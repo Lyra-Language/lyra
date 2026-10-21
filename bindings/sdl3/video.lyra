@@ -89,3 +89,37 @@ pub let set_window_size = (window: Window, width: i32, height: i32) -> bool =>
 /// The window's title bar.
 pub let set_window_title = (window: Window, title: string) -> bool =>
   title.with_cstring((t) => unsafe { sdl_set_window_title(window, t) })
+
+@symbol("SDL_GetWindowSize")
+unsafe extern sdl_get_window_size: (window: Window, w: ^mut i32, h: ^mut i32) -> bool
+
+@symbol("SDL_GetWindowDisplayScale")
+unsafe extern sdl_get_window_display_scale: (window: Window) -> f32
+
+@symbol("SDL_GetWindowPixelDensity")
+unsafe extern sdl_get_window_pixel_density: (window: Window) -> f32
+
+/// The window's size in its own coordinates — points, which a high-density display shows at
+/// more than one pixel each; a mouse event's position is in the same coordinates.
+pub let window_size = (window: Window) -> (i64, i64) => {
+  var w: i32 = 0
+  var h: i32 = 0
+  unsafe { sdl_get_window_size(window, &mut w, &mut h) }
+  (i64(w), i64(h))
+}
+
+/// How large the window's content should be drawn: the pixel density of a high-density
+/// display times the scale the user chose for it (Windows' 150%, say). An interface laid
+/// out in its own units draws at this many pixels a unit. `1.0` if SDL cannot say.
+pub let window_display_scale = (window: Window) -> f32 => {
+  let scale = unsafe { sdl_get_window_display_scale(window) }
+  if scale > 0.0 { scale } else { 1.0 }
+}
+
+/// Pixels a point of the window's coordinates covers across: `2.0` on a Retina display,
+/// `1.0` on most others — whatever scale the user chose, which [window_display_scale] has.
+/// `1.0` if SDL cannot say.
+pub let window_pixel_density = (window: Window) -> f32 => {
+  let density = unsafe { sdl_get_window_pixel_density(window) }
+  if density > 0.0 { density } else { 1.0 }
+}

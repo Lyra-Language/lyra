@@ -119,6 +119,27 @@ struct TouchFingerEvent {
   window: u32,
 }
 
+/// `SDL_WindowEvent` — something that happened to a window; `data1` and `data2` are its new
+/// size for a resize.
+struct WindowEvent {
+  kind: u32,
+  reserved: u32,
+  timestamp: u64,
+  window_id: u32,
+  data1: i32,
+  data2: i32,
+}
+
+/// `SDL_TextInputEvent` — text typed, UTF-8, in memory SDL owns: copied out as the event is
+/// read.
+struct TextInputEvent {
+  kind: u32,
+  reserved: u32,
+  timestamp: u64,
+  window_id: u32,
+  text: ^u8,
+}
+
 /// `SDL_Event` — 128 bytes, read as a `u32` to find the tag and as a struct to read the
 /// payload that tag selects.
 ///
@@ -136,6 +157,8 @@ union RawEvent {
   device: GamepadDeviceEvent,
   gamepad_button: GamepadButtonEvent,
   finger: TouchFingerEvent,
+  window: WindowEvent,
+  text: TextInputEvent,
   padding: [128]u8,
 }
 
@@ -145,6 +168,9 @@ const EVENT_WILL_ENTER_BACKGROUND: u32 = 0x103
 const EVENT_DID_ENTER_FOREGROUND: u32 = 0x106
 const EVENT_KEY_DOWN: u32 = 0x300
 const EVENT_KEY_UP: u32 = 0x301
+const EVENT_TEXT_INPUT: u32 = 0x303
+const EVENT_WINDOW_RESIZED: u32 = 0x206
+const EVENT_WINDOW_DISPLAY_SCALE_CHANGED: u32 = 0x214
 const EVENT_MOUSE_MOTION: u32 = 0x400
 const EVENT_MOUSE_BUTTON_DOWN: u32 = 0x401
 const EVENT_MOUSE_BUTTON_UP: u32 = 0x402
@@ -193,6 +219,15 @@ pub data Event =
   | DidEnterForeground
   /// The system is ending the app.
   | Terminating
+  /// Text typed — a key's character, or what an input method composed — while the window
+  /// asks for text ([start_text_input]). A key's [KeyDown] arrives as well.
+  | TextInput(string)
+  /// The window was resized, to a width and height in its own coordinates (points, which
+  /// a high-density display shows at more than one pixel each).
+  | WindowResized(i32, i32)
+  /// The window's display scale changed ([window_display_scale]): it moved to another
+  /// display, or the user changed the scale of this one.
+  | WindowScaleChanged
   | Other(u32)
 
 @symbol("SDL_PollEvent")
@@ -213,6 +248,21 @@ pub let poll_event = () -> Maybe<Event> => {
   } else {
     Some(classify(raw))
   }
+}
+
+@symbol("SDL_WaitEventTimeout")
+unsafe extern sdl_wait_event_timeout: (event: ^mut RawEvent, timeout_ms: i32) -> bool
+
+/// [poll_event], waiting up to `timeout_ms` milliseconds for an event when there is none —
+/// `None` if none came. A program that draws only when something happens sleeps here
+/// rather than spinning; a negative `timeout_ms` waits as long as it takes.
+pub let wait_event = (timeout_ms: i64) -> Maybe<Event> => {
+  var raw = RawEvent { padding: #[0; 128] }
+  let wait = i32(timeout_ms.clamp(-1, 2147483647))
+  if unsafe { sdl_wait_event_timeout(
+    &mut raw,
+    wait
+  ) } { Some(classify(raw)) } else { None }
 }
 
 /// Read the tag, then the one member it selects.
@@ -241,6 +291,12 @@ let classify = pure (raw: RawEvent) -> Event => {
   } else if kind == EVENT_MOUSE_WHEEL {
     let sign: f32 = if unsafe { raw.wheel.direction } == WHEEL_FLIPPED { -1.0 } else { 1.0 }
     MouseWheel(unsafe { raw.wheel.x } * sign, unsafe { raw.wheel.y } * sign)
+  } else if kind == EVENT_TEXT_INPUT {
+    TextInput(c_name(unsafe { raw.text.text }))
+  } else if kind == EVENT_WINDOW_RESIZED {
+    WindowResized(unsafe { raw.window.data1 }, unsafe { raw.window.data2 })
+  } else if kind == EVENT_WINDOW_DISPLAY_SCALE_CHANGED {
+    WindowScaleChanged
   } else if kind == EVENT_TERMINATING {
     Terminating
   } else if kind == EVENT_WILL_ENTER_BACKGROUND {

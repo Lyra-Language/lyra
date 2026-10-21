@@ -1,0 +1,125 @@
+module ui.backend
+//! The two seams between the interface and a machine: [Platform], the window and what the
+//! user does in it, and [Renderer], which turns a display list into pixels. `ui.sdl3` is the
+//! first implementation of both; everything above them is pure Lyra and calls no library.
+//!
+//! ```
+//! import ui.backend.{ Platform, Renderer, CloseRequested }
+//! import ui.sdl3
+//!
+//! let main = () -> u8 => {
+//!   let Some(window) = sdl3.open("Hello", 640.0, 480.0) else { return 1 }
+//!   var platform = window.platform
+//!   var renderer = window.renderer
+//!   loop {
+//!     for event in platform.next_events(-1) {
+//!       if event == CloseRequested { sdl3.close(platform, renderer); return 0 }
+//!     }
+//!     renderer.draw(BACKGROUND, view(platform.window_size()))
+//!   }
+//! }
+//! ```
+//!
+//! **Both traits are small on purpose.** A new backend — a GPU renderer, the web, a phone's
+//! native layer — implements these and nothing else, so each method is one a backend cannot
+//! do without. Positions in [InputEvent], sizes and the display list are all **logical
+//! units**: the platform divides its own coordinates by [Platform.scale] before it reports
+//! them, and the renderer multiplies by it before it draws.
+
+import ui.draw.{ Point, Size, Rect, Color, Image, TextureId, DrawOp }
+
+/// The window, and the input it receives.
+pub trait Platform {
+  /// What happened since the last call, oldest first — waiting up to `wait_ms` milliseconds
+  /// for something when nothing has (`0` never waits, a negative wait as long as it takes).
+  /// An interface with nothing animating waits, and costs nothing while the user is away.
+  next_events: (mut Self, i64) -> []InputEvent
+  /// The window's size, in logical units.
+  window_size: (Self) -> Size
+  /// Pixels a logical unit: a high-density display's density times the scale the user chose
+  /// for it.
+  scale: (Self) -> f32
+  /// Ask for typed text, with the field it goes into — where an input method's window and a
+  /// phone's keyboard keep clear of — or stop asking, with `None`.
+  set_text_input: (mut Self, Maybe<Rect>) -> void
+  /// The text on the clipboard; `""` when there is none.
+  clipboard: (Self) -> string
+  set_clipboard: (mut Self, string) -> void
+  /// The pointer's shape while it is over the window.
+  set_cursor: (mut Self, Cursor) -> void
+}
+
+/// Pixels, from a display list.
+pub trait Renderer {
+  /// Keep `image` as a texture to draw from, named by the answer — `None` if the backend
+  /// cannot hold it.
+  upload: (mut Self, Image) -> Maybe<TextureId>
+  /// Write `image` into texture `id` with its top-left corner at the texel `at` — a glyph
+  /// added to an atlas. `false`, changing nothing, if it does not fit.
+  update: (mut Self, TextureId, Point, Image) -> bool
+  /// Draw a frame: the window cleared to the colour, then the display list in order, then
+  /// shown.
+  draw: (mut Self, Color, []DrawOp) -> void
+}
+
+/// Something the user did, or the window had done to it, in logical units.
+pub data InputEvent =
+  /// The user asked to close the window (or quit the app).
+  CloseRequested
+  /// The window changed size, to this.
+  | Resized(Size)
+  /// The window moved to a display with another scale, or its display's changed: lay out
+  /// and draw again at [Platform.scale].
+  | ScaleChanged
+  | PointerMoved(Point)
+  | PointerDown(PointerButton, Point)
+  | PointerUp(PointerButton, Point)
+  /// Scrolled by this far, in lines: across (positive to the right) and down (positive
+  /// toward the user, so content moves up).
+  | Scrolled(f32, f32)
+  | KeyPressed(Key, Modifiers)
+  | KeyReleased(Key, Modifiers)
+  /// Text typed while text was asked for ([Platform.set_text_input]): a key's character or
+  /// what an input method composed. Its key's [KeyPressed] arrives as well, and a text field
+  /// takes the text from here, not from the key.
+  | TextTyped(string)
+
+/// A mouse button, or a touch (which is [Primary]).
+pub data PointerButton = Primary | Secondary | Middle | OtherButton(u8)
+
+/// A key, as an interface tells keys apart: the ones that edit and move, named as the web's
+/// `KeyboardEvent.key` names them, and the rest by the character they type (the space bar is
+/// `Character(' ')`). A key with neither is `Unnamed`, carrying the platform's code.
+///
+/// The names are the web's rather than the shortest (`ArrowLeft`, not `Left`) because a
+/// constructor's name is matched program-wide: a program's own `data Dir = Left | Right`
+/// would otherwise take them.
+pub data Key =
+  Enter
+  | Escape
+  | Tab
+  | Backspace
+  | Delete
+  | ArrowLeft
+  | ArrowRight
+  | ArrowUp
+  | ArrowDown
+  | Home
+  | End
+  | PageUp
+  | PageDown
+  | Character(rune)
+  | Unnamed(u32)
+
+/// The modifier keys held with a key. `primary` is the one shortcuts use — Command on a
+/// Mac, Control elsewhere — so `primary` and `Character('c')` is Copy everywhere.
+pub struct Modifiers {
+  shift: bool = false,
+  control: bool = false,
+  alt: bool = false,
+  command: bool = false,
+  primary: bool = false,
+}
+
+/// The pointer's shape.
+pub data Cursor = Arrow | IBeam | Hand | Crosshair | Move | NotAllowed | Busy

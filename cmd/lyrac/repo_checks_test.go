@@ -27,7 +27,7 @@ import (
 // errors on a file the command line called clean. They are siblings now, as every other
 // example's modules are, and this test is the thing that would have said so.
 // editorRoot builds the module root a language server sees: a directory holding **only**
-// `std` and `bindings`, as `build/` does after `./build.sh` links them there.
+// `std`, `bindings` and `ui`, as `build/` does after `./build.sh` links them there.
 //
 // Built here rather than pointed at `build/`, which is what the first version did and why
 // it failed in CI: CI never runs `build.sh`, so `build/std` does not exist and every
@@ -38,7 +38,7 @@ import (
 func editorRoot(t *testing.T, repo string) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"std", "bindings"} {
+	for _, name := range []string{"std", "bindings", "ui"} {
 		if err := os.Symlink(filepath.Join(repo, name), filepath.Join(dir, name)); err != nil {
 			t.Fatal(err)
 		}
@@ -49,7 +49,7 @@ func editorRoot(t *testing.T, repo string) string {
 func TestRepo_EveryLyraFileChecksUnderBothRoots(t *testing.T) {
 	root := repoRoot(t)
 	var files []string
-	for _, dir := range []string{"std", "examples", "bindings"} {
+	for _, dir := range []string{"std", "examples", "bindings", "ui"} {
 		if err := filepath.Walk(filepath.Join(root, dir), func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err

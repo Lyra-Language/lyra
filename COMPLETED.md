@@ -9,6 +9,55 @@ Newest first.
 
 ## Dated log
 
+### 10/21/26 — `ui/`, phase 1: a display list drawn through SDL3, and two alias bugs it found
+
+The GUI's first phase, per its design document: the seams, and an SDL3 backend drawing
+through them. `examples/ui/shapes.lyra` draws every op; `cmd/lyrac/ui_test.go` reads its
+frame headless.
+
+- **A root of its own, `ui/`**, linked by `build.sh` beside `std` and `bindings`, so it
+  resolves as `bindings` does today. A separate repository would need a dependency
+  mechanism Lyra lacks (a compile searches the entry's directory and the std root only), and
+  `std.ui` would promise an interface that has not settled.
+- **The display list is the contract** (`ui.draw`): six ops in logical units. A renderer
+  sees no widget, style or text, so a later backend is those ops and two texture calls.
+- **Shapes are triangles, tessellated in pixels** (`ui.tess`): a contour half a pixel
+  inside the edge and one half outside, corners sampled at the same angles in both, so the
+  band between them softens the edge over exactly one pixel and a pixel-aligned edge stays
+  crisp. A border is four such contours. Tessellating in logical units would make the band
+  a unit wide — two pixels on a Retina display.
+- **SDL's software renderer truncates vertices to whole pixels** (`SW_QueueGeometry`'s
+  `(int)` casts), so headless the band lands half a pixel out and a hairline is two
+  half-strength pixels; the test checks edges for presence, not shade. A GPU renderer keeps
+  the halves.
+- **Logical units are SDL points times pixel density over display scale**: a point on a
+  Mac, two thirds of a pixel at Windows' 150%. The platform converts every position it
+  reports; the renderer scales by the display scale.
+- **`ui.backend`'s keys are the web's names** (`ArrowLeft`, `KeyPressed`), because a
+  constructor is matched program-wide by name: SDL's `Event` has `KeyDown`, and a program's
+  own `data Dir = Left | Right` would take `Left`.
+- **Bindings grown for it**: geometry and clipping (`draw_geometry`, `set_clip`,
+  `Vertex`, `PixelRect`), `update_texture_area`, `wait_event`, text input, the window's size,
+  density and scale, the clipboard, and `TextInput`/`WindowResized`/`WindowScaleChanged`
+  events.
+
+**A type imported under an alias was unknown inside a declaration.** `struct Holder { b: B
+}` under `import owner.{ Box as B }` was "unknown type \"B\"" reported at `Box`'s own
+declaration: a declaration's member names are stamped with the declaration they mean
+(`stampNames`), then resolved from that declaration's module (`declaringSite`), which has
+no `B`. Annotations worked, since nothing stamps them. Stamping now writes the declared name
+beside the key; since lyra-W004 reads the stamped names after type checking, the alias's use
+is handed to it (`AliasedTypeUses`) rather than lost. Fixing it in the resolver instead left
+the backend reading `P<i64>` against `Pair<i64>` — every reader of a stamped name would have
+needed it. `TestExec_AnAliasedTypeImportInsideADeclaration`.
+
+**A constructor alias cannot separate two constructors of one name, and is now refused when
+it would have to.** `eraseConstructorAliases` (10/19) rewrites `SdlKeyDown` to `KeyDown`
+before any pass, so beside `ui.backend`'s `KeyDown` both spellings meant one constructor:
+caught here only by the payloads differing (`KeyDown takes 1 argument(s)`). With payloads
+alike it would have built the wrong one. `constructorAliasCollisions` refuses the import,
+naming the other constructor; resolving constructors by declaration is todo.md's.
+
 ### 10/20/26 — What Vega's release needs of Lyra: `base_path`, and an install's shared library found at run time
 
 Vega's release (its `package.sh`) carries lyrac and Sheliak, and has to find them and have

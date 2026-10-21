@@ -683,6 +683,28 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   clips; WebP and KTX2/Basis textures; `KHR_materials_variants`, iridescence, sheen,
   specular, IOR, volume; back-to-front sorting of see-through meshes.
 
+## GUI (`ui/`)
+
+The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is built.
+
+- **[DONE 10/21] Phase 1, the seams** — `ui.draw`'s display list, `ui.tess`, the
+  `Platform`/`Renderer` traits and `ui.sdl3` over `SDL_RenderGeometry` (COMPLETED.md, 10/21).
+- **[OPEN] Phase 2, text and layout.** HarfBuzz shaping and a FreeType glyph atlas behind
+  `Glyphs` (`Renderer.update` writes the atlas); a constraints layout in Lyra; `Row`,
+  `Column`, `Stack`, `Scroll`. Gate: a static screen lays out.
+- **[OPEN] `ui.sdl3`'s platform half is untested.** Nothing headless sends it input: bind
+  `SDL_PushEvent` and script events, as `std.game`'s `--hold` scripts a pad.
+- **[OPEN] A rounded clip is square on SDL's renderer** (`PushClip`'s radii are ignored):
+  it needs a stencil (an SDL_GPU backend) or content drawn to a texture and masked.
+- **[OPEN] A constructor resolved by its declaration, not its name.** Then `KeyDown as
+  SdlKeyDown` could stand beside another module's `KeyDown`, which is refused since 10/21
+  (`constructorAliasCollisions`) rather than silently confused.
+- **[OPEN] An install carries `ui/`** beside `std/` and `bindings/` once a shipped program
+  uses it — Vega's release copies those two into its lyra.
+- **[OPEN] Vega: `bindings.sdl3.Event` grew `TextInput`, `WindowResized` and
+  `WindowScaleChanged`.** A `match` over it with no wildcard arm (none in this repo) is no
+  longer exhaustive.
+
 ## Array comprehensions
 
 - **[OPEN] A comprehension clause whose source depends on an earlier one** (`[row in grid,

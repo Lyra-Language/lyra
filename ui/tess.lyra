@@ -1,0 +1,209 @@
+module ui.tess
+//! Shapes as triangles — what a renderer that draws only triangles (SDL's geometry, a GPU)
+//! makes of `ui.draw`'s rounded rectangles and borders.
+//!
+//! ```
+//! import ui.tess.{ Mesh, fill, border }
+//!
+//! var mesh = Mesh {}
+//! fill(mesh, rect, radii, color)            // in pixels
+//! border(mesh, rect, radii, 2.0, color)
+//! // mesh.vertices and mesh.indices, three indices a triangle
+//! ```
+//!
+//! **Everything here is in pixels**, not logical units: the renderer scales a display list
+//! first. That is because of the edges. A shape's edge is **softened over one pixel** — a
+//! band from the colour to clear, half a pixel inside the edge to half outside — which is
+//! what makes a curve look smooth without multisampling, and a band one *pixel* wide is only
+//! one pixel wide in pixels. An edge on a whole pixel stays crisp: the pixel inside it is
+//! the colour and the one outside clear.
+//!
+//! **A shape is outlined by contours with the same corners sampled at the same angles**,
+//! offset from its edge (half a pixel in, half out, and the same again at a border's inner
+//! edge), so the points of neighbouring contours pair off and a band between two is a
+//! strip of quads.
+
+import ui.draw.{ Rect, Radii, Color, Point }
+import std.math.{ PI, HALF_PI }
+
+/// A triangle's corner, as the renderer hands it on: where it is, its colour (`0.0`–`1.0` a
+/// channel, alpha not premultiplied) and where in a texture it reads (`0.0`–`1.0`). The
+/// fields are SDL's `SDL_Vertex` in order, and most GPU vertex layouts.
+pub struct Vertex {
+  x: f32,
+  y: f32,
+  r: f32,
+  g: f32,
+  b: f32,
+  a: f32,
+  u: f32 = 0.0,
+  v: f32 = 0.0,
+}
+
+/// Triangles: every three of `indices` name one's corners in `vertices`. Shapes are added to
+/// one mesh in the order they are drawn, so a run of them is one draw.
+pub struct Mesh {
+  vertices: []Vertex = [],
+  indices: []i32 = [],
+}
+
+/// `rect` filled with `color`, its corners rounded by `radii` (fitted to it as CSS fits
+/// them), its edge softened over a pixel.
+pub let fill = (mesh: mut Mesh, rect: Rect, radii: Radii, color: Color) -> void => {
+  if rect.is_empty() || color.a == 0 {
+    return
+  }
+  if rect.w < 1.0 || rect.h < 1.0 {
+    // Thinner than the softened edge itself: a plain rectangle as faint as it is thin.
+    quad(mesh, rect, Rect {}, faded(color, rect.w.min(1.0) * rect.h.min(1.0)))
+    return
+  }
+  let fit = radii.fitted(rect.w, rect.h)
+  let segments = corner_segments(fit)
+  let inside = contour(rect, fit, -0.5, segments)
+  let outside = contour(rect, fit, 0.5, segments)
+  let first = i32(mesh.vertices.len())
+  let n = i32(inside.len())
+  for p in inside { mesh.vertices.push(vertex(p, color, 1.0)) }
+  for p in outside { mesh.vertices.push(vertex(p, color, 0.0)) }
+  // A rounded rectangle is convex, so its inside is a fan from any one point.
+  for i in 1..<n - 1 {
+    triangle(mesh, first, first + i, first + i + 1)
+  }
+  band(mesh, first, first + n, n)
+}
+
+/// The band `width` wide inside `rect`'s edge, following its corners, in `color`. A border
+/// thinner than a pixel is a pixel as faint as it is thin; one meeting in the middle is a
+/// [fill].
+pub let border = (
+  mesh: mut Mesh,
+  rect: Rect,
+  radii: Radii,
+  width: f32,
+  color: Color
+) -> void => {
+  if rect.is_empty() || width <= 0.0 || color.a == 0 {
+    return
+  }
+  if width * 2.0 >= rect.w || width * 2.0 >= rect.h {
+    fill(mesh, rect, radii, color)
+    return
+  }
+  let thickness = width.max(1.0)
+  let shade = faded(color, width.min(1.0))
+  let fit = radii.fitted(rect.w, rect.h)
+  let segments = corner_segments(fit)
+  let inner = rect.inset(thickness)
+  let inner_radii = fit.shrunk(thickness)
+  let contours = #[
+    contour(rect, fit, 0.5, segments),
+    contour(rect, fit, -0.5, segments),
+    contour(inner, inner_radii, 0.5, segments),
+    contour(inner, inner_radii, -0.5, segments),
+  ]
+  let alphas: [4]f32 = #[0.0, 1.0, 1.0, 0.0]
+  let first = i32(mesh.vertices.len())
+  let n = i32(contours[0].len())
+  for c in 0..<4 {
+    for p in contours[c] { mesh.vertices.push(vertex(p, shade, alphas[c])) }
+  }
+  band(mesh, first, first + n, n)
+  band(mesh, first + n, first + 2 * n, n)
+  band(mesh, first + 2 * n, first + 3 * n, n)
+}
+
+/// `at` as two triangles in `color`, reading the texture across `texture` — a rectangle in
+/// texture coordinates, `0.0`–`1.0` — with hard edges: a glyph or a picture.
+pub let quad = (mesh: mut Mesh, at: Rect, texture: Rect, color: Color) -> void => {
+  let first = i32(mesh.vertices.len())
+  let corners: [4](f32, f32) = #[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+  for (across, down) in corners {
+    let p = Point { x: at.x + at.w * across, y: at.y + at.h * down }
+    var v = vertex(p, color, 1.0)
+    v.u = texture.x + texture.w * across
+    v.v = texture.y + texture.h * down
+    mesh.vertices.push(v)
+  }
+  triangle(mesh, first, first + 1, first + 2)
+  triangle(mesh, first, first + 2, first + 3)
+}
+
+/// The outline of `rect`, its corners rounded by `radii`, moved `out` pixels outward (inward
+/// when negative): the rectangle `out` larger on each side with every radius `out` larger,
+/// none below zero. Clockwise from the top-left corner's left end, each corner `segments`
+/// steps from one side to the next.
+let contour = pure (rect: Rect, radii: Radii, out: f32, segments: [4]i64) -> []Point => {
+  let left = rect.x - out
+  let top = rect.y - out
+  let right = rect.x + rect.w + out
+  let bottom = rect.y + rect.h + out
+  let tl = (radii.top_left + out).max(0.0)
+  let tr = (radii.top_right + out).max(0.0)
+  let br = (radii.bottom_right + out).max(0.0)
+  let bl = (radii.bottom_left + out).max(0.0)
+  var points: []Point = []
+  corner(points, left + tl, top + tl, tl, f32(PI), segments[0])
+  corner(points, right - tr, top + tr, tr, f32(PI + HALF_PI), segments[1])
+  corner(points, right - br, bottom - br, br, 0.0, segments[2])
+  corner(points, left + bl, bottom - bl, bl, f32(HALF_PI), segments[3])
+  points
+}
+
+/// A quarter circle about (`cx`, `cy`) from `start` radians, clockwise on the screen (whose
+/// `y` runs down), `segments` steps and so one point more. A square corner is its one point
+/// that many times, which keeps every contour the same length.
+let corner = (
+  points: mut []Point,
+  cx: f32,
+  cy: f32,
+  r: f32,
+  start: f32,
+  segments: i64
+) -> void => {
+  for i in 0..<=segments {
+    let angle = start + f32(HALF_PI) * f32(i) / f32(segments)
+    points.push(Point { x: cx + r * angle.cos(), y: cy + r * angle.sin() })
+  }
+}
+
+/// How many steps each corner of these radii is drawn in: about one every two and a half
+/// pixels of its outer edge, at least one and at most sixteen.
+let corner_segments = pure (radii: Radii) -> [4]i64 => #[
+  steps(radii.top_left),
+  steps(radii.top_right),
+  steps(radii.bottom_right),
+  steps(radii.bottom_left),
+]
+
+let steps = pure (r: f32) -> i64 => ((r + 0.5) * f32(HALF_PI) / 2.5).ceil().clamp(1, 16)
+
+/// The strip of quads between two contours of `n` points, starting at vertices `a` and `b`,
+/// closed back to the start.
+let band = (mesh: mut Mesh, a: i32, b: i32, n: i32) -> void => {
+  for i in 0..<n {
+    let j = (i + 1) % n
+    triangle(mesh, a + i, a + j, b + j)
+    triangle(mesh, a + i, b + j, b + i)
+  }
+}
+
+let triangle = (mesh: mut Mesh, a: i32, b: i32, c: i32) -> void => {
+  mesh.indices.push(a)
+  mesh.indices.push(b)
+  mesh.indices.push(c)
+}
+
+/// A corner at `p` in `color`, its alpha times `alpha`.
+let vertex = pure (p: Point, color: Color, alpha: f32) -> Vertex => Vertex {
+  x: p.x,
+  y: p.y,
+  r: f32(color.r) / 255.0,
+  g: f32(color.g) / 255.0,
+  b: f32(color.b) / 255.0,
+  a: f32(color.a) / 255.0 * alpha,
+}
+
+/// `color` with its alpha times `by`.
+let faded = pure (color: Color, by: f32) -> Color =>
+  Color { color | a: u8((f32(color.a) * by.clamp(0.0, 1.0)).round()) }

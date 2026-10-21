@@ -78,7 +78,7 @@ unsafe extern sdl_create_texture: (
 @symbol("SDL_UpdateTexture")
 unsafe extern sdl_update_texture: (
   texture: ^u8,
-  rect: ^u8,
+  rect: ^PixelRect,
   pixels: ^u32,
   pitch: i32
 ) -> bool
@@ -201,6 +201,21 @@ pub let update_texture = (texture: Texture, pixels: []u32) -> bool => {
     false
   } else {
     unsafe { sdl_update_texture(texture.handle, nullptr, pixels.data(), i32(width * 4)) }
+  }
+}
+
+/// Replace the `area` of a texture made by [create_texture] with `pixels`, row by row,
+/// `0xAARRGGBB` each — a glyph added to an atlas. Fails (answers `false`, changing nothing)
+/// unless there is exactly one pixel per texel of `area`.
+pub let update_texture_area = (
+  texture: Texture,
+  area: PixelRect,
+  pixels: []u32
+) -> bool => {
+  if area.w <= 0 || area.h <= 0 || pixels.len() != i64(area.w) * i64(area.h) {
+    false
+  } else {
+    unsafe { sdl_update_texture(texture.handle, &area, pixels.data(), area.w * 4) }
   }
 }
 

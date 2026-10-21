@@ -38,6 +38,30 @@ pub struct Pixels {
   argb: []u32,
 }
 
+/// `SDL_Rect` — a rectangle in whole pixels: what SDL clips drawing to ([set_clip]), and the
+/// part of a texture [update_texture_area] writes.
+pub struct PixelRect {
+  x: i32,
+  y: i32,
+  w: i32,
+  h: i32,
+}
+
+/// `SDL_Vertex` — one corner of a triangle [draw_geometry] draws: where it is, its colour
+/// (`0.0`–`1.0` a channel, alpha not premultiplied), and where in a texture it reads
+/// (`0.0`–`1.0` across and down). SDL nests a point, a colour and a point; eight floats in a
+/// row are the same layout, and a program fills them by name.
+pub struct Vertex {
+  x: f32,
+  y: f32,
+  r: f32,
+  g: f32,
+  b: f32,
+  a: f32,
+  u: f32,
+  v: f32,
+}
+
 /// An opaque colour, which is nearly every colour a program names.
 pub let rgb = pure (r: u8, g: u8, b: u8) -> Color => Color { r: r, g: g, b: b, a: 255 }
 
@@ -155,6 +179,19 @@ unsafe extern sdl_read_surface_pixel: (
 
 @symbol("SDL_DestroySurface")
 unsafe extern sdl_destroy_surface: (surface: Surface) -> void
+
+@symbol("SDL_RenderGeometry")
+unsafe extern sdl_render_geometry: (
+  renderer: Renderer,
+  texture: ^u8,
+  vertices: ^Vertex,
+  num_vertices: i32,
+  indices: ^i32,
+  num_indices: i32,
+) -> bool
+
+@symbol("SDL_SetRenderClipRect")
+unsafe extern sdl_set_render_clip_rect: (renderer: Renderer, rect: ^PixelRect) -> bool
 
 impl Window {
   /// The renderer for a window, or `None` if SDL could not make one.
@@ -321,4 +358,53 @@ impl Renderer {
     unsafe { sdl_render_coordinates_from_window(self, x, y, &mut rx, &mut ry) }
     (rx, ry)
   }
+
+  /// Draw triangles, each three of `indices` naming its corners in `vertices`, coloured by
+  /// them and blended by their alpha as [set_draw_blend] says. Anything a rectangle cannot
+  /// be — a rounded corner, an edge softened to look smooth — is triangles. Nothing to draw
+  /// draws nothing.
+  pub let draw_geometry = (self, vertices: []Vertex, indices: []i32) -> bool => {
+    if vertices.len() == 0 || indices.len() == 0 {
+      return true
+    }
+    unsafe { sdl_render_geometry(
+      self,
+      nullptr,
+      vertices.data(),
+      i32(vertices.len()),
+      indices.data(),
+      i32(indices.len())
+    ) }
+  }
+
+  /// [draw_geometry] reading `texture` at each corner's `u`, `v`, its texels multiplied by
+  /// the corners' colour — white leaves them as they are — and blended as the texture's
+  /// [set_texture_blend] says.
+  pub let draw_textured_geometry = (
+    self,
+    texture: Texture,
+    vertices: []Vertex,
+    indices: []i32,
+  ) -> bool => {
+    if vertices.len() == 0 || indices.len() == 0 {
+      return true
+    }
+    unsafe { sdl_render_geometry(
+      self,
+      texture.handle,
+      vertices.data(),
+      i32(vertices.len()),
+      indices.data(),
+      i32(indices.len())
+    ) }
+  }
+
+  /// Draw only inside `rect`, in the renderer's coordinates, until [clear_clip] — or another
+  /// `set_clip`, which replaces it rather than narrowing it.
+  pub let set_clip = (self, rect: PixelRect) -> bool =>
+    unsafe { sdl_set_render_clip_rect(self, &rect) }
+
+  /// Draw anywhere again.
+  pub let clear_clip = (self) -> bool =>
+    unsafe { sdl_set_render_clip_rect(self, nullptr) }
 }

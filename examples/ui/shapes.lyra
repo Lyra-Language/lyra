@@ -1,0 +1,158 @@
+// A display list drawn by `ui.sdl3`: rounded fills, borders thin and thick, a see-through
+// fill over another, a clip, a picture and a run of glyphs — every op `ui.draw` has.
+//
+//     lyrac run examples/ui/shapes.lyra
+//     lyrac run examples/ui/shapes.lyra -- --frames 1 --png shapes.png
+//
+// **The second form draws one frame and writes it to a PNG instead of showing it**, which is
+// how `cmd/lyrac/ui_test.go` checks the backend: with `SDL_VIDEODRIVER=dummy` and
+// `SDL_RENDER_DRIVER=software` no window appears, and the frame is at one pixel a unit.
+//
+// Nothing here is drawn by name. The program builds a list of values ([scene]) and hands it
+// to a renderer; which renderer is the one line that opens the window.
+
+import ui.sdl3
+import ui.sdl3.{ SdlRenderer, capture }
+import ui.backend.{ Platform, Renderer, InputEvent, CloseRequested, KeyPressed, Escape }
+import ui.draw.{
+  DrawOp,
+  Fill,
+  Border,
+  Glyphs,
+  Picture,
+  PushClip,
+  PopClip,
+  Rect,
+  Size,
+  GlyphQuad,
+  Image,
+  TextureId,
+  Color,
+  rgb,
+  rgba,
+  radius,
+}
+import std.collections.{ parse_args }
+import std.png.{ write_png }
+import std.io.{ write_bytes }
+
+const WIDTH: f32 = 360.0
+const HEIGHT: f32 = 240.0
+
+let main = () -> u8 => {
+  let args = parse_args(["--frames", "--png"])
+  let frames = args.value("--frames").flat_map((n) => n.parse_i64()).unwrap_or(0)
+  let opened = sdl3.open("Shapes", WIDTH, HEIGHT)
+  let window = match opened {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      return 2
+    },
+  }
+  var platform = window.platform
+  var renderer = window.renderer
+  let Some(art) = upload_art(renderer) else {
+    println("the renderer could not hold the art")
+    sdl3.close(platform, renderer)
+    return 1
+  }
+  var drawn = 0
+  var status: u8 = 0
+  loop {
+    let list = scene(platform.window_size(), art)
+    drawn += 1
+    if frames > 0 && drawn >= frames {
+      if let Some(path) = args.value("--png") {
+        if !save(renderer, list, path) { status = 1 }
+      }
+      break
+    }
+    renderer.draw(BACKGROUND, list)
+    if wants_to_close(platform.next_events(if frames > 0 { 0 } else { -1 })) { break }
+  }
+  sdl3.close(platform, renderer)
+  status
+}
+
+const BACKGROUND: Color = Color { r: 242, g: 242, b: 245, a: 255 }
+
+/// The textures [scene] draws from: a checkerboard picture, and a glyph — a square of full
+/// coverage, standing in for a letter until there is text.
+struct Art {
+  checker: TextureId,
+  glyph: TextureId,
+}
+
+/// The frame for a window `size`: everything `ui.draw` can say, laid out by hand.
+let scene = pure (size: Size, art: Art) -> []DrawOp => [
+  // A card: white, rounded, with a hairline border.
+  Fill(Rect { x: 20.0, y: 20.0, w: 200.0, h: 120.0 }, radius(12.0), rgb(0xFFFFFF)),
+  Border(Rect { x: 20.0, y: 20.0, w: 200.0, h: 120.0 }, radius(12.0), 1.0, rgb(0xC8C8D0)),
+  // A pill-shaped button on it.
+  Fill(Rect { x: 36.0, y: 92.0, w: 96.0, h: 32.0 }, radius(16.0), rgb(0x3C78D8)),
+  // Half see-through red over the card's corner and the background.
+  Fill(Rect { x: 150.0, y: 70.0, w: 120.0, h: 100.0 }, radius(8.0), rgba(0xE0404080)),
+  // A thick green ring.
+  Border(Rect { x: 240.0, y: 20.0, w: 100.0, h: 100.0 }, radius(20.0), 6.0, rgb(0x2E8B57)),
+  // A yellow rectangle larger than its clip, which shows only the clip's part.
+  PushClip(Rect { x: 240.0, y: 150.0, w: 100.0, h: 70.0 }, radius(0.0)),
+  Fill(Rect { x: 220.0, y: 130.0, w: 140.0, h: 110.0 }, radius(0.0), rgb(0xF0C85A)),
+  PopClip,
+  // The checkerboard, each of its 8 × 8 texels 8 units square.
+  Picture(art.checker, Rect { x: 0.0, y: 0.0, w: 8.0, h: 8.0 }, Rect { x: 20.0, y: 160.0, w: 64.0, h: 64.0 }),
+  // Two "glyphs" in dark grey.
+  Glyphs(art.glyph, [
+    GlyphQuad { at: Rect { x: 100.0, y: 170.0, w: 16.0, h: 16.0 }, texels: Rect { x: 0.0, y: 0.0, w: 4.0, h: 4.0 } },
+    GlyphQuad { at: Rect { x: 120.0, y: 170.0, w: 16.0, h: 16.0 }, texels: Rect { x: 0.0, y: 0.0, w: 4.0, h: 4.0 } },
+  ], rgb(0x202020)),
+  // A frame round the whole window, whatever its size.
+  Border(Rect { x: 4.0, y: 4.0, w: size.w - 8.0, h: size.h - 8.0 }, radius(6.0), 1.0, rgb(0x9090A0)),
+]
+
+/// Upload [Art]'s textures, or `None` if the renderer cannot hold them.
+let upload_art = (renderer: mut SdlRenderer) -> Maybe<Art> => {
+  var checker: []u32 = []
+  for y in 0..<8 {
+    for x in 0..<8 {
+      checker.push(if (x + y) % 2 == 0 { 0xFF000000 } else { 0xFFFFFFFF })
+    }
+  }
+  let Some(board) = renderer.upload(Image {
+    width: 8,
+    height: 8,
+    argb: checker
+  }) else { return None }
+  let Some(glyph) = renderer.upload(Image {
+    width: 4,
+    height: 4,
+    argb: [0xFFFFFFFF; 16]
+  }) else {
+    return None
+  }
+  Some(Art { checker: board, glyph: glyph })
+}
+
+/// Whether the user asked to close the window, or pressed Escape.
+let wants_to_close = pure (events: []InputEvent) -> bool =>
+  events.any((e) => match e {
+    CloseRequested => true,
+    KeyPressed(Escape, _) => true,
+    _ => false,
+  })
+
+/// Draw `list` without showing it, and write the frame to `path` as a PNG.
+let save = (renderer: SdlRenderer, list: []DrawOp, path: string) -> bool => {
+  let Some(frame) = capture(renderer, BACKGROUND, list) else { return false }
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(u8((p >> 24) & 0xFF))
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(png) => write_bytes(path, png),
+    Err(_) => false,
+  }
+}

@@ -1,0 +1,538 @@
+module ui.sdl3
+//! `ui.backend`'s two traits over SDL3: [SdlPlatform], a window and its events, and
+//! [SdlRenderer], which draws a display list as triangles through SDL's 2D renderer
+//! (`SDL_RenderGeometry`).
+//!
+//! ```
+//! import ui.sdl3
+//!
+//! let Ok(window) = sdl3.open("Hello", 640.0, 480.0) else { return 1 }
+//! var platform = window.platform
+//! var renderer = window.renderer
+//! // … platform.next_events(…), renderer.draw(…) …
+//! sdl3.close(platform, renderer)
+//! ```
+//!
+//! **Shapes are triangles** (`ui.tess`), tessellated in pixels after the display list is
+//! scaled, so a rounded corner is as smooth on a Retina display as anywhere. A run of fills
+//! and borders is one draw; a texture or a clip ends the run.
+//!
+//! **SDL's software renderer puts a vertex on a whole pixel** (it truncates), which a GPU
+//! renderer does not: there, the half-pixel band that softens an edge lands half a pixel out
+//! and a hairline shows as two pixels at half strength. It is the renderer a machine with no
+//! GPU — and a headless test — gets.
+//!
+//! **A clip is a rectangle**: SDL's renderer clips to whole pixels and nothing rounder, so a
+//! `PushClip`'s radii are ignored here — content in a rounded clip shows square at its
+//! corners. A backend that can mask (a GPU's stencil) honours them.
+//!
+//! **Logical units**: SDL reports a window in points, and a high-density display shows a
+//! point as several pixels. A logical unit is a point times the pixel density over the
+//! display scale ([SdlPlatform.scale]) — the same as a point on a Mac, smaller than one on
+//! Windows at 150%, where the user asked for everything larger.
+
+import bindings.sdl3.{
+  init,
+  quit,
+  last_error,
+  platform,
+  INIT_VIDEO,
+  Window,
+  create_window,
+  destroy_window,
+  set_window_size,
+  window_size,
+  window_display_scale,
+  window_pixel_density,
+  WINDOW_RESIZABLE,
+  WINDOW_HIGH_PIXEL_DENSITY,
+  Renderer as Canvas,
+  destroy_renderer,
+  Color as CanvasColor,
+  PixelRect,
+  Vertex,
+  BLEND_ALPHA,
+  Texture,
+  create_texture,
+  update_texture_area,
+  destroy_texture,
+  Event,
+  Quit as SdlQuit,
+  WindowResized as SdlResized,
+  WindowScaleChanged as SdlScaleChanged,
+  MouseMotion as SdlMouseMotion,
+  MouseDown as SdlMouseDown,
+  MouseUp as SdlMouseUp,
+  MouseWheel as SdlMouseWheel,
+  KeyDown as SdlKeyDown,
+  KeyUp as SdlKeyUp,
+  TextInput as SdlTextInput,
+  poll_event,
+  wait_event,
+  modifiers,
+  MOD_SHIFT,
+  MOD_CTRL,
+  MOD_ALT,
+  MOD_GUI,
+  start_text_input,
+  stop_text_input,
+  set_text_input_area,
+  clipboard_text,
+  set_clipboard_text,
+  Cursor as SystemCursor,
+  system_cursor,
+  set_cursor,
+  destroy_cursor,
+  CURSOR_DEFAULT,
+  CURSOR_TEXT,
+  CURSOR_POINTER,
+  CURSOR_CROSSHAIR,
+  CURSOR_MOVE,
+  CURSOR_NOT_ALLOWED,
+  CURSOR_WAIT,
+  KEY_RETURN,
+  KEY_KP_ENTER,
+  KEY_ESCAPE,
+  KEY_TAB,
+  KEY_BACKSPACE,
+  KEY_DELETE,
+  KEY_LEFT,
+  KEY_RIGHT,
+  KEY_UP,
+  KEY_DOWN,
+  KEY_HOME,
+  KEY_END,
+  KEY_PAGEUP,
+  KEY_PAGEDOWN,
+}
+import ui.backend.{
+  Platform,
+  Renderer,
+  InputEvent,
+  CloseRequested,
+  Resized,
+  ScaleChanged,
+  PointerMoved,
+  PointerDown,
+  PointerUp,
+  Scrolled,
+  KeyPressed,
+  KeyReleased,
+  TextTyped,
+  PointerButton,
+  Primary,
+  Secondary,
+  Middle,
+  OtherButton,
+  Key,
+  Enter,
+  Escape,
+  Tab,
+  Backspace,
+  Delete,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ArrowDown,
+  Home,
+  End,
+  PageUp,
+  PageDown,
+  Character,
+  Unnamed,
+  Modifiers,
+  Cursor,
+  Arrow,
+  IBeam,
+  Hand,
+  Crosshair,
+  Move,
+  NotAllowed,
+  Busy,
+}
+import ui.draw.{
+  Point,
+  Size,
+  Rect,
+  Color,
+  Image,
+  TextureId,
+  DrawOp,
+  Fill,
+  Border,
+  Glyphs,
+  Picture,
+  PushClip,
+  PopClip,
+}
+import ui.tess.{ Mesh, fill, border, quad }
+
+/// A window open for an interface: its [SdlPlatform] and [SdlRenderer], which [close] puts
+/// away together.
+pub struct SdlWindow {
+  platform: SdlPlatform,
+  renderer: SdlRenderer,
+}
+
+/// Open a window `width` × `height` logical units, resizable and at the display's full
+/// density — or why not.
+pub let open = (title: string, width: f32, height: f32) -> Result<SdlWindow, string> => {
+  if !init(INIT_VIDEO) {
+    return Err("SDL could not start: ${last_error()}")
+  }
+  let flags = WINDOW_RESIZABLE | WINDOW_HIGH_PIXEL_DENSITY
+  let Some(window) = create_window(
+    title,
+    i32(width.round()),
+    i32(height.round()),
+    flags
+  ) else {
+    let why = last_error()
+    quit()
+    return Err("SDL could not open a window: ${why}")
+  }
+  // Opened in points, which is a logical unit only on a display whose scale is its density.
+  let per_point = units_per_point(window)
+  if (per_point - 1.0).abs() > 0.001 {
+    set_window_size(
+      window,
+      i32((width / per_point).round()),
+      i32((height / per_point).round())
+    )
+  }
+  let Some(canvas) = window.create_renderer() else {
+    let why = last_error()
+    destroy_window(window)
+    quit()
+    return Err("SDL could not make a renderer: ${why}")
+  }
+  canvas.set_vsync(true)
+  Ok(SdlWindow {
+    platform: SdlPlatform { window: window },
+    renderer: SdlRenderer { canvas: canvas, window: window },
+  })
+}
+
+/// Close the window: its textures, its renderer, the window, and SDL.
+pub let close = (platform: SdlPlatform, renderer: SdlRenderer) -> void => {
+  for texture in renderer.textures { destroy_texture(texture) }
+  destroy_renderer(renderer.canvas)
+  if let Some(shown) = platform.cursor { destroy_cursor(shown) }
+  destroy_window(platform.window)
+  quit()
+}
+
+// ── The platform ─────────────────────────────────────────────────────────────
+
+/// An SDL window and the input it receives.
+pub struct SdlPlatform {
+  window: Window,
+  /// The cursor shown, made from the platform's own shapes, and which shape it is.
+  cursor: Maybe<SystemCursor> = None,
+  shape: Cursor = Arrow,
+}
+
+impl Platform for SdlPlatform {
+  next_events = (self, wait_ms) => {
+    var events: []InputEvent = []
+    let per_point = units_per_point(self.window)
+    var next = if wait_ms == 0 { poll_event() } else { wait_event(wait_ms) }
+    while let Some(event) = next {
+      if let Some(input) = translate(event, per_point) { events.push(input) }
+      next = poll_event()
+    }
+    events
+  }
+  window_size = (self) => {
+    let (w, h) = window_size(self.window)
+    let per_point = units_per_point(self.window)
+    Size { w: f32(w) * per_point, h: f32(h) * per_point }
+  }
+  scale = (self) => window_display_scale(self.window)
+  set_text_input = (self, field) => match field {
+    Some(area) => {
+      let per_point = units_per_point(self.window)
+      set_text_input_area(self.window, pixel_rect(area.scaled(1.0 / per_point)), 0)
+      start_text_input(self.window)
+    },
+    None => {
+      stop_text_input(self.window)
+    },
+  }
+  clipboard = (self) => clipboard_text()
+  set_clipboard = (self, text) => {
+    set_clipboard_text(text)
+  }
+  set_cursor = (self, shape) => {
+    if shape == self.shape {
+      return
+    }
+    let Some(made) = system_cursor(cursor_id(shape)) else { return }
+    set_cursor(made)
+    if let Some(old) = self.cursor { destroy_cursor(old) }
+    self.cursor = Some(made)
+    self.shape = shape
+  }
+}
+
+/// Logical units a point of `window`'s coordinates is: its pixel density over its display
+/// scale.
+let units_per_point = (window: Window) -> f32 =>
+  window_pixel_density(window) / window_display_scale(window)
+
+/// An SDL event as the interface sees it, positions in logical units — or `None` for one it
+/// has no use for.
+let translate = (event: Event, per_point: f32) -> Maybe<InputEvent> => match event {
+  SdlQuit => Some(CloseRequested),
+  SdlResized(w, h) =>
+    Some(Resized(Size { w: f32(w) * per_point, h: f32(h) * per_point })),
+  SdlScaleChanged => Some(ScaleChanged),
+  SdlMouseMotion(x, y) =>
+    Some(PointerMoved(Point { x: x * per_point, y: y * per_point })),
+  SdlMouseDown(button, x, y) =>
+    Some(PointerDown(pointer_button(button), Point { x: x * per_point, y: y * per_point })),
+  SdlMouseUp(button, x, y) =>
+    Some(PointerUp(pointer_button(button), Point { x: x * per_point, y: y * per_point })),
+  SdlMouseWheel(x, y) => Some(Scrolled(x, -y)),
+  SdlKeyDown(code) => Some(KeyPressed(key(code), held_modifiers())),
+  SdlKeyUp(code) => Some(KeyReleased(key(code), held_modifiers())),
+  SdlTextInput(text) => Some(TextTyped(text)),
+  _ => None,
+}
+
+let pointer_button = pure (button: u8) -> PointerButton => match button {
+  1 => Primary,
+  2 => Middle,
+  3 => Secondary,
+  _ => OtherButton(button),
+}
+
+/// An SDL key code as a [Key]. SDL's code for a key that types is the character it types
+/// (lower case, on the current layout); the rest are the scancode with bit 30 set.
+let key = pure (code: u32) -> Key =>
+  if code == KEY_RETURN || code == KEY_KP_ENTER {
+    Enter
+  } else if code == KEY_ESCAPE {
+    Escape
+  } else if code == KEY_TAB {
+    Tab
+  } else if code == KEY_BACKSPACE {
+    Backspace
+  } else if code == KEY_DELETE {
+    Delete
+  } else if code == KEY_LEFT {
+    ArrowLeft
+  } else if code == KEY_RIGHT {
+    ArrowRight
+  } else if code == KEY_UP {
+    ArrowUp
+  } else if code == KEY_DOWN {
+    ArrowDown
+  } else if code == KEY_HOME {
+    Home
+  } else if code == KEY_END {
+    End
+  } else if code == KEY_PAGEUP {
+    PageUp
+  } else if code == KEY_PAGEDOWN {
+    PageDown
+  } else if code >= 0x20 && code < 0x40000000 {
+    Character(rune(i32(code)))
+  } else {
+    Unnamed(code)
+  }
+
+/// The modifiers held now. Command is the primary modifier on Apple's systems.
+let held_modifiers = () -> Modifiers => {
+  let held = modifiers()
+  let command = held & MOD_GUI != 0
+  let control = held & MOD_CTRL != 0
+  Modifiers {
+    shift: held & MOD_SHIFT != 0,
+    control: control,
+    alt: held & MOD_ALT != 0,
+    command: command,
+    primary: if apple() { command } else { control },
+  }
+}
+
+let apple = () -> bool => {
+  let name = platform()
+  name == "macOS" || name == "iOS"
+}
+
+let cursor_id = pure (shape: Cursor) -> i32 => match shape {
+  Arrow => CURSOR_DEFAULT,
+  IBeam => CURSOR_TEXT,
+  Hand => CURSOR_POINTER,
+  Crosshair => CURSOR_CROSSHAIR,
+  Move => CURSOR_MOVE,
+  NotAllowed => CURSOR_NOT_ALLOWED,
+  Busy => CURSOR_WAIT,
+}
+
+// ── The renderer ─────────────────────────────────────────────────────────────
+
+/// SDL's 2D renderer for one window, and the textures uploaded to it, a [TextureId] the
+/// index of each.
+pub struct SdlRenderer {
+  canvas: Canvas,
+  window: Window,
+  textures: []Texture = [],
+}
+
+impl Renderer for SdlRenderer {
+  upload = (self, image) => {
+    let Some(texture) = create_texture(
+      self.canvas,
+      image.width,
+      image.height,
+      image.argb
+    ) else {
+      return None
+    }
+    self.textures.push(texture)
+    Some(TextureId(self.textures.len() - 1))
+  }
+  update = (self, id, at, image) => {
+    let index = i64(id)
+    if index < 0 || index >= self.textures.len() {
+      return false
+    }
+    let area = PixelRect {
+      x: i32(at.x.round()),
+      y: i32(at.y.round()),
+      w: i32(image.width),
+      h: i32(image.height),
+    }
+    update_texture_area(self.textures[index], area, image.argb)
+  }
+  draw = (self, background, ops) => {
+    paint(self, background, ops)
+    self.canvas.present()
+  }
+}
+
+/// The frame [Renderer.draw] would show, read back rather than shown — what a test compares
+/// with the picture it expected. `None` if SDL cannot read it.
+pub let capture = (
+  renderer: SdlRenderer,
+  background: Color,
+  ops: []DrawOp
+) -> Maybe<Image> => {
+  paint(renderer, background, ops)
+  let Some(frame) = renderer.canvas.read_pixels() else { return None }
+  Some(Image { width: frame.width, height: frame.height, argb: frame.argb })
+}
+
+/// Clear to `background` and draw `ops`, scaled to pixels, without showing them.
+let paint = (renderer: SdlRenderer, background: Color, ops: []DrawOp) -> void => {
+  let canvas = renderer.canvas
+  let scale = window_display_scale(renderer.window)
+  canvas.clear_clip()
+  canvas.set_draw_color(CanvasColor {
+    r: background.r,
+    g: background.g,
+    b: background.b,
+    a: background.a
+  })
+  canvas.clear()
+  canvas.set_draw_blend(BLEND_ALPHA)
+  var shapes = Mesh {}
+  var clips: []Rect = []
+  for op in ops {
+    match op {
+      Fill(at, radii, color) =>
+        fill(shapes, at.scaled(scale), radii.scaled(scale), color),
+      Border(at, radii, width, color) =>
+        border(shapes, at.scaled(scale), radii.scaled(scale), width * scale, color),
+      Glyphs(id, glyphs, color) => {
+        flush(canvas, shapes)
+        let Some(texture) = texture_of(renderer, id) else { continue }
+        var mesh = Mesh {}
+        for g in glyphs {
+          quad(mesh, g.at.scaled(scale), in_texture(g.texels, texture), color)
+        }
+        canvas.draw_textured_geometry(texture, vertices(mesh), mesh.indices)
+      },
+      Picture(id, texels, at) => {
+        flush(canvas, shapes)
+        let Some(texture) = texture_of(renderer, id) else { continue }
+        var mesh = Mesh {}
+        quad(
+          mesh,
+          at.scaled(scale),
+          in_texture(texels, texture),
+          Color { r: 255, g: 255, b: 255 }
+        )
+        canvas.draw_textured_geometry(texture, vertices(mesh), mesh.indices)
+      },
+      PushClip(at, _) => {
+        flush(canvas, shapes)
+        let inside = at.scaled(scale)
+        let narrowed = if clips.len() == 0 { inside } else { clips[clips.len() - 1].intersect(inside) }
+        clips.push(narrowed)
+        canvas.set_clip(pixel_rect(narrowed))
+      },
+      PopClip => {
+        flush(canvas, shapes)
+        if clips.len() > 0 {
+          clips = clips.slice(0, clips.len() - 1)
+        }
+        if clips.len() == 0 {
+          canvas.clear_clip()
+        } else {
+          canvas.set_clip(pixel_rect(clips[clips.len() - 1]))
+        }
+      },
+    }
+  }
+  flush(canvas, shapes)
+}
+
+/// Draw the shapes gathered so far, and start again.
+let flush = (canvas: Canvas, shapes: mut Mesh) -> void => {
+  canvas.draw_geometry(vertices(shapes), shapes.indices)
+  shapes = Mesh {}
+}
+
+/// A mesh's corners as SDL's — the same eight floats, field for field.
+let vertices = pure (mesh: Mesh) -> []Vertex => [
+  v in mesh.vertices | Vertex {
+    x: v.x,
+    y: v.y,
+    r: v.r,
+    g: v.g,
+    b: v.b,
+    a: v.a,
+    u: v.u,
+    v: v.v
+  }
+]
+
+/// Texture `id`, lent: the renderer still owns it, and [close] destroys it.
+@borrowed
+let texture_of = pure (renderer: SdlRenderer, id: TextureId) -> Maybe<Texture> => {
+  let index = i64(id)
+  if index < 0 || index >= renderer.textures.len() { None } else { Some(renderer.textures[index]) }
+}
+
+/// A rectangle in a texture's texels as texture coordinates, `0.0`–`1.0`.
+let in_texture = pure (texels: Rect, texture: Texture) -> Rect => Rect {
+  x: texels.x / texture.width,
+  y: texels.y / texture.height,
+  w: texels.w / texture.width,
+  h: texels.h / texture.height,
+}
+
+/// A rectangle to the nearest whole pixels at each edge.
+let pixel_rect = pure (r: Rect) -> PixelRect => {
+  let left = r.x.round()
+  let top = r.y.round()
+  PixelRect {
+    x: i32(left),
+    y: i32(top),
+    w: i32((r.x + r.w).round() - left),
+    h: i32((r.y + r.h).round() - top),
+  }
+}

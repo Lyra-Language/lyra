@@ -1,0 +1,192 @@
+module ui.draw
+//! What an interface is drawn as: a **display list** — a flat run of [DrawOp]s in logical
+//! units — and the geometry and colours the ops are made of.
+//!
+//! ```
+//! import ui.draw.{ DrawOp, Fill, Border, Rect, rgb, radius }
+//!
+//! let card = pure (at: Rect) -> []DrawOp => [
+//!   Fill(at, radius(8.0), rgb(0xFFFFFF)),
+//!   Border(at, radius(8.0), 1.0, rgb(0xD0D0D0)),
+//! ]
+//! ```
+//!
+//! **The display list is the whole contract with a renderer** (`ui.backend`'s `Renderer`):
+//! six ops and the textures they read. A renderer never sees widgets, styles or text — a
+//! line of text arrives as [Glyphs], quads cut from a texture — so a new backend is those
+//! six ops and nothing more.
+//!
+//! **Coordinates are logical units**, `x` across and `y` down from the window's top left.
+//! The renderer multiplies by the window's scale once, so nothing here knows about pixels or
+//! high-density displays.
+
+// ── Geometry ─────────────────────────────────────────────────────────────────
+
+/// A position, in logical units.
+pub struct Point {
+  x: f32 = 0.0,
+  y: f32 = 0.0,
+}
+
+/// A width and a height, in logical units.
+pub struct Size {
+  w: f32 = 0.0,
+  h: f32 = 0.0,
+}
+
+/// An axis-aligned rectangle: its top-left corner and its size. A rectangle with no width or
+/// no height is empty, and draws nothing.
+pub struct Rect {
+  x: f32 = 0.0,
+  y: f32 = 0.0,
+  w: f32 = 0.0,
+  h: f32 = 0.0,
+}
+
+/// The radius of each corner of a rounded rectangle, clockwise from the top left. `0.0` is
+/// a square corner.
+pub struct Radii {
+  top_left: f32 = 0.0,
+  top_right: f32 = 0.0,
+  bottom_right: f32 = 0.0,
+  bottom_left: f32 = 0.0,
+}
+
+/// Every corner rounded by `r`.
+pub let radius = pure (r: f32) -> Radii =>
+  Radii { top_left: r, top_right: r, bottom_right: r, bottom_left: r }
+
+// ── Colour ───────────────────────────────────────────────────────────────────
+
+/// A colour: red, green and blue, and `a` its opacity — `255` opaque, `0` invisible.
+/// Alpha is not premultiplied.
+pub struct Color {
+  r: u8,
+  g: u8,
+  b: u8,
+  a: u8 = 255,
+}
+
+/// An opaque colour written as CSS writes it, `0xRRGGBB`.
+pub let rgb = pure (hex: u32) -> Color =>
+  Color { r: u8((hex >> 16) & 0xFF), g: u8((hex >> 8) & 0xFF), b: u8(hex & 0xFF) }
+
+/// A colour and its opacity, `0xRRGGBBAA`.
+pub let rgba = pure (hex: u32) -> Color => Color {
+  r: u8((hex >> 24) & 0xFF),
+  g: u8((hex >> 16) & 0xFF),
+  b: u8((hex >> 8) & 0xFF),
+  a: u8(hex & 0xFF),
+}
+
+// ── Images and textures ──────────────────────────────────────────────────────
+
+/// Pixels a program holds: `width` × `height`, row by row, `0xAARRGGBB` each — what a
+/// renderer uploads as a texture, and what [Glyphs] and [Picture] draw from once it has.
+pub struct Image {
+  width: i64,
+  height: i64,
+  argb: []u32,
+}
+
+/// A texture a renderer holds, named by the number its `upload` answered.
+pub type TextureId = i64
+
+/// One glyph of a line of text: the rectangle it covers, in logical units, and the part of
+/// its texture it shows, in texels.
+pub struct GlyphQuad {
+  at: Rect,
+  texels: Rect,
+}
+
+// ── The display list ─────────────────────────────────────────────────────────
+
+/// One thing to draw. A display list is drawn in order, each op over what came before.
+pub data DrawOp =
+  /// A rectangle filled with a colour, its corners rounded.
+  Fill(Rect, Radii, Color)
+  /// A rectangle's outline: a band this many units wide inside its edge, following its
+  /// rounded corners.
+  | Border(Rect, Radii, f32, Color)
+  /// A line of text: quads cut from a texture of glyphs, each texel's alpha the glyph's
+  /// coverage, drawn in the colour.
+  | Glyphs(TextureId, []GlyphQuad, Color)
+  /// The `texels` part of a texture (the second rectangle) drawn into `at` (the third),
+  /// stretched to fit.
+  | Picture(TextureId, Rect, Rect)
+  /// Draw only inside the rectangle until the matching [PopClip]. Clips nest: each narrows
+  /// the one around it.
+  | PushClip(Rect, Radii)
+  /// Undo the last [PushClip].
+  | PopClip
+
+// ── Rectangles ───────────────────────────────────────────────────────────────
+
+impl Rect {
+  /// The rectangle `by` units smaller on every side — larger for a negative `by`.
+  pub let inset = pure (self, by: f32) -> Rect =>
+    Rect { x: self.x + by, y: self.y + by, w: self.w - 2.0 * by, h: self.h - 2.0 * by }
+
+  /// The part of both rectangles, which is empty where they do not meet.
+  pub let intersect = pure (self, other: Rect) -> Rect => {
+    let left = self.x.max(other.x)
+    let top = self.y.max(other.y)
+    let right = (self.x + self.w).min(other.x + other.w)
+    let bottom = (self.y + self.h).min(other.y + other.h)
+    Rect { x: left, y: top, w: (right - left).max(0.0), h: (bottom - top).max(0.0) }
+  }
+
+  /// Whether the rectangle covers nothing.
+  pub let is_empty = pure (self) -> bool => self.w <= 0.0 || self.h <= 0.0
+
+  /// Whether `p` is inside — its top and left edges included, its bottom and right not.
+  pub let contains = pure (self, p: Point) -> bool =>
+    p.x >= self.x && p.y >= self.y && p.x < self.x + self.w && p.y < self.y + self.h
+
+  /// The same rectangle, `by` times larger, about the origin: logical units to pixels.
+  pub let scaled = pure (self, by: f32) -> Rect =>
+    Rect { x: self.x * by, y: self.y * by, w: self.w * by, h: self.h * by }
+}
+
+impl Radii {
+  /// The radii `by` times larger.
+  pub let scaled = pure (self, by: f32) -> Radii => Radii {
+    top_left: self.top_left * by,
+    top_right: self.top_right * by,
+    bottom_right: self.bottom_right * by,
+    bottom_left: self.bottom_left * by,
+  }
+
+  /// The radii a rectangle `w` × `h` can hold: as CSS does, every radius scaled down by one
+  /// factor until no two corners on a side need more than that side, and none negative.
+  pub let fitted = pure (self, w: f32, h: f32) -> Radii => {
+    let tl = self.top_left.max(0.0)
+    let tr = self.top_right.max(0.0)
+    let br = self.bottom_right.max(0.0)
+    let bl = self.bottom_left.max(0.0)
+    var factor: f32 = 1.0
+    factor = factor.min(side_room(w, tl + tr))
+    factor = factor.min(side_room(w, bl + br))
+    factor = factor.min(side_room(h, tl + bl))
+    factor = factor.min(side_room(h, tr + br))
+    Radii {
+      top_left: tl * factor,
+      top_right: tr * factor,
+      bottom_right: br * factor,
+      bottom_left: bl * factor,
+    }
+  }
+
+  /// Each radius `by` smaller, none below zero: the inner edge of a border `by` wide.
+  pub let shrunk = pure (self, by: f32) -> Radii => Radii {
+    top_left: (self.top_left - by).max(0.0),
+    top_right: (self.top_right - by).max(0.0),
+    bottom_right: (self.bottom_right - by).max(0.0),
+    bottom_left: (self.bottom_left - by).max(0.0),
+  }
+}
+
+/// How far two corners needing `need` together fit along a side `length` long: `1.0` when
+/// they do.
+let side_room = pure (length: f32, need: f32) -> f32 =>
+  if need <= length || need <= 0.0 { 1.0 } else { length.max(0.0) / need }

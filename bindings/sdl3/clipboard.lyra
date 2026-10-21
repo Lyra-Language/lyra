@@ -1,0 +1,21 @@
+module bindings.sdl3
+//! The clipboard's text, read and replaced.
+
+@symbol("SDL_GetClipboardText")
+unsafe extern sdl_get_clipboard_text: () -> ^u8
+
+@symbol("SDL_SetClipboardText")
+unsafe extern sdl_set_clipboard_text: (text: ^u8) -> bool
+
+/// The text on the clipboard, or `""` when there is none (or it holds something else, a
+/// picture). SDL hands back a copy it allocated, which is copied again and freed here.
+pub let clipboard_text = () -> string => {
+  let text = unsafe { sdl_get_clipboard_text() }
+  let copied = c_name(text)
+  if text != nullptr { unsafe { sdl_free(text) } }
+  copied
+}
+
+/// Put `text` on the clipboard, for this program or any other to paste.
+pub let set_clipboard_text = (text: string) -> bool =>
+  text.with_cstring((t) => unsafe { sdl_set_clipboard_text(t) })

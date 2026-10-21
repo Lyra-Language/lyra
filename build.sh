@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Build the compiler and language server into build/, laid out the way an install is:
-# the binaries with `std/`, `bindings/` and `runtime/` beside them (`runtime/genesis` is the
+# the binaries with `std/`, `bindings/`, `ui/` and `runtime/` beside them (`runtime/genesis` is the
 # start-up and support code `lyrac build` links into every Genesis ROM).
 #
 #   ./build.sh
@@ -33,8 +33,11 @@ mkdir -p "$OUT"
 go build -o "$OUT/lyrac" ./cmd/lyrac
 go build -o "$OUT/lyra-lsp" ./cmd/lyra-lsp
 
-# Recreated each time so neither can survive as a stale copy if its source ever moves.
-for dir in std bindings runtime; do
+# Recreated each time so none can survive as a stale copy if its source ever moves. `ui` is
+# the GUI framework's root (`ui.draw`, `ui.backend`, `ui.sdl3`), linked as `bindings` is so
+# that `import ui.draw` resolves under the same root as `std` — a root of its own rather than
+# `std.ui` until its interface settles.
+for dir in std bindings runtime ui; do
   rm -f "$OUT/$dir"
   ln -s "../$dir" "$OUT/$dir"
 done
@@ -99,4 +102,4 @@ else
   imgui_note="no liblyra-imgui.a (${imgui_err##*: })"
 fi
 
-printf 'built %s/{lyrac,lyra-lsp} %s, %s, lib/liblyra-{menubar,pty}.a and %s, with std -> ../std, bindings -> ../bindings\n' "$OUT" "$fmt_note" "$lui_note" "$imgui_note"
+printf 'built %s/{lyrac,lyra-lsp} %s, %s, lib/liblyra-{menubar,pty}.a and %s, with std -> ../std, bindings -> ../bindings, ui -> ../ui\n' "$OUT" "$fmt_note" "$lui_note" "$imgui_note"

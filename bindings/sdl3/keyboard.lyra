@@ -48,6 +48,35 @@ pub let key_name = (key: u32) -> string => c_name(unsafe { sdl_get_key_name(key)
 pub let scancode_name = (scancode: u32) -> string =>
   c_name(unsafe { sdl_get_scancode_name(scancode) })
 
+@symbol("SDL_StartTextInput")
+unsafe extern sdl_start_text_input: (window: Window) -> bool
+
+@symbol("SDL_StopTextInput")
+unsafe extern sdl_stop_text_input: (window: Window) -> bool
+
+@symbol("SDL_SetTextInputArea")
+unsafe extern sdl_set_text_input_area: (
+  window: Window,
+  rect: ^PixelRect,
+  cursor: i32
+) -> bool
+
+/// Ask for typed text in `window`: [TextInput] events start arriving, an input method's
+/// window may open, and a phone shows its keyboard. Ask only while a text field has the
+/// focus — on a phone the keyboard covers half the screen.
+pub let start_text_input = (window: Window) -> bool =>
+  unsafe { sdl_start_text_input(window) }
+
+/// Stop asking for text: no more [TextInput], and a phone's keyboard goes away.
+pub let stop_text_input = (window: Window) -> bool =>
+  unsafe { sdl_stop_text_input(window) }
+
+/// Where in `window` the text being typed is — the field, in window coordinates, and the
+/// caret's offset across it — so an input method puts its candidates beside it rather than
+/// over it.
+pub let set_text_input_area = (window: Window, area: PixelRect, cursor: i32) -> bool =>
+  unsafe { sdl_set_text_input_area(window, &area, cursor) }
+
 /// SDL's names are static strings it owns; this copies one out. SDL answers `""` rather
 /// than NULL for an unknown code, but NULL is checked anyway.
 let c_name = pure (p: ^u8) -> string =>
