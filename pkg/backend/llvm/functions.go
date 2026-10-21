@@ -212,6 +212,15 @@ func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
 	// `main(int argc, char **argv)` — the C runtime passes both whether or not they are
 	// read, and stashing them first is what lets `program_arg` be called from anywhere,
 	// including a module-level initializer below.
+	// A live build runs the top-level initializers from a function of their own, emitted
+	// first so `main`'s own state is begun after it (live.go).
+	var globalsInit *ir.Func
+	if l.live != nil {
+		var err error
+		if globalsInit, err = l.emitLiveGlobalsInit(); err != nil {
+			return err
+		}
+	}
 	argcParam := ir.NewParam("argc", lltypes.I32)
 	argvParam := ir.NewParam("argv", lltypes.NewPointer(lltypes.NewPointer(lltypes.I8)))
 	symbol := l.entry
@@ -227,8 +236,10 @@ func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
 	// the one place guaranteed to run before anything reads one, and it avoids
 	// llvm.global_ctors, whose ordering across translation units is exactly the
 	// unpredictability this sidesteps by having a single entry point.
-	block, err := l.initGlobals(block)
-	if err != nil {
+	var err error
+	if globalsInit != nil {
+		block.NewCall(globalsInit)
+	} else if block, err = l.initGlobals(block); err != nil {
 		return err
 	}
 
@@ -391,11 +402,14 @@ func (l *lowerer) declareFunctionAs(name string, fn *ast.LambdaExpr) (*ir.Func, 
 		irParams = append(irParams, irParam)
 	}
 	if !inMemory {
-		return l.module.NewFunc(name, retType, irParams...), nil
+		irFn := l.module.NewFunc(name, retType, irParams...)
+		l.sourceFuncs[irFn] = true
+		return irFn, nil
 	}
 	// A large aggregate is returned through the caller's slot (sret.go).
 	irFn := l.module.NewFunc(name, lltypes.Void, irParams...)
 	l.sretResults[irFn] = retType
+	l.sourceFuncs[irFn] = true
 	return irFn, nil
 }
 

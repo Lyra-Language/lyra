@@ -13,7 +13,7 @@ import (
 // restart it each time one of the source files that build read changes, until
 // interrupted. It is the restart kind of hot reload — the program starts over with
 // fresh state each time; swapping code into a running program is open work in
-// todo.md.
+// --live (live.go), which this loop also runs.
 //
 // **A build that fails leaves the running program alone.** Its diagnostics print and
 // the old copy carries on, so a save made mid-edit costs nothing; the next good save
@@ -45,9 +45,24 @@ func watch(o buildOptions, stop <-chan os.Signal, poll time.Duration) int {
 
 	files := []string{o.path}
 	seen := snapshot(files)
-	rebuild := func() {
+	// rebuild starts the program again — or, under --live with it running, first tries to
+	// swap the change in (child.reload), which may restart it instead.
+	rebuild := func(changed string) {
 		before := snapshot(files)
-		next, built := startChild(o)
+		var next *child
+		var built []string
+		if current != nil && current.live != nil {
+			var applied bool
+			next, built, applied = current.reload(o, changed)
+			if applied {
+				next = current
+			}
+		} else {
+			if changed != "" {
+				fmt.Fprintf(os.Stderr, "lyrac: %s changed; rebuilding\n", changed)
+			}
+			next, built = startChild(&o)
+		}
 		// A file read by this build is compared against its time from *before* the
 		// build, so a save landing while it compiled triggers another one.
 		files = append([]string{o.path}, built...)
@@ -65,12 +80,12 @@ func watch(o buildOptions, stop <-chan os.Signal, poll time.Duration) int {
 			}
 			return
 		}
-		if current != nil {
+		if current != nil && current != next {
 			current.stop()
 		}
 		current = next
 	}
-	rebuild()
+	rebuild("")
 
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
@@ -100,8 +115,7 @@ func watch(o buildOptions, stop <-chan os.Signal, poll time.Duration) int {
 				continue
 			}
 			settle(files, poll)
-			fmt.Fprintf(os.Stderr, "lyrac: %s changed; rebuilding\n", changed)
-			rebuild()
+			rebuild(changed)
 		}
 	}
 }
@@ -112,6 +126,7 @@ type child struct {
 	cmd  *exec.Cmd
 	dir  string
 	done chan error
+	live *liveSession // under --live, its generation 0's live half
 }
 
 // startChild builds o into a fresh temp directory and starts it, returning nil if the
@@ -120,13 +135,28 @@ type child struct {
 //
 // Each build has a directory of its own because the previous program is still running
 // from its directory while this one is built.
-func startChild(o buildOptions) (*child, []string) {
+//
+// Under --live the program is started as a live generation 0, where it can be (live.go);
+// where it cannot, o.live is cleared, once, with a note, and the run is --watch.
+func startChild(o *buildOptions) (*child, []string) {
+	if o.live {
+		res, entry, files, _ := typedProgram(o.path)
+		if entry == nil {
+			return nil, files
+		}
+		if ok, why := liveAvailable(*o, res); !ok {
+			fmt.Fprintf(os.Stderr, "lyrac: --live restarts the program on each change here: %s\n", why)
+			o.live = false
+		} else {
+			return startGeneration0(*o, res, entry), files
+		}
+	}
 	dir, err := os.MkdirTemp("", "lyrac-run-")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
 		return nil, nil
 	}
-	cmd, files, _ := prepareRun(o, dir)
+	cmd, files, _ := prepareRun(*o, dir)
 	if cmd == nil {
 		os.RemoveAll(dir)
 		return nil, files
@@ -166,6 +196,9 @@ func (c *child) stop() {
 }
 
 func (c *child) cleanUp() {
+	if c.live != nil {
+		c.live.toProgram.Close()
+	}
 	os.RemoveAll(c.dir)
 }
 

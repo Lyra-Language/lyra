@@ -1,0 +1,98 @@
+// A hero who walks laps of the screen on his own — the program to change while it runs:
+//
+//   lyrac run --live live.lyra
+//
+// Save a change to `update`, `draw` or `backdrop` (his pace, how far he goes before turning,
+// the sky's colour) and it is swapped in at the next frame: he carries on from where he
+// was, in the same window, rather than starting his walk again. Change `main`, or a field
+// of `Hero`, and lyrac restarts the game instead and says why — `main`'s frame and the
+// values already in memory are the two things a swap cannot change (pkg/backend/LIVE.md).
+//
+// The loop is in `main`, as a live program's must be: only there does a change land.
+
+import std.game.screen
+import std.game.sprites
+import std.game.sprites.{ Sprite }
+
+/// The screen, the Genesis's.
+const WIDTH: i64 = 320
+const HEIGHT: i64 = 224
+
+/// The hero is a 16×16 square.
+const SIZE: f32 = 16.0
+
+/// Where the hero is, which way he is walking (0 right, 1 down, 2 left, 3 up), and how far
+/// he has gone since he last turned — the state a swap keeps.
+struct Hero {
+  x: f32,
+  y: f32,
+  heading: i64,
+  walked: f32,
+}
+
+let main = () -> u8 => {
+  if !screen.open("Live", WIDTH, HEIGHT) { return 1 }
+  screen.load_sprites(16, hero_art())
+  var hero = Hero { x: 40.0, y: 40.0, heading: 0, walked: 0.0 }
+  while screen.running() {
+    for _ in 0..<screen.updates_due() { hero = update(hero) }
+    draw(hero)
+    screen.show()
+  }
+  screen.close()
+}
+
+/// One update: a step along his heading, and a right turn after each side of the lap.
+let update = pure (hero: Hero) -> Hero => {
+  let pace: f32 = 2.0
+  let side: f32 = 140.0
+  let (dx, dy) = match hero.heading {
+    0 => (pace, 0.0),
+    1 => (0.0, pace),
+    2 => (-pace, 0.0),
+    _ => (0.0, -pace),
+  }
+  let walked = hero.walked + pace
+  if walked >= side {
+    return Hero {
+      x: hero.x + dx,
+      y: hero.y + dy,
+      heading: (hero.heading + 1) % 4,
+      walked: 0.0
+    }
+  }
+  Hero { x: hero.x + dx, y: hero.y + dy, heading: hero.heading, walked: walked }
+}
+
+/// One frame: the sky, and the hero over it.
+let draw = (hero: Hero) -> void => {
+  let (r, g, b) = backdrop()
+  screen.set_backdrop(r, g, b)
+  sprites.clear()
+  sprites.add(Sprite {
+    x: hero.x,
+    y: hero.y,
+    width: SIZE,
+    height: SIZE,
+    sheet_x: 0.0,
+    sheet_y: 0.0
+  })
+}
+
+/// The sky's colour.
+let backdrop = pure () -> (u8, u8, u8) => (32, 64, 160)
+
+/// The hero: a red square with a white eye.
+let hero_art = pure () -> [256]u32 => {
+  var art: [256]u32 = #[0; 256]
+  for row in 0..<16 {
+    for column in 0..<16 { art[row * 16 + column] = RED }
+  }
+  for row in 4..<7 {
+    for column in 9..<12 { art[row * 16 + column] = WHITE }
+  }
+  art
+}
+
+const RED: u32 = 0xFFE03020
+const WHITE: u32 = 0xFFFFFFFF

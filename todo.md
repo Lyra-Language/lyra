@@ -242,12 +242,10 @@ Package management, versioning and separate compilation are out of scope by deci
     both in one walk, and doing the same here before the AST is checked would mean two
     unverified things at once.
 
-- **[IDEA] Hot reload that keeps the program's state.** `lyrac run --watch` (10/06)
-  restarts the program on each save; the next stage swaps changed code into the running
-  one, so a game keeps its world and window. Design proposed 10/06 in
-  [pkg/backend/LIVE.md](pkg/backend/LIVE.md): calls in `main` through patchable slots,
-  later generations as shared libraries bound to generation 0's globals, lyrac restarting
-  instead whenever a type's shape or `main` changed.
+- **[PARTIAL] Hot reload that keeps the program's state — `lyrac run --live` (10/20).**
+  Built on macOS ([pkg/backend/LIVE.md](pkg/backend/LIVE.md)); next: function values
+  through slots and new top-level `let`s initialized on apply (LIVE.md step 4), Linux
+  through `./asan.sh` (step 5), whole static archives in generation 0, then Vega on it.
 - **[DECIDED, not built] Qualified type names — `ast.Program` in a type position.**
 
   **The gap.** A plain `import lib` binds a namespace that works for values and not for

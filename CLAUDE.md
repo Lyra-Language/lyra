@@ -460,6 +460,15 @@ constructor written bare (`xs.map(Width)`) is erased by the driver, before every
 
 **Foreign functions** — see [`pkg/backend/FFI.md`](pkg/backend/FFI.md).
 
+**Live reload (`lyrac run --live`)** — design `pkg/backend/LIVE.md`; backend
+`pkg/backend/llvm/live.go`, CLI `cmd/lyrac/live.go`. Only `main` calls through slots and
+polls, so only `main`'s frame outlives a swap. **Whether a change may be applied is lyrac's
+decision, made before the program hears of it**, against generation 0 (not the previous
+generation). A symbol the backend numbers program-wide must be listed in `liveNumbered`, or
+`main`'s normalized IR changes with unrelated code and every save restarts. A new runtime
+global holding state is bound to generation 0's automatically if it is mutable and not
+private (`isLiveState`); one that must stay per generation must be private.
+
 **Naming: the two remainders** — `%` is the **truncated** remainder (sign of the dividend,
 `rem`) and `%%` the **floored** one (sign of the divisor, `rem_floor`). The grammar rules,
 the AST constants (`MathBinaryOpRem`/`MathBinaryOpRemFloor`) and the standard library

@@ -136,6 +136,7 @@ func (l *lowerer) declareSpecialization(inst typetable.Instantiation) error {
 	} else {
 		l.specialized[inst.Key()] = l.module.NewFunc(symbol, retType, irParams...)
 	}
+	l.sourceFuncs[l.specialized[inst.Key()]] = true
 	l.specializedParams[inst.Key()] = inst.Func.Parameters
 	// A lambda written inside this body is lifted to a function of its own, and its
 	// signature mentions the type variables this instantiation binds — so it is declared

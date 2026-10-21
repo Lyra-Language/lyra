@@ -700,6 +700,38 @@ Details in `../FFI.md`. Essentials for this package:
   `compileCached` skips. Any new consumer of emitted IR must ask it.
 - Open gaps: `todo.md`, "Lazy sequences".
 
+## Live reload (`live.go`)
+
+`Backend.Live(gen)` makes `Emit` a generation of a `lyrac run --live` program (design:
+`../LIVE.md`), and `LiveInfo()` returns what lyrac's compatibility check compares. All of it
+runs over the finished module (`finishLive`), so an ordinary build is byte for byte what it
+was.
+
+- **Generation 0**: each call **in `main`** to a function written in Lyra (`sourceFuncs`,
+  marked in `declareFunctionAs` and `declareSpecialization`; never an extern or glue) loads
+  its callee from `@lyra.live.slot.<symbol>`. Every block that branches back to a block
+  dominating it gets a call to `lyra.live.poll`, which loads `lyra.live.pending` (volatile)
+  and, when SIGUSR1 has set it, runs `lyra.live.apply`: `read` a path from fd 3, `dlopen`
+  it, call its `lyra_live_patch`, and answer on fd 4. `lyra.live.init` installs the
+  handler only when `LYRA_LIVE` is set.
+- **Generation N** is the whole program again, with `main` and its initializers removed,
+  every **live state** global (mutable, not private: `lyra_global_*`, argc/argv, the saved
+  termios) turned into a declaration, and a `lyra_live_patch` storing its functions in the
+  slots.
+- **In a live build the initializers run from `lyra.live.init_globals`**, which `main`
+  calls, not inline: they are part of what generation N replaces, and `main` is what is
+  compared.
+- **`LiveInfo.Main` is normalized** (`normalizeLive`): a program-wide numbered symbol
+  (`.str.N`, `.cstr.N`, `lyra_closure_N`, `lyra_env_drop_N`, `lyra_retain_N_*`,
+  `lyra.seq.N`, `.re.*.N`) is replaced by a hash of its own normalized definition. A new
+  numbered kind must join `liveNumbered`, or a lambda added elsewhere restarts every live
+  program.
+- **The slot loads are named** (`live.callee.N`): `main`'s text was taken first, which gave
+  its unnamed values their IDs, and an unnamed instruction inserted afterwards fails llir's
+  ID check.
+- SIGUSR1 and `dlopen`'s flags come from `liveSignals`, keyed by the platform's OS (macOS
+  and Linux measured; anything else refused).
+
 ## Shared walks and helpers
 
 **`emitOwnedValue(block, v, t, retainWalk|dropWalk)`** (`owned_walk.go`) is the single

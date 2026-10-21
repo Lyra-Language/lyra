@@ -1,6 +1,16 @@
 # Live reload — design
 
-**Status: proposed, 10/06.** The second stage of hot reload. The first, `lyrac run --watch`
+**Status: built for macOS, 10/20 — as `lyrac run --live`, its own flag (open question 1).**
+Applied: a changed body or signature, a new function or type. Restarting: everything in the
+table's restart rows, plus a new top-level `let` (row 4's initializing on apply is not
+built). Not built: function values through slots (step 4), Linux (step 5), whole archives in
+generation 0. Step 1 was replaced: rather than renaming the numbered symbols, lyrac compares
+`main` normalized (`normalizeLive`), each numbered symbol hashed by what it defines.
+Generation N is a `-bundle` with `-bundle_loader` generation 0, so what generation 0 defines
+is bound to it at link time; generation 0 needs no export list on macOS, whose executables
+export their globals. What lyrac checks and reports is in `cmd/lyrac/README.md`.
+
+The second stage of hot reload. The first, `lyrac run --watch`
 (`cmd/lyrac/watch.go`), restarts the program on every save. This stage swaps changed code
 into the running program, so its state — `main`'s locals, the heap, globals, and whatever
 it holds through C (the window, the GPU device, the ImGui context) — survives the edit.
@@ -9,6 +19,7 @@ it holds through C (the window, the GPU device, the ImGui context) — survives 
 
 ```bash
 lyrac run --live src/vega.lyra -- hero.vega
+lyrac run --live examples/game/live.lyra   # the example made for it
 ```
 
 Everything `--watch` does, except that a good save is **applied** to the running program

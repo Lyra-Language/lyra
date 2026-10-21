@@ -107,6 +107,11 @@ run flags:
   --watch       rebuild and restart the program whenever a source file it reads
                 changes (its imports and the standard library included); a build
                 that fails leaves the running copy alone. Ctrl-C stops both
+  --live        as --watch, except that a change is swapped into the running
+                program, which keeps its state (its window, its world), when that
+                is safe: a function's body, a new function or type. It restarts,
+                saying why, when main or a type's shape changed. macOS only;
+                elsewhere it is --watch
   --            everything after it is passed to the program, not to lyrac:
                 lyrac run prog.lyra -- --verbose input.txt
                 Reachable in the program through program_args(), with the
@@ -158,6 +163,11 @@ type buildOptions struct {
 	// watch is `run --watch`: rebuild and restart on every change to a source file
 	// the program reads, until interrupted (see watch.go).
 	watch bool
+	// live is `run --live`: --watch, except that a change is swapped into the running
+	// program when that is safe, keeping its state (live.go). liveEmit asks lowerAndEmit
+	// for a live build's generation 0 and carries back what it emitted.
+	live     bool
+	liveEmit *liveEmit
 
 	// programArgs is everything after a `--`, handed to the program `run` executes
 	// and reachable there through `program_args()`. Empty for a build, which runs
@@ -226,6 +236,12 @@ func parseBuildArgs(cmd string, args []string) (buildOptions, bool) {
 				return o, false
 			}
 			o.watch = true
+		case arg == "--live":
+			if cmd != "run" {
+				fmt.Fprintf(os.Stderr, "lyrac: --live is a run flag (use `lyrac run --live`)\n")
+				return o, false
+			}
+			o.watch, o.live = true, true
 		case isOptFlag(arg):
 			// Spelled the way clang spells it, and passed through unexamined
 			// beyond that: the C compiler is the authority on which levels it
@@ -514,11 +530,17 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 	if app {
 		be.EntrySymbol(appEntry) // runtime/ios/main.c's `main` calls it (app.go)
 	}
+	if o.liveEmit != nil {
+		be.Live(0)
+	}
 	libs := linkFlags(res, p)
 	ir, err := be.Emit(res, entry)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %s backend: %v\n", be.Name(), err)
 		return "", 1
+	}
+	if o.liveEmit != nil {
+		o.liveEmit.info = be.LiveInfo()
 	}
 
 	llFile := llPath(o)

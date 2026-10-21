@@ -6,7 +6,7 @@ Compiler CLI on `pkg/driver`. Build with `go build ./cmd/lyrac` (or `./build.sh`
 |---|---|
 | `lyrac check <file>` | parse + typecheck; exit 1 on any error |
 | `lyrac build <file>` | check, resolve the entry point, emit IR, link an executable |
-| `lyrac run <file>` | build into a temp dir and exec; `--watch` rebuilds and restarts on save |
+| `lyrac run <file>` | build into a temp dir and exec; `--watch` rebuilds and restarts on save; `--live` swaps the change into the running program when it can |
 | `lyrac doc <file>` | Markdown documentation, one page per module |
 
 Diagnostics print as `path:line:col: severity[code]: message` (`line:col` omitted when
@@ -124,7 +124,22 @@ panicking program when the toolchain is there, and runs them when `$SHELIAK` is 
   Genesis program too, restarting Sheliak. A failed build prints its diagnostics and leaves
   the running program alone; the old one gets SIGTERM, then a kill after 2 s. Each build
   has its own temp dir. A module created *after* an import of it failed is noticed on the
-  next save of a watched file. Restart only — state is not kept (todo.md).
+  next save of a watched file. Restart only — state is not kept.
+- **`--live`** (`live.go`; design `pkg/backend/LIVE.md`) is `--watch` that keeps the
+  program's state: a save is built as the next **generation**, checked against generation
+  0, and loaded into the running program at its next loop turn in `main`, which answers
+  over a pipe (fds 3 and 4, `LYRA_LIVE` set). `lyrac: x.lyra changed; applied`, or
+  `restarting: <why>` and a restart as `--watch` does — when `main` changed (its IR,
+  normalized by the backend), a type's Lyra shape (`typeShapes`: fields, constructors in
+  order) or LLVM layout changed, a top-level `let` is new or retyped, the link flags
+  changed, the bundle would not link or load, or no answer came within 2 s (the loop is
+  not in `main`, or it is blocked). A changed initializer is applied with a note: the
+  value is kept. A generation is `clang -bundle -bundle_loader <gen 0>
+  -Wl,-undefined,dynamic_lookup`, linking no libraries, so a static archive's state is
+  never duplicated; it lives in the run's temp dir and is never unloaded. **macOS only**
+  (`liveAvailable`): elsewhere, and for a Genesis program, it says so once and is
+  `--watch`. `live_test.go` runs a session (a body applied with the count kept, a reordered
+  `data` type and a changed `main` restarting) and the check's every row.
 
 ## `doc`
 

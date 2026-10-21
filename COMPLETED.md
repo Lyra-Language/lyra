@@ -58,6 +58,37 @@ caught here only by the payloads differing (`KeyDown takes 1 argument(s)`). With
 alike it would have built the wrong one. `constructorAliasCollisions` refuses the import,
 naming the other constructor; resolving constructors by declaration is todo.md's.
 
+### 10/20/26 — `lyrac run --live`: a change swapped into the running program, its state kept
+
+`--watch` (10/06) restarts the program on every save, so a game loses its world and its
+window each time. `--live` builds the change and loads it into the program as it runs, as
+LIVE.md proposed: `main`'s calls go through slots, each later generation is a bundle bound
+to generation 0's globals, and lyrac restarts instead whenever a change cannot be applied
+safely. `examples/game/live.lyra` is the example; recolouring its sky and changing the
+hero's pace mid-run kept the window, the process and where he stood.
+
+- **Its own flag, macOS only.** The user chose `--live` over making `--watch` do it, while
+  it is new; on Linux, iOS and the Genesis it says so once and is `--watch`.
+- **`main`'s IR is compared normalized, rather than the backend renaming every numbered
+  symbol** (LIVE.md's step 1). Seven counters are program-wide, not two (`.str`, `.cstr`,
+  `lyra_closure`, `lyra_env_drop`, `lyra_retain`, `lyra.seq`, and the regex tables); hashing
+  each by its definition covers them all and changes no ordinary build's output.
+- **The initializers moved out of `main` in a live build** (`lyra.live.init_globals`).
+  Inside it, any top-level `let` added or edited anywhere — and a line added above one, which
+  moves its traps' locations — changed `main` and forced a restart.
+- **Two type checks, not one.** The Lyra shape (fields, constructors in order) catches what
+  layout cannot: reordered tags, an `i32` payload that became `f32`. The LLVM layout catches
+  what the shape spells by name: an `alias` underneath a field changing width.
+- **`-bundle -bundle_loader <gen 0>`, with dynamic lookup for the rest**, rather than a
+  plain shared library: what generation 0 defines binds to it when the bundle is linked, and
+  no library is linked into the bundle, so a static archive's state is never copied.
+- **Gen 0 answers `ready` before lyrac signals it.** SIGUSR1's default action is to end the
+  process, so a save that landed before the handler was installed would have killed the
+  program.
+- An llir trap: `main`'s text is taken before the slot loads go in, which numbers its
+  unnamed values, and an unnamed instruction inserted afterwards fails llir's ID check — so
+  the loads are named.
+
 ### 10/20/26 — What Vega's release needs of Lyra: `base_path`, and an install's shared library found at run time
 
 Vega's release (its `package.sh`) carries lyrac and Sheliak, and has to find them and have

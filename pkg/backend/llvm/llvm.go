@@ -127,6 +127,10 @@ type Backend struct {
 	// starts the program itself — an iOS app comes in through `SDL_RunApp`, which a shim's
 	// `main` calls with this (`lyra_main`; runtime/ios/main.c). EntrySymbol sets it.
 	entry string
+	// live makes Emit a live build's generation (live.go), and liveInfo is what the last
+	// one produced.
+	live     *liveBuild
+	liveInfo *LiveInfo
 }
 
 // EntrySymbol emits the program's entry as the C function name rather than `main`, with
@@ -235,6 +239,8 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		byCopyParams:       map[*ir.Param]bool{},
 		envDropFns:         map[string]*ir.Func{},
 		externs:            map[string]externDecl{},
+		live:               b.live,
+		sourceFuncs:        map[*ir.Func]bool{},
 	}
 	// Record top-level `const` declarations so a reference to one inlines its
 	// compile-time value (they aren't functions, so forEachUserFunction skips them).
@@ -378,6 +384,14 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		return nil, l.symbolConflict
 	}
 	b.coroSymbols = l.seqCoroSymbols
+	b.liveInfo = nil
+	if l.live != nil {
+		info, err := l.finishLive(m)
+		if err != nil {
+			return nil, err
+		}
+		b.liveInfo = info
+	}
 	return m, nil
 }
 
@@ -398,6 +412,12 @@ type lowerer struct {
 	os, arch string
 	// entry is the entry's C symbol; see Backend.entry ("" is `main`).
 	entry string
+	// live is set in a live build (live.go). sourceFuncs are the functions written in
+	// Lyra — plain, method, specialization — which `main` reaches through a slot there;
+	// livePending is generation 0's flag its signal handler sets.
+	live        *liveBuild
+	sourceFuncs map[*ir.Func]bool
+	livePending *ir.Global
 	// externPlans holds the ABI plan for each foreign function whose signature carries an
 	// aggregate by value, keyed by the declared function so the call site can find it.
 	// Absent for every other extern, which is the common case.
