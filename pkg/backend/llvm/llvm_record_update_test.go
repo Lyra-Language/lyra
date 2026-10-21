@@ -88,3 +88,34 @@ let main = () -> u8 => {
 		t.Errorf("exited %d; want 127 (each bit is one base form that must hold)", got)
 	}
 }
+
+// **A generic struct can be updated** (10/21): `Box { b | tag: t }` on a `b: Box<e>` was
+// refused as "base struct has type Box<e>, expected Box" — the base compared with the bare
+// declaration rather than the instantiation — so no generic type could be updated at all,
+// inside a generic function or out of one, by name or through an `impl` block's `self`.
+// The base's type arguments are the literal's now, which a listed field may confirm but not
+// change: an update to a value of another type is refused at its field.
+func TestExec_RecordUpdateOfAGenericStruct(t *testing.T) {
+	t.Parallel()
+	src := `module main
+struct Box<e> { value: e, tag: string, items: []e }
+let retag<e> = pure (b: Box<e>, tag: string) -> Box<e> => Box { b | tag: tag }
+impl Box<e> {
+  let with_value = pure (self, v: e) -> Box<e> => Box { self | value: v }
+}
+let main = () -> u8 => {
+  var score = 0
+  let b = Box { value: 5, tag: "a" ++ "b", items: [1, 2] }
+  let r = retag(b, "c" ++ "d")
+  if r.tag == "cd" && r.value == 5 && r.items.len() == 2 && b.tag == "ab" { score += 1 }
+  let w = r.with_value(9)
+  if w.value == 9 && w.tag == "cd" && w.items[1] == 2 { score += 2 }
+  let s = Box { value: "x" ++ "y", tag: "t", items: [] }
+  let direct = Box { s | tag: "u" }
+  if direct.value == "xy" && direct.tag == "u" { score += 4 }
+  u8(score)
+}`
+	if got := buildAndRunASanWithPrelude(t, src); got != 7 {
+		t.Errorf("exited %d; want 7 (each bit is one update that must hold)", got)
+	}
+}

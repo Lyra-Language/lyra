@@ -5536,6 +5536,21 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 	for _, p := range decl.GenericParams {
 		genericParamNames[p.Name] = true
 	}
+	// A record update's base is inferred first, once: its instantiation is the literal's
+	// until a listed field says otherwise. `Box { b | tag: t }` on a `b: Box<e>` was
+	// refused as "base struct has type Box<e>, expected Box" — the base compared with the
+	// bare declaration — so no generic struct could be updated at all.
+	var baseType types.Type
+	if expr.BaseStruct != nil {
+		baseType = tc.inferExprType(expr.BaseStruct)
+		if pt, ok := tc.resolveType(baseType, expr.BaseStruct.GetLocation()).(types.ParameterizedType); ok &&
+			len(expr.GenericArgs) == 0 && pt.Name == decl.Name &&
+			len(pt.TypeArguments) == len(decl.GenericParams) {
+			for i, param := range decl.GenericParams {
+				typeSubst[param.Name] = pt.TypeArguments[i]
+			}
+		}
+	}
 	switch {
 	case len(expr.GenericArgs) == len(decl.GenericParams):
 		// Explicit turbofish arguments (`Point2::<i32> { … }`). This branch also
@@ -5679,9 +5694,13 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 	if expr.BaseStruct != nil {
 		// Record update syntax: the base struct supplies any fields not listed in
 		// the update, so missing-field errors are suppressed for those.
-		// We do verify that the base expression has the same struct type.
-		baseType := tc.inferExprType(expr.BaseStruct)
-		if baseType != nil && !types.TypesEqual(baseType, structType) {
+		// We do verify that the base expression has the same struct type — the same
+		// instantiation, for a generic one.
+		want := types.Type(structType)
+		if inst, ok := resultType.(types.ParameterizedType); ok {
+			want = inst
+		}
+		if baseType != nil && !types.TypesEqual(tc.resolveType(baseType, expr.BaseStruct.GetLocation()), want) {
 			tc.addError(expr.BaseStruct.GetLocation(), SeverityError,
 				"%s: base struct has type %s, expected %s", expr.Name, baseType, structType)
 		}

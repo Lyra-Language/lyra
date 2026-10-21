@@ -383,3 +383,32 @@ func TestExec_StructFieldDefaults_ManagedASan(t *testing.T) {
 		t.Errorf("expected one drop per allocation: %d allocations, %d drop-glue calls", allocs, dropCalls)
 	}
 }
+
+// **A generic struct's `[]` default takes each literal's instantiation** (10/21). A field's
+// default is one AST node shared by every literal it fills, so the type recorded for it was
+// the last literal's: `items: []e = []` left out by a generic function's literal lowered with
+// no element type ("dynamic array has no element type"), and two instantiations side by side
+// stored one's empty array into the other's field (a loud mismatch, rule 5). Found by
+// `ui.layout`'s `Node<e>`, whose `children: []Node<e> = []` every leaf leaves out.
+func TestExec_GenericStructEmptyArrayDefault(t *testing.T) {
+	t.Parallel()
+	src := `module main
+struct Nd<e> { value: e, items: []e = [], tags: []string = [] }
+let leaf<e> = pure (x: e) -> Nd<e> => Nd { value: x }
+let main = () -> u8 => {
+  var score = 0
+  let a = leaf(5)
+  let b = leaf("x" ++ "y")
+  if a.value == 5 && a.items.len() == 0 && a.tags.len() == 0 { score += 1 }
+  if b.value == "xy" && b.items.len() == 0 { score += 2 }
+  var c = Nd { value: 1.5 }
+  var d = Nd { value: true }
+  c.items.push(2.5)
+  d.items.push(false)
+  if c.items[0] == 2.5 && d.items.len() == 1 && !d.items[0] { score += 4 }
+  u8(score)
+}`
+	if got := buildAndRunASanWithPrelude(t, src); got != 7 {
+		t.Errorf("exited %d; want 7 (each bit is one literal that must hold)", got)
+	}
+}

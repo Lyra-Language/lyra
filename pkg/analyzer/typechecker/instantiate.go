@@ -222,6 +222,11 @@ func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(
 		if declared == nil {
 			continue
 		}
+		// A filled-in default is the declaration's own value, typed in the declaration's
+		// variables; it solves none of this call's (seedFromExpectedReturn).
+		if tc.typeTable.IsDefault(arg) {
+			continue
+		}
 		if needsContextualTypes(arg) {
 			deferred = append(deferred, i)
 			continue
@@ -268,6 +273,23 @@ func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(
 		if g, isVar := declared.(types.GenericType); isVar && vars[g.Name] &&
 			(isUnsettledArrayLiteral(arg, argType) || isUnsettledTupleLiteral(arg, argType)) {
 			untyped = append(untyped, untypedArg{index: i, typ: argType})
+			continue
+		}
+		// **An empty array literal says nothing at all**, whatever its parameter: `[]` for
+		// a `[]Node<e>` has no element to solve `e` from, and unified first it failed the
+		// call that a sibling or the context would have solved — `column([])` under a
+		// `-> Node<Msg>` (10/21). Deferred past the context, and never unified (third pass).
+		if isEmptyArrayLiteral(arg) {
+			untyped = append(untyped, untypedArg{index: i, typ: argType})
+			continue
+		}
+		// **A parameter that mentions none of the call's variables binds nothing**, so it
+		// has nothing to say to the solve; the argument check after it judges the value,
+		// narrowing a literal to the parameter as any typed slot does. Unified here, the
+		// literal's *default* was compared with the parameter by equality: `Some(1.0)` for a
+		// `Maybe<f32>` was a `Maybe<f64>`, and `sized(Some(1.0), Some(1.0), [b])` reported
+		// "cannot infer type variable e" — about a variable the third argument solves (10/21).
+		if !mentionsGenericParam(declared, vars) {
 			continue
 		}
 		if !unifyGenericTarget(declared, promoteToDefault(argType), vars, subst) {
@@ -372,7 +394,7 @@ func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(
 		// call: `inner(bus, 3)` against `(bus: mut b, vector: u32)` compared i64 with u32
 		// and reported "cannot infer type variable b", a variable `bus` had already
 		// solved (09/28, Sheliak's `jump_to_vector`).
-		if !mentionsGenericParam(declared, vars) {
+		if !mentionsGenericParam(declared, vars) || isEmptyArrayLiteral(call.Arguments[u.index]) {
 			continue
 		}
 		if g, isVar := declared.(types.GenericType); isVar && vars[g.Name] {
@@ -454,6 +476,12 @@ func isUnsettledArrayLiteral(arg ast.Expression, argType types.Type) bool {
 		return false
 	}
 	return elem == nil || isUntypedLiteralType(elem)
+}
+
+// isEmptyArrayLiteral reports whether arg is `[]`.
+func isEmptyArrayLiteral(arg ast.Expression) bool {
+	lit, ok := arg.(*ast.ArrayLiteralExpr)
+	return ok && len(lit.Elements) == 0
 }
 
 // isUnsettledTupleLiteral reports whether arg is a tuple literal with an element still
@@ -623,7 +651,7 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 		if len(lambda.GenericParams) > 0 { // the line seedFromExpectedReturn draws, for its reason
 			settle = tc.contextBindings(lambda.ReturnType.Type, vars, call.GetLocation())
 		}
-		subst, ok = tc.solveTypeVars(lambda, call, vars, argumentSolve{seed: tc.seedFromExpectedReturn(lambda, vars), settle: settle})
+		subst, ok = tc.solveTypeVars(lambda, call, vars, argumentSolve{seed: tc.seedFromExpectedReturn(lambda, vars, call), settle: settle})
 		if !ok && tc.reportSizeMismatch(calleeName, lambda, call) {
 			return nil
 		}
@@ -1039,7 +1067,12 @@ func (tc *TypeChecker) currentExpectedType() types.Type {
 //
 // It is a *seed*, not an override: argument solving runs afterwards over the same map, so
 // a call that is inconsistent for its own reasons still fails for those reasons.
-func (tc *TypeChecker) seedFromExpectedReturn(lambda *ast.LambdaExpr, vars map[string]bool) map[string]types.Type {
+//
+// **A parameter the call leaves to its default reaches nothing** (10/21): the default is the
+// declaration's value, whose type is the declared one, variables and all, so it solves none
+// of them. `sized<e>(w, h, children: []Node<e> = [])` written `sized(w, h)` has an `e` only
+// the context can give, as one no parameter mentions has.
+func (tc *TypeChecker) seedFromExpectedReturn(lambda *ast.LambdaExpr, vars map[string]bool, call *ast.FunctionCallExpr) map[string]types.Type {
 	want := tc.currentExpectedType()
 	if want == nil || len(vars) == 0 {
 		return nil
@@ -1057,6 +1090,9 @@ func (tc *TypeChecker) seedFromExpectedReturn(lambda *ast.LambdaExpr, vars map[s
 	}
 	mentioned := map[string]bool{}
 	for i := range lambda.Parameters {
+		if call != nil && i < len(call.Arguments) && tc.typeTable.IsDefault(call.Arguments[i]) {
+			continue
+		}
 		collectTypeVars(lambda.Parameters[i].Type, mentioned)
 	}
 	unreachable := map[string]bool{}

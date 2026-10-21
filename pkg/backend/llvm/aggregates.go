@@ -195,7 +195,16 @@ func (l *lowerer) lowerStructInstanceExpr(block *ir.Block, e *ast.StructInstance
 			return nil, nil, fmt.Errorf("llvm: struct %s field %q has no value (default values not implemented yet)", structType.Name, declField.Name)
 		}
 		var v value.Value
-		v, block, err = l.lowerExpr(block, valExpr)
+		if dyn, ok := emptyDefaultArray(l.res.TypeTable, valExpr, declField.Type); ok {
+			// **A field's default is one node, shared by every literal it fills**, so the
+			// type recorded for it is the last literal's: an empty `items: []e = []` of a
+			// generic struct had no element type inside a generic function, and the other
+			// instantiation's beside a second one (10/21). This literal's own instantiation
+			// has the field's type, which is all an empty array needs.
+			v, block, err = l.lowerDynArrayConstruction(block, valExpr.(*ast.ArrayLiteralExpr), dyn)
+		} else {
+			v, block, err = l.lowerExpr(block, valExpr)
+		}
 		if err != nil {
 			return nil, nil, err
 		}
@@ -222,6 +231,17 @@ func (l *lowerer) lowerStructInstanceExpr(block *ir.Block, e *ast.StructInstance
 		return boxed, block, err
 	}
 	return agg, block, nil
+}
+
+// emptyDefaultArray reports whether value is a field's filled-in default `[]`, and the
+// dynamic array type the field it fills has in this literal.
+func emptyDefaultArray(table interface{ IsDefault(ast.Expression) bool }, value ast.Expression, field types.Type) (types.DynamicArrayType, bool) {
+	arr, ok := value.(*ast.ArrayLiteralExpr)
+	if !ok || len(arr.Elements) != 0 || !table.IsDefault(value) {
+		return types.DynamicArrayType{}, false
+	}
+	dyn, ok := types.WithAllocation(field, types.Unspecified).(types.DynamicArrayType)
+	return dyn, ok
 }
 
 // lowerRecordBaseField reads field idx out of a record update's base — an inline struct, or

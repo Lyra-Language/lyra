@@ -1359,8 +1359,21 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// `m.flat_map(f).flat_map(g)` under `-> Maybe<string>`, the inner call solved its own
 	// result from the outer's context and refused `f` returning `Maybe<i64>` (10/13, Vega's
 	// `mcp_checks.image_png`); split at a `let`, the same chain was typed.
+	//
+	// **Except through a method whose result is its receiver** (10/21): every declaration
+	// of the name this file can reach returns the type its `self` takes — a builder's
+	// `node.with_class("x")` — so the receiver *is* the call's value, as far as its type
+	// goes, and the context is the receiver's too. Without it a leaf builder whose type
+	// variable no argument reaches (`text<e>("Title")`, a `Node<e>`) could not be chained
+	// at all: `text("Title").with_class("t")` in a `Node<Msg>` view was "cannot infer e".
 	var objType types.Type
-	tc.withoutExpectedType(func() { objType = tc.inferExprType(member.Object) })
+	if want := tc.currentExpectedType(); want != nil && tc.methodReturnsItsReceiver(member.Property.Name, member.GetLocation()) {
+		restore := tc.pushExpectedType(want, member.Object.GetLocation())
+		objType = tc.inferExprType(member.Object)
+		restore()
+	} else {
+		tc.withoutExpectedType(func() { objType = tc.inferExprType(member.Object) })
+	}
 	if objType == nil {
 		return nil
 	}

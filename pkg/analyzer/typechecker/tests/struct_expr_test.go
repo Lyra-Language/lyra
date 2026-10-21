@@ -320,3 +320,21 @@ func TestCall_MemberExpr_OnUnknownStruct_Error(t *testing.T) {
 	`, false)
 	assertErrorsAre(t, res, `undefined identifier "unknown"`)
 }
+
+// A generic struct's update keeps its base's instantiation (10/21: every one was refused,
+// the base compared with the bare declaration), and a listed field cannot change it.
+func TestTypeCheck_GenericRecordUpdate(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Box<e> { value: e, tag: string }
+		let retag<e> = (b: Box<e>, tag: string) -> Box<e> => Box { b | tag: tag }
+		let b = Box { value: 5, tag: "a" }
+		let c: Box<i64> = Box { b | tag: "c" }
+	`, false)
+	assertNoErrors(t, res)
+	res = parseCollectAndCheck(t, `
+		struct Box<e> { value: e, tag: string }
+		let b = Box { value: 5, tag: "a" }
+		let s = Box { b | value: "x" }
+	`, false)
+	assertErrorsAre(t, res, "Box.value: cannot assign string to i64")
+}

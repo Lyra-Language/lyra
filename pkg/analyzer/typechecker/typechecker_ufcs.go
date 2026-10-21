@@ -381,6 +381,27 @@ func receiverIsGeneric(recv *ast.Parameter) bool {
 // them by `len(LambdaClauses) > 0` would have made membership depend on *when* this runs:
 // desugarClauses consumes the clauses, so the same function would be a candidate after
 // its declaration was checked and not before.
+// methodReturnsItsReceiver reports whether a call of methodName at loc passes its context
+// on to its receiver: there is a declaration of the name this file can reach that takes a
+// receiver, and every one of them returns the type its receiver takes, as written. A name
+// with any other candidate keeps the barrier — its receiver may well be a different type
+// from its result.
+func (tc *TypeChecker) methodReturnsItsReceiver(methodName string, loc ast.Location) bool {
+	found := false
+	for _, fn := range tc.symTable.FunctionsNamed(methodName) {
+		recv, isReceiver := ufcsReceiverParam(fn)
+		if !isReceiver || !tc.ufcsImported(methodName, fn, loc) {
+			continue
+		}
+		if fn.ReturnType.Type == nil || recv.Type == nil ||
+			!types.TypesEqual(recv.Type, fn.ReturnType.Type) {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
 func ufcsReceiverParam(fn *ast.LambdaExpr) (*ast.Parameter, bool) {
 	return ast.ReceiverParam(fn)
 }
