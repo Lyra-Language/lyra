@@ -9,6 +9,40 @@ Newest first.
 
 ## Dated log
 
+### 10/21/26 — `ui/`, phase 4: markup for `ui`, commands and subscriptions, live reload
+
+The GUI's fourth phase; gate `examples/ui/components_view.lui`, `bindings.imgui.ui`'s example
+interface written again for `ui` and run from the keyboard (`TestRun_UiComponentsPort`).
+
+- **lui has two targets** rather than a second tool: the parser, props, control flow,
+  markers and `lui map` are one; what a capitalized tag becomes differs. The target is the
+  file's (`<script target="ui">`), so `lui --check src` and the editors need no flag; the
+  default stays `bindings.imgui.ui`, so every existing `.lui` generates byte for byte.
+- **A sheet is a function of the theme** — a global `<style global theme={T}>` one the
+  program calls, a component's one `ui.layout` calls with the theme in force
+  (`component_of`) — which is what lets `$colors.accent` be `t.colors.accent` and checked by
+  lyrac, its errors put back at the rule's line (each rule is marked, not only the
+  `<style>`).
+- **Parts are checked by lui** against what the component's markup marks, or a control's
+  known parts: a typo in `confirm::questin` was a rule that silently matched nothing.
+  `Comp.class::part` ranks above `Comp::part`.
+- **Commands are a closed set the host performs**, each naming its result's event. The brief
+  wanted results back through the platform as input events; `InputEvent` cannot carry a
+  program's event type, so the host queues them for its next pass instead, and the platform
+  route waits for async I/O (todo.md). Subscriptions are recomputed after every update, so
+  one holds exactly while the state says — no unsubscribe to forget.
+- **`Host.step` puts the loop in `main`** because `lyrac run --live` swaps code only at
+  `main`'s back-edges; `view` and `update` reach the new code through `App`'s function values,
+  whose thunks call through slots. Under `--live` a pass waits at most 100 ms, else an idle
+  window would never reach a swap and lyrac would restart it after its one-second wait.
+  Swapping a view keeps the count going; a field added to the state restarts it
+  (`TestLive_SwapsAUiViewAndRestartsOnItsState`).
+- **The platform gained a clock, the system's look and `open_url`**; `ScriptPlatform` has a
+  clock of its own that only `wait:N` moves, so a timer's firing is exact in a test.
+- **`Subscription`, not `Sub`**: the prelude's subtraction trait is `Sub`.
+- Found (todo.md): a generic struct's `None` field default is E073; an untyped lambda as a
+  constructor's payload gets no context.
+
 ### 10/21/26 — `ui/`, phase 3: interaction, and five compiler fixes generic nodes needed
 
 The GUI's third phase, per its design document; gate `examples/ui/form.lyra`, a form that

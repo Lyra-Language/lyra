@@ -125,8 +125,9 @@ pub data Kind<e> =
   | Texels(TextureId, Rect, Size)
   /// A subtree in a theme, with a global sheet.
   | Theming(Theme, Sheet)
-  /// A component: its tag is its name, and the sheet is scoped to it.
-  | Scope(Sheet)
+  /// A component: its tag is its name, and its sheet — made from the theme in force — is
+  /// scoped to it.
+  | Scope((Theme) -> Sheet)
   /// A button: this event when it is pressed.
   | Pressable(e)
   /// A checkbox, ticked or not: this event when it is toggled.
@@ -291,6 +292,17 @@ pub let component<e> = pure (
   sheet: Sheet,
   children: []Node<e>
 ) -> Node<e> => {
+  let kind: Kind<e> = Scope((_: Theme) -> Sheet => sheet)
+  Node { kind: kind, tag: name, children: children }
+}
+
+/// A component as [component] is, whose sheet is made from the theme it is drawn in — the
+/// sheet `lui` writes for a component's `<style>`, whose `$tokens` read the theme.
+pub let component_of<e> = pure (
+  name: string,
+  sheet: (Theme) -> Sheet,
+  children: []Node<e>
+) -> Node<e> => {
   let kind: Kind<e> = Scope(sheet)
   Node { kind: kind, tag: name, children: children }
 }
@@ -351,6 +363,20 @@ impl Node<e> {
   /// The node read to assistive technology as `label`, rather than its visible text.
   pub let labelled = pure (self, label: string) -> Node<e> => Node { self | label: label }
 
+  /// The node with every event its controls raise passed through `f` — a component written
+  /// for its own event type, placed in a tree of another's (Elm's `Html.map`):
+  /// `settings_panel(s).map(SettingsSaid)`.
+  pub let map<b> = pure (self, f: pure (e) -> b) -> Node<b> => Node {
+    kind: mapped_kind(self.kind, f),
+    tag: self.tag,
+    class: self.class,
+    part: self.part,
+    style: self.style,
+    children: [child in self.children | child.map(f)],
+    key: self.key,
+    label: self.label,
+  }
+
   /// A row or column with its children placed by `main` and `cross`; any other node unchanged.
   pub let aligned = pure (self, main: MainAlign, cross: CrossAlign) -> Node<e> =>
     match self.kind {
@@ -360,6 +386,37 @@ impl Node<e> {
       },
       _ => self,
     }
+}
+
+/// `kind` with its events passed through `f`: a control's own, and a slider's or field's
+/// through its function. Every other kind is the same in either event type.
+let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => match kind {
+  Flow(axis, main, cross) => Flow(axis, main, cross),
+  Grow(flex) => Grow(flex),
+  Layers => Layers,
+  Pin(edges) => Pin(edges),
+  Inset(space) => Inset(space),
+  Place(at) => Place(at),
+  Measured(w, h) => Measured(w, h),
+  Scrolls(axis, offset) => Scrolls(axis, offset),
+  Words(content) => Words(content),
+  Texels(texture, texels, size) => Texels(texture, texels, size),
+  Theming(theme, sheet) => Theming(theme, sheet),
+  Scope(sheet) => Scope(sheet),
+  Pressable(event) => Pressable(f(event)),
+  Checkable(checked, event) => Checkable(checked, f(event)),
+  Ranged(spec) => Ranged(SliderSpec {
+    value: spec.value,
+    min: spec.min,
+    max: spec.max,
+    step: spec.step,
+    on_change: (v: f32) -> b => f((spec.on_change)(v)),
+  }),
+  Editable(spec) => Editable(FieldSpec {
+    value: spec.value,
+    placeholder: spec.placeholder,
+    on_edit: (text: string) -> b => f((spec.on_edit)(text)),
+  }),
 }
 
 // ── Constraints ──────────────────────────────────────────────────────────────
@@ -542,9 +599,10 @@ let lay<e> = (
   let classes = with_state(node.class, id, ui)
   let style = own.compute(node.tag, classes, node.part, node.style)
   let within = match node.kind {
-    Scope(sheet) => own.in_component(node.tag, sheet).inside(style),
+    Scope(sheet_of) =>
+      own.in_component(node.tag, node.class, sheet_of(own.theme)).inside(style),
     _ => if focusable(node.kind) {
-      own.in_component(node.tag, Sheet {}).inside(style)
+      own.in_component(node.tag, node.class, Sheet {}).inside(style)
     } else {
       own.inside(style)
     },

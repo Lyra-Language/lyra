@@ -1,0 +1,202 @@
+<!--
+  The interface of examples/imgui/components_view.lui, for the ui target: `build/lui
+  examples/ui/components_view.lui` writes components_view.lyra beside it, which
+  components.lyra runs. ImGui's menu bar is a toolbar here and its colour picker three
+  swatches; the rest is the same interface, styled from the theme.
+-->
+
+<script target="ui">
+  import ui.app.{ Command, Subscription, After, WriteFile, QuitApp, OnAppearance }
+  import ui.backend.{ Appearance, DarkMode }
+  import ui.style.{ Style, Theme, light_theme, dark_theme }
+  import ui.layout.{ Node, button, sized }
+  import ui.draw.{ rgb }
+
+  /// What the interface can be asked to do.
+  pub data Event =
+    ToggleSound
+    | ToggleMusic
+    | AskReset
+    | ConfirmReset
+    | CancelReset
+    | AskQuit
+    | ConfirmQuit
+    | CancelQuit
+    | Load(i64)
+    | Rename(string)
+    | NameDone
+    | NameSaved(bool)
+    | SetVolume(f32)
+    | SetAccent(u32)
+    | ClearNotice
+    | Looked(Appearance)
+
+  pub struct State {
+    sound: bool = true,
+    music: bool = false,
+    asking_reset: bool = false,
+    asking_quit: bool = false,
+    resets: i64 = 0,
+    loaded: i64 = -1,
+    quit: bool = false,
+    /// The player's name as typed, and as last saved (to the file `name.txt`).
+    name: string = "Hero",
+    saved_name: string = "",
+    commits: i64 = 0,
+    volume: f32 = 0.5,
+    /// A colour, `0xRRGGBB`.
+    accent: u32 = 0x3C78D8,
+    /// A line shown for two seconds after something happens.
+    notice: string = "",
+    /// The system's look, followed.
+    dark: bool = false,
+  }
+
+  /// `s` after `event`, and the work it asks for.
+  pub let update = pure (s: State, event: Event) -> (State, []Command<Event>) => match event {
+    ToggleSound => (State { s | sound: !s.sound }, []),
+    ToggleMusic => (State { s | music: !s.music }, []),
+    AskReset => (State { s | asking_reset: true }, []),
+    ConfirmReset => noticed(State { s | asking_reset: false, resets: s.resets + 1 }, "Every save erased."),
+    CancelReset => (State { s | asking_reset: false }, []),
+    AskQuit => (State { s | asking_quit: true }, []),
+    ConfirmQuit => (State { s | quit: true }, [QuitApp]),
+    CancelQuit => (State { s | asking_quit: false }, []),
+    Load(slot) => noticed(State { s | loaded: slot }, "Slot ${slot + 1} loaded."),
+    Rename(name) => (State { s | name: name }, []),
+    NameDone => (State { s | commits: s.commits + 1 }, [WriteFile("name.txt", s.name, NameSaved)]),
+    NameSaved(ok) => if ok {
+      noticed(State { s | saved_name: s.name }, "Saved ${s.name}.")
+    } else {
+      noticed(s, "Could not save the name.")
+    },
+    SetVolume(v) => (State { s | volume: v }, []),
+    SetAccent(c) => (State { s | accent: c }, []),
+    ClearNotice => (State { s | notice: "" }, []),
+    Looked(look) => (State { s | dark: look == DarkMode }, []),
+  }
+
+  /// `s` showing `what`, cleared again in two seconds.
+  let noticed = pure (s: State, what: string) -> (State, []Command<Event>) =>
+    (State { s | notice: what }, [After(2000, ClearNotice)])
+
+  /// The system's look, followed while the program runs.
+  pub let subscriptions = pure (_: State) -> []Subscription<Event> => [OnAppearance(Looked)]
+
+  /// The theme for the state: the system's look.
+  pub let theme_for = pure (s: State) -> Theme => if s.dark { dark_theme() } else { light_theme() }
+
+  /// A colour's swatch: a square of it, to pick it, ringed while it is the one picked.
+  let swatch = pure (s: State, rgb_hex: u32) -> Node<Event> => sized(Some(28.0), Some(28.0), [
+    button("", SetAccent(rgb_hex))
+      .with_class(if s.accent == rgb_hex { "swatch picked" } else { "swatch" })
+      .with_style(Style { background: Some(rgb(rgb_hex)) })
+      .labelled("accent #${rgb_hex}"),
+  ])
+</script>
+
+<!-- How the whole interface looks, in the theme's own colours and spacing. -->
+<style global theme={Theme} name="components_sheet">
+  .page { background: $colors.background; padding: $space.xl; gap: $space.l }
+  .toolbar { gap: $space.s }
+  .card {
+    background: $colors.surface;
+    border-color: $colors.border;
+    border-width: 1;
+    radius: 12;
+    padding: $space.l;
+    gap: $space.m
+  }
+  Text.title { font-size: 20 }
+  Text.label { color: $colors.muted; font-size: 13 }
+  .notice { color: $colors.accent }
+  .swatch { radius: 14; padding: 0 }
+  .picked { border-color: $colors.text; border-width: 2 }
+  .loaded { background: #1d4f91 }
+  /* A confirm's question is the accent's, wherever one is used. */
+  confirm::question { color: $colors.accent }
+  toggle_row::note { color: $colors.muted; font-size: 13 }
+</style>
+
+<!-- The whole interface for a state. -->
+<component name="view" props={{ s: State }} event={Event}>
+  <Themed theme={theme_for(s)} sheet={components_sheet(theme_for(s))}>
+    <Column class="page" cross="stretch">
+      <Row class="toolbar">
+        <Button on_click={AskReset}>Reset...</Button>
+        <for each={slot in 0..<3}>
+          <Button on_click={Load(slot)} key="slot {slot}" class={if s.loaded == slot { "loaded" } else { "" }}>Slot {slot + 1}</Button>
+        </for>
+        <Button on_click={AskQuit}>Quit</Button>
+      </Row>
+      <Column class="card" cross="stretch">
+        <Text class="title">Settings</Text>
+        <Text class="label">Name</Text>
+        <Row style="gap: 8">
+          <Expanded>
+            <TextInput value={s.name} placeholder="your name" on_edit={Rename} label="Name"/>
+          </Expanded>
+          <Button on_click={NameDone}>Save</Button>
+        </Row>
+        <Text class="label">Volume</Text>
+        <Slider value={s.volume} min="0" max="1" step="0.05" on_change={SetVolume} label="Volume"/>
+        <Text class="label">Accent</Text>
+        <Row style="gap: 8">
+          {swatch(s, 0x3C78D8)}
+          {swatch(s, 0x2E8B57)}
+          {swatch(s, 0xC0392B)}
+        </Row>
+        <Text class="label">Audio</Text>
+        <toggle_row label="Sound" note="effects and voices" on={s.sound} toggle={ToggleSound}/>
+        <toggle_row label="Music" note="the soundtrack" on={s.music} toggle={ToggleMusic}/>
+        <Text class="label">Saves</Text>
+        <Text>Reset {s.resets} times</Text>
+        <if test={s.asking_reset}>
+          <confirm question="Erase every save?" yes={ConfirmReset} no={CancelReset}/>
+        </if>
+        <else>
+          <Row><Button on_click={AskReset}>Reset...</Button></Row>
+        </else>
+      </Column>
+      <if test={s.asking_quit}>
+        <Column class="card">
+          <confirm question="Quit without saving?" yes={ConfirmQuit} no={CancelQuit}/>
+        </Column>
+      </if>
+      <Text class="notice">{s.notice}</Text>
+    </Column>
+  </Themed>
+</component>
+
+<!-- A question and its two answers: any program's, whatever its events. -->
+<component name="confirm" props={{
+  question: string,
+  yes: e,
+  no: e,
+}}>
+  <style>
+    Button { radius: 6; padding: 14 4 }
+    Button.danger { background: #aa2828 }
+    Row { gap: $space.m }
+  </style>
+  <Column style="gap: 8">
+    <Text part="question">{question}</Text>
+    <Row>
+      <Button class="danger" on_click={yes}>Yes</Button>
+      <Button on_click={no}>No</Button>
+    </Row>
+  </Column>
+</component>
+
+<!-- A setting's checkbox and a note on what it covers, on one line. -->
+<component name="toggle_row" props={{
+  label: string,
+  note: string,
+  on: bool,
+  toggle: e,
+}}>
+  <Row style="gap: 12">
+    <Checkbox checked={on} on_toggle={toggle}>{label}</Checkbox>
+    <Text part="note">{note}</Text>
+  </Row>
+</component>

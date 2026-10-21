@@ -46,7 +46,9 @@ func (h *Handler) analyzeMarkup(uri lsp.DocumentURI, path, source string) []lsp.
 		return []lsp.Diagnostic{}
 	}
 	name := filepath.Base(path)
-	code, line, problem, ok := runLui(lui, name, source)
+	// The whole path, not the name: lui reads the files an `<import src="…"/>` names
+	// beside it, and takes the name for its markers itself.
+	code, line, problem, ok := runLui(lui, path, source)
 	if !ok {
 		return []lsp.Diagnostic{}
 	}
@@ -118,13 +120,13 @@ func markupDiagnostic(source string, line int, sev lsp.DiagnosticSeverity, code,
 	}
 }
 
-// runLui generates source (the markup file name) with `lui --stdin`: the module, or the
+// runLui generates source (the markup file at path) with `lui --stdin`: the module, or the
 // markup's own mistake as its line and message. ok is false when lui could not be run or
 // answered in no shape this understands — no diagnostics then, as with lyrafmt.
-func runLui(lui, name, source string) (code string, line int, problem string, ok bool) {
+func runLui(lui, path, source string) (code string, line int, problem string, ok bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, lui, "--stdin", "--name", name)
+	cmd := exec.CommandContext(ctx, lui, "--stdin", "--name", path)
 	cmd.Stdin = strings.NewReader(source)
 	var out bytes.Buffer
 	cmd.Stdout = &out

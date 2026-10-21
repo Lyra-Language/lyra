@@ -1,0 +1,117 @@
+// The interface of components_view.lui — `lui`'s markup for the ui target — run by `ui.app`:
+// its state, events, update, commands and subscription are the markup's script's; this file
+// opens the window and holds the loop.
+//
+//     build/lui examples/ui/components_view.lui      # after editing the markup
+//     lyrac run examples/ui/components.lyra
+//     lyrac run --live examples/ui/components.lyra   # edit the view, keep the state
+//     lyrac run examples/ui/components.lyra -- --script "Tab Enter Tab Tab Enter" --png FILE
+//
+// **The loop is `main`'s own** (`while host.step(…) {}`), which is what `lyrac run --live`
+// needs to swap a changed view or update in while the window, the framework's state and the
+// program's stay as they are: run `lui --watch` beside it and an edit to the markup lands in
+// the running window. A change to `State`'s fields restarts it, as lyrac says.
+//
+// **The second form plays a script instead** (`ui.script`'s `parse_steps`) and prints the
+// state it left — headless with `SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software` — and
+// `--png FILE` writes the last frame.
+
+import ui.sdl3
+import ui.sdl3.{ SdlRenderer, capture }
+import ui.app.{ App, host_of }
+import ui.script.{ timed_platform, parse_steps }
+import ui.backend.{ Platform, DarkMode }
+import ui.draw.{ Point, Size, Color }
+import ui.text.{ Fonts, fonts_new, glyph_atlas }
+import ui.layout.{ layout, loose, paint }
+import components_view.{ State, view, update, subscriptions, theme_for }
+import std.collections.{ parse_args }
+import std.png.{ write_png }
+import std.io.{ write_bytes }
+
+const WIDTH: f32 = 520.0
+const HEIGHT: f32 = 640.0
+
+let main = () -> u8 => {
+  let args = parse_args(["--script", "--png"])
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let opened = sdl3.open("Components", WIDTH, HEIGHT)
+  let window = match opened {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      fonts.close()
+      return 2
+    },
+  }
+  var platform = window.platform
+  var renderer = window.renderer
+  let app = App {
+    view: view,
+    update: update,
+    subscriptions: subscriptions,
+    background: Color { r: 0, g: 0, b: 0 }
+  }
+  let start = State { dark: platform.appearance() == DarkMode }
+  var status: u8 = 0
+  if let Some(script) = args.value("--script") {
+    match parse_steps(script) {
+      Ok(steps) => {
+        var scripted = timed_platform(steps, Size { w: WIDTH, h: HEIGHT })
+        var host = host_of(app, start, scripted)
+        while host.step(scripted, renderer, fonts) {}
+        report(host.state)
+        if let Some(path) = args.value("--png") {
+          if !save(renderer, fonts, host.state, path) { status = 1 }
+        }
+      },
+      Err(why) => {
+        println("the script: ${why}")
+        status = 1
+      },
+    }
+  } else {
+    var host = host_of(app, start, platform)
+    while host.step(platform, renderer, fonts) {}
+  }
+  sdl3.close(platform, renderer)
+  fonts.close()
+  status
+}
+
+/// The state a script left, a line a field.
+let report = (s: State) -> void => {
+  println("name: ${s.name} (saved: ${s.saved_name}, ${s.commits} commits)")
+  println("sound: ${s.sound}, music: ${s.music}, volume: ${s.volume}")
+  println("resets: ${s.resets}, loaded: ${s.loaded}, accent: ${s.accent}")
+  println("notice: ${s.notice}")
+  println("quit: ${s.quit}")
+}
+
+/// The view of `state` drawn without showing it, and written to `path` as a PNG.
+let save = (renderer: SdlRenderer, fonts: Fonts, state: State, path: string) -> bool => {
+  var r = renderer
+  var f = fonts
+  var atlas = glyph_atlas()
+  let laid = layout(view(state), loose(Size { w: WIDTH, h: HEIGHT }), f)
+  let list = paint(laid, Point {}, 1.0, f, atlas, r)
+  let Some(frame) = capture(r, theme_for(state).colors.background, list) else {
+    println("capture failed")
+    return false
+  }
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(u8((p >> 24) & 0xFF))
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(png) => write_bytes(path, png),
+    Err(_) => false,
+  }
+}

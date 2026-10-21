@@ -19,9 +19,14 @@ module ui.script
 //!   `PageDown`, or one character (`a`, `/`), which is its key.
 //! - `move:X,Y`, `down:X,Y`, `up:X,Y` and `click:X,Y` (a move, a press and a release) — the
 //!   pointer, in logical units; `scroll:N` scrolls down `N` lines (up for a negative `N`).
+//! - `resize:W,H` — the window resized; `dark`, `light` — the system's look changed.
+//! - `wait:N` — `N` milliseconds pass on the platform's clock, as far as the program waits
+//!   (a timer due sooner fires first). Only [parse_steps] reads it; a script of inputs alone
+//!   is [parse_script]'s.
 //!
 //! Every input is one pass of a program's loop: the platform answers one at a time, then
-//! [CloseRequested] once they are spent.
+//! [CloseRequested] once they are spent. Its clock stands still but for `wait:`, so a timer's
+//! firing is exact.
 
 import ui.backend.{
   Platform,
@@ -52,31 +57,70 @@ import ui.backend.{
   Character,
   Cursor,
   Arrow,
+  Resized,
+  Appearance,
+  LightMode,
+  DarkMode,
+  AppearanceChanged,
 }
 import ui.draw.{ Point, Size, Rect }
 
-/// A platform with no window: its inputs come from a list, its size and scale are fixed, and
-/// its clipboard, its text-input field and the pointer's shape are values a test can read.
+/// A platform with no window: its inputs come from a list of [Step]s, its clock moves only
+/// when a step says time passes, its size and scale are fixed until a step resizes it, and its
+/// clipboard, text-input field, pointer shape, look and the addresses it was asked to open are
+/// values a test can read.
 pub struct ScriptPlatform {
-  inputs: []InputEvent,
+  steps: []Step,
   next: i64 = 0,
   size: Size,
   units: f32 = 1.0,
   clip: string = "",
   typing: Maybe<Rect> = None,
   shape: Cursor = Arrow,
+  look: Appearance = LightMode,
+  opened: []string = [],
+  /// The clock, in milliseconds, and how much of the current wait has passed.
+  clock: i64 = 0,
+  waited: i64 = 0,
 }
 
-/// A platform playing `inputs`, its window `size` large.
+/// One step of a script: an input, or time passing.
+pub data Step = Played(InputEvent) | Waited(i64)
+
+/// A platform playing `inputs`, its window `size` large, with no time passing.
 pub let script_platform = pure (inputs: []InputEvent, size: Size) -> ScriptPlatform =>
-  ScriptPlatform { inputs: inputs, size: size }
+  ScriptPlatform { steps: [i in inputs | Played(i)], size: size }
+
+/// A platform playing `steps`, its window `size` large.
+pub let timed_platform = pure (steps: []Step, size: Size) -> ScriptPlatform =>
+  ScriptPlatform { steps: steps, size: size }
 
 impl Platform for ScriptPlatform {
   next_events = (self, wait_ms) => {
-    if self.next >= self.inputs.len() { return [CloseRequested] }
-    let input = self.inputs[self.next]
-    self.next += 1
-    [input]
+    if self.next >= self.steps.len() { return [CloseRequested] }
+    match self.steps[self.next] {
+      // Time passes as far as the program waits — no further than the step says.
+      Waited(ms) => {
+        let left = ms - self.waited
+        let by = if wait_ms < 0 { left } else { wait_ms.min(left) }
+        self.clock += by
+        self.waited += by
+        if self.waited >= ms {
+          self.next += 1
+          self.waited = 0
+        }
+        []
+      },
+      Played(input) => {
+        self.next += 1
+        match input {
+          Resized(size) => { self.size = size },
+          AppearanceChanged(look) => { self.look = look },
+          _ => {},
+        }
+        [input]
+      },
+    }
   }
   window_size = pure (self) => self.size
   scale = pure (self) => self.units
@@ -84,26 +128,46 @@ impl Platform for ScriptPlatform {
   clipboard = pure (self) => self.clip
   set_clipboard = (self, text) => { self.clip = text }
   set_cursor = (self, cursor) => { self.shape = cursor }
+  now_ms = pure (self) => self.clock
+  appearance = pure (self) => self.look
+  open_url = (self, url) => {
+    self.opened.push(url)
+    true
+  }
 }
 
-/// The inputs `script` writes down, or what is wrong with it.
+/// The inputs `script` writes down, or what is wrong with it — a script of inputs alone,
+/// which [parse_steps] reads too; time passing (`wait:N`) is refused here.
 pub let parse_script = pure (script: string) -> Result<[]InputEvent, string> => {
   var inputs: []InputEvent = []
+  for step in parse_steps(script)? {
+    match step {
+      Played(input) => inputs.push(input),
+      Waited(_) =>
+        return Err("wait: is a step, not an input; read the script with parse_steps"),
+    }
+  }
+  Ok(inputs)
+}
+
+/// The steps `script` writes down, or what is wrong with it.
+pub let parse_steps = pure (script: string) -> Result<[]Step, string> => {
+  var inputs: []Step = []
   for token in tokens(script) {
     if token.starts_with("'") {
-      inputs.push(TextTyped(token.slice(1, token.len() - 1).replace("\\'", "'")))
+      inputs.push(Played(TextTyped(token.slice(1, token.len() - 1).replace("\\'", "'"))))
       continue
     }
     if let Some((verb, place)) = pointer_token(token) {
       let Some(at) = point(place) else { return Err("not a point: ${token}") }
       match verb {
-        "move" => inputs.push(PointerMoved(at)),
-        "down" => inputs.push(PointerDown(Primary, at)),
-        "up" => inputs.push(PointerUp(Primary, at)),
+        "move" => inputs.push(Played(PointerMoved(at))),
+        "down" => inputs.push(Played(PointerDown(Primary, at))),
+        "up" => inputs.push(Played(PointerUp(Primary, at))),
         "click" => {
-          inputs.push(PointerMoved(at))
-          inputs.push(PointerDown(Primary, at))
-          inputs.push(PointerUp(Primary, at))
+          inputs.push(Played(PointerMoved(at)))
+          inputs.push(Played(PointerDown(Primary, at)))
+          inputs.push(Played(PointerUp(Primary, at)))
         },
         _ => return Err("not a pointer input: ${token}"),
       }
@@ -111,7 +175,21 @@ pub let parse_script = pure (script: string) -> Result<[]InputEvent, string> => 
     }
     if let Some(lines) = token.strip_prefix("scroll:") {
       let Some(n) = lines.parse_i64() else { return Err("not a number of lines: ${token}") }
-      inputs.push(Scrolled(0.0, f32(n)))
+      inputs.push(Played(Scrolled(0.0, f32(n))))
+      continue
+    }
+    if let Some(ms) = token.strip_prefix("wait:") {
+      let Some(n) = ms.parse_i64() else { return Err("not a number of milliseconds: ${token}") }
+      inputs.push(Waited(n))
+      continue
+    }
+    if let Some(place) = token.strip_prefix("resize:") {
+      let Some(at) = point(place) else { return Err("not a size: ${token}") }
+      inputs.push(Played(Resized(Size { w: at.x, h: at.y })))
+      continue
+    }
+    if token == "dark" || token == "light" {
+      inputs.push(Played(AppearanceChanged(if token == "dark" { DarkMode } else { LightMode })))
       continue
     }
     let parts = token.split("+")
@@ -127,7 +205,7 @@ pub let parse_script = pure (script: string) -> Result<[]InputEvent, string> => 
       }
     }
     let Some(key) = key_named(parts[parts.len() - 1]) else { return Err("not a key: ${token}") }
-    inputs.push(KeyPressed(key, mods))
+    inputs.push(Played(KeyPressed(key, mods)))
   }
   Ok(inputs)
 }

@@ -12,7 +12,7 @@
 
 import ui.sdl3
 import ui.sdl3.{ SdlRenderer, capture }
-import ui.app.{ App, run }
+import ui.app.{ sandbox, run }
 import ui.script.{ script_platform, parse_script }
 import ui.draw.{ Point, Size, Color }
 import ui.text.{ Fonts, fonts_new, glyph_atlas }
@@ -75,7 +75,7 @@ let main = () -> u8 => {
   var renderer = window.renderer
   let theme = light_theme()
   let shown = (form: Form) -> Node<FormEvent> => view(theme, form)
-  let app = App { view: shown, update: update, background: theme.colors.background }
+  let app = sandbox(shown, update, theme.colors.background)
   var status: u8 = 0
   if let Some(script) = args.value("--script") {
     match parse_script(script) {

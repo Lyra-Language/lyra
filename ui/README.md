@@ -20,8 +20,8 @@ A root of its own beside `std/` and `bindings/` (`build.sh` links it into `build
 | `ui.style` | `Style` (all `Maybe`), `Insets`, `Rule`/`Sheet`, `Theme` (`Palette`, `Spacing`, radius, font, `elements` sheet; `light_theme`, `dark_theme`), and the cascade: `Cascade` settles an element's tag, classes, part and inline style into `Computed`. | no |
 | `ui.layout` | `Node<e>` (kind, tag, class, part, style, children, key, label; `e` the program's event type, `NoEvent` for none) built by `row`, `column`, `expanded`, `stack`, `positioned`, `padding`, `align`, `sized`, `scroll`, `text`, `image`, `themed`, `component` and the controls `button`, `checkbox`, `slider`, `text_input`, and `.with_class`/`.with_style`/`.with_part`/`.keyed`/`.labelled`/`.aligned`; `layout`/`layout_with(node, Constraints, fonts, Interaction) -> Laid<e>` (each with its identity, role, label, focus ring and a field's caret) and `paint(laid, origin, scale, fonts, atlas, renderer) -> []DrawOp`. | no (text through `ui.text`) |
 | `ui.interact` | `Ui`: the framework's state by identity (focus, hover, press, scroll offsets, carets, selections, undo), `frame` (lay out and drop what left the tree), `handle(laid, input, platform) -> []e`, `place_text_input`; `hit`, `control_at`, `find`, `focus_order`; `Editing`, a field's editing operations. | no |
-| `ui.app` | `App { view, update, background }` and `run(app, state, platform, renderer, fonts) -> s`: lay out, paint, wait for input, route it, update, repeat. | no |
-| `ui.script` | `ScriptPlatform` (a `Platform` with no window, playing inputs one a pass) and `parse_script` (`"Tab 'Ada' Shift+Tab Primary+v click:10,20 scroll:1"`). | no |
+| `ui.app` | `App { view, update: (s, e) -> (s, []Command<e>), subscriptions: (s) -> []Subscription<e>, background }` (`sandbox(view, update, bg)` for a plain update); `Command` (`WriteFile`, `ReadFile`, `After`, `CopyText`, `PasteText`, `OpenUrl`, `QuitApp`), `Subscription` (`EveryFrame`, `Every`, `OnResize`, `OnAppearance`); `run`, and `Host` (`host_of`, `step`) for a loop of `main`'s own — which `lyrac run --live` needs. | no |
+| `ui.script` | `ScriptPlatform` (a `Platform` with no window and a clock of its own, playing one step a pass), `parse_script` (inputs: `"Tab 'Ada' Shift+Tab Primary+v click:10,20 scroll:1"`) and `parse_steps` (with `wait:N`, `resize:W,H`, `dark`, `light`). | no |
 
 **Nothing above `ui.backend` calls a platform's library**; `ui.text` calls the two text
 libraries, which every platform has. A new backend — a GPU renderer, the web, a phone's own
@@ -48,9 +48,10 @@ layer — implements the two traits; the display list is the whole contract.
   constraints and lays several out as a column. A row's child may overflow its width.
 - **The cascade is five layers**, each beating the ones below whatever their specificity:
   the theme's `elements`, the global sheets (`themed`'s, outermost first, one layer), the
-  enclosing component's scoped sheet (never reaching a component inside it), part rules
-  (`Card::label`, from the theme, the global sheets and the sheet of the component around
-  the part's), and inline style. Within a layer the more specific (tag 1, class 10, both 11),
+  enclosing component's scoped sheet (never reaching a component inside it; made from the
+  theme in force where the component is `component_of`), part rules (`Card::label`, and the
+  more specific `Card.big::label`, from the theme, the global sheets and the sheet of the
+  component around the part's), and inline style. Within a layer the more specific (tag 1, class 10, both 11),
   then the later. `color`, `font` and `opacity` are inherited, opacity multiplied.
 - **Text is shaped once a paragraph and broken afterwards**, at a simple reading of UAX #14's
   opportunities (spaces, a hyphen inside a word, ideographs; a newline is a paragraph), with
@@ -74,6 +75,21 @@ layer — implements the two traits; the display list is the whole contract.
 - **The pointer's shape follows it**: an I-beam over a text field (and while a selection is
   dragged in one), the arrow elsewhere, set through `Platform.set_cursor` as it moves —
   `ui.sdl3` makes SDL's system cursor and changes it only when the shape does.
+- **Commands and subscriptions**: `update` is pure and answers the next state and the
+  `Command`s to carry out, each naming the event its result comes back as; the host performs
+  them after `update` and delivers the results on the next pass (not through the platform:
+  `InputEvent` carries no program event). `subscriptions(state)` is asked again after every
+  update, so a subscription holds exactly while the state says; the loop waits for input only
+  while no `EveryFrame` is on, and no longer than the next timer or `Every`.
+- **`Node.map(f)`** lifts a component's own events into its parent's type (Elm's `Html.map`).
+- **Live reload**: a program whose loop is `main`'s (`while host.step(…) {}`) takes `lyrac run
+  --live`'s swaps — `view` and `update` are function values in `App`, so they reach the newest
+  code — keeping the window, the framework's state and its own; under `--live` a pass waits
+  at most 100 ms, so an idle window still reaches the swap. A change to the state's shape
+  restarts it (lyrac says so). With `lui --watch` beside it, an edit to markup lands in the
+  running window.
+- **The platform's clock and look**: `now_ms`, `appearance` (and `AppearanceChanged`), and
+  `open_url` are the platform's; `ui.sdl3` reads SDL's ticks and system theme.
 - **Every element has a role and a label** (`Role`, AccessKit's), a control's label its
   visible text unless `.labelled`, for phase 5's bridge.
 - **What SDL's 2D renderer cannot do**: a clip is a whole-pixel rectangle, so `PushClip`'s
@@ -87,6 +103,10 @@ layer — implements the two traits; the display list is the whole contract.
 - `examples/ui/settings.lyra` — phase 2's gate, a static settings screen: text, rows and
   columns, a stack, components styled through their parts, a dark-themed card. `--boxes`
   prints where each element with a class was laid out.
+- `examples/ui/components_view.lui` — phase 4's gate: the `bindings.imgui.ui` example's
+  interface as markup for the `ui` target (a global sheet of `$tokens`, components with parts,
+  a command, a timer, the system's look followed), run by `examples/ui/components.lyra`, whose
+  loop is `main`'s (`lyrac run --live`); `--script` plays steps headless.
 - `examples/ui/form.lyra` — phase 3's gate, a form that works from the keyboard: two
   fields, a checkbox, a slider and Submit, run by `ui.app`. `--script "…"` plays input
   instead of waiting for a user and prints the state it left; `--png FILE` the last frame.
@@ -95,5 +115,9 @@ layer — implements the two traits; the display list is the whole contract.
   `TestRun_UiCascade` the layout and the cascade's order, with no font; `TestRun_UiLaysOutAScreen`
   the settings frame against its boxes; `TestFreetypeOffsets` the binding's offsets;
   `TestRun_UiInteraction` hit-testing, identity, the keyboard, a field's editing and roles,
-  scripted with no window; `TestRun_UiFormFromTheKeyboard` the form played by its script. None
+  scripted with no window; `TestRun_UiFormFromTheKeyboard` the form played by its script;
+  `TestRun_UiCommandsAndSubscriptions` timers, subscriptions on and off, a file round trip,
+  the clipboard, frames, `map` and quitting; `TestRun_UiComponentsPort` the markup example from
+  the keyboard; `TestLive_SwapsAUiViewAndRestartsOnItsState` (`live_test.go`) a view swapped
+  into a running host, and a restart on the state's shape. None
   needs a display; the ones that draw need SDL3 and a font, and all need HarfBuzz and FreeType.

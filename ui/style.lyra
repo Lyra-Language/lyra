@@ -15,7 +15,8 @@ module ui.style
 //!
 //! **A selector** is an element's tag (`Text`), a class (`.title`), both (`Text.title`), or a
 //! component's part (`Toggle::knob` — an element marked as part `knob` inside a component
-//! tagged `Toggle`). Classes are space-separated on an element (`"card wide"`).
+//! tagged `Toggle` — or `Toggle.big::knob`, inside one of class `big`, which is the more
+//! specific). Classes are space-separated on an element (`"card wide"`).
 //!
 //! **The cascade is five layers**, each beating every one below it whatever its rules'
 //! specificity; within a layer, the more specific rule wins, then the later:
@@ -291,6 +292,8 @@ pub struct Cascade {
   theme: Theme,
   globals: []Rule = [],
   component: string = "",
+  /// The component's own classes, for a `Component.class::part` rule.
+  component_classes: string = "",
   scoped: []Rule = [],
   outer_scoped: []Rule = [],
   inherited: Computed,
@@ -317,10 +320,18 @@ impl Cascade {
     out = applied(self.globals, tag, classes, out)
     out = applied(self.scoped, tag, classes, out)
     if part.len() > 0 && self.component.len() > 0 {
-      let selector = "${self.component}::${part}"
-      for rules in [self.theme.elements.rules, self.globals, self.outer_scoped] {
-        for rule in rules {
-          if rule.selector == selector { out = rule.style.over(out) }
+      // `Component::part`, then the more specific `Component.class::part`, each in order.
+      for rank in #[1, 11] {
+        for rules in [self.theme.elements.rules, self.globals, self.outer_scoped] {
+          for rule in rules {
+            let fit = part_specificity(
+              rule.selector,
+              self.component,
+              self.component_classes,
+              part
+            )
+            if fit == rank { out = rule.style.over(out) }
+          }
         }
       }
     }
@@ -363,10 +374,17 @@ impl Cascade {
     inherited: Computed { self.inherited | color: theme.colors.text, font: theme.font },
   }
 
-  /// The cascade inside a component tagged `name` whose scoped sheet is `sheet`.
-  pub let in_component = pure (self, name: string, sheet: Sheet) -> Cascade => Cascade {
+  /// The cascade inside a component tagged `name`, with `classes`, whose scoped sheet is
+  /// `sheet`.
+  pub let in_component = pure (
+    self,
+    name: string,
+    classes: string,
+    sheet: Sheet
+  ) -> Cascade => Cascade {
     self |
     component: name,
+    component_classes: classes,
     scoped: sheet.rules,
     outer_scoped: self.scoped,
   }
@@ -391,6 +409,23 @@ let applied = pure (
     }
   }
   out
+}
+
+/// How specific a part rule's `selector` is for part `part` of a component tagged `component`
+/// with `classes`: 1 for `Component::part`, 11 for `Component.class::part` with one of its
+/// classes, 0 when it does not match.
+pub let part_specificity = pure (
+  selector: string,
+  component: string,
+  classes: string,
+  part: string
+) -> i64 => {
+  let halves = selector.split("::")
+  if halves.len() != 2 || halves[1] != part { return 0 }
+  let head = halves[0].split(".")
+  if head.len() > 2 || head[0] != component { return 0 }
+  if head.len() == 1 { return 1 }
+  if classes.split(" ").any((c) => c == head[1]) { 11 } else { 0 }
 }
 
 /// How specific `selector` is for an element of `tag` with `classes`: 1 for its tag, 10 for

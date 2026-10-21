@@ -1,0 +1,10 @@
+module bindings.sdl3
+//! A web address or a file opened in the program the system chooses for it.
+
+@symbol("SDL_OpenURL")
+unsafe extern sdl_open_url: (url: ^u8) -> bool
+
+/// Open `url` — `https://…`, `mailto:…`, `file://…` — as the system would: a browser, a mail
+/// program, the file's application. Whether the system took it; not whether anything opened.
+pub let open_url = (url: string) -> bool =>
+  url.with_cstring((u) => unsafe { sdl_open_url(u) })

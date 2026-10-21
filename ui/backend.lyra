@@ -47,7 +47,17 @@ pub trait Platform {
   set_clipboard: (mut Self, string) -> void
   /// The pointer's shape while it is over the window.
   set_cursor: (mut Self, Cursor) -> void
+  /// Milliseconds since some fixed moment: what timers and frame times are measured in.
+  now_ms: (Self) -> i64
+  /// Whether the system is set to a light or a dark look.
+  appearance: (Self) -> Appearance
+  /// Open a web address (or `mailto:`, `file://`) in the program the system chooses for it;
+  /// whether it was taken.
+  open_url: (mut Self, string) -> bool
 }
+
+/// The system's look: light or dark.
+pub data Appearance = LightMode | DarkMode
 
 /// **A platform with its own text fields** — a phone, whose keyboard, autocorrect, dictation
 /// and selection handles belong to the system's field and not to one drawn here — places one
@@ -97,6 +107,8 @@ pub data InputEvent =
   /// what an input method composed. Its key's [KeyPressed] arrives as well, and a text field
   /// takes the text from here, not from the key.
   | TextTyped(string)
+  /// The system switched between its light and dark look, to this.
+  | AppearanceChanged(Appearance)
   /// A system text field ([NativeFields]) identified as the first string was edited: its value
   /// is now the second, with the caret before this rune. Never sent by a desktop platform.
   | FieldEdited(string, string, i64)

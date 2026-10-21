@@ -321,3 +321,126 @@ func TestLive_SpanText(t *testing.T) {
 		t.Errorf("spanText = %q", got)
 	}
 }
+
+// liveUiProgram is a `ui.app` program whose loop is `main`'s own — `host.step` — counting
+// with an `Every` subscription, on a script's platform that waits for good, and printing the
+// count and the text its view last showed: what the host laid out, through the `view` in its
+// `App`, a function value.
+const liveUiProgram = `import ui.app.{ App, Command, Subscription, Every, host_of }
+import ui.script.{ timed_platform, Waited }
+import ui.backend.{ Renderer }
+import ui.draw.{ Size, Color, TextureId }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, text }
+
+extern usleep: (us: u32) -> i32
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = pure (self, background, ops) => {}
+}
+
+data Ev = Tick
+
+struct State {
+  count: i64 = 0,
+}
+
+let main = () => {
+  var platform = timed_platform([Waited(1000000000)], Size { w: 100.0, h: 100.0 })
+  var renderer = Blank {}
+  var fonts = fonts_new()
+  let app = App { view: view, update: update, subscriptions: subscriptions, background: Color { r: 0, g: 0, b: 0 } }
+  var host = host_of(app, State {}, platform)
+  var n = 0
+  while n < 100000 && host.step(platform, renderer, fonts) {
+    if host.shown.len() > 0 { println("${host.state.count} ${host.shown[0].label}") }
+    n += 1
+    unsafe { usleep(20000) }
+  }
+}
+
+let view = pure (s: State) -> Node<Ev> => text("first ${s.count}")
+
+let update = pure (s: State, _: Ev) -> (State, []Command<Ev>) => (State { count: s.count + 1 }, [])
+
+let subscriptions = pure (_: State) -> []Subscription<Ev> => [Every(10, Tick)]
+`
+
+// Live reload of a `ui.app` program (phase 4): a changed view is swapped in while the host
+// keeps its state — the count goes on from where it was, and the new text is the host's own
+// layout's — and a change to the state's fields restarts it, saying so.
+func TestLive_SwapsAUiViewAndRestartsOnItsState(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("--live swaps code only on macOS")
+	}
+	requireCC(t)
+	skipWithoutText(t)
+	t.Setenv("LYRA_STD", repoRoot(t))
+	path := filepath.Join(t.TempDir(), "app.lyra")
+	saves := 0
+	save := func(src string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		saves++
+		stamp := time.Now().Add(time.Duration(saves) * time.Second)
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save(liveUiProgram)
+
+	stdout, stderr, restore := captureStreams(t)
+	stop := make(chan os.Signal, 1)
+	result := make(chan int, 1)
+	o := buildOptions{path: path, opt: "-O0", watch: true, live: true}
+	go func() { result <- watch(o, stop, 20*time.Millisecond) }()
+	finish := func() {
+		t.Helper()
+		stop <- os.Interrupt
+		select {
+		case <-result:
+			restore()
+		case <-time.After(30 * time.Second):
+			restore()
+			t.Fatal("watch did not return after the interrupt")
+		}
+	}
+	defer func() {
+		if !t.Failed() {
+			return
+		}
+		t.Logf("stdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}()
+
+	if !waitFor(stdout, " first 3\n") {
+		finish()
+		t.Fatal("generation 0 never ran")
+	}
+	save(strings.Replace(liveUiProgram, `text("first ${s.count}")`, `text("second ${s.count}")`, 1))
+	if !waitFor(stderr, "app.lyra changed; applied") || !waitFor(stdout, " second ") {
+		finish()
+		t.Fatal("the new view was not applied")
+	}
+	if n := firstNumberWith(stdout.String(), "second"); n < 4 {
+		finish()
+		t.Fatalf("the first line from the new view counts %d: the state did not survive the swap", n)
+	}
+	// The state's fields changed: a restart, said, and the count from 0 again.
+	save(strings.Replace(liveUiProgram, "  count: i64 = 0,\n", "  count: i64 = 0,\n  extra: bool = false,\n", 1))
+	if !waitFor(stderr, "restarting:") || !waitFor(stdout, "0 first 0\n") {
+		finish()
+		t.Fatal("a change to the state's fields did not restart the program")
+	}
+	finish()
+}

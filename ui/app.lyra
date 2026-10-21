@@ -1,47 +1,124 @@
 module ui.app
 //! A program's loop: its state, a `view` of it, an `update` for each event the view's
-//! controls raise — and the framework between them.
+//! controls raise, the work `update` asks for, the things it subscribes to — and the
+//! framework between them.
 //!
 //! ```
-//! import ui.app.{ App, run }
+//! import ui.app.{ App, Command, After, Subscription, Every, run }
 //!
-//! data Msg = Increment
+//! data Msg = Increment | Tick
 //!
 //! let view = pure (count: i64) -> Node<Msg> => column([
 //!   text("${count}"),
 //!   button("More", Increment),
 //! ])
-//! let update = pure (count: i64, msg: Msg) -> i64 => match msg { Increment => count + 1 }
+//! let update = pure (count: i64, msg: Msg) -> (i64, []Command<Msg>) => match msg {
+//!   Increment => (count + 1, [After(1000, Tick)]),
+//!   Tick => (count, []),
+//! }
+//! let subscriptions = pure (count: i64) -> []Subscription<Msg> => []
 //!
-//! let final = run(App { view: view, update: update, background: BACKGROUND }, 0, platform, renderer, fonts)
+//! let app = App { view: view, update: update, subscriptions: subscriptions, background: BG }
+//! let last = run(app, 0, platform, renderer, fonts)
 //! ```
 //!
-//! **Each pass**: the view of the state, laid out with the framework's state (`ui.interact`'s
-//! `Ui`), painted and drawn; then the platform's input, **waited for** when there is none —
-//! an interface with nothing changing costs nothing while the user is away — each input routed
-//! to the events it raises, `update` applied to each in turn, and the view laid out again
-//! before the next input, so a key pressed after a click acts on what the click made.
+//! **Each pass** ([Host.step]): the events already due — timers, the results of commands,
+//! subscriptions — each through `update`; the view of the state laid out with the framework's
+//! state (`ui.interact`'s `Ui`), painted and drawn; then the platform's input, **waited for**
+//! when there is none — an interface with nothing changing costs nothing while the user is
+//! away — each input routed to the events it raises, `update` applied to each in turn, and the
+//! view laid out again before the next input, so a key pressed after a click acts on what the
+//! click made.
 //!
-//! **`update` is pure and answers only the next state** for now. Phase 4 gives it work to ask
-//! for — commands (a file read, a timer, a request) and subscriptions — which is what [App]
-//! will grow, beside `update`, rather than a change to how a view or an event is written.
+//! **`update` is pure**: it answers the next state and the [Command]s it wants carried out — a
+//! file written or read, a timer, the clipboard, a web address opened, the program ended —
+//! each naming the event its result comes back as. The host performs them after `update`
+//! returns, and their results are events of the next pass. They are carried out where the host
+//! runs, one after another; a slow read holds the loop (todo.md).
+//!
+//! **`subscriptions` says what the state wants to hear of** ([Subscription]): every frame, every so many
+//! milliseconds, the window's size, the system's look. It is asked again after every update,
+//! so a subscription is on exactly while the state says so — and the loop waits for input only
+//! while no `EveryFrame` is on, and no longer than the next timer.
+//!
+//! **A program's own `main` can hold the loop** — `while host.step(platform, renderer, fonts)
+//! {}` — which is what `lyrac run --live` needs: it swaps changed code in only at a loop of
+//! `main`'s, and calls `view` and `update` through the function values in [App], which reach
+//! the newest code. The host keeps the window, the framework's state and the program's state
+//! across a swap; under `--live` (`LYRA_LIVE_FD` set) it never waits longer than a tenth of a
+//! second, so an idle window still reaches the swap, and lays the view out again each pass.
+//! A change to the state's shape is a restart, which lyrac says.
 
-import ui.backend.{ Platform, Renderer, InputEvent, CloseRequested }
-import ui.draw.{ Point, Color }
-import ui.text.{ Fonts, glyph_atlas }
-import ui.layout.{ Node, paint }
-import ui.interact.{ ui_new }
+import ui.backend.{
+  Platform,
+  Renderer,
+  CloseRequested,
+  Resized,
+  AppearanceChanged,
+  Appearance,
+}
+import ui.draw.{ Point, Size, Color }
+import ui.text.{ Fonts, GlyphAtlas, glyph_atlas }
+import ui.layout.{ Node, Laid, paint }
+import ui.interact.{ Ui, ui_new }
+import std.io.{ read_file, write_file }
+import std.env.{ lookup }
 
-/// A program: its view of its state `s`, and the next state for each event `e` its view raises;
-/// the colour the window is cleared to behind the view.
+/// A program: its view of its state `s`; the next state, and the work to carry out, for each
+/// event `e` its view raises; what its state subscribes to; the colour the window is cleared to
+/// behind the view.
 pub struct App<s, e> {
   view: (s) -> Node<e>,
-  update: (s, e) -> s,
+  update: (s, e) -> (s, []Command<e>),
+  subscriptions: (s) -> []Subscription<e>,
   background: Color,
 }
 
-/// Run `app` from `state` until the user closes the window, drawing through `renderer`, its
-/// input from `platform` and its text in `fonts`; answer the last state.
+/// Work `update` asks the host to carry out, each naming the event its result comes back as.
+pub data Command<e> =
+  /// Write the text to the file at the path; whether it was written.
+  WriteFile(string, string, (bool) -> e)
+  /// Read the file at the path; its text, or `None`.
+  | ReadFile(string, (Maybe<string>) -> e)
+  /// The event, this many milliseconds from now.
+  | After(i64, e)
+  /// Put the text on the clipboard.
+  | CopyText(string)
+  /// The clipboard's text.
+  | PasteText((string) -> e)
+  /// Open a web address (or `mailto:`, `file://`) as the system does.
+  | OpenUrl(string)
+  /// End the program, as closing its window does.
+  | QuitApp
+
+/// What a state wants to hear of while it holds.
+pub data Subscription<e> =
+  /// Every frame drawn, with the milliseconds since the last — an animation's clock. The loop
+  /// does not wait for input while one is on.
+  EveryFrame((f32) -> e)
+  /// The event, every so many milliseconds.
+  | Every(i64, e)
+  /// The window's new size, each time it changes.
+  | OnResize((Size) -> e)
+  /// The system's look, each time it switches between light and dark.
+  | OnAppearance((Appearance) -> e)
+
+/// A program with no work to ask for and nothing to subscribe to: `update` answers the next
+/// state alone, Elm's sandbox.
+pub let sandbox<s, e> = pure (
+  view: (s) -> Node<e>,
+  update: pure (s, e) -> s,
+  background: Color
+) -> App<s, e> => App {
+  view: view,
+  update: (state: s, event: e) -> (s, []Command<e>) => (update(state, event), []),
+  subscriptions: (_: s) -> []Subscription<e> => [],
+  background: background,
+}
+
+/// Run `app` from `state` until the user closes the window or `update` asks to quit, drawing
+/// through `renderer`, its input from `platform` and its text in `fonts`; answer the last
+/// state.
 pub let run<s, e, p, r> where p: Platform, r: Renderer = (
   app: App<s, e>,
   state: s,
@@ -49,25 +126,215 @@ pub let run<s, e, p, r> where p: Platform, r: Renderer = (
   renderer: mut r,
   fonts: mut Fonts
 ) -> s => {
-  var current = state
-  var ui = ui_new()
-  var atlas = glyph_atlas()
-  var laid = ui.frame((app.view)(current), platform.window_size(), fonts)
-  loop {
-    ui.place_text_input(laid, platform)
-    let ops = paint(laid, Point {}, platform.scale(), fonts, atlas, renderer)
-    renderer.draw(app.background, ops)
-    for input in platform.next_events(-1) {
-      if closes(input) { return current }
-      let events = ui.handle(laid, input, platform)
-      for event in events { current = (app.update)(current, event) }
-      laid = ui.frame((app.view)(current), platform.window_size(), fonts)
-    }
-  }
+  var host = host_of(app, state, platform)
+  while host.step(platform, renderer, fonts) {}
+  host.state
 }
 
-/// Whether `input` asks the program to end.
-let closes = pure (input: InputEvent) -> bool => match input {
-  CloseRequested => true,
-  _ => false,
+/// What a running program's loop holds between passes: the program, its state, the
+/// framework's state and glyphs, the events waiting to be delivered and the timers waiting to
+/// be due, when each `Every` period last fired, when the last frame was drawn, whether the
+/// program is still running, and the tree it last showed.
+pub struct Host<s, e> {
+  app: App<s, e>,
+  state: s,
+  ui: Ui,
+  atlas: GlyphAtlas,
+  waiting: []e = [],
+  timers: []Timer<e> = [],
+  fired: [](i64, i64) = [],
+  last_frame: i64 = -1,
+  running: bool = true,
+  live: bool = false,
+  /// The tree as last laid out, after the last input of the last pass — none before the
+  /// first. (An array of at most one: a generic struct's `None` default is not settled yet,
+  /// todo.md.)
+  shown: []Laid<e> = [],
+}
+
+/// The sooner of a wait (`-1` for none) and `delay` milliseconds, never below none at all.
+let sooner = pure (wait: i64, delay: i64) -> i64 => {
+  let d = delay.max(0)
+  if wait < 0 { d } else { wait.min(d) }
+}
+
+/// An event due at a moment of the platform's clock.
+pub struct Timer<e> {
+  at: i64,
+  event: e,
+}
+
+/// A host for `app` at `state`, on `platform`'s clock.
+pub let host_of<s, e, p> where p: Platform = (
+  app: App<s, e>,
+  state: s,
+  platform: p
+) -> Host<s, e> =>
+  Host {
+    app: app,
+    state: state,
+    ui: ui_new(),
+    atlas: glyph_atlas(),
+    last_frame: platform.now_ms(),
+    live: lookup("LYRA_LIVE_FD").is_some(),
+  }
+
+/// The longest a pass waits for input under `lyrac run --live`, and how long a frame lasts
+/// while an animation runs, in milliseconds.
+pub const LIVE_WAIT_MS: i64 = 100
+pub const FRAME_MS: i64 = 16
+
+impl Host<s, e> {
+  /// One pass of the loop: what is due, delivered; the view drawn; input waited for and
+  /// routed. Whether the program goes on.
+  pub let step<p, r> where p: Platform, r: Renderer = (
+    self: mut,
+    platform: mut p,
+    renderer: mut r,
+    fonts: mut Fonts
+  ) -> bool => {
+    let now = platform.now_ms()
+    self.deliver_due(now, platform)
+    let subs = (self.app.subscriptions)(self.state)
+    let elapsed = f32(now - self.last_frame)
+    self.last_frame = now
+    for sub in subs {
+      if let EveryFrame(make) = sub { self.dispatch(make(elapsed), now, platform) }
+    }
+    self.deliver_due(now, platform)
+    if !self.running { return false }
+    var laid = self.ui.frame((self.app.view)(self.state), platform.window_size(), fonts)
+    self.ui.place_text_input(laid, platform)
+    let ops = paint(laid, Point {}, platform.scale(), fonts, self.atlas, renderer)
+    renderer.draw(self.app.background, ops)
+    for input in platform.next_events(self.wait_ms(now)) {
+      let at = platform.now_ms()
+      match input {
+        CloseRequested => {
+          self.running = false
+          return false
+        },
+        Resized(size) => self.heard(at, platform, (sub) => match sub {
+          OnResize(make) => Some(make(size)),
+          _ => None,
+        }),
+        AppearanceChanged(look) => self.heard(at, platform, (sub) => match sub {
+          OnAppearance(make) => Some(make(look)),
+          _ => None,
+        }),
+        _ => {},
+      }
+      for event in self.ui.handle(
+        laid,
+        input,
+        platform
+      ) { self.dispatch(event, at, platform) }
+      self.deliver_due(at, platform)
+      if !self.running { return false }
+      laid = self.ui.frame((self.app.view)(self.state), platform.window_size(), fonts)
+    }
+    self.shown = [laid]
+    self.running
+  }
+
+  /// How long the pass may wait for input from `now`: not at all while events wait, a frame
+  /// while a frame subscription is on, until the next timer or `Every`, else for good — never
+  /// past a tenth of a second under `--live`.
+  let wait_ms = (self: mut, now: i64) -> i64 => {
+    if self.waiting.len() > 0 { return 0 }
+    var wait: i64 = -1
+    for timer in self.timers { wait = sooner(wait, timer.at - now) }
+    for sub in (self.app.subscriptions)(self.state) {
+      match sub {
+        EveryFrame(_) => { wait = sooner(wait, FRAME_MS) },
+        Every(period, _) => { wait = sooner(wait, self.last_fired(period, now) + period - now) },
+        _ => {},
+      }
+    }
+    if !self.live { return wait }
+    if wait < 0 { LIVE_WAIT_MS } else { wait.min(LIVE_WAIT_MS) }
+  }
+
+  /// The events due by `now`, each through `update`: the results waiting, the timers whose
+  /// moment has come, and each `Every` whose period has passed — until none is left (at most
+  /// a thousand, so an update that answers every event with another cannot hold the loop).
+  let deliver_due<p> where p: Platform = (
+    self: mut,
+    now: i64,
+    platform: mut p
+  ) -> void => {
+    var rounds = 0
+    loop {
+      var due: []e = self.waiting
+      self.waiting = []
+      var later: []Timer<e> = []
+      for timer in self.timers {
+        if timer.at <= now { due.push(timer.event) } else { later.push(timer) }
+      }
+      self.timers = later
+      for sub in (self.app.subscriptions)(self.state) {
+        if let Every(period, event) = sub {
+          if now - self.last_fired(period, now) >= period {
+            due.push(event)
+            self.fire(period, now)
+          }
+        }
+      }
+      if due.len() == 0 { return }
+      for event in due { self.dispatch(event, now, platform) }
+      rounds += 1
+      if rounds >= 1000 || !self.running { return }
+    }
+  }
+
+  /// `event` through `update`, and the commands it answers carried out.
+  let dispatch<p> where p: Platform = (
+    self: mut,
+    event: e,
+    now: i64,
+    platform: mut p
+  ) -> void => {
+    let (next, commands) = (self.app.update)(self.state, event)
+    self.state = next
+    for command in commands {
+      match command {
+        WriteFile(path, text, done) => self.waiting.push(done(write_file(path, text))),
+        ReadFile(path, done) => self.waiting.push(done(read_file(path))),
+        After(ms, later) => self.timers.push(Timer { at: now + ms, event: later }),
+        CopyText(text) => platform.set_clipboard(text),
+        PasteText(done) => self.waiting.push(done(platform.clipboard())),
+        OpenUrl(url) => {
+          let _ = platform.open_url(url)
+        },
+        QuitApp => { self.running = false },
+      }
+    }
+  }
+
+  /// The event each subscription `pick` answers for, through `update`.
+  let heard<p> where p: Platform = (
+    self: mut,
+    now: i64,
+    platform: mut p,
+    pick: (Subscription<e>) -> Maybe<e>
+  ) -> void => {
+    for sub in (self.app.subscriptions)(self.state) {
+      if let Some(event) = pick(sub) { self.dispatch(event, now, platform) }
+    }
+  }
+
+  /// When an `Every` of `period` last fired; `now` for one that has not, so its first is a
+  /// period after it was first seen.
+  let last_fired = (self: mut, period: i64, now: i64) -> i64 => {
+    for (p, at) in self.fired {
+      if p == period { return at }
+    }
+    self.fired.push((period, now))
+    now
+  }
+
+  /// `period`'s `Every` fired at `now`.
+  let fire = (self: mut, period: i64, now: i64) -> void => {
+    self.fired = [...[f in self.fired | f.0 != period | f], (period, now)]
+  }
 }

@@ -561,8 +561,8 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   would do.
 - **[DONE 10/19] Markup for `bindings.imgui.ui`** — `.lui` files generated into Lyra by
   `tools/lui`, not a Lyra grammar change (COMPLETED.md, 10/19).
-- **[OPEN] `.lui`: components called across files** (an import each). A lowercase tag
-  reaches only the same file's components, since lui must know a component's props.
+- **[DONE 10/21] `.lui`: components called across files** — `<import src="other.lui"/>`
+  reads its components, checks calls and imports the module (COMPLETED.md, 10/21).
 - **[OPEN] `bindings.imgui.ui`: what the tree lacks.** Keys for repeated labels (ImGui's
   `push_id`), tooltips, tables, child regions, an integer slider, and layout past `Row` and
   `Form`. Grow it as Vega's next dialogs and panels move to markup.
@@ -705,6 +705,22 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 10/21] Phase 3, interaction** — `Node<e>`, `ui.interact` (identity, hit-testing,
   focus, the keyboard, a drawn text field), `ui.app`'s loop, `ui.script`; gate
   `examples/ui/form.lyra` (COMPLETED.md, 10/21).
+- **[DONE 10/21] Phase 4, markup and reload** — lui's `ui` target (tokens, global and themed
+  sheets, parts, imports across files), commands and subscriptions, `Node.map`, `Host` for
+  `lyrac run --live`; gate `examples/ui/components_view.lui` (COMPLETED.md, 10/21).
+- **[OPEN] `ui.app`: commands run where the host runs.** A file read holds the loop until it
+  ends; async I/O wants a worker and results the platform posts (an `InputEvent` carrying an
+  id, since it cannot carry the program's event type).
+- **[OPEN] lui's `ui` target lacks** menus, windows, a colour picker and `Fragment` (a `<for>`
+  holds one element); `ui` itself has no such elements yet.
+- **[OPEN] lui: an import's module is its path from the importing file**, `/` as `.` — right
+  when both are under the program's root as written, else `module="…"`. Imports are one level:
+  an imported file's own imports are not read.
+- **[OPEN] Typechecker: a generic struct's field defaulted to `None`** (`shown: Maybe<Laid<e>>
+  = None`) is E073; `Host.shown` is a `[]Laid<e>` of at most one meanwhile.
+- **[OPEN] Typechecker: an untyped lambda as a data constructor's payload** (`Scope((_) =>
+  sheet)` for `Scope((Theme) -> Sheet)`) is not elaborated from the payload's type, as an
+  argument's is; its parameters must be annotated.
 - **[OPEN] `ui`: `:hover`-style selectors.** A control's states are classes the framework adds
   (`Button.hover`); whether the cascade grows pseudo-classes, and their specificity, is open.
 - **[OPEN] `ui.interact`: a caret moves by rune, not grapheme cluster.** `é` written as `e`

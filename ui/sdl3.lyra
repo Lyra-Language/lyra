@@ -34,6 +34,10 @@ module ui.sdl3
 import bindings.sdl3.{
   init,
   quit,
+  ticks,
+  open_url,
+  system_theme,
+  ThemeDark,
   last_error,
   platform,
   INIT_VIDEO,
@@ -112,6 +116,10 @@ import ui.backend.{
   Platform,
   Renderer,
   InputEvent,
+  Appearance,
+  LightMode,
+  DarkMode,
+  AppearanceChanged,
   CloseRequested,
   Resized,
   ScaleChanged,
@@ -211,7 +219,7 @@ pub let open = (title: string, width: f32, height: f32) -> Result<SdlWindow, str
   }
   canvas.set_vsync(true)
   Ok(SdlWindow {
-    platform: SdlPlatform { window: window },
+    platform: SdlPlatform { window: window, look: system_look() },
     renderer: SdlRenderer { canvas: canvas, window: window },
   })
 }
@@ -233,6 +241,8 @@ pub struct SdlPlatform {
   /// The cursor shown, made from the platform's own shapes, and which shape it is.
   cursor: Maybe<SystemCursor> = None,
   shape: Cursor = Arrow,
+  /// The system's look as last reported, to say when it changes.
+  look: Appearance = LightMode,
 }
 
 impl Platform for SdlPlatform {
@@ -243,6 +253,13 @@ impl Platform for SdlPlatform {
     while let Some(event) = next {
       if let Some(input) = translate(event, per_point) { events.push(input) }
       next = poll_event()
+    }
+    // SDL's own theme event wakes the wait above; the look is read rather than the event
+    // bound, so a change is said once whatever woke it.
+    let look = system_look()
+    if look != self.look {
+      self.look = look
+      events.push(AppearanceChanged(look))
     }
     events
   }
@@ -276,7 +293,14 @@ impl Platform for SdlPlatform {
     self.cursor = Some(made)
     self.shape = shape
   }
+  now_ms = (self) => i64(ticks())
+  appearance = pure (self) => self.look
+  open_url = (self, url) => open_url(url)
 }
+
+/// The system's look, light unless it says dark.
+let system_look = () -> Appearance =>
+  if system_theme() == ThemeDark { DarkMode } else { LightMode }
 
 /// Logical units a point of `window`'s coordinates is: its pixel density over its display
 /// scale.

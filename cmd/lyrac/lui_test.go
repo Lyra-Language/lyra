@@ -465,3 +465,168 @@ func TestLui_InputsModalAndSlot(t *testing.T) {
 		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
 }
+
+// The ui target's example — components_view.lui ported from bindings.imgui.ui — is what lui
+// makes from its markup, and the program running it checks clean, warnings and all.
+func TestLui_UiTargetExampleIsCurrentAndChecks(t *testing.T) {
+	skipWithoutText(t)
+	lui := buildLui(t)
+	root := repoRoot(t)
+	if b, err := exec.Command(lui, "--check", filepath.Join(root, "examples", "ui", "components_view.lui")).CombinedOutput(); err != nil {
+		t.Fatalf("examples/ui/components_view.lyra is stale: %v\n%s", err, b)
+	}
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(root, "examples", "ui", "components.lyra"))
+	if code != 0 {
+		t.Fatalf("checking the example exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if out := stdout + stderr; strings.Contains(out, "warning") {
+		t.Errorf("the example or its generated view warns:\n%s", out)
+	}
+}
+
+// The ui target's mistakes, at their markup lines: an element ui lacks, a part a component
+// does not have (its own, or a control's), a token in an inline style, `key=` or a global
+// style in the bindings.imgui.ui target, an unknown target, a <for> of several elements, an
+// import lui cannot read, and a misspelt prop of an imported component.
+func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
+	lui := buildLui(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "w.lui"), []byte("<script target=\"ui\"></script>\n<component name=\"badge\" props={{ words: string }}>\n  <Text part=\"label\">{words}</Text>\n</component>\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ui := "<script target=\"ui\"></script>\n"
+	cases := []struct{ name, source, want string }{
+		{"unknown", ui + "<component name=\"a\">\n  <Buton/>\n</component>", "x.lui:3: <Buton> is not an element of ui"},
+		{"attribute", ui + "<component name=\"a\">\n  <Column gapp=\"8\"/>\n</component>", "x.lui:3: <Column> has no attribute gapp"},
+		{"own part", ui + "<component name=\"a\">\n  <Text part=\"title\">T</Text>\n</component>\n<style global>\n  a::titel { color: #fff }\n</style>", "x.lui:6: a has no part titel (its parts: title)"},
+		{"control part", ui + "<style global>\n\n  Slider::knob { color: #fff }\n</style>", "x.lui:4: Slider has no part knob (its parts: track, fill, thumb)"},
+		{"class part", ui + "<component name=\"a\">\n  <Text part=\"title\">T</Text>\n</component>\n<style global>\n  a.big::tittle { color: #fff }\n</style>", "x.lui:6: a has no part tittle"},
+		{"inline token", ui + "<component name=\"a\">\n  <Column style=\"gap: $space.m\"/>\n</component>", "x.lui:3: $space.m reads the theme, which an inline style cannot"},
+		{"bad token", ui + "<style global>\n  .a { color: $colors-x }\n</style>", "x.lui:3: $colors-x is not a token"},
+		{"imgui key", "<component name=\"a\" props={{ x: e }}>\n  <Button on_click={x} key=\"k\">Hi</Button>\n</component>", "x.lui:2: key= and part= are the ui target's"},
+		{"imgui global", "<style global>\n</style>", "x.lui:1: a global <style> is the ui target's"},
+		{"target", "<script target=\"web\"></script>", "x.lui:1: target is \"ui\" or \"imgui\", not \"web\""},
+		{"for", ui + "<component name=\"a\">\n  <for each={i in 0..<2}>\n    <Text>a</Text>\n    <Text>b</Text>\n  </for>\n</component>", "x.lui:3: a <for> holds one element in the ui target"},
+		{"import", ui + "<import src=\"nope.lui\"/>", "x.lui:2: cannot read nope.lui"},
+		{"imported prop", ui + "<import src=\"w.lui\"/>\n<component name=\"a\">\n  <badge word=\"hi\"/>\n</component>", "x.lui:4: component badge has no prop word"},
+		{"imported part", ui + "<import src=\"w.lui\"/>\n<style global>\n  badge::lable { color: #fff }\n</style>", "x.lui:4: badge has no part lable (its parts: label)"},
+	}
+	for _, c := range cases {
+		path := filepath.Join(dir, "x.lui")
+		if err := os.WriteFile(path, []byte(c.source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := exec.Command(lui, path).CombinedOutput()
+		if err == nil {
+			t.Errorf("%s: lui accepted it", c.name)
+			continue
+		}
+		if !strings.Contains(string(out), c.want) {
+			t.Errorf("%s: got %q, want it to contain %q", c.name, out, c.want)
+		}
+	}
+}
+
+// A component of another file, imported with <import src="…"/>, is called with its props
+// checked by lui and imported into the module by lyrac; its part is styled from the
+// importing file's global sheet, a `$token` reads the theme the sheet is made from, and
+// `--target ui` names the target for a file that does not. A mistake lyrac finds in a token
+// (`$colours`) or a script is put back at its markup line by `lui map`.
+func TestLui_UiTargetAcrossFilesTokensAndMap(t *testing.T) {
+	skipWithoutText(t)
+	lui := buildLui(t)
+	dir := t.TempDir()
+	widgets := `<component name="badge" props={{ words: string }}>
+  <style>
+    Text { font-size: $font.size }
+  </style>
+  <Text part="label">{words}</Text>
+</component>
+`
+	view := `<script>
+  import ui.style.{ Theme }
+  pub data Ev = Go
+</script>
+<import src="widgets.lui"/>
+<style global theme={Theme} name="app_sheet">
+  .box { padding: $space.m; background: $colors.surface }
+  badge::label { color: $colors.accent }
+</style>
+<component name="view" props={{ t: Theme }} event={Ev}>
+  <Themed theme={t} sheet={app_sheet(t)}>
+    <Column class="box" key="top">
+      <badge words="hello"/>
+      <Button on_click={Go}>Go</Button>
+    </Column>
+  </Themed>
+</component>
+`
+	for name, text := range map[string]string{"widgets.lui": widgets, "view.lui": view} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"widgets.lui", "view.lui"} {
+		if b, err := exec.Command(lui, "--target", "ui", filepath.Join(dir, name)).CombinedOutput(); err != nil {
+			t.Fatalf("lui refused %s: %v\n%s", name, err, b)
+		}
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"import widgets.{ badge }",
+		"pub let app_sheet = pure (t: Theme) -> Sheet",
+		`Rule { selector: "badge::label", style: Style { color: Some(t.colors.accent) } }, // view.lui:8`,
+		`.keyed("top")`,
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("view.lyra lacks %q:\n%s", want, generated)
+		}
+	}
+	main := filepath.Join(dir, "main.lyra")
+	if err := os.WriteFile(main, []byte(`import view.{ view }
+import ui.layout.{ layout, loose }
+import ui.style.{ light_theme }
+import ui.text.{ fonts_new }
+import ui.draw.{ Size }
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  let laid = layout(view(light_theme()), loose(Size { w: 200.0, h: 200.0 }), fonts)
+  println("${laid.tag} ${laid.children[0].laid.tag}")
+  0
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LYRA_STD", repoRoot(t))
+	stdout, stderr, code := captureRun(t, "run", main)
+	if code != 0 || stdout != "view Themed\n" {
+		t.Errorf("running it exited %d, printed %q\nstderr: %s", code, stdout, stderr)
+	}
+
+	// A token naming no field of the theme, and a script's mistake: lyrac's errors, mapped.
+	broken := strings.Replace(view, "$colors.accent", "$colours.accent", 1)
+	broken = strings.Replace(broken, "pub data Ev = Go", "pub data Ev = Go\n  let wrong = () -> bool => 7", 1)
+	if err := os.WriteFile(filepath.Join(dir, "view.lui"), []byte(broken), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := exec.Command(lui, "--target", "ui", filepath.Join(dir, "view.lui")).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused the broken view: %v\n%s", err, b)
+	}
+	so, se, _ := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	cmd := exec.Command(lui, "map")
+	cmd.Stdin = strings.NewReader(so + se)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("lui map: %v\n%s", err, out)
+	}
+	path := filepath.Join(dir, "view.lui")
+	for _, want := range []string{path + ":4: error", path + ":9: error"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("mapped output lacks %q:\n%s", want, out)
+		}
+	}
+}

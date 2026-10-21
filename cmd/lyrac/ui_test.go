@@ -632,7 +632,7 @@ int main(void) {
 // holding the accent a gap inside the border, its corners less round by the inset. **Roles and labels**: each control's role, and its
 // label its visible text unless it was given one.
 func TestRun_UiInteraction(t *testing.T) {
-	got := runUiProgram(t, `import ui.app.{ App, run }
+	got := runUiProgram(t, `import ui.app.{ sandbox, run }
 import ui.script.{ ScriptPlatform, script_platform, parse_script }
 import ui.interact.{ ui_new, find }
 import ui.backend.{ Renderer, Arrow, IBeam }
@@ -705,7 +705,7 @@ let play = (view: (State) -> Node<Ev>, script: string, fonts: mut Fonts) -> (Sta
   let Ok(inputs) = parse_script(script) else { panic("bad script: ${script}") }
   var platform = script_platform(inputs, Size { w: 300.0, h: 200.0 })
   var renderer = Blank {}
-  let app = App { view: view, update: update, background: Color { r: 0, g: 0, b: 0 } }
+  let app = sandbox(view, update, Color { r: 0, g: 0, b: 0 })
   let last = run(app, State {}, platform, renderer, fonts)
   (last, platform)
 }
@@ -982,5 +982,229 @@ result: Thanks, Ada: ada@example.com, with the newsletter, volume 7.
 	}
 	if w := right - left + 1; w < 9 || w > 13 {
 		t.Errorf("the checkbox's fill is %d pixels wide, want about 11 (18 less the border and gap each side)", w)
+	}
+}
+
+// Commands and subscriptions (`ui.app`), played on a script's clock with no window. **A timer**
+// (`After`) fires once at its moment, among the ticks of an `Every` that runs only while the
+// state subscribes to it. **The window's size and the system's look** are heard while
+// subscribed and not after. **A file written** comes back as its event, whose update reads it
+// back; **the clipboard** is written and read. **A frame subscription** delivers a frame each
+// pass while on, their times adding up to the time passed. **`Node.map`** lifts a component's
+// own event into the program's. **`QuitApp`** ends the program before the script does, and a
+// web address asked for is opened.
+func TestRun_UiCommandsAndSubscriptions(t *testing.T) {
+	t.Setenv("UI_TMP", t.TempDir())
+	got := runUiProgram(t, `import ui.app.{
+  App,
+  Command,
+  Subscription,
+  WriteFile,
+  ReadFile,
+  After,
+  CopyText,
+  PasteText,
+  OpenUrl,
+  QuitApp,
+  EveryFrame,
+  Every,
+  OnResize,
+  OnAppearance,
+  run,
+}
+import ui.script.{ timed_platform, parse_steps }
+import ui.backend.{ Renderer, Appearance, DarkMode }
+import ui.draw.{ Size, Color, TextureId }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, column, button }
+import std.env.{ lookup }
+
+/// A renderer that draws nothing.
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = (self, id, at, image) => true
+  draw = (self, background, ops) => {}
+}
+
+data Msg =
+  Start
+  | Stop
+  | Tick
+  | Delayed
+  | Save
+  | Saved(bool)
+  | Loaded(Maybe<string>)
+  | Copy
+  | Pasted(string)
+  | Animate
+  | Frame(f32)
+  | Resize(Size)
+  | Look(Appearance)
+  | Child(Poke)
+  | Bye
+
+/// A component with events of its own, lifted into the program's by map.
+data Poke = Poked
+
+struct State {
+  running: bool = false,
+  animating: bool = false,
+  frames: i64 = 0,
+  elapsed: f32 = 0.0,
+  log: []string = [],
+  file: string,
+}
+
+let main = () -> u8 => {
+  let file = "${lookup("UI_TMP") ?? "/tmp"}/saved.txt"
+  // Buttons in order: start, stop, save, copy, animate, child's poke, quit — Tab reaches
+  // the first, and each further Tab the next. The last Tab and Enter never play: quit ends
+  // the program first.
+  let script = [
+    "Tab Enter",
+    "wait:1000",
+    "resize:320,240 dark",
+    "Tab Enter",
+    "wait:1000 light",
+    "Tab Enter",
+    "Tab Enter",
+    "Tab Enter wait:100 Enter",
+    "Tab Enter",
+    "Tab Enter Tab Enter",
+  ].join(" ")
+  let Ok(steps) = parse_steps(script) else { panic("script") }
+  var platform = timed_platform(steps, Size { w: 300.0, h: 200.0 })
+  var renderer = Blank {}
+  var fonts = fonts_new()
+  let app = App { view: view, update: update, subscriptions: subscriptions, background: Color { r: 0, g: 0, b: 0 } }
+  let last = run(app, State { file: file }, platform, renderer, fonts)
+  for line in last.log { println(line) }
+  println("frames ${last.frames} over ${last.elapsed}ms; clock ${platform.clock}; script ${platform.next} of ${platform.steps.len()}; opened ${platform.opened.join(",")}")
+  0
+}
+
+let view = pure (_: State) -> Node<Msg> => column([
+  button("start", Start),
+  button("stop", Stop),
+  button("save", Save),
+  button("copy", Copy),
+  button("animate", Animate),
+  child().map(Child),
+  button("quit", Bye),
+])
+
+/// A part of the interface written for its own events.
+let child = pure () -> Node<Poke> => column([button("poke", Poked)])
+
+let update = pure (s: State, msg: Msg) -> (State, []Command<Msg>) => match msg {
+  Start => (said(State { s | running: true }, "start"), [After(500, Delayed)]),
+  Stop => (said(State { s | running: false }, "stop"), []),
+  Tick => (said(s, "tick"), []),
+  Delayed => (said(s, "delayed"), []),
+  Save => (said(s, "save"), [WriteFile(s.file, "hello", Saved)]),
+  Saved(ok) => (said(s, "saved ${ok}"), [ReadFile(s.file, Loaded)]),
+  Loaded(text) => (said(s, "loaded ${text ?? "nothing"}"), []),
+  Copy => (said(s, "copy"), [CopyText("clipped"), PasteText(Pasted)]),
+  Pasted(text) => (said(s, "pasted ${text}"), []),
+  Animate => (said(State { s | animating: !s.animating }, "animate ${!s.animating}"), []),
+  Frame(ms) => (State { s | frames: s.frames + 1, elapsed: s.elapsed + ms }, []),
+  Resize(size) => (said(s, "resized ${size.w}x${size.h}"), []),
+  Look(look) => (said(s, "look ${if look == DarkMode { "dark" } else { "light" }}"), []),
+  Child(Poked) => (said(s, "child poked"), []),
+  Bye => (said(s, "bye"), [OpenUrl("https://example.com"), QuitApp]),
+}
+
+let said = pure (s: State, what: string) -> State => State { s | log: [...s.log, what] }
+
+/// Ticks every 200 ms, the window's size and the system's look while running; frames while
+/// animating.
+let subscriptions = pure (s: State) -> []Subscription<Msg> => {
+  var subs: []Subscription<Msg> = []
+  if s.running {
+    subs.push(Every(200, Tick))
+    subs.push(OnResize(Resize))
+    subs.push(OnAppearance(Look))
+  }
+  if s.animating { subs.push(EveryFrame(Frame)) }
+  subs
+}
+`)
+	want := `start
+tick
+tick
+delayed
+tick
+tick
+tick
+resized 320x240
+look dark
+stop
+save
+saved true
+loaded hello
+copy
+pasted clipped
+animate true
+animate false
+child poked
+bye
+frames 8 over 100ms; clock 2100; script 21 of 23; opened https://example.com
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// Phase 4's gate: the bindings.imgui.ui example's interface, ported to the ui target as
+// markup (`examples/ui/components_view.lui`), runs from the keyboard with its commands and
+// timer: a slot loaded, the name typed over and saved — a file written, its result an event —
+// the slider stepped, a swatch picked, Sound turned off, a reset asked for and confirmed, and
+// the notice it showed cleared by its timer two seconds on.
+func TestRun_UiComponentsPort(t *testing.T) {
+	skipWithoutText(t)
+	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	t.Setenv("LYRA_STD", repoRoot(t))
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "components")
+	if _, stderr, code := captureRun(t, "build", "-o", bin, filepath.Join(repoRoot(t), "examples", "ui", "components.lyra")); code != 0 {
+		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
+	}
+	cmd := exec.Command(bin, "--script",
+		"Tab Tab Tab Enter Tab Tab Tab 'Ada' Tab Enter Tab Right Right Tab Tab Enter Tab Tab Space Tab Tab Enter Shift+Tab Shift+Tab Enter wait:2500",
+		"--png", filepath.Join(dir, "end.png"))
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+	out, err := cmd.CombinedOutput()
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 &&
+		strings.Contains(string(out), "SDL could not") {
+		t.Skipf("SDL could not open a dummy window here: %s", out)
+	} else if ok && exitErr.ExitCode() == 1 && strings.HasPrefix(string(out), "no font") {
+		t.Skipf("no font here: %s", out)
+	} else if err != nil {
+		t.Fatalf("running: %v\n%s", err, out)
+	}
+	want := `name: Ada (saved: Ada, 1 commits)
+sound: false, music: false, volume: 0.6
+resets: 1, loaded: 1, accent: 3050327
+notice: 
+quit: false
+`
+	if string(out) != want {
+		t.Errorf("got\n%s\nwant\n%s", out, want)
+	}
+	if saved, err := os.ReadFile(filepath.Join(dir, "name.txt")); err != nil || string(saved) != "Ada" {
+		t.Errorf("name.txt is %q (%v), want the saved name", saved, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "end.png")); err != nil {
+		t.Errorf("no last frame: %v", err)
 	}
 }

@@ -1,6 +1,7 @@
-// lui — markup for `bindings.imgui.ui`, generated into Lyra.
+// lui — markup for `bindings.imgui.ui` or `ui`, generated into Lyra.
 //
 //   build/lui view.lui            # writes view.lyra beside it
+//   build/lui --target ui view.lui   # for `ui` where the file does not say
 //   build/lui src                 # every .lui file beneath src, each its module
 //   build/lui --check view.lui    # exit 1 when view.lyra is not what view.lui makes
 //   build/lui --watch view.lui    # again whenever view.lui changes, until stopped
@@ -46,16 +47,40 @@
 //   element's `style="…"` takes the same declarations.
 // - `event={Event}` makes a component's events a concrete type; the default is `e`, a
 //   type variable, so the component fits any program's tree.
+// - **Two targets.** `<script target="ui">` (or `--target ui`) writes for `ui.layout`:
+//   `<Row main="between" cross="center">`, `<Column>`, `<Stack>`, `<Expanded flex>`,
+//   `<Positioned left top right bottom width height>`, `<Padding all | x y | top …>`,
+//   `<Align at="center">`, `<Scroll axis offset>`, `<SizedBox width height>`, `<Text>`,
+//   `<Button on_click>`, `<Checkbox checked on_toggle>`, `<Slider value min max step
+//   on_change>`, `<TextInput value placeholder on_edit>`, `<Image texture texels width height>`
+//   and `<Themed theme sheet>`; any of them takes `class`, `part`, `key`, `label` and `style`.
+//   A component is named for its parts' rules and its sheet is a function of the theme
+//   (`component_of`). The default target is `bindings.imgui.ui`, as before.
+// - **Styling for ui**: a top-level `<style global theme={AppTheme} name="app_sheet">` is a
+//   public function of that theme answering the sheet (for `<Themed>`); a `$path` in a sheet
+//   reads the theme (`$colors.accent` is `t.colors.accent`); `Comp::part` and
+//   `Comp.class::part` rules are checked against the parts the component's markup marks
+//   (`part="title"`), or a control's (`Checkbox::box`), as a prop is.
+// - **Another file's components**: `<import src="widgets.lui"/>` reads that file's
+//   components, checks calls to them, and imports the ones called from its module (its path
+//   without `.lui`, or `module="…"`).
 
 import std.collections.{ parse_args }
 import std.io.{ read_file, write_file, read_stdin, sleep_ms, read_dir, is_symlink }
 import std.path
 
 let main = () -> u8 => {
-  let args = parse_args(["--name"])
+  let args = parse_args(["--name", "--target"])
+  let target = args.value("--target").unwrap_or(IMGUI)
+  if target != IMGUI && target != UI {
+    println("lui: --target is ${UI} or ${IMGUI}, not ${target}")
+    return 2
+  }
   // An editor's buffer, not a file: the module on standard output, or `line: what` and 1.
   if args.has("--stdin") {
-    match generate(args.value("--name").unwrap_or("stdin.lui"), read_stdin()) {
+    let name = args.value("--name").unwrap_or("stdin.lui")
+    let source = read_stdin()
+    match generate_with(name.base(), source, imported_files(name, source), target) {
       Ok(code) => print(code),
       Err(problem) => {
         println(problem)
@@ -72,7 +97,7 @@ let main = () -> u8 => {
     println("usage: lui [--check | --watch] <file.lui | directory>...  |  lyrac check … 2>&1 | lui map  |  lui --stdin --name <file.lui>")
     return 2
   }
-  if args.has("--watch") { return watch(args.positional) }
+  if args.has("--watch") { return watch(args.positional, target) }
   let check = args.has("--check")
   let paths = lui_files(args.positional)
   if paths.len() == 0 {
@@ -81,7 +106,7 @@ let main = () -> u8 => {
   }
   var failures = 0
   for path in paths {
-    if !run(path, read_file(path), check) { failures += 1 }
+    if !run(path, read_file(path), check, target) { failures += 1 }
   }
   u8(failures.min(255))
 }
@@ -116,7 +141,7 @@ let gather = (dir: string, names: []string, out: mut []string) -> void => {
 
 /// `path` (its text `source`, `None` when it could not be read) generated into the module
 /// beside it, or with `check`, compared with it; whether all was well, what was not said.
-let run = (path: string, source: Maybe<string>, check: bool) -> bool => {
+let run = (path: string, source: Maybe<string>, check: bool, target: string) -> bool => {
   if !path.ends_with(".lui") {
     println("lui: ${path} is not a .lui file")
     return false
@@ -126,7 +151,7 @@ let run = (path: string, source: Maybe<string>, check: bool) -> bool => {
     return false
   }
   let out = "${path.slice(0, path.len() - 4)}.lyra"
-  match generate(path.base(), text) {
+  match generate_with(path.base(), text, imported_files(path, text), target) {
     Err(problem) => {
       println("${path}:${problem}")
       false
@@ -150,7 +175,7 @@ let run = (path: string, source: Maybe<string>, check: bool) -> bool => {
 /// second, as a markup file is small — until the program is stopped. A directory is walked
 /// again on every pass ([lui_files]), so a `.lui` file added beneath it is generated as it
 /// appears. Each generation is said, and a mistake at its line, as when run once.
-let watch = (paths: []string) -> u8 => {
+let watch = (paths: []string, target: string) -> u8 => {
   // The files met so far, and the text each was last generated from: a NUL no file holds
   // at first, so each is generated on the pass that finds it.
   var known: []string = []
@@ -168,7 +193,7 @@ let watch = (paths: []string) -> u8 => {
       let now = text.unwrap_or("")
       if now == seen[k] { continue }
       seen[k] = now
-      if run(path, text, false) { println("lui: ${path} generated") }
+      if run(path, text, false, target) { println("lui: ${path} generated") }
     }
     sleep_ms(WATCH_MS)
   }
@@ -176,6 +201,30 @@ let watch = (paths: []string) -> u8 => {
 
 /// How often `--watch` reads its files.
 const WATCH_MS: i64 = 250
+
+/// The element modules a file can target: `ui`'s (`ui.layout`) or `bindings.imgui.ui`, the
+/// default. A file names its own in a script, `<script target="ui">`; `--target` is the
+/// default for one that does not.
+const UI = "ui"
+const IMGUI = "imgui"
+
+/// The files `<import src="…"/>` names in `source` (the file at `path`), each read beside
+/// it: `(src, text)`, the text `None` where it could not be read — `generate_with` says so at
+/// the import's line.
+let imported_files = (path: string, source: string) -> [](string, Maybe<string>) => {
+  let Ok(tops) = parse_file(source.encode_utf8()) else { return [] }
+  let dir = match path.parent() {
+    Some(d) => d,
+    None => "",
+  }
+  var out: [](string, Maybe<string>) = []
+  for t in tops {
+    if t.name != "import" { continue }
+    let Some(src) = t.text_attr("src") else { continue }
+    out.push((src, read_file(if dir.len() > 0 { dir.join(src) } else { src })))
+  }
+  out
+}
 
 // ── Errors, put back at the markup ───────────────────────────────────────────
 
@@ -250,33 +299,102 @@ let marker_line = pure (row: string, prefix: string) -> Maybe<i64> => {
 
 // ── The file, generated ──────────────────────────────────────────────────────
 
-/// The Lyra module `source` (the file `name`) makes, or the first thing wrong with it, as
-/// `line: what`.
-pub let generate = pure (name: string, source: string) -> Result<string, string> => {
+/// The Lyra module `source` (the file `name`) makes for `bindings.imgui.ui`, or the first
+/// thing wrong with it, as `line: what`.
+pub let generate = pure (name: string, source: string) -> Result<string, string> =>
+  generate_with(name, source, [], IMGUI)
+
+/// The Lyra module `source` (the file `name`) makes, `imports` the text of each file its
+/// `<import>`s name, for the `target` element module unless a script names one.
+pub let generate_with = pure (
+  name: string,
+  source: string,
+  imports: [](string, Maybe<string>),
+  default_target: string
+) -> Result<string, string> => {
   let b = source.encode_utf8()
   let tops = parse_file(b)?
+  var target = default_target
+  for t in tops {
+    if t.name != "script" { continue }
+    if let Some(named) = t.text_attr("target") {
+      if named != UI && named != IMGUI {
+        return Err("${t.line}: target is \"${UI}\" or \"${IMGUI}\", not \"${named}\"")
+      }
+      target = named
+    }
+  }
   var scripts: []string = []
   var components: []Component = []
+  var globals: []Tag = []
+  var imported: []Imported = []
   for t in tops {
     match t.name {
       "script" => scripts.push("// ${name}:${first_line(t)}\n${dedent(t.raw)}"),
       "component" => components.push(read_component(t)?),
-      _ => { return Err("${t.line}: <${t.name}> at the top of a file; only <script> and <component> go there") },
+      "style" => {
+        if target != UI { return Err("${t.line}: a global <style> is the ui target's; name it with <script target=\"ui\">") }
+        if !t.attrs.any((a) => a.name == "global") {
+          return Err("${t.line}: a <style> at the top of a file is global: <style global theme={AppTheme}>")
+        }
+        globals.push(t)
+      },
+      "import" => imported.push(read_import(t, imports)?),
+      _ => { return Err("${t.line}: <${t.name}> at the top of a file; only <script>, <import>, <style global> and <component> go there") },
     }
   }
-  var writer = Writer { components: components, used: [], file: name }
+  var writer = Writer {
+    components: components,
+    imported: imported,
+    used: [],
+    file: name,
+    target: target
+  }
   var bodies: []string = []
   var sheets: []string = []
   for c in components {
     bodies.push(writer.component(name, c)?)
-    if c.rules.len() > 0 { sheets.push(writer.sheet(c)) }
+    if c.rules.len() > 0 { sheets.push(writer.sheet(c)?) }
   }
+  for g in globals { sheets.push(writer.global_sheet(g)?) }
   var out: []string = ["// Generated by lui from ${name}: edit that file, not this one."]
   out.push(writer.imports())
   for s in scripts { out.push(s) }
   for body in bodies { out.push(body) }
   for s in sheets { out.push(s) }
   Ok("${out.join("\n\n")}\n")
+}
+
+/// Another file's components, for this one's to call: the module they are in and their
+/// props.
+struct Imported {
+  module: string,
+  components: []Component,
+}
+
+/// An `<import src="widgets.lui"/>`: the file's components, read from `files` — the module
+/// its `module="…"` names, else its path with `/` for `.` and no `.lui`, so a file beside
+/// this one is the module of its name.
+let read_import = pure (
+  t: Tag,
+  files: [](string, Maybe<string>)
+) -> Result<Imported, string> => {
+  let Some(src) = t.text_attr("src") else { return Err("${t.line}: an <import> needs src=\"file.lui\"") }
+  if !src.ends_with(".lui") { return Err("${t.line}: <import> names a .lui file, not ${src}") }
+  var text: Maybe<string> = None
+  for (path, read) in files {
+    if path == src { text = read }
+  }
+  let Some(source) = text else { return Err("${t.line}: cannot read ${src}") }
+  let tops = parse_file(source.encode_utf8()).map_err((what) => "${t.line}: in ${src}: ${what}")?
+  var components: []Component = []
+  for top in tops {
+    if top.name == "component" {
+      components.push(read_component(top).map_err((what) => "${t.line}: in ${src}: ${what}")?)
+    }
+  }
+  let module = t.text_attr("module") ?? src.slice(0, src.len() - 4).replace("/", ".")
+  Ok(Imported { module: module, components: components })
 }
 
 /// A `<component>`: its name, props, event type, sheet and children.
@@ -286,6 +404,9 @@ struct Component {
   props_text: string,
   event: string,
   rules: []Rule,
+  /// The parts its markup names (`part="title"`), for a `component::part` rule to be checked
+  /// against.
+  parts: []string,
   /// Its `<style>`'s line, 0 for none.
   style_line: i64,
   children: []Markup,
@@ -297,10 +418,11 @@ struct Prop {
   default: string,
 }
 
-/// A style rule: a selector and its declarations, as Lyra `Style` fields.
+/// A style rule: a selector, its declarations as written, and the markup line it is on.
 struct Rule {
   selector: string,
-  fields: []string,
+  body: string,
+  line: i64,
 }
 
 let read_component = pure (t: Tag) -> Result<Component, string> => {
@@ -335,23 +457,42 @@ let read_component = pure (t: Tag) -> Result<Component, string> => {
     }
     children.push(child)
   }
+  var parts: []string = []
+  parts_in(children, parts)
   Ok(Component {
     name: name,
     props: read_props(props_text),
     props_text: props_text,
     event: event,
     rules: rules,
+    parts: parts,
     style_line: style_line,
     children: children,
     line: t.line,
   })
 }
 
-/// The generator's state: the file's components, for calls between them, and the names
-/// of `bindings.imgui.ui` the module uses, for its import.
+/// The part names `children` mark (`part="…"`), at any depth, appended to `out`.
+let parts_in = (children: []Markup, out: mut []string) -> void => {
+  for child in children {
+    if let Element(t) = child {
+      if let Some(p) = t.text_attr("part") {
+        if !out.any((q) => q == p) { out.push(p) }
+      }
+      parts_in(t.children, out)
+    }
+  }
+}
+
+/// The generator's state: the file's components and the ones it imports, for calls between
+/// them, the names of the target's modules the module uses, for its imports, and the target.
 struct Writer {
   components: []Component,
+  imported: []Imported = [],
   used: []string,
+  /// The imported components called, as `module.name`.
+  called: []string = [],
+  target: string = IMGUI,
   /// The markup file's name, for the markers `lui map` reads.
   file: string,
   /// The event type of the component being written, for the lambdas `on_change` becomes.
@@ -372,29 +513,112 @@ impl Writer {
       ""
     }
     self.use("Node")
-    self.use("Component")
     self.event = c.event
+    let items = self.nodes_of(c.children, "    ")?
+    let head = "/// From ${file}, line ${c.line}.\npub let ${c.name}${generic} = pure (${c.props_text}) -> Node<${c.event}> =>"
+    if self.target == UI {
+      // Named for its parts' rules (`confirm::question`); its sheet made from the theme.
+      let made = if c.rules.len() > 0 {
+        self.use("component_of")
+        "component_of(${quote(c.name)}, ${c.name}_sheet, ${self.listed(items, "  ")})"
+      } else {
+        self.use("component")
+        self.use("Sheet")
+        "component(${quote(c.name)}, Sheet {}, ${self.listed(items, "  ")})"
+      }
+      return Ok("${head}\n  ${made}")
+    }
+    self.use("Component")
     let sheet_name = if c.rules.len() > 0 {
       "${c.name}_sheet"
     } else {
       self.use("Sheet")
       "Sheet {}"
     }
-    let items = self.nodes_of(c.children, "    ")?
-    let head = "/// From ${file}, line ${c.line}.\npub let ${c.name}${generic} = pure (${c.props_text}) -> Node<${c.event}> =>"
     Ok("${head}\n  Component(${sheet_name}, ${self.listed(items, "  ")})")
   }
 
-  let sheet = (self: mut, c: Component) -> string => {
+  /// A component's `<style>`: for `bindings.imgui.ui` a `Sheet`; for `ui` a function of the
+  /// theme it is drawn in, which its `$tokens` read.
+  let sheet = (self: mut, c: Component) -> Result<string, string> => {
+    if self.target == UI {
+      let rules = self.ui_rules(c.rules)?
+      return Ok("let ${c.name}_sheet = pure (${theme_param(c.rules)}: Theme) -> Sheet => Sheet { // ${self.file}:${c.style_line}\n  rules: ${self.listed(rules, "  ")},\n}")
+    }
     self.use("Sheet")
     self.use("StyleRule")
     self.use("Style")
     var rules: []string = []
     for r in c.rules {
-      self.uses_in(r.fields)
-      rules.push("StyleRule { selector: ${quote(r.selector)}, style: Style { ${r.fields.join(", ")} } }")
+      let fields = declarations(r.body, r.line)?
+      self.uses_in(fields)
+      rules.push("StyleRule { selector: ${quote(r.selector)}, style: Style { ${fields.join(", ")} } }")
     }
-    "let ${c.name}_sheet = Sheet { // ${self.file}:${c.style_line}\n  rules: ${list(rules, "  ")},\n}"
+    Ok("let ${c.name}_sheet = Sheet { // ${self.file}:${c.style_line}\n  rules: ${list(rules, "  ")},\n}")
+  }
+
+  /// A file's `<style global theme={AppTheme} name="app_sheet">`: a public function of the
+  /// theme — `Theme` unless it names another — answering the sheet, for a `Themed` element
+  /// (`<Themed theme={t} sheet={app_sheet(t)}>`). Named `global_sheet` unless it says.
+  let global_sheet = (self: mut, t: Tag) -> Result<string, string> => {
+    let rules = read_style(t.raw, t.line)?
+    let theme = t.code_attr("theme") ?? "Theme"
+    let name = t.text_attr("name") ?? "global_sheet"
+    if theme == "Theme" { self.use("Theme") }
+    let written = self.ui_rules(rules)?
+    Ok("/// From ${self.file}, line ${t.line}.\npub let ${name} = pure (${theme_param(rules)}: ${theme}) -> Sheet => Sheet {\n  rules: ${self.listed(written, "  ")},\n}")
+  }
+
+  /// `rules` as `ui.style` `Rule`s, each marked with its markup line; a part rule checked
+  /// against the parts its component has.
+  let ui_rules = (self: mut, rules: []Rule) -> Result<[]Item, string> => {
+    self.use("Sheet")
+    self.use("Rule")
+    self.use("Style")
+    self.use("Theme")
+    var out: []Item = []
+    for r in rules {
+      self.check_part(r)?
+      let fields = ui_declarations(r.body, r.line, true)?
+      self.ui_uses_in(fields)
+      out.push(Item {
+        text: "Rule { selector: ${quote(r.selector)}, style: Style { ${fields.join(", ")} } }",
+        line: r.line,
+      })
+    }
+    Ok(out)
+  }
+
+  /// A rule's `component::part` (or `component.class::part`) naming a part its component does
+  /// not have, as a prop that is not one is: the component of this file or one it imports, or
+  /// one of `ui`'s controls. Another component, written in Lyra, is taken on trust.
+  let check_part = pure (self, r: Rule) -> Result<void, string> => {
+    let halves = r.selector.split("::")
+    if halves.len() == 1 { return Ok() }
+    if halves.len() > 2 { return Err("${r.line}: ${r.selector} has more than one ::") }
+    let owner = halves[0].split(".")[0]
+    let part = halves[1].trim()
+    let known = match self.parts_of(owner) {
+      Some(parts) => parts,
+      None => return Ok(),
+    }
+    if known.any((p) => p == part) { return Ok() }
+    let named = if known.len() == 0 { "none" } else { known.join(", ") }
+    Err("${r.line}: ${owner} has no part ${part} (its parts: ${named})")
+  }
+
+  /// The parts of the component or control named `name`, if lui knows it.
+  let parts_of = pure (self, name: string) -> Maybe<[]string> => {
+    if let Some(c) = component_named(self.components, name) { return Some(c.parts) }
+    for i in self.imported {
+      if let Some(c) = component_named(i.components, name) { return Some(c.parts) }
+    }
+    match name {
+      "Checkbox" => Some(["box", "checked", "fill"]),
+      "Slider" => Some(["track", "fill", "thumb"]),
+      "TextInput" => Some(["placeholder", "selection", "caret"]),
+      _ => None,
+    }
   }
 
   /// `children` as array elements, each written at `indent`.
@@ -441,6 +665,8 @@ impl Writer {
             let body = self.nodes_of(t.children, "${indent}  ")?
             let one = if body.len() == 1 && !body[0].text.starts_with("...") {
               body[0].text
+            } else if self.target == UI {
+              return Err("${t.line}: a <for> holds one element in the ui target; wrap its children in a <Column> or <Row>")
             } else {
               self.use("Fragment")
               "Fragment(${self.listed(body, indent)})"
@@ -459,6 +685,10 @@ impl Writer {
   /// One element or component call, its continuation lines at `indent`.
   let element = (self: mut, t: Tag, indent: string) -> Result<string, string> => {
     if !is_upper(t.name) { return self.call(t, indent) }
+    if self.target == UI { return self.ui_element(t, indent) }
+    if attr_named(t.attrs, "key").is_some() || attr_named(t.attrs, "part").is_some() {
+      return Err("${t.line}: key= and part= are the ui target's; name it with <script target=\"ui\">")
+    }
     // A slot is its name alone: where the caller draws, through `seen`.
     if t.name == "Slot" {
       let Some(name) = attr_named(t.attrs, "name") else {
@@ -519,8 +749,18 @@ impl Writer {
   /// A call of a component of this file: its props in order, from the attributes, the
   /// children, or the defaults.
   let call = (self: mut, t: Tag, indent: string) -> Result<string, string> => {
-    let Some(c) = component_named(self.components, t.name) else {
-      return Err("${t.line}: no component ${t.name} in this file; call another file's as {${t.name}(…)}")
+    var found = component_named(self.components, t.name)
+    if found.is_none() {
+      for i in self.imported {
+        if let Some(c) = component_named(i.components, t.name) {
+          found = Some(c)
+          let called = "${i.module}.${c.name}"
+          if !self.called.any((k) => k == called) { self.called.push(called) }
+        }
+      }
+    }
+    let Some(c) = found else {
+      return Err("${t.line}: no component ${t.name} in this file or one it imports (<import src=\"…\"/>); call one written in Lyra as {${t.name}(…)}")
     }
     for a in t.attrs {
       if c.props.filter((p) => p.name == a.name).len() == 0 {
@@ -616,18 +856,31 @@ impl Writer {
     if self.used.filter((u) => u == name).len() == 0 { self.used.push(name) }
   }
 
-  /// The module's imports: the names of `bindings.imgui.ui` it uses, in a fixed order, and
-  /// `bindings.imgui`'s for colours and sizes when a style has them.
+  /// The module's imports: the names of the target's modules it uses, in a fixed order — for
+  /// `bindings.imgui.ui`, `bindings.imgui`'s colours and sizes too — and the components it
+  /// calls from the files it imports.
   let imports = pure (self) -> string => {
-    var ui: []string = []
-    for name in ui_names {
-      if self.used.filter((u) => u == name).len() > 0 { ui.push(name) }
+    var import_lines: []string = []
+    if self.target == UI {
+      for (module, names) in UI_MODULES {
+        let mine = [n in names | self.used.any((u) => u == n) | n]
+        if mine.len() > 0 { import_lines.push("import ${module}.{ ${mine.join(", ")} }") }
+      }
+    } else {
+      var ui: []string = []
+      for name in ui_names {
+        if self.used.filter((u) => u == name).len() > 0 { ui.push(name) }
+      }
+      import_lines.push("import bindings.imgui.ui.{ ${ui.join(", ")} }")
+      var imgui: []string = []
+      if self.used.filter((u) => u == "col32").len() > 0 { imgui.push("col32") }
+      if self.used.filter((u) => u == "Vec2").len() > 0 { imgui.push("Vec2") }
+      if imgui.len() > 0 { import_lines.push("import bindings.imgui.{ ${imgui.join(", ")} }") }
     }
-    var import_lines = ["import bindings.imgui.ui.{ ${ui.join(", ")} }"]
-    var imgui: []string = []
-    if self.used.filter((u) => u == "col32").len() > 0 { imgui.push("col32") }
-    if self.used.filter((u) => u == "Vec2").len() > 0 { imgui.push("Vec2") }
-    if imgui.len() > 0 { import_lines.push("import bindings.imgui.{ ${imgui.join(", ")} }") }
+    for i in self.imported {
+      let names = [c in i.components | self.called.any((k) => k == "${i.module}.${c.name}") | c.name]
+      if names.len() > 0 { import_lines.push("import ${i.module}.{ ${names.join(", ")} }") }
+    }
     import_lines.join("\n")
   }
 }
@@ -751,6 +1004,487 @@ let list = pure (items: []string, indent: string) -> string => {
   var out = "["
   for item in items { out = "${out}\n${indent}  ${item}," }
   "${out}\n${indent}]"
+}
+
+// ── The ui target ────────────────────────────────────────────────────────────
+
+/// The names a module for the ui target may import, by module, in each import's order.
+const UI_MODULES = [
+  (
+    "ui.layout",
+    [
+      "Node",
+      "Edges",
+      "Alignment",
+      "SliderSpec",
+      "FieldSpec",
+      "Horizontal",
+      "Vertical",
+      "MainStart",
+      "MainCenter",
+      "MainEnd",
+      "SpaceBetween",
+      "SpaceAround",
+      "SpaceEvenly",
+      "CrossStart",
+      "CrossCenter",
+      "CrossEnd",
+      "CrossStretch",
+      "row",
+      "column",
+      "stack",
+      "expanded",
+      "positioned",
+      "padding",
+      "align",
+      "sized",
+      "scroll",
+      "text",
+      "image",
+      "themed",
+      "component",
+      "component_of",
+      "button",
+      "checkbox",
+      "slider",
+      "text_input",
+    ],
+  ),
+  ("ui.style", ["Style", "Sheet", "Rule", "Theme", "Insets", "insets", "insets_xy"]),
+  ("ui.draw", ["Size", "Rect", "Color", "rgb", "rgba"]),
+]
+
+/// What a ui element writes: the builder it calls and how its markup becomes the call.
+data UiShape =
+  /// Children in a row or column: `main=` and `cross=` place them.
+  ShapeLine(string)
+  /// Children over one another.
+  | ShapePile
+  /// One child: `expanded`, `positioned`, `padding`, `align`, `scroll`.
+  | ShapeWrap(string)
+  /// A box of a size, its children inside.
+  | ShapeBox
+  /// Its text: `text`.
+  | ShapeText
+  /// A control, its text its label: `button`, `checkbox`.
+  | ShapeLabelled(string)
+  /// A control of attributes alone: `slider`, `text_input`, `image`.
+  | ShapeBare(string)
+  /// A theme and sheet for its children.
+  | ShapeThemed
+
+/// The attributes every ui element takes: its classes, the part of its component it is, its
+/// key, its label for assistive technology, and its inline style.
+const UI_COMMON = ["class", "part", "key", "label", "style"]
+
+impl Writer {
+  /// A capitalized tag as the `ui.layout` call it stands for, its common attributes chained
+  /// after it (`.with_class(…)`, `.keyed(…)`).
+  let ui_element = (self: mut, t: Tag, indent: string) -> Result<string, string> => {
+    let Some((shape, allowed)) = ui_kind(t.name) else {
+      return Err("${t.line}: <${t.name}> is not an element of ui")
+    }
+    for a in t.attrs {
+      if !allowed.any((n) => n == a.name) && !UI_COMMON.any((n) => n == a.name) {
+        return Err("${a.line}: <${t.name}> has no attribute ${a.name}")
+      }
+    }
+    let base = match shape {
+      ShapeLine(builder) => {
+        self.use(builder)
+        let items = self.nodes_of(t.children, "${indent}  ")?
+        let made = "${builder}(${self.listed(items, indent)})"
+        let main_word = t.text_attr("main")
+        let cross_word = t.text_attr("cross")
+        if main_word.is_none() && cross_word.is_none() {
+          made
+        } else {
+          let m = main_align(main_word ?? "start").map_err((what) => "${t.line}: ${what}")?
+          let default_cross = if builder == "row" { "center" } else { "start" }
+          let c = cross_align(cross_word ?? default_cross).map_err((what) => "${t.line}: ${what}")?
+          self.use(m)
+          self.use(c)
+          "${made}.aligned(${m}, ${c})"
+        }
+      },
+      ShapePile => {
+        self.use("stack")
+        let items = self.nodes_of(t.children, "${indent}  ")?
+        "stack(${self.listed(items, indent)})"
+      },
+      ShapeBox => {
+        self.use("sized")
+        let items = self.nodes_of(t.children, "${indent}  ")?
+        let w = maybe_number(t, "width")?
+        let h = maybe_number(t, "height")?
+        if items.len() == 0 {
+          "sized(${w}, ${h})"
+        } else {
+          "sized(${w}, ${h}, ${self.listed(items, indent)})"
+        }
+      },
+      ShapeWrap(builder) => {
+        self.use(builder)
+        let child = self.only_child(t, indent)?
+        match builder {
+          "expanded" => {
+            let flex = number_attr(t, "flex")?
+            if flex.len() > 0 { "expanded(${child}, ${flex})" } else { "expanded(${child})" }
+          },
+          "positioned" => {
+            self.use("Edges")
+            var edges: []string = []
+            for side in ["left", "top", "right", "bottom", "width", "height"] {
+              let n = number_attr(t, side)?
+              if n.len() > 0 { edges.push("${side}: Some(${n})") }
+            }
+            "positioned(Edges { ${edges.join(", ")} }, ${child})"
+          },
+          "padding" => "padding(${self.insets_attr(t)?}, ${child})",
+          "align" => {
+            self.use("Alignment")
+            let at = alignment(t.text_attr("at") ?? "center").map_err((what) => "${t.line}: ${what}")?
+            "align(${at}, ${child})"
+          },
+          _ => {
+            let axis = match t.text_attr("axis") ?? "vertical" {
+              "vertical" => "Vertical",
+              "horizontal" => "Horizontal",
+              other =>
+                return Err("${t.line}: axis is vertical or horizontal, not ${other}"),
+            }
+            self.use(axis)
+            let offset = number_attr(t, "offset")?
+            "scroll(${axis}, ${if offset.len() > 0 { offset } else { "0.0" }}, ${child})"
+          },
+        }
+      },
+      ShapeText => {
+        self.use("text")
+        "text(${label_of(t)?})"
+      },
+      ShapeLabelled(builder) => {
+        self.use(builder)
+        let label = label_of(t)?
+        if builder == "button" {
+          "button(${label}, ${required(t, "on_click")?})"
+        } else {
+          let checked = match attr_named(t.attrs, "checked") {
+            Some(a) => match a.value {
+              Bare => "true",
+              Braced(code) => code,
+              Quoted(text) => text,
+            },
+            None => return Err("${t.line}: <Checkbox> needs checked"),
+          }
+          "checkbox(${label}, ${checked}, ${required(t, "on_toggle")?})"
+        }
+      },
+      ShapeBare(builder) => {
+        self.use(builder)
+        if words_of(t.children).trim().len() > 0 || t.children.any((c) => match c {
+          Element(_) => true,
+          _ => false,
+        }) {
+          return Err("${t.line}: <${t.name}> holds nothing")
+        }
+        match builder {
+          "slider" => {
+            self.use("SliderSpec")
+            var fields = ["value: ${required(t, "value")?}"]
+            for f in ["min", "max", "step"] {
+              let n = number_attr(t, f)?
+              if n.len() > 0 { fields.push("${f}: ${n}") }
+            }
+            fields.push("on_change: ${self.changes(t, "on_change", "f32")?}")
+            "slider(SliderSpec { ${fields.join(", ")} })"
+          },
+          "text_input" => {
+            self.use("FieldSpec")
+            var fields = ["value: ${required(t, "value")?}"]
+            if let Some(a) = attr_named(t.attrs, "placeholder") {
+              fields.push("placeholder: ${attr_lyra(a.value)}")
+            }
+            fields.push("on_edit: ${self.changes(t, "on_edit", "string")?}")
+            "text_input(FieldSpec { ${fields.join(", ")} })"
+          },
+          _ => {
+            self.use("Size")
+            let w = number_attr(t, "width")?
+            let h = number_attr(t, "height")?
+            if w.len() == 0 || h.len() == 0 { return Err("${t.line}: <Image> needs width and height") }
+            "image(${required(t, "texture")?}, ${required(t, "texels")?}, Size { w: ${w}, h: ${h} })"
+          },
+        }
+      },
+      ShapeThemed => {
+        self.use("themed")
+        let items = self.nodes_of(t.children, "${indent}  ")?
+        "themed(${required(t, "theme")?}, ${required(t, "sheet")?}, ${self.listed(items, indent)})"
+      },
+    }
+    self.ui_modifiers(t, base)
+  }
+
+  /// `base` with the element's common attributes chained after it.
+  let ui_modifiers = (self: mut, t: Tag, base: string) -> Result<string, string> => {
+    var out = base
+    for a in t.attrs {
+      match a.name {
+        "class" => { out = "${out}.with_class(${attr_lyra(a.value)})" },
+        "part" => { out = "${out}.with_part(${attr_lyra(a.value)})" },
+        "key" => { out = "${out}.keyed(${attr_lyra(a.value)})" },
+        "label" => { out = "${out}.labelled(${attr_lyra(a.value)})" },
+        "style" => {
+          self.use("Style")
+          let fields = match a.value {
+            Quoted(text) => ui_declarations(text, a.line, false)?,
+            _ => return Err("${a.line}: style is \"…\": style=\"gap: 8; color: #333\""),
+          }
+          self.ui_uses_in(fields)
+          out = "${out}.with_style(Style { ${fields.join(", ")} })"
+        },
+        _ => {},
+      }
+    }
+    Ok(out)
+  }
+
+  /// The one element `t` holds, written at `indent`.
+  let only_child = (self: mut, t: Tag, indent: string) -> Result<string, string> => {
+    let items = self.nodes_of(t.children, indent)?
+    if items.len() != 1 || items[0].text.starts_with("...") {
+      return Err("${t.line}: <${t.name}> holds one element")
+    }
+    Ok(items[0].text)
+  }
+
+  /// An `on_change`-style attribute: a bare name is the lambda calling it.
+  let changes = pure (
+    self,
+    t: Tag,
+    name: string,
+    value_type: string
+  ) -> Result<string, string> => {
+    let Some(a) = attr_named(
+      t.attrs,
+      name
+    ) else { return Err("${t.line}: <${t.name}> needs ${name}") }
+    match a.value {
+      Braced(code) => Ok(if is_bare_name(code) {
+        "(value: ${value_type}) -> ${self.event} => ${code}(value)"
+      } else {
+        code
+      }),
+      _ => Err("${a.line}: ${name} of <${t.name}> takes {…}"),
+    }
+  }
+
+  /// A `<Padding>`'s space: `all`, else `x` and `y`, else `top`, `right`, `bottom`, `left`.
+  let insets_attr = (self: mut, t: Tag) -> Result<string, string> => {
+    let all = number_attr(t, "all")?
+    if all.len() > 0 {
+      self.use("insets")
+      return Ok("insets(${all})")
+    }
+    let x = number_attr(t, "x")?
+    let y = number_attr(t, "y")?
+    if x.len() > 0 || y.len() > 0 {
+      self.use("insets_xy")
+      return Ok("insets_xy(${if x.len() > 0 { x } else { "0.0" }}, ${if y.len() > 0 { y } else { "0.0" }})")
+    }
+    self.use("Insets")
+    var sides: []string = []
+    for side in ["top", "right", "bottom", "left"] {
+      let n = number_attr(t, side)?
+      if n.len() > 0 { sides.push("${side}: ${n}") }
+    }
+    Ok("Insets { ${sides.join(", ")} }")
+  }
+
+  /// The names of `ui.style` and `ui.draw` a style's fields use.
+  let ui_uses_in = (self: mut, fields: []string) -> void => {
+    for f in fields {
+      for name in ["rgb(", "rgba(", "insets(", "insets_xy(", "Insets {"] {
+        if f.contains(name) { self.use(name.replace("(", "").replace(" {", "")) }
+      }
+    }
+  }
+}
+
+/// An attribute the element cannot do without, as Lyra.
+let required = pure (t: Tag, name: string) -> Result<string, string> =>
+  match attr_named(t.attrs, name) {
+    Some(a) => Ok(attr_lyra(a.value)),
+    None => Err("${t.line}: <${t.name}> needs ${name}"),
+  }
+
+/// A number attribute as an `f32`: `"8"` is `8.0`, `{w}` is `w`; `""` when absent.
+let number_attr = pure (t: Tag, name: string) -> Result<string, string> =>
+  match attr_named(t.attrs, name) {
+    None => Ok(""),
+    Some(a) => match a.value {
+      Quoted(text) => number(text).map_err((what) => "${a.line}: ${what}"),
+      Braced(code) => Ok(code),
+      Bare => Err("${a.line}: ${name} of <${t.name}> needs a value"),
+    },
+  }
+
+/// A number attribute as a `Maybe<f32>`: absent is `None`.
+let maybe_number = pure (t: Tag, name: string) -> Result<string, string> => {
+  let n = number_attr(t, name)?
+  Ok(if n.len() == 0 { "None" } else { "Some(${n})" })
+}
+
+/// A ui element's shape and the attributes of its own it takes, beside [UI_COMMON].
+let ui_kind = pure (tag: string) -> Maybe<(UiShape, []string)> => match tag {
+  "Row" => Some((ShapeLine("row"), ["main", "cross"])),
+  "Column" => Some((ShapeLine("column"), ["main", "cross"])),
+  "Stack" => Some((ShapePile, [])),
+  "Expanded" => Some((ShapeWrap("expanded"), ["flex"])),
+  "Positioned" => Some((ShapeWrap("positioned"), ["left", "top", "right", "bottom", "width", "height"])),
+  "Padding" =>
+    Some((ShapeWrap("padding"), ["all", "x", "y", "top", "right", "bottom", "left"])),
+  "Align" => Some((ShapeWrap("align"), ["at"])),
+  "Scroll" => Some((ShapeWrap("scroll"), ["axis", "offset"])),
+  "SizedBox" => Some((ShapeBox, ["width", "height"])),
+  "Text" => Some((ShapeText, [])),
+  "Button" => Some((ShapeLabelled("button"), ["on_click"])),
+  "Checkbox" => Some((ShapeLabelled("checkbox"), ["checked", "on_toggle"])),
+  "Slider" => Some((ShapeBare("slider"), ["value", "min", "max", "step", "on_change"])),
+  "TextInput" => Some((ShapeBare("text_input"), ["value", "placeholder", "on_edit"])),
+  "Image" => Some((ShapeBare("image"), ["texture", "texels", "width", "height"])),
+  "Themed" => Some((ShapeThemed, ["theme", "sheet"])),
+  _ => None,
+}
+
+let main_align = pure (word: string) -> Result<string, string> => match word {
+  "start" => Ok("MainStart"),
+  "center" => Ok("MainCenter"),
+  "end" => Ok("MainEnd"),
+  "between" => Ok("SpaceBetween"),
+  "around" => Ok("SpaceAround"),
+  "evenly" => Ok("SpaceEvenly"),
+  _ => Err("main is start, center, end, between, around or evenly, not ${word}"),
+}
+
+let cross_align = pure (word: string) -> Result<string, string> => match word {
+  "start" => Ok("CrossStart"),
+  "center" => Ok("CrossCenter"),
+  "end" => Ok("CrossEnd"),
+  "stretch" => Ok("CrossStretch"),
+  _ => Err("cross is start, center, end or stretch, not ${word}"),
+}
+
+/// `at="top-left"` and its kin as an `Alignment`.
+let alignment = pure (word: string) -> Result<string, string> => {
+  let (x, y) = match word {
+    "top-left" => ("0.0", "0.0"),
+    "top" => ("0.5", "0.0"),
+    "top-right" => ("1.0", "0.0"),
+    "left" => ("0.0", "0.5"),
+    "center" => ("0.5", "0.5"),
+    "right" => ("1.0", "0.5"),
+    "bottom-left" => ("0.0", "1.0"),
+    "bottom" => ("0.5", "1.0"),
+    "bottom-right" => ("1.0", "1.0"),
+    _ => return Err("at is center, top, bottom, left, right or a corner (top-left…), not ${word}"),
+  }
+  Ok("Alignment { x: ${x}, y: ${y} }")
+}
+
+/// The theme parameter's name for a sheet of `rules`: `t` when a rule reads a `$token`, `_`
+/// when none does.
+let theme_param = pure (rules: []Rule) -> string =>
+  if rules.any((r) => r.body.contains("$")) { "t" } else { "_" }
+
+/// `color: $colors.accent; padding: 8 4` as `ui.style` `Style` fields. A `$path` reads the
+/// theme (`$space.m` is `t.space.m`) where `tokens` allows it — a sheet's rules, not an
+/// element's inline style, which has no theme to read.
+let ui_declarations = pure (
+  text: string,
+  line: i64,
+  tokens: bool
+) -> Result<[]string, string> => {
+  var fields: []string = []
+  for d in text.split(";") {
+    if d.trim().len() == 0 { continue }
+    let Some(colon) = d.index(":") else { return Err("${line}: \"${d.trim()}\" has no `:`") }
+    let name = d.slice(0, colon).trim().replace("-", "_")
+    let given = d.slice(colon + 1, d.len()).trim()
+    if given.contains("$") && !tokens {
+      return Err("${line}: ${given} reads the theme, which an inline style cannot; give the element a class and the rule to a <style>")
+    }
+    let field = match name {
+      "rounding" => "radius",
+      other => other,
+    }
+    let lyra: Result<string, string> = match name {
+      "color" => ui_color(given),
+      "background" => ui_color(given),
+      "border_color" => ui_color(given),
+      "border_width" => ui_number(given),
+      "radius" => ui_number(given),
+      "rounding" => ui_number(given),
+      "gap" => ui_number(given),
+      "opacity" => ui_number(given),
+      "font_size" => ui_number(given),
+      "line_height" => ui_number(given),
+      "padding" => ui_padding(given),
+      _ => Err("no style property ${name} in ui (color, background, border-color, border-width, radius, gap, opacity, font-size, line-height, padding)"),
+    }
+    match lyra {
+      Ok(v) => fields.push("${field}: Some(${v})"),
+      Err(what) => return Err("${line}: ${what}"),
+    }
+  }
+  Ok(fields)
+}
+
+/// A token `$a.b` as the theme's `t.a.b`, if `value` is one.
+let token = pure (value: string) -> Maybe<Result<string, string>> => {
+  let Some(path) = value.strip_prefix("$") else { return None }
+  let fine = path.len() > 0 && path
+    .to_runes()
+    .all((c) => c.is_ascii_alpha() || c.is_ascii_digit() || c == '_' || c == '.')
+  if !fine { return Some(Err("${value} is not a token: $name or $name.field")) }
+  Some(Ok("t.${path}"))
+}
+
+/// `#rgb`, `#rrggbb`, `#rrggbbaa` or a `$token` as a `Color`.
+let ui_color = pure (value: string) -> Result<string, string> => {
+  if let Some(read) = token(value) { return read }
+  let Some(hex) = value.strip_prefix("#") else { return Err("${value} is not a #colour or a $token") }
+  let digits = if hex.len() == 3 { "${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}" } else { hex }
+  if digits.len() != 6 && digits.len() != 8 { return Err("${value} is not #rgb, #rrggbb or #rrggbbaa") }
+  for k in 0..<(digits.len() / 2) {
+    if hex_byte(digits.slice(
+      k * 2,
+      k * 2 + 2
+    )).is_none() { return Err("${value} is not hexadecimal") }
+  }
+  Ok(if digits.len() == 6 { "rgb(0x${digits.to_ascii_upper()})" } else { "rgba(0x${digits.to_ascii_upper()})" })
+}
+
+/// A number or a `$token`, an `f32`.
+let ui_number = pure (value: string) -> Result<string, string> => {
+  if let Some(read) = token(value) { return read }
+  number(value)
+}
+
+/// Padding: one value all round, two (across, then down), or four (top, right, bottom, left,
+/// as CSS has them) — numbers or `$tokens`.
+let ui_padding = pure (value: string) -> Result<string, string> => {
+  let parts = value.split_when((c) => c == ' ')
+  var vs: []string = []
+  for p in parts { vs.push(ui_number(p)?) }
+  match vs.len() {
+    1 => Ok("insets(${vs[0]})"),
+    2 => Ok("insets_xy(${vs[0]}, ${vs[1]})"),
+    4 =>
+      Ok("Insets { top: ${vs[0]}, right: ${vs[1]}, bottom: ${vs[2]}, left: ${vs[3]} }"),
+    _ => Err("padding is one, two or four values, not ${value}"),
+  }
 }
 
 // ── The elements ─────────────────────────────────────────────────────────────
@@ -1053,29 +1787,61 @@ const NAMED_KEYS = ["PgUp", "PgDn"]
 
 // ── Styles ───────────────────────────────────────────────────────────────────
 
-/// A `<style>`'s rules: `Button.danger, .note { … }`, `/* … */` comments between.
+/// A `<style>`'s rules — `Button.danger, .note { … }`, `/* … */` comments between — each at
+/// the markup line its selector starts on; `line` is the `<style>`'s, its text starting on it.
 let read_style = pure (raw: string, line: i64) -> Result<[]Rule, string> => {
   var rules: []Rule = []
-  var rest = strip_comments(raw)
+  let text = strip_comments_kept(raw)
+  var from = 0
   loop {
+    let rest = text.slice(from, text.len())
     let Some(open) = rest.index("{") else {
-      if rest
-        .trim()
-        .len() > 0 { return Err("${line}: \"${rest.trim()}\" in <style> is no rule") }
+      if rest.trim().len() > 0 {
+        return Err("${line + lines_before(text, from)}: \"${rest.trim()}\" in <style> is no rule")
+      }
       break
     }
+    let head = rest.slice(0, open)
+    // The rule's line: where its selector's first character is.
+    let lead = head.len() - head.trim_start().len()
+    let at = line + lines_before(text, from + lead)
     let Some(close) = rest.index("}", open) else {
-      return Err("${line}: a rule in <style> is never closed")
+      return Err("${at}: a rule in <style> is never closed")
     }
-    let fields = declarations(rest.slice(open + 1, close), line)?
-    for selector in rest.slice(0, open).split(",") {
+    let body = rest.slice(open + 1, close)
+    for selector in head.split(",") {
       let s = selector.trim()
-      if s.len() == 0 { return Err("${line}: a rule in <style> with no selector") }
-      rules.push(Rule { selector: s, fields: fields })
+      if s.len() == 0 { return Err("${at}: a rule in <style> with no selector") }
+      rules.push(Rule { selector: s, body: body, line: at })
     }
-    rest = rest.slice(close + 1, rest.len())
+    from += close + 1
   }
   Ok(rules)
+}
+
+/// How many line breaks `text` has before rune `at`.
+let lines_before = pure (text: string, at: i64) -> i64 => {
+  var n = 0
+  for i, c in text {
+    if i >= at { break }
+    if c == '\n' { n += 1 }
+  }
+  n
+}
+
+/// `/* … */` comments blanked, their line breaks kept, so a rule's line still counts.
+let strip_comments_kept = pure (text: string) -> string => {
+  var out = text
+  loop {
+    let Some(open) = out.index("/*") else { break }
+    let close = out.index("*/", open).unwrap_or(out.len() - 2)
+    let kept = [c in out.slice(
+      open,
+      close + 2
+    ) | if c == '\n' { "\n" } else { " " }].join()
+    out = "${out.slice(0, open)}${kept}${out.slice(close + 2, out.len())}"
+  }
+  out
 }
 
 /// `color: #fff; rounding: 4` as `Style` fields.

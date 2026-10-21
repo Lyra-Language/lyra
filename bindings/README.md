@@ -74,6 +74,7 @@ naming the frameworks it needs; the machine's is the system's (Homebrew, a distr
 | `process.lyra` | `create_process([path, args…])` → `Maybe<Process>` (a bare name is looked up on the `PATH`; output inherited), `run_process([path, args…])` → `Maybe<(exit code, output)>`, run to its end with standard error and output captured together (it blocks for the whole run); `create_process_to_file(args, path)` starts one writing both to a file, for a caller that polls `wait_process` rather than waiting (Vega builds games with it; a file, not a pipe, so a long output never stalls), `wait_process(p, block)` → the exit code, or `None` while running when not blocking; `kill_process(p, force)`; `destroy_process` forgets it — **a program still running keeps running**, and one never waited for is a zombie until this one exits. Vega launches Sheliak with it. **SDL reads the argument array at `SDL_CreateProcessWithProperties`, not when the property is set**, and Lyra frees an array after its last use, so `run_process` uses it again after the create — without that, a segfault. |
 | `filesystem.lyra` | `pref_path(org, app)` → `Maybe<string>`: the folder for a program's own files (settings), made if missing, ending in the separator — `~/Library/Application Support/<org>/<app>/` on macOS, the XDG data folder on Linux, `%APPDATA%` on Windows. Vega keeps its settings there. `base_path()` → `Maybe<string>`: the folder the program was started from, for what it ships beside itself — `<App>.app/Contents/Resources/` in a macOS bundle, else the executable's folder; ends in the separator. Vega's release finds its lyrac and Sheliak there. |
 | `clipboard.lyra` | `clipboard_text()` (`""` when it holds no text) and `set_clipboard_text(text)`. |
+| `url.lyra` | `open_url(url)` — a web address, `mailto:` or `file://`, opened by the program the system chooses (`SDL_OpenURL`); whether the system took it. |
 | `timer.lyra` | `delay`, `ticks`, and `ticks_ns` — a fixed timestep needs nanoseconds: whole milliseconds drift a 16.67 ms step by a whole step every few seconds. |
 
 **Examples**: `examples/SDL3/basic.lyra` (a bouncing square, bindings only), and in
@@ -500,9 +501,34 @@ The example's interface is `examples/imgui/components_view.lui`.
   line; a mistake leaves the last good module in place. Stop it with Ctrl-C. **A
   directory is walked again every pass** (`lui --watch src`), so a file added beneath it
   is generated as it appears.
-- **Tested** by `cmd/lyrac/lui_test.go`: the example's module is what lui makes and checks
-  clean, and each kind of mistake is reported at its line. **Not yet**: components across
-  files.
+- **Two targets** — `bindings.imgui.ui`, the default, and `ui` (`ui.layout`), named by a
+  script (`<script target="ui">`) or `lui --target ui`. For `ui` a capitalized tag is a
+  `ui.layout` builder (`<Row main="between" cross="center">`, `<Column>`, `<Stack>`,
+  `<Expanded flex>`, `<Positioned left top …>`, `<Padding all | x y | top …>`, `<Align
+  at="top-left">`, `<Scroll axis offset>`, `<SizedBox width height>`, `<Text>`, `<Button
+  on_click>`, `<Checkbox checked on_toggle>`, `<Slider value min max step on_change>`,
+  `<TextInput value placeholder on_edit>`, `<Image texture texels width height>`, `<Themed
+  theme sheet>`), and every element takes `class`, `part`, `key` (its identity, `.keyed`),
+  `label` (for assistive technology) and `style`. A `<for>` there holds one element.
+- **Styling for `ui`**: a component's `<style>` is a sheet made from the theme it is drawn
+  in (`component_of`); a top-level `<style global theme={AppTheme} name="app_sheet">` is a
+  `pub` function of that theme (`Theme` by default) answering the sheet, for `<Themed
+  theme={t} sheet={app_sheet(t)}>`. A `$path` reads the theme — `$colors.accent` is
+  `t.colors.accent`, `$space.m` `t.space.m` — wherever a number or colour goes (not in an
+  inline `style`, which has no theme); properties `color`, `background`, `border-color`,
+  `border-width`, `radius` (or `rounding`), `gap`, `opacity`, `font-size`, `line-height`,
+  `padding` (one, two — across then down — or four). Each rule is marked with its line, so
+  `lui map` puts a token lyrac refuses back at it. **Parts**: `Comp::part` and
+  `Comp.class::part` are checked against the parts the component's markup marks
+  (`part="title"`) — or a control's (`Checkbox::box`, `Slider::thumb`,
+  `TextInput::placeholder`) — and a part it lacks is lui's error, as a misspelt prop is.
+- **Another file's components**: `<import src="widgets.lui"/>` at the top reads that file,
+  checks calls to its components as this file's are, and imports the ones called from its
+  module — the path without `.lui` (`/` as `.`), or `module="…"`. `lyra-lsp` passes the
+  markup's path, so imports resolve in the editors too.
+- **Tested** by `cmd/lyrac/lui_test.go`: the examples' modules (both targets) are what lui
+  makes and check clean, each kind of mistake is reported at its line, and a token's or a
+  script's error from lyrac is mapped back.
 - **The editors show errors at the markup**: `lyra-lsp` runs `lui --stdin` on a `.lui`
   buffer, analyzes the module beside it, and publishes each diagnostic at the markup line
   its marker names (`cmd/lyra-lsp/README.md`); both extensions send `.lui` to it.
