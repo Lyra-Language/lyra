@@ -831,6 +831,13 @@ target = "genesis"
   `vdp.SCREEN_WIDTH`) — the last was "no member" until 09/30.
 - `pub extern` exports a foreign function as `pub let` does a binding; a call still needs
   `unsafe` (§8, `extern`).
+- **A member imported under another name** (`import lib.{ Box as B }`) is that member under
+  the new name in every position — a type inside a declaration too (a field `b: B`, a
+  payload, `P<i64>` for a generic one), which was "unknown type" at the original's
+  declaration until 10/21. **A constructor is the exception that cannot always be renamed**:
+  constructors are matched by their own name, so `KeyDown as SdlKeyDown` is refused while the
+  module also reaches another constructor named `KeyDown` — its own, or another module's —
+  since the two could not be told apart. Rename one where its data type declares it.
 - Resolution: **own scope → imports → prelude**. Using an export you didn't import names the fix (`add import lib.{ … }`), distinct from a missing `pub`.
 - **Every position that writes a type's name takes the rule**: parameter, return type, local annotation, struct field, `alias`. It is one pass over the written occurrences (`TypeRefs`), not a check inside a resolver — until 09/22 it was the latter, and the first two were refused while the last three were not. A type a value merely *carries* across the boundary is untouched: `m.col` on a value from a constructor payload writes no name, so there is nothing to refuse.
 - **So does every position that writes a trait's name**: an impl head (`impl Bus for TestBus`), a `where` bound, a supertrait list, a `Trait::method` path. Each needs the trait imported, and each counts as a use of the import (no `lyra-W004`); implementing another module's private trait is `lyra-E028`. A trait reached only by dispatch (`x.area()`, an operator) writes no name and needs only its module loaded. Until 09/28 all four positions resolved an unimported public trait.

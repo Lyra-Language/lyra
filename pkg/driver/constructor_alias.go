@@ -1,8 +1,11 @@
 package driver
 
 import (
+	"fmt"
+
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
 // eraseConstructorAliases rewrites every use of a constructor imported under an alias —
@@ -109,4 +112,72 @@ func constructorAliases(st *symbols.SymbolTable) map[string]map[string]string {
 func declaresConstructor(st *symbols.SymbolTable, module, name string) bool {
 	_, ok := ownConstructor(st, module, name)
 	return ok
+}
+
+// constructorAliasCollisions refuses an aliased constructor import whose own name the
+// module also reaches as another constructor — its own, or another module's imported by
+// name or under an alias. The erasure above rewrites the alias to that name, and a
+// constructor is matched by name, so after it the two are one: `KeyDown as SdlKeyDown`
+// beside another module's `KeyDown` checked `SdlKeyDown(code)` against the other's payload,
+// and with payloads alike would have built the wrong one in silence. Until this is lifted —
+// a constructor resolved by its declaration rather than its name — one of the two has to be
+// renamed where it is declared.
+func constructorAliasCollisions(program *ast.Program, st *symbols.SymbolTable) []diag.Diagnostic {
+	if program == nil || st == nil {
+		return nil
+	}
+	var out []diag.Diagnostic
+	byModule := map[string]map[string][]string{} // module → constructor name → the modules it comes from
+	var aliased []struct {
+		module, source string
+		member         ast.ImportMember
+	}
+	for _, node := range program.Statements {
+		imp, ok := node.(*ast.ImportStmt)
+		if !ok || imp.Alias != "" {
+			continue
+		}
+		module := st.ModuleOfFile[imp.GetLocation().File]
+		source := joinModulePath(imp.Path)
+		for _, m := range imp.Members {
+			if !declaresConstructor(st, source, m.Name) {
+				continue
+			}
+			if byModule[module] == nil {
+				byModule[module] = map[string][]string{}
+			}
+			byModule[module][m.Name] = append(byModule[module][m.Name], source)
+			if m.Alias != "" && m.Alias != m.Name {
+				aliased = append(aliased, struct {
+					module, source string
+					member         ast.ImportMember
+				}{module, source, m})
+			}
+		}
+	}
+	for _, a := range aliased {
+		other := ""
+		if own, ok := ownConstructor(st, a.module, a.member.Name); ok {
+			other = fmt.Sprintf("this module's own %s (%s:%d)", a.member.Name,
+				own.GetLocation().File, own.GetLocation().StartLine)
+		}
+		for _, source := range byModule[a.module][a.member.Name] {
+			if other == "" && source != a.source {
+				other = fmt.Sprintf("the %s imported from module %q", a.member.Name, source)
+			}
+		}
+		if other == "" {
+			continue
+		}
+		out = append(out, diag.Diagnostic{
+			Location: a.member.Location,
+			Severity: diag.SeverityError,
+			Code:     diag.CodeTypeError,
+			Message: fmt.Sprintf(
+				"%s as %s: a constructor imported under another name is still matched by its own,"+
+					" so %s cannot be told from %s. Rename one of the two where its data type"+
+					" declares it", a.member.Name, a.member.Alias, a.member.Alias, other),
+		})
+	}
+	return out
 }

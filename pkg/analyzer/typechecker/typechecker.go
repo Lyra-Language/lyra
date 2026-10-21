@@ -93,6 +93,8 @@ type TypeChecker struct {
 	// resolved identity (stampDeclaredNames). Once each: the walk rewrites the
 	// declaration in place, and a second pass would be work with nothing to do.
 	stampedDecls map[*ast.TypeDeclStmt]bool
+	// aliasedTypeUses: AliasedTypeUses.
+	aliasedTypeUses map[string]map[string]bool
 	// circularNewtypes are newtypes whose base chain leads back to themselves, found up
 	// front by checkNewtypeCycles. Resolution refuses to hand one back, which is what
 	// makes every newtype-stripping walk in the compiler terminate — see that function.
@@ -145,6 +147,7 @@ func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTabl
 		resolvingTypes:   make(map[string]bool),
 		circularNewtypes: make(map[string]bool),
 		stampedDecls:     make(map[*ast.TypeDeclStmt]bool),
+		aliasedTypeUses:  map[string]map[string]bool{},
 	}
 }
 
@@ -3027,11 +3030,19 @@ func (tc *TypeChecker) stampDeclaredNames(decl *ast.TypeDeclStmt) {
 //
 // It descends through the composites *and* through an aggregate's members, which
 // resolveTypeWith deliberately does not: this is about the members.
+//
+// **A name imported under an alias is stamped with the declaration's own name too**
+// (`declaredName`): a stamped name is resolved later from the declaring module
+// (`declaringSite`), and read by the backend, both of which know `Box` and not the
+// importer's `B`. Until 10/21 a field written `b: B` was "unknown type" at `Box`'s
+// declaration. The alias is recorded as used (`AliasedTypeUses`), since lyra-W004 reads the
+// stamped names and would no longer find it.
 func (tc *TypeChecker) stampNames(t types.Type, loc ast.Location) types.Type {
 	switch v := t.(type) {
 	case types.UnresolvedType:
 		if v.Key == "" {
 			v.Key = tc.symTable.TypeKey(v.Name, loc)
+			v.Name = tc.declaredName(v.Name, v.Key, loc)
 		}
 		return v
 	case types.StaticArrayType:
@@ -3056,6 +3067,7 @@ func (tc *TypeChecker) stampNames(t types.Type, loc ast.Location) types.Type {
 	case types.ParameterizedType:
 		if v.Key == "" {
 			v.Key = tc.symTable.TypeKey(v.Name, loc)
+			v.Name = tc.declaredName(v.Name, v.Key, loc)
 		}
 		args := make([]types.Type, len(v.TypeArguments))
 		for i, a := range v.TypeArguments {
@@ -3105,6 +3117,26 @@ func (tc *TypeChecker) stampNames(t types.Type, loc ast.Location) types.Type {
 		return t
 	}
 }
+
+// declaredName is the name the declaration `key` names was declared under — `written`
+// itself unless `written` is an import alias (recorded as used in loc's file), or `key`
+// names no declaration.
+func (tc *TypeChecker) declaredName(written, key string, loc ast.Location) string {
+	decl, ok := tc.symTable.LookupTypeByKey(key)
+	if !ok || decl == nil || decl.Name == written {
+		return written
+	}
+	if tc.aliasedTypeUses[loc.File] == nil {
+		tc.aliasedTypeUses[loc.File] = map[string]bool{}
+	}
+	tc.aliasedTypeUses[loc.File][decl.Name] = true
+	return decl.Name
+}
+
+// AliasedTypeUses maps a file to the declared names of the types it wrote under an import
+// alias inside a declaration, which stamping replaced (stampNames) — uses lyra-W004 can no
+// longer see in the source it reads.
+func (tc *TypeChecker) AliasedTypeUses() map[string]map[string]bool { return tc.aliasedTypeUses }
 
 // resolveTypeIfKnown resolves an UnresolvedType only when the name is actually
 // in the symbol table, returning t unchanged and emitting no diagnostic when it

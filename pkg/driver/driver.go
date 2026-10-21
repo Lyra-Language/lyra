@@ -196,6 +196,7 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	res.Program, res.SymbolTable, res.ScopeTable = program, symTable, scopeTable
 	// Before every pass: an aliased constructor import is erased into the constructor's own
 	// name, and the uses it rewrote count the import as used (lyra-W004, below).
+	res.Diagnostics = append(res.Diagnostics, constructorAliasCollisions(program, symTable)...)
 	aliasedConstructorUses := eraseConstructorAliases(program, symTable)
 	// And a constructor written as a function value becomes the lambda that applies it.
 	eraseConstructorValues(program, symTable)
@@ -414,7 +415,7 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// never writes that module's name, so the syntactic check cannot see the use.
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUnusedImports(program, checker.ImportUse{
 		Modules: tc.UFCSModules(),
-		Names:   mergeNameUses(tc.DispatchedTraits(), aliasedConstructorUses),
+		Names:   mergeNameUses(mergeNameUses(tc.DispatchedTraits(), aliasedConstructorUses), tc.AliasedTypeUses()),
 		Callees: tc.UFCSCallees(),
 		Exports: func(file, name string) []string {
 			return typechecker.UFCSReachableExporters(symTable, file, name)
