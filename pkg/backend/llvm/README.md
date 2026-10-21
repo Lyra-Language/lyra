@@ -702,8 +702,9 @@ Details in `../FFI.md`. Essentials for this package:
 
 ## Live reload (`live.go`)
 
-`Backend.Live(gen)` makes `Emit` a generation of a `lyrac run --live` program (design:
-`../LIVE.md`), and `LiveInfo()` returns what lyrac's compatibility check compares. All of it
+`Backend.Live(gen, base)` makes `Emit` a generation of a `lyrac run --live` program
+(design: `../LIVE.md`) — `base` (a `LiveBase`, nil for generation 0) is what the running
+program holds — and `LiveInfo()` returns what lyrac's compatibility check compares. All of it
 runs over the finished module (`finishLive`), so an ordinary build is byte for byte what it
 was.
 
@@ -714,10 +715,17 @@ was.
   and, when SIGUSR1 has set it, runs `lyra.live.apply`: `read` a path from fd 3, `dlopen`
   it, call its `lyra_live_patch`, and answer on fd 4. `lyra.live.init` installs the
   handler only when `LYRA_LIVE` is set.
-- **Generation N** is the whole program again, with `main` and its initializers removed,
-  every **live state** global (mutable, not private: `lyra_global_*`, argc/argv, the saved
-  termios) turned into a declaration, and a `lyra_live_patch` storing its functions in the
-  slots.
+- **A function used as a value has a slot too**: its `name.closure` thunk (`closures.go`,
+  `liveThunks`) calls through the slot, in every generation, so a stored callback reaches
+  the newest body. `callThroughSlots` is the one rewrite, for `main` and the thunks.
+- **Generation N** is the whole program again, with `main` removed, every **live state**
+  global (mutable, not private: `lyra_global_*`, argc/argv, the saved termios) that `base`
+  holds turned into a declaration (`liveBuild.binds`), and a `lyra_live_patch` that first
+  runs `lyra.live.init_globals` — lowered with only the **new** globals' initializers, which
+  `initGlobals` skips the bound ones for — then stores its functions in the slots
+  generation 0 has with the same type.
+- **Generations are `dlopen`ed `RTLD_GLOBAL`**: a global one adds is found by name by the
+  ones after it, through `-undefined dynamic_lookup`'s flat lookup.
 - **In a live build the initializers run from `lyra.live.init_globals`**, which `main`
   calls, not inline: they are part of what generation N replaces, and `main` is what is
   compared.

@@ -531,7 +531,7 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 		be.EntrySymbol(appEntry) // runtime/ios/main.c's `main` calls it (app.go)
 	}
 	if o.liveEmit != nil {
-		be.Live(0)
+		be.Live(0, nil)
 	}
 	libs := linkFlags(res, p)
 	ir, err := be.Emit(res, entry)

@@ -20,11 +20,14 @@ import (
 // A live program is built in **generations**. Generation 0 is the executable: the program
 // as always, except that every call **in `main`** to a Lyra function loads its callee from
 // a slot (`@lyra.live.slot.<symbol>`), and every loop back-edge in `main` polls a flag a
-// SIGUSR1 sets. Generation N ≥ 1 is the whole program again, built as a library whose
-// mutable globals are *declarations* — the dynamic linker binds them to generation 0's, so
-// the new code sees the state the old code made — and whose `lyra_live_patch` stores its
-// functions' addresses in generation 0's slots. Generation 0's `lyra.live.apply`, reached
-// from a poll, reads the library's path from a pipe, `dlopen`s it and calls that.
+// SIGUSR1 sets. A function used as a value calls through a slot too, from its closure
+// thunk, so a callback stored before a swap reaches the newest code. Generation N ≥ 1 is
+// the whole program again, built as a library whose mutable globals are *declarations* —
+// the dynamic linker binds them to the running program's, so the new code sees the state
+// the old code made — and whose `lyra_live_patch` initializes the globals new to the
+// program, then stores its functions' addresses in generation 0's slots. Generation 0's
+// `lyra.live.apply`, reached from a poll, reads the library's path from a pipe, `dlopen`s
+// it and calls that.
 //
 // **Only `main` polls and only `main` calls through slots**, because `main`'s is the one
 // frame that stays on the stack: everything it calls returns every time round its loop, so
@@ -51,14 +54,28 @@ type LiveInfo struct {
 	// Types are the module's named LLVM types, by name, each with its definition: the
 	// layout of a value already in memory.
 	Types map[string]string
-	// Slots are the functions `main` calls through a slot, by symbol.
-	Slots []string
+	// Slots are the functions called through a slot — each one `main` calls, and each one
+	// used as a value — by symbol, each with its LLVM type.
+	Slots map[string]string
+}
+
+// LiveBase is what the running program already has, which a generation N binds to rather
+// than defines.
+type LiveBase struct {
+	// Slots are generation 0's, by symbol, each with its function's type. A generation
+	// patches only these, and only where the type is the same.
+	Slots map[string]string
+	// Globals are the mutable globals the program holds — generation 0's, and those an
+	// applied generation added since — by symbol. Any other a generation defines is new,
+	// and its `lyra_live_patch` runs the initializer.
+	Globals map[string]string
 }
 
 // Live makes the next Emit a live build's generation gen: 0 for the executable, N ≥ 1 for
-// a library to be loaded into it. b, for chaining.
-func (b *Backend) Live(gen int) *Backend {
-	b.live = &liveBuild{gen: gen}
+// a library to be loaded into the program base describes (nil for generation 0). b, for
+// chaining.
+func (b *Backend) Live(gen int, base *LiveBase) *Backend {
+	b.live = &liveBuild{gen: gen, base: base}
 	return b
 }
 
@@ -85,13 +102,27 @@ const (
 )
 
 type liveBuild struct {
-	gen int
+	gen  int
+	base *LiveBase
 }
 
-// liveSignals is SIGUSR1, and the dlopen flags (RTLD_NOW | RTLD_LOCAL), per OS.
+// binds reports whether a later generation declares the global sym rather than defining
+// it: the running program already holds it, so its initializer is not run again.
+func (b *liveBuild) binds(sym string) bool {
+	if b.gen == 0 || b.base == nil {
+		return false
+	}
+	_, ok := b.base.Globals[sym]
+	return ok
+}
+
+// liveSignals is SIGUSR1, and the dlopen flags (RTLD_NOW | RTLD_GLOBAL), per OS.
+// **RTLD_GLOBAL** because a global one generation adds is defined there, and the
+// generations after it find it by name — the flat lookup `-undefined dynamic_lookup`
+// leaves them, which sees only images loaded global.
 var liveSignals = map[string]struct{ usr1, dlopenFlags int64 }{
-	"darwin": {30, 2 | 4},
-	"linux":  {10, 2},
+	"darwin": {30, 2 | 8},
+	"linux":  {10, 2 | 0x100},
 }
 
 // LiveSignal is the number of SIGUSR1 on os, which lyrac sends a live program — the same
@@ -113,10 +144,14 @@ func (l *lowerer) finishLive(m *ir.Module) (*LiveInfo, error) {
 	if mainFn == nil {
 		return nil, fmt.Errorf("llvm: live build has no %s", l.entrySymbol())
 	}
+	if l.live.gen > 0 && l.live.base == nil {
+		return nil, fmt.Errorf("llvm: live generation %d has no base to bind to", l.live.gen)
+	}
 	info := &LiveInfo{
 		Main:    normalizeLive(m, mainFn.Name()),
 		Globals: map[string]string{},
 		Types:   map[string]string{},
+		Slots:   map[string]string{},
 	}
 	for _, t := range m.TypeDefs {
 		info.Types[t.Name()] = t.LLString()
@@ -126,13 +161,26 @@ func (l *lowerer) finishLive(m *ir.Module) (*LiveInfo, error) {
 			info.Globals[g.Name()] = g.ContentType.LLString()
 		}
 	}
-	callees := l.mainCallees(mainFn)
-	for _, fn := range callees {
-		info.Slots = append(info.Slots, fn.Name())
+	thunks := l.liveThunks(m)
+	slotted := l.mainCallees(mainFn)
+	for _, t := range thunks {
+		if !slices.Contains(slotted, t.target) {
+			slotted = append(slotted, t.target)
+		}
+	}
+	for _, fn := range slotted {
+		info.Slots[fn.Name()] = fn.Type().LLString()
 	}
 
 	if l.live.gen == 0 {
-		l.rewriteMainCalls(mainFn, callees)
+		slots := map[*ir.Func]*ir.Global{}
+		for _, fn := range slotted {
+			slots[fn] = l.module.NewGlobalDef(liveSlotPrefix+fn.Name(), fn)
+		}
+		callThroughSlots(mainFn, slots)
+		for _, t := range thunks {
+			callThroughSlots(t.thunk, slots)
+		}
 		poll := l.emitLivePoll(sig.dlopenFlags)
 		insertPolls(mainFn, poll)
 		init := l.emitLiveInit(sig.usr1)
@@ -141,19 +189,58 @@ func (l *lowerer) finishLive(m *ir.Module) (*LiveInfo, error) {
 		return info, nil
 	}
 
-	// A later generation: generation 0's `main` stays, so this one's goes, with the
-	// initializers it ran — the state they made is generation 0's, already made.
-	m.Funcs = slices.DeleteFunc(m.Funcs, func(f *ir.Func) bool {
-		return f == mainFn || f.Name() == liveGlobalsInit
-	})
+	// A later generation: generation 0's `main` stays, so this one's goes. Its
+	// initializers stay for the globals new to the program (initGlobals lowered only
+	// those); the rest are the running program's, bound to by name, their state already
+	// made.
+	m.Funcs = slices.DeleteFunc(m.Funcs, func(f *ir.Func) bool { return f == mainFn })
 	for _, g := range m.Globals {
-		if isLiveState(g) {
+		if isLiveState(g) && l.live.binds(g.Name()) {
 			g.Init = nil
 			g.Linkage = enum.LinkageExternal
 		}
 	}
-	l.emitLivePatch(callees)
+	// A slot is patched only where generation 0 has it with the same type: a function
+	// new since, or one whose signature changed, is called directly by this generation's
+	// thunk, and an older closure keeps the code it was made with.
+	slots := map[*ir.Func]*ir.Global{}
+	var patched []*ir.Func
+	for _, fn := range slotted {
+		if was, ok := l.live.base.Slots[fn.Name()]; ok && was == fn.Type().LLString() {
+			slot := l.module.NewGlobal(liveSlotPrefix+fn.Name(), fn.Type())
+			slot.Linkage = enum.LinkageExternal
+			slots[fn] = slot
+			patched = append(patched, fn)
+		}
+	}
+	for _, t := range thunks {
+		callThroughSlots(t.thunk, slots)
+	}
+	l.emitLivePatch(findFunc(m, liveGlobalsInit), patched, slots)
 	return info, nil
+}
+
+// liveThunk is a named function's closure thunk ([closureThunk]) and the function it
+// calls.
+type liveThunk struct {
+	thunk, target *ir.Func
+}
+
+// liveThunks are the thunks of the Lyra functions used as values, in module order.
+func (l *lowerer) liveThunks(m *ir.Module) []liveThunk {
+	targets := map[*ir.Func]*ir.Func{}
+	for name, thunk := range l.closureThunks {
+		if fn, ok := l.funcs[name]; ok && l.isSlottable(fn) {
+			targets[thunk] = fn
+		}
+	}
+	var out []liveThunk
+	for _, f := range m.Funcs {
+		if target, ok := targets[f]; ok {
+			out = append(out, liveThunk{thunk: f, target: target})
+		}
+	}
+	return out
 }
 
 // entrySymbol is the C name the entry is emitted under.
@@ -201,10 +288,7 @@ func (l *lowerer) mainCallees(mainFn *ir.Func) []*ir.Func {
 				continue
 			}
 			fn, ok := call.Callee.(*ir.Func)
-			if !ok || seen[fn] || !l.sourceFuncs[fn] || len(fn.Blocks) == 0 {
-				continue
-			}
-			if _, isExtern := l.externs[fn.Name()]; isExtern {
+			if !ok || seen[fn] || !l.isSlottable(fn) {
 				continue
 			}
 			seen[fn] = true
@@ -214,23 +298,28 @@ func (l *lowerer) mainCallees(mainFn *ir.Func) []*ir.Func {
 	return out
 }
 
-// rewriteMainCalls points each of main's calls to callees at a load of the callee's slot,
-// a global initialized to the function. The load is also what keeps LLVM from inlining
-// the callee into `main`, which would leave nothing to patch.
-func (l *lowerer) rewriteMainCalls(mainFn *ir.Func, callees []*ir.Func) {
-	slots := map[*ir.Func]*ir.Global{}
-	for _, fn := range callees {
-		g := l.module.NewGlobalDef(liveSlotPrefix+fn.Name(), fn)
-		slots[fn] = g
+// isSlottable reports whether fn is a function defined in Lyra, which a generation may
+// replace — not an `extern`, and not the runtime's own glue.
+func (l *lowerer) isSlottable(fn *ir.Func) bool {
+	if !l.sourceFuncs[fn] || len(fn.Blocks) == 0 {
+		return false
 	}
+	_, isExtern := l.externs[fn.Name()]
+	return !isExtern
+}
+
+// callThroughSlots points each of fn's calls to a function with a slot at a load of that
+// slot. In `main` the load is also what keeps LLVM from inlining the callee, which would
+// leave nothing to patch.
+func callThroughSlots(fn *ir.Func, slots map[*ir.Func]*ir.Global) {
 	n := 0
-	for _, b := range mainFn.Blocks {
+	for _, b := range fn.Blocks {
 		insts := make([]ir.Instruction, 0, len(b.Insts))
 		for _, inst := range b.Insts {
 			if call, ok := inst.(*ir.InstCall); ok {
-				if fn, ok := call.Callee.(*ir.Func); ok {
-					if slot, ok := slots[fn]; ok {
-						load := ir.NewLoad(fn.Type(), slot)
+				if callee, ok := call.Callee.(*ir.Func); ok {
+					if slot, ok := slots[callee]; ok {
+						load := ir.NewLoad(callee.Type(), slot)
 						// Named, so the IDs `main`'s unnamed values were given when its
 						// text was taken (normalizeLive) still count up without a gap.
 						load.SetName(fmt.Sprintf("live.callee.%d", n))
@@ -383,24 +472,31 @@ func (l *lowerer) liveReply(block *ir.Block, text string) {
 	block.NewCall(l.writeFunc(), i32c(liveWriteFD), l.cString(text), i64c(int64(len(text))))
 }
 
-// emitLivePatch emits a later generation's `lyra_live_patch`: a store of each of its
-// functions `main` calls into generation 0's slot for it. The library carries its own
-// patch list as code, so the loader has no table to read.
-func (l *lowerer) emitLivePatch(callees []*ir.Func) {
+// emitLivePatch emits a later generation's `lyra_live_patch`: first initGlobals, which
+// initializes the globals new to the program in declaration order, then a store of each
+// of its functions with a slot into generation 0's slot for it. The library carries its
+// own patch list as code, so the loader has no table to read.
+//
+// The globals come first because the next call through a slot may read one.
+func (l *lowerer) emitLivePatch(initGlobals *ir.Func, patched []*ir.Func, slots map[*ir.Func]*ir.Global) {
 	fn := l.module.NewFunc(LivePatchSymbol, lltypes.Void)
 	b := fn.NewBlock("entry")
-	for _, callee := range callees {
-		slot := l.module.NewGlobal(liveSlotPrefix+callee.Name(), callee.Type())
-		slot.Linkage = enum.LinkageExternal
-		b.NewStore(callee, slot)
+	if initGlobals != nil {
+		b.NewCall(initGlobals)
+	}
+	for _, callee := range patched {
+		b.NewStore(callee, slots[callee])
 	}
 	b.NewRet(nil)
 }
 
 // emitLiveGlobalsInit lowers the top-level initializers into a function of their own,
-// which `main` calls where it would otherwise run them inline (lowerEntry).
+// which `main` calls where it would otherwise run them inline (lowerEntry) — and which,
+// in a later generation, initializes only the globals new to the program
+// (initGlobals asks liveBuild.binds), run from `lyra_live_patch`.
 func (l *lowerer) emitLiveGlobalsInit() (*ir.Func, error) {
 	fn := l.module.NewFunc(liveGlobalsInit, lltypes.Void)
+	fn.Linkage = enum.LinkageInternal
 	l.beginFunction(lltypes.Void, nil, false, false)
 	block, err := l.initGlobals(fn.NewBlock("entry"))
 	if err != nil {

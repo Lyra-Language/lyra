@@ -243,9 +243,9 @@ Package management, versioning and separate compilation are out of scope by deci
     unverified things at once.
 
 - **[PARTIAL] Hot reload that keeps the program's state — `lyrac run --live` (10/20).**
-  Built on macOS ([pkg/backend/LIVE.md](pkg/backend/LIVE.md)); next: function values
-  through slots and new top-level `let`s initialized on apply (LIVE.md step 4), Linux
-  through `./asan.sh` (step 5), whole static archives in generation 0, then Vega on it.
+  Built on macOS ([pkg/backend/LIVE.md](pkg/backend/LIVE.md)), with function values through
+  slots and new top-level `let`s initialized on apply (step 4, 10/21); next: Linux through
+  `./asan.sh` (step 5), whole static archives in generation 0, then Vega on it.
 - **[DECIDED, not built] Qualified type names — `ast.Program` in a type position.**
 
   **The gap.** A plain `import lib` binds a namespace that works for values and not for

@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 10/21/26 — `lyrac run --live`: stored callbacks reach new code, and a new top-level `let` is applied
+
+LIVE.md's step 4. Before it, `on_click = save` kept in `main`'s state called the `save` it
+was made with forever, and adding a top-level `let` restarted the program.
+
+- **The closure thunk calls through a slot**, not the function: generation 0 gets a slot for
+  every function used as a value as well as each one `main` calls, and every generation's
+  thunks load from it. The thunk was already the one place a named function becomes a
+  value, so nothing at the use sites changed.
+- **A slot is patched only where generation 0 has it with the same type.** A function first
+  used as a value later has no slot to patch, and one whose signature changed would be
+  called by old closures with the old arguments; either way that generation's thunk calls
+  directly and the value is stale until a restart, never wrong.
+- **A new global is defined by the generation that adds it and initialized in its
+  `lyra_live_patch`, before any slot is patched** — the next call through a slot may read
+  it. The initializer function is lowered with the new globals' initializers only.
+- **The generation after binds to it, rather than defining it again.** Checked against
+  generation 0 alone, each save would have seen it as new and reset it — a counter added in
+  one save started again at every save after. lyrac records what an applied generation
+  added and passes it to the backend with generation 0's globals (`LiveBase`). That needed
+  **`RTLD_GLOBAL`**: the later bundle finds the symbol through `-undefined dynamic_lookup`'s
+  flat lookup, which skips images loaded local (measured: `symbol not found in flat
+  namespace`).
+
 ### 10/21/26 — `ui/`, phase 1: a display list drawn through SDL3, and two alias bugs it found
 
 The GUI's first phase, per its design document: the seams, and an SDL3 backend drawing

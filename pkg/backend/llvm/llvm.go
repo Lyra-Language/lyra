@@ -1215,6 +1215,11 @@ func (l *lowerer) initGlobals(block *ir.Block) (*ir.Block, error) {
 		if !ok {
 			continue
 		}
+		// A live build's later generation runs only the initializers of the globals new
+		// to the running program; the others hold its state already (live.go).
+		if l.live != nil && l.live.binds(g.Name()) {
+			continue
+		}
 		// **A fixed array of zeros is already there**: every global is defined zeroed, so
 		// `var art: [28672]u32 = #[0; 28672]` needs no start-up code. Lowered, it built the
 		// array on the stack and stored it whole — a 112 KB aggregate value, the kind LLVM's

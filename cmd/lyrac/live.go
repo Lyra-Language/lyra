@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,9 +35,10 @@ import (
 // **When a change cannot be swapped safely lyrac restarts the program, as --watch does,
 // and says why**, so --live is never worse than --watch: `main` itself changed (it is the
 // frame that never returns), a type's fields or constructors changed (values already in
-// memory have the old shape), a top-level `let` is new or changed type (its storage is
-// generation 0's), the program links a new library, or the program did not answer — its
-// loop is not in `main`, or it is blocked.
+// memory have the old shape), a top-level `let` changed type (its storage is the running
+// program's), the program links a new library, or the program did not answer — its loop
+// is not in `main`, or it is blocked. A new top-level `let` is applied: the generation
+// defines it and initializes it before anything new runs.
 //
 // macOS only so far; elsewhere --live is --watch, and says so once.
 
@@ -64,7 +66,11 @@ type liveSession struct {
 
 // liveBase is what a generation must share with generation 0 to run on its state.
 type liveBase struct {
-	info   *llvm.LiveInfo
+	info *llvm.LiveInfo
+	// added are the top-level `let`/`var`s an applied generation defined since, by symbol,
+	// each with its type: the program holds them now, so a later generation binds to them
+	// as to generation 0's.
+	added  map[string]string
 	shapes map[string]string // each type, by declaration key, to its Lyra shape
 	inits  map[string]string // each top-level `let`/`var`'s symbol, to its initializer's text
 	links  []string
@@ -138,6 +144,7 @@ func startGeneration0(o buildOptions, res *driver.Result, entry *driver.EntryPoi
 	s := &liveSession{
 		base: liveBase{
 			info:   o.liveEmit.info,
+			added:  map[string]string{},
 			shapes: typeShapes(res),
 			inits:  initializers(res),
 			links:  linkFlags(res, p),
@@ -178,7 +185,7 @@ func (c *child) reload(o buildOptions, changed string) (*child, []string, bool) 
 		return nil, files, false
 	}
 	s := c.live
-	reason, lib := s.prepare(o, res, entry, c.dir)
+	reason, lib, info := s.prepare(o, res, entry, c.dir)
 	if reason == "" {
 		reason = s.load(c, lib)
 	}
@@ -188,6 +195,9 @@ func (c *child) reload(o buildOptions, changed string) (*child, []string, bool) 
 		for _, note := range s.base.notes(res) {
 			fmt.Fprintf(os.Stderr, "lyrac: %s\n", note)
 		}
+		for _, sym := range s.base.adopt(info, res) {
+			fmt.Fprintf(os.Stderr, "lyrac: top-level `%s` is new; initialized\n", globalName(sym))
+		}
 		return nil, files, true
 	}
 	fmt.Fprintf(os.Stderr, "lyrac: %s changed; restarting: %s\n", filepath.Base(changed), reason)
@@ -195,34 +205,35 @@ func (c *child) reload(o buildOptions, changed string) (*child, []string, bool) 
 }
 
 // prepare builds res as the next generation and checks it against generation 0. It
-// returns why it cannot be applied, or "" and the bundle to load.
-func (s *liveSession) prepare(o buildOptions, res *driver.Result, entry *driver.EntryPoint, dir string) (string, string) {
+// returns why it cannot be applied, or "", the bundle to load and its LiveInfo.
+func (s *liveSession) prepare(o buildOptions, res *driver.Result, entry *driver.EntryPoint, dir string) (string, string, *llvm.LiveInfo) {
 	p, err := platformOf(o)
 	if err != nil {
-		return err.Error(), ""
+		return err.Error(), "", nil
 	}
 	gen := s.gen + 1
-	be := llvm.NewForPlatform(p).Live(gen)
+	be := llvm.NewForPlatform(p).Live(gen, s.base.process())
 	ir, err := be.Emit(res, entry)
 	if err != nil {
-		return fmt.Sprintf("the new code did not compile: %v", err), ""
+		return fmt.Sprintf("the new code did not compile: %v", err), "", nil
 	}
 	// Checked before linking, which is the slow half of a build, so a change that must
 	// restart starts the new program as soon as it can.
-	if why := s.base.incompatible(be.LiveInfo(), typeShapes(res), linkFlags(res, p)); why != "" {
-		return why, ""
+	info := be.LiveInfo()
+	if why := s.base.incompatible(info, typeShapes(res), linkFlags(res, p)); why != "" {
+		return why, "", nil
 	}
 	cc, err := findCC(o.cc)
 	if err != nil {
-		return err.Error(), ""
+		return err.Error(), "", nil
 	}
 	if err := llvm.CheckCoroutineSupport(ir, cc); err != nil {
-		return err.Error(), ""
+		return err.Error(), "", nil
 	}
 	name := filepath.Base(replaceExt(o.path, ""))
 	ll := filepath.Join(dir, fmt.Sprintf("%s.%d.ll", name, gen))
 	if err := os.WriteFile(ll, ir, 0o644); err != nil {
-		return err.Error(), ""
+		return err.Error(), "", nil
 	}
 	// **A bundle loaded by generation 0, linking no libraries.** `-bundle_loader` binds
 	// what generation 0 defines — its globals, its slots — to generation 0's, and
@@ -233,9 +244,9 @@ func (s *liveSession) prepare(o buildOptions, res *driver.Result, entry *driver.
 	lib := filepath.Join(dir, fmt.Sprintf("%s.%d.bundle", name, gen))
 	link := exec.Command(cc, o.opt, "-bundle", "-bundle_loader", s.exe, "-Wl,-undefined,dynamic_lookup", ll, "-o", lib)
 	if out, err := link.CombinedOutput(); err != nil {
-		return fmt.Sprintf("the new code did not link: %v\n%s", err, out), ""
+		return fmt.Sprintf("the new code did not link: %v\n%s", err, out), "", nil
 	}
-	return "", lib
+	return "", lib, info
 }
 
 // load sends lib to the running program and waits for its answer, returning why it was
@@ -286,9 +297,12 @@ func (b liveBase) incompatible(info *llvm.LiveInfo, shapes map[string]string, li
 	}
 	for _, sym := range llvm.SortedKeys(info.Globals) {
 		was, ok := b.info.Globals[sym]
+		if !ok {
+			was, ok = b.added[sym]
+		}
 		switch {
 		case !ok && strings.HasPrefix(sym, "lyra_global_"):
-			return fmt.Sprintf("a top-level `%s` is new", globalName(sym))
+			// New: the generation defines it, and its `lyra_live_patch` initializes it.
 		case !ok:
 			return fmt.Sprintf("the runtime needs state it did not have (`%s`)", sym)
 		case was != info.Globals[sym]:
@@ -299,6 +313,31 @@ func (b liveBase) incompatible(info *llvm.LiveInfo, shapes map[string]string, li
 		return "the libraries it links changed"
 	}
 	return ""
+}
+
+// process is what the running program holds, for the backend to bind a generation to:
+// generation 0's slots, and its globals with those an applied generation added.
+func (b liveBase) process() *llvm.LiveBase {
+	globals := maps.Clone(b.info.Globals)
+	maps.Copy(globals, b.added)
+	return &llvm.LiveBase{Slots: b.info.Slots, Globals: globals}
+}
+
+// adopt records the top-level values an applied generation with info defined, which the
+// program now holds, and returns their symbols.
+func (b liveBase) adopt(info *llvm.LiveInfo, res *driver.Result) []string {
+	var out []string
+	inits := initializers(res)
+	for _, sym := range llvm.SortedKeys(info.Globals) {
+		_, was := b.info.Globals[sym]
+		if _, added := b.added[sym]; was || added || !strings.HasPrefix(sym, "lyra_global_") {
+			continue
+		}
+		b.added[sym] = info.Globals[sym]
+		b.inits[sym] = inits[sym]
+		out = append(out, sym)
+	}
+	return out
 }
 
 // notes are what an applied generation leaves stale by design: a top-level value whose

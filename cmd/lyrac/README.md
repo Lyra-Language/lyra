@@ -131,15 +131,19 @@ panicking program when the toolchain is there, and runs them when `$SHELIAK` is 
   over a pipe (fds 3 and 4, `LYRA_LIVE` set). `lyrac: x.lyra changed; applied`, or
   `restarting: <why>` and a restart as `--watch` does — when `main` changed (its IR,
   normalized by the backend), a type's Lyra shape (`typeShapes`: fields, constructors in
-  order) or LLVM layout changed, a top-level `let` is new or retyped, the link flags
-  changed, the bundle would not link or load, or no answer came within 2 s (the loop is
-  not in `main`, or it is blocked). A changed initializer is applied with a note: the
-  value is kept. A generation is `clang -bundle -bundle_loader <gen 0>
+  order) or LLVM layout changed, a top-level `let` is retyped, the link flags changed, the
+  bundle would not link or load, or no answer came within 2 s (the loop is not in `main`,
+  or it is blocked). A changed initializer is applied with a note: the value is kept. A
+  new top-level `let` is applied, with a note that it was initialized, and recorded in
+  `liveBase.added`, so later generations bind to it rather than define it again
+  (`liveBase.process` is what the backend is given). A generation is `clang -bundle -bundle_loader <gen 0>
   -Wl,-undefined,dynamic_lookup`, linking no libraries, so a static archive's state is
   never duplicated; it lives in the run's temp dir and is never unloaded. **macOS only**
   (`liveAvailable`): elsewhere, and for a Genesis program, it says so once and is
-  `--watch`. `live_test.go` runs a session (a body applied with the count kept, a reordered
-  `data` type and a changed `main` restarting) and the check's every row.
+  `--watch`. `live_test.go` runs two sessions (a body applied with the count kept, a
+  reordered `data` type and a changed `main` restarting; a callback stored in `main`'s
+  state reaching an edited body, and a new `var` initialized on apply and kept through the
+  next swap) and the check's every row.
 
 ## `doc`
 

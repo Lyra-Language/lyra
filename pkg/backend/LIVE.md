@@ -1,10 +1,10 @@
 # Live reload — design
 
-**Status: built for macOS, 10/20 — as `lyrac run --live`, its own flag (open question 1).**
-Applied: a changed body or signature, a new function or type. Restarting: everything in the
-table's restart rows, plus a new top-level `let` (row 4's initializing on apply is not
-built). Not built: function values through slots (step 4), Linux (step 5), whole archives in
-generation 0. Step 1 was replaced: rather than renaming the numbered symbols, lyrac compares
+**Status: built for macOS, 10/20 — as `lyrac run --live`, its own flag (open question 1);
+step 4 on 10/21.** Applied: a changed body or signature, a new function, type or top-level
+`let` (initialized on apply), and a function value made from a named function reaches the
+newest body. Restarting: the table's restart rows. Not built: Linux (step 5), whole archives
+in generation 0. Step 1 was replaced: rather than renaming the numbered symbols, lyrac compares
 `main` normalized (`normalizeLive`), each numbered symbol hashed by what it defines.
 Generation N is a `-bundle` with `-bundle_loader` generation 0, so what generation 0 defines
 is bound to it at link time; generation 0 needs no export list on macOS, whose executables
@@ -122,7 +122,11 @@ for `program_args`, `tui.go`'s saved terminal state) — and the dynamic linker 
 to the executable's when the library is loaded. One rule, no per-global bookkeeping.
 
 A global **new** in generation N is defined there, and generation N's `lyra_live_patch`
-(below) runs its initializer, in declaration order, before any slot is patched.
+(below) runs its initializer, in declaration order, before any slot is patched. The
+program holds it from then on, so lyrac passes it on (`LiveBase.Globals`) and every later
+generation declares it as it does generation 0's — bound by name, which is why generations
+are `dlopen`ed `RTLD_GLOBAL`: the flat lookup `-undefined dynamic_lookup` leaves sees only
+global images.
 
 Generation 0 makes these mutable globals default-linkage and exports them, with its slots,
 through an explicit export list (`-exported_symbols_list` on macOS, `--dynamic-list` on
@@ -142,7 +146,10 @@ A named function used as a value already gets a thunk, `@name.closure` (`closure
 a `--live` build the thunk calls through generation 0's slot when there is one, so
 `button.on_click = save_project` stored in `app` reaches the newest `save_project`.
 (Generation 0 gets a slot for every function used as a value, as well as every function
-`main` calls.)
+`main` calls.) Every generation's thunks call through it, and a generation patches only
+the slots generation 0 has with the same type: a function first used as a value after the
+start, or one whose signature changed, is called directly by that generation's thunk, so a
+value made from it keeps that generation's code until a restart.
 
 **A lambda's lifted body is not patched**: a closure created before a reload keeps running
 the code it was created with until the program makes a new one. Matching an anonymous

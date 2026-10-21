@@ -125,6 +125,133 @@ func TestLive_SwapsABodyAndRestartsOnATypeOrMain(t *testing.T) {
 	}
 }
 
+// liveCallbackProgram keeps a function value in `main`'s state — a button's `on_click`,
+// made from `save` once before the loop — and asks `extra` for a third word.
+const liveCallbackProgram = `extern usleep: (us: u32) -> i32
+
+struct Button {
+  on_click: () -> string,
+}
+
+let main = () => {
+  let button = Button { on_click: save }
+  var n = 0
+  while n < 100000 {
+    println("${n} ${(button.on_click)()} ${extra()}")
+    n += 1
+    unsafe { usleep(20000) }
+  }
+}
+
+let save = pure () -> string => "saved first"
+let extra = () -> string => "none"
+`
+
+// A callback stored before a swap reaches the newest body, since its thunk calls through
+// a slot; a new top-level `var` is defined and initialized when applied, not restarted
+// for, and keeps its value through the swap after that.
+func TestLive_SwapsACallbackAndInitializesANewGlobal(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("--live swaps code only on macOS")
+	}
+	requireCC(t)
+	t.Setenv("LYRA_STD", repoRoot(t))
+	path := filepath.Join(t.TempDir(), "prog.lyra")
+	saves := 0
+	save := func(src string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		saves++
+		stamp := time.Now().Add(time.Duration(saves) * time.Second)
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save(liveCallbackProgram)
+
+	stdout, stderr, restore := captureStreams(t)
+	stop := make(chan os.Signal, 1)
+	result := make(chan int, 1)
+	o := buildOptions{path: path, opt: "-O0", watch: true, live: true}
+	go func() { result <- watch(o, stop, 20*time.Millisecond) }()
+	finish := func() {
+		t.Helper()
+		stop <- os.Interrupt
+		select {
+		case <-result:
+			restore()
+		case <-time.After(30 * time.Second):
+			restore()
+			t.Fatal("watch did not return after the interrupt")
+		}
+	}
+	defer func() {
+		if !t.Failed() {
+			return
+		}
+		t.Logf("stdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}()
+
+	if !waitFor(stdout, "3 saved first none\n") {
+		finish()
+		t.Fatal("generation 0 never ran")
+	}
+
+	// The stored callback's function: applied, and the button calls the new body.
+	edited := strings.Replace(liveCallbackProgram, `"saved first"`, `"saved second"`, 1)
+	save(edited)
+	if !waitFor(stderr, "prog.lyra changed; applied") || !waitFor(stdout, " saved second none\n") {
+		finish()
+		t.Fatal("the stored callback kept calling the old body")
+	}
+
+	// A new top-level `var`, counted up by `extra`: initialized on apply, from 3.
+	counted := strings.Replace(edited, "let extra = () -> string => \"none\"", `var lives = 3
+let extra = () -> string => {
+  lives += 1
+  "${lives}"
+}`, 1)
+	save(counted)
+	if !waitFor(stderr, "top-level `lives` is new; initialized") || !waitFor(stdout, " saved second 4\n") {
+		finish()
+		t.Fatal("the new global was not initialized on apply")
+	}
+
+	// One more swap: `lives` is the program's now, so it counts on rather than starting
+	// again from its initializer.
+	waitFor(stdout, " saved second 6\n")
+	save(strings.Replace(counted, `"saved second"`, `"saved third"`, 1))
+	if !waitFor(stdout, " saved third ") {
+		finish()
+		t.Fatal("the third save was not applied")
+	}
+	if n := firstNumberAfter(stdout.String(), "saved third"); n < 7 {
+		finish()
+		t.Fatalf("`lives` read %d after the next swap: it was defined again rather than kept", n)
+	}
+	finish()
+	if strings.Contains(stderr.String(), "restarting") {
+		t.Errorf("want no restart\nstderr: %s", stderr)
+	}
+}
+
+// firstNumberAfter is the last field, as a number, of the first line of out containing
+// word.
+func firstNumberAfter(out, word string) int {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, word) {
+			fields := strings.Fields(line)
+			n, err := strconv.Atoi(fields[len(fields)-1])
+			if err == nil {
+				return n
+			}
+		}
+	}
+	return -1
+}
+
 // firstNumberWith is the count on the first line of out that contains word.
 func firstNumberWith(out, word string) int {
 	for _, line := range strings.Split(out, "\n") {
@@ -146,6 +273,7 @@ func TestLive_Incompatible(t *testing.T) {
 			Globals: map[string]string{"lyra_global_.score": "i64", "lyra_argc": "i64"},
 			Types:   map[string]string{"%World": "{ i64, double }"},
 		},
+		added:  map[string]string{"lyra_global_.bonus": "i64"}, // a generation since defined it
 		shapes: map[string]string{"::Mood": "Calm(); Busy(); "},
 		links:  []string{"-lm"},
 	}
@@ -164,8 +292,11 @@ func TestLive_Incompatible(t *testing.T) {
 		{"main", func(i *llvm.LiveInfo, _ map[string]string, _ *[]string) { i.Main += " ; changed" }, "`main` changed"},
 		{"shape", func(_ *llvm.LiveInfo, s map[string]string, _ *[]string) { s["::Mood"] = "Busy(); Calm(); " }, "type `Mood` changed"},
 		{"layout", func(i *llvm.LiveInfo, _ map[string]string, _ *[]string) { i.Types["%World"] = "{ i64, float }" }, "layout of `World` changed"},
-		{"new global", func(i *llvm.LiveInfo, _ map[string]string, _ *[]string) { i.Globals["lyra_global_.lives"] = "i64" }, "top-level `lives` is new"},
+		{"new global", func(i *llvm.LiveInfo, _ map[string]string, _ *[]string) { i.Globals["lyra_global_.lives"] = "i64" }, ""},
 		{"global type", func(i *llvm.LiveInfo, _ map[string]string, _ *[]string) { i.Globals["lyra_global_.score"] = "i32" }, "top-level `score` changed type"},
+		{"added global's type", func(i *llvm.LiveInfo, _ map[string]string, _ *[]string) {
+			i.Globals["lyra_global_.bonus"] = "double"
+		}, "top-level `bonus` changed type"},
 		{"runtime state", func(i *llvm.LiveInfo, _ map[string]string, _ *[]string) {
 			i.Globals["lyra_termios_saved"] = "[64 x i8]"
 		}, "the runtime needs state"},
