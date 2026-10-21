@@ -733,6 +733,11 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) t
 			return nil
 		}
 		inferredType = resolvedDeclType
+		// The annotation's widths onto the value's untyped leaves, as checkVarDecl does: a
+		// `let (n, x): (i32, f64) = (1, 2.0)` lowered its `1` as an i64 into an i32 binding,
+		// which a closure capturing `n` then stored into an i32 slot — a backend panic.
+		tc.typeTable.Set(decl.Value, resolvedDeclType)
+		tc.propagateExpectedType(decl.Value, resolvedDeclType)
 	}
 
 	// **With no annotation the value settles to its defaults, exactly as an unannotated

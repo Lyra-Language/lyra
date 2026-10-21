@@ -293,3 +293,29 @@ let main = () -> void => {
 		t.Errorf("got %q; want \"5 five\"", got)
 	}
 }
+
+// An annotated destructuring gives its widths to the value, as an annotated `let` does:
+// the `1` here was lowered as an i64 into an i32 binding, and a closure capturing the
+// name then panicked storing it into its i32 slot (found by ui's AccessKit binding,
+// 10/21). Directly, through an `if` and through a `match`.
+func TestExec_AnnotatedDestructuringWidensItsLiterals(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `module main
+let call = (f: () -> void) -> void => f()
+let main = () -> void => {
+  let (a, x): (i32, f64) = (1, 2.0)
+  call(() => println("${a} ${x}"))
+  let b = true
+  let (c, y): (u8, f64) = if b { (3, 4.0) } else { (0, 0.0) }
+  call(() => println("${c} ${y}"))
+  let m: Maybe<f64> = Some(6.0)
+  let (d, z): (i16, f64) = match m {
+    Some(v) => (5, v),
+    None => (0, 0.0),
+  }
+  call(() => println("${d} ${z}"))
+}`, "")
+	if got := strings.TrimSpace(out); got != "1 2\n3 4\n5 6" {
+		t.Errorf("got %q; want \"1 2\\n3 4\\n5 6\"", got)
+	}
+}

@@ -1861,6 +1861,18 @@ func (tc *TypeChecker) checkForInLoopExpr(expr *ast.ForInLoopExpr) types.Type {
 				tc.setLoopVarType(expr.Key, declared)
 			}
 		} else if iterType != nil {
+			// An unannotated array of untyped literals settles to its defaults, as
+			// `let xs = [1.0, 2.0]` does, and the loop variable takes that type: left
+			// untyped, `for s in [1.0, 2.0] { f(s) }` passed the f64 the backend lowered the
+			// array as to an f32 parameter, unconverted (`xs[0]` there was refused). A range
+			// keeps its own rule (its width comes from its bounds and uses).
+			if _, isRange := iterType.(types.RangeType); !isRange {
+				if settled := promoteToDefault(iterType); settled != nil && !types.TypesEqual(settled, iterType) {
+					tc.typeTable.Set(expr.Iterable, settled)
+					tc.propagateExpectedType(expr.Iterable, settled)
+					iterType = settled
+				}
+			}
 			tc.bindForInLoopVars(expr, iterType)
 		}
 		tc.checkBlockForEffect(expr.Body)

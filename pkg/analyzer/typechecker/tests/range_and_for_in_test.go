@@ -126,3 +126,18 @@ func TestTypeCheck_ForIn_InvalidRange_EmitsRangeError(t *testing.T) {
 	res := parseCollectAndCheck(t, `for i in "a"..<=10 { }`, false)
 	assertErrorsAre(t, res, "range start must be numeric, got string")
 }
+
+// An array of untyped literals walked by `for` settles to its defaults, as a `let` of it
+// does, so its element is an f64 an f32 parameter refuses — as `xs[0]` is refused. Left
+// untyped, the call was accepted and the backend passed the f64 it lowered the array as to
+// the f32 parameter, unconverted: a scale of 2.0 arrived as 0 (found by ui's AccessKit
+// bounds, 10/21). Annotated, the array is f32 and the call fine.
+func TestTypeCheck_ForIn_UntypedArraySettlesItsElement(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let half = (by: f32) -> f32 => by
+		for s in [1.0, 2.0] { let _ = half(s) }
+		let scales: []f32 = [1.0, 2.0]
+		for s in scales { let _ = half(s) }
+	`, false)
+	assertErrorsAre(t, res, "half: argument 1 (by): cannot assign f64 to f32")
+}
