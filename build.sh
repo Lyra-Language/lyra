@@ -102,4 +102,16 @@ else
   imgui_note="no liblyra-imgui.a (${imgui_err##*: })"
 fi
 
-printf 'built %s/{lyrac,lyra-lsp} %s, %s, lib/liblyra-{menubar,pty}.a and %s, with std -> ../std, bindings -> ../bindings, ui -> ../ui\n' "$OUT" "$fmt_note" "$lui_note" "$imgui_note"
+# **The C half of `bindings.accesskit`**, into `build/lib/liblyra-accesskit.a`: a `ui`
+# program's accessibility tree handed to AccessKit's macOS adapter, AccessKit's prebuilt
+# static library (pinned and downloaded once, `bindings/accesskit/build.sh`) merged in. Every
+# `ui` program links it, so where it cannot be built — another platform, offline — it is a
+# stub that does nothing, and the program runs unheard by assistive technology.
+accesskit_note='lib/liblyra-accesskit.a'
+if accesskit_err=$("$ROOT/bindings/accesskit/build.sh" "$OUT" 2>&1); then
+  :
+else
+  accesskit_note="a stub liblyra-accesskit.a (${accesskit_err##*: })"
+fi
+
+printf 'built %s/{lyrac,lyra-lsp} %s, %s, lib/liblyra-{menubar,pty}.a, %s and %s, with std -> ../std, bindings -> ../bindings, ui -> ../ui\n' "$OUT" "$fmt_note" "$lui_note" "$imgui_note" "$accesskit_note"

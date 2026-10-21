@@ -9,6 +9,55 @@ Newest first.
 
 ## Dated log
 
+### 10/21/26 — `ui/`, phase 5: a layout cache, frames on demand, batched draws, VoiceOver
+
+The GUI's polish phase. Each step was measured, then tested (`TestRun_UiCacheAndIdle`,
+`TestRun_UiBatchesGeometryCalls`, `TestRun_UiAccessibilityTree`).
+
+- **The layout cache is keyed by identity**, not by a hash of the node. An element gives back
+  its last `Laid` when four things match last frame: its node (events ignored, since closures
+  cannot be compared, and a component's sheet compared through the theme it is made from),
+  its constraints, the cascade it inherits, and the interaction state under it. A reused
+  `Laid` has its kinds refreshed from the new node, so a button raises this frame's event.
+  The first version was slower than no cache (5.1 ms on 400 boxes): its child matching was
+  quadratic, and it copied every entry forward each frame. Matching children by index first,
+  and keeping last frame's table whole when the root is reused, brought it to 0.3 ms.
+- **A frame is drawn only when something may have changed**: the host's `dirty` flag is set by
+  input, a delivered event or the first pass. Under `--live` every pass draws, still waiting
+  at most 100 ms. Ten idle seconds of the form measured no CPU at all.
+- **Batching** joins consecutive ops on one texture into one `SDL_RenderGeometry`. An op may
+  join an earlier batch only if it overlaps nothing drawn since; otherwise a box drawn over a
+  label would end up under it. Checking overlap glyph by glyph was quadratic (8.5 ms at 400
+  boxes). Using each glyph run's union rectangle, with a batch's bounds as a fast reject,
+  brought it to 1.6 ms. A clip flushes every batch.
+- **A GPU renderer was measured and not built** (the numbers are in todo.md): tessellation and
+  geometry take 1.6 ms of a 400-box frame, and layout and paint take the rest.
+- **VoiceOver works through AccessKit's prebuilt C release**, pinned and SHA-checked like
+  ImGui, merged with a small Objective-C shim into one static archive. AccessKit asks for the
+  tree through a callback, which a Lyra closure cannot be, so the shim holds the last snapshot
+  the program gave and answers from it. Actions are queued and wake the loop with an SDL user
+  event, and `ui.interact` handles them as the keyboard would. The tree leaves out wrappers,
+  unlabelled rows and columns, and a control's insides. Node ids are identities hashed, so
+  they stay the same across frames.
+- **Found: an annotated tuple destructuring never pushed its annotation onto the value**, as
+  an annotated `let` does (`checkDestructuringDecl`). In `let (has, n): (i32, f64) = (1,
+  2.0)` the `1` was lowered as an i64 into an i32 binding. That was harmless until a closure
+  captured `has`; then the backend panicked storing it into the closure's i32 slot. Fixed
+  with the same `propagateExpectedType` call
+  (`TestExec_AnnotatedDestructuringWidensItsLiterals`).
+- **Found: a `for` over an array of untyped literals left its variable untyped**, so `for s
+  in [1.0, 2.0] { f(s) }` with `f` taking an `f32` was accepted, and the backend passed the
+  `f64` it lowered the array as to the `f32` parameter, unconverted: every scale arrived as 0
+  (the AccessKit bounds test). The array now settles to its defaults first, as a `let` of it
+  does, and the call is refused as `xs[0]` was (`TestTypeCheck_ForIn_UntypedArraySettlesItsElement`).
+  All 79 programs in the workspace still check.
+- **VoiceOver's highlight was half size on a Retina display**: AccessKit's macOS adapter
+  takes bounds in the window's pixels and divides by the backing scale itself, so
+  `ui.sdl3` scales the tree's logical bounds at the seam (`access_bounds`); the tree stays in
+  logical units. Two more were found and are open in
+  todo.md: a private generic struct can't be another module's type argument, and a generic
+  call gets no context from a field assignment.
+
 ### 10/21/26 — `ui/`, phase 4: markup for `ui`, commands and subscriptions, live reload
 
 The GUI's fourth phase; gate `examples/ui/components_view.lui`, `bindings.imgui.ui`'s example

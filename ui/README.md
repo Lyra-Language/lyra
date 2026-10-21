@@ -14,13 +14,14 @@ A root of its own beside `std/` and `bindings/` (`build.sh` links it into `build
 |---|---|---|
 | `ui.draw` | The display list: `DrawOp` (`Fill`, `Border`, `Glyphs`, `Picture`, `PushClip`, `PopClip`) and its geometry — `Point`, `Size`, `Rect`, `Radii` (CSS's fitting), `Color` (`rgb`/`rgba`), `Image` (`pixelated` keeps its texels crisp when drawn larger), `TextureId`, `GlyphQuad`. Logical units throughout. | no |
 | `ui.tess` | Rounded rectangles and borders as triangles (`Mesh` of `Vertex`), edges softened over one pixel. In **pixels**: a renderer scales first. | no |
-| `ui.backend` | The two seams: `Platform` (window, events, scale, text input, clipboard, cursor) and `Renderer` (`upload`, `update`, `draw(background, ops)`), and `InputEvent`, `Key`, `Modifiers`, `PointerButton`, `Cursor`; and `NativeFields` (a phone's own text fields placed by identity, edits back as `FieldEdited`), declared and not yet implemented. | no |
-| `ui.sdl3` | Both traits over `bindings.sdl3`: `open` → `SdlWindow { platform, renderer }`, `close`, and `capture` (a frame read back, for tests). Draws through `SDL_RenderGeometry`. | SDL3 |
+| `ui.backend` | The two seams: `Platform` (window, events, scale, text input, clipboard, cursor) and `Renderer` (`upload`, `update`, `draw(background, ops)`), and `InputEvent`, `Key`, `Modifiers`, `PointerButton`, `Cursor`; `AccessTree`/`AccessNode`/`AccessRole`/`AccessRequest` and `ACCESS_*`, for `Platform.update_access` and the `AccessAction` input; and `NativeFields` (a phone's own text fields placed by identity, edits back as `FieldEdited`), declared and not yet implemented. | no |
+| `ui.sdl3` | Both traits over `bindings.sdl3`: `open` → `SdlWindow { platform, renderer }`, `close`, and `capture` (a frame read back, for tests). Draws through `SDL_RenderGeometry`, a call a run of ops on one texture (`geometry_calls` counts them); on macOS tells VoiceOver through `bindings.accesskit`. | SDL3, AccessKit |
 | `ui.text` | `Fonts` (font files by family; `add_system_font` tries `SYSTEM_FONTS`), `FontSpec` (family, size, `line_height`), `lay_out` → `TextBlock` (lines of placed glyphs, cached by text, font and width), and `GlyphAtlas`, which renders glyphs into one texture through `Renderer.update` and answers a `Glyphs` op. | HarfBuzz, FreeType |
 | `ui.style` | `Style` (all `Maybe`), `Insets`, `Rule`/`Sheet`, `Theme` (`Palette`, `Spacing`, radius, font, `elements` sheet; `light_theme`, `dark_theme`), and the cascade: `Cascade` settles an element's tag, classes, part and inline style into `Computed`. | no |
 | `ui.layout` | `Node<e>` (kind, tag, class, part, style, children, key, label; `e` the program's event type, `NoEvent` for none) built by `row`, `column`, `expanded`, `stack`, `positioned`, `padding`, `align`, `sized`, `scroll`, `text`, `image`, `themed`, `component` and the controls `button`, `checkbox`, `slider`, `text_input`, and `.with_class`/`.with_style`/`.with_part`/`.keyed`/`.labelled`/`.aligned`; `layout`/`layout_with(node, Constraints, fonts, Interaction) -> Laid<e>` (each with its identity, role, label, focus ring and a field's caret) and `paint(laid, origin, scale, fonts, atlas, renderer) -> []DrawOp`. | no (text through `ui.text`) |
 | `ui.interact` | `Ui`: the framework's state by identity (focus, hover, press, scroll offsets, carets, selections, undo), `frame` (lay out and drop what left the tree), `handle(laid, input, platform) -> []e`, `place_text_input`; `hit`, `control_at`, `find`, `focus_order`; `Editing`, a field's editing operations. | no |
 | `ui.app` | `App { view, update: (s, e) -> (s, []Command<e>), subscriptions: (s) -> []Subscription<e>, background }` (`sandbox(view, update, bg)` for a plain update); `Command` (`WriteFile`, `ReadFile`, `After`, `CopyText`, `PasteText`, `OpenUrl`, `QuitApp`), `Subscription` (`EveryFrame`, `Every`, `OnResize`, `OnAppearance`); `run`, and `Host` (`host_of`, `step`) for a loop of `main`'s own — which `lyrac run --live` needs. | no |
+| `ui.access` | `access_tree(laid, focus) -> AccessTree`: the laid-out tree as assistive technology hears it, a node for each paragraph, image, scroll and control (and labelled group), ids its identities hashed; `access_id`, `access_node`. | no |
 | `ui.script` | `ScriptPlatform` (a `Platform` with no window and a clock of its own, playing one step a pass), `parse_script` (inputs: `"Tab 'Ada' Shift+Tab Primary+v click:10,20 scroll:1"`) and `parse_steps` (with `wait:N`, `resize:W,H`, `dark`, `light`). | no |
 
 **Nothing above `ui.backend` calls a platform's library**; `ui.text` calls the two text
@@ -91,7 +92,23 @@ layer — implements the two traits; the display list is the whole contract.
 - **The platform's clock and look**: `now_ms`, `appearance` (and `AppearanceChanged`), and
   `open_url` are the platform's; `ui.sdl3` reads SDL's ticks and system theme.
 - **Every element has a role and a label** (`Role`, AccessKit's), a control's label its
-  visible text unless `.labelled`, for phase 5's bridge.
+  visible text unless `.labelled`. `ui.access` reads the laid-out tree into an `AccessTree`
+  the host hands `Platform.update_access` after each frame: wrappers and unlabelled rows and
+  columns give their children to their parent, a control is one node (its insides its label),
+  and a node's id is its identity hashed, so it is the same from frame to frame. What
+  VoiceOver asks comes back as `AccessAction(identity, request)`, handled as the keyboard
+  would be — focus, press, step — or a field's text or a slider's number set outright.
+  **The tree is in logical units; AccessKit's macOS adapter takes the window's pixels**, from
+  its content's top left, so `ui.sdl3` scales each node's bounds by `scale()` at the seam
+  (`access_bounds`), as its renderer scales a display list. Given points, VoiceOver's
+  highlight on a Retina display was half size.
+- **A frame is drawn only when something may have changed**: an input, an event, the first
+  pass — or every pass under `--live`. An idle window costs no CPU (`Host.frames`,
+  `Host.layouts` count).
+- **Layout is cached by identity** (`layout_cached`, `LayoutCache`, which `Host` keeps): an
+  element whose node, constraints, cascade and state are as last frame gives back its last
+  `Laid`, the theme in the key. Shaped text is cached too, at most `LAID_LIMIT` paragraphs
+  a generation, two generations kept.
 - **What SDL's 2D renderer cannot do**: a clip is a whole-pixel rectangle, so `PushClip`'s
   radii are ignored there; and its software renderer (headless, or no GPU) truncates each
   vertex to a whole pixel, so edges come out half a pixel soft.
@@ -121,3 +138,6 @@ layer — implements the two traits; the display list is the whole contract.
   the keyboard; `TestLive_SwapsAUiViewAndRestartsOnItsState` (`live_test.go`) a view swapped
   into a running host, and a restart on the state's shape. None
   needs a display; the ones that draw need SDL3 and a font, and all need HarfBuzz and FreeType.
+  Phase 5's: `TestRun_UiCacheAndIdle` (what the layout cache lays out and gives back; an idle
+  host draws nothing), `TestRun_UiBatchesGeometryCalls` (the draws a frame takes),
+  `TestRun_UiAccessibilityTree` (a form's tree, and VoiceOver's actions driving it).

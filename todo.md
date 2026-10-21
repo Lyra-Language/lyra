@@ -697,9 +697,6 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   fit is left out; it needs a second page or eviction (sizes animating, many fonts).
 - **[OPEN] `ui.layout`: a `Picture` ignores opacity.** `DrawOp.Picture` has no colour to
   fade by; give it one (a tint, as `Glyphs` has) and `paint` can pass the opacity on.
-- **[OPEN] `ui.layout` lays out the whole tree every frame** (and again after every input),
-  only shaped text cached. A relayout boundary — a subtree whose constraints, node and state
-  are unchanged keeps its `Laid` — is the fix when a screen grows large enough to need it.
 - **[OPEN] `./asan.sh` has no HarfBuzz or FreeType** (`asan.Dockerfile`), so the `ui`
   layout, cascade and offset tests skip there; CI installs both.
 - **[DONE 10/21] Phase 3, interaction** — `Node<e>`, `ui.interact` (identity, hit-testing,
@@ -708,6 +705,29 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 10/21] Phase 4, markup and reload** — lui's `ui` target (tokens, global and themed
   sheets, parts, imports across files), commands and subscriptions, `Node.map`, `Host` for
   `lyrac run --live`; gate `examples/ui/components_view.lui` (COMPLETED.md, 10/21).
+- **[DONE 10/21] Phase 5, polish** — a layout cache by identity, frames drawn on demand,
+  batched geometry calls, and an accessibility tree to VoiceOver through AccessKit
+  (COMPLETED.md, 10/21).
+- **[OPEN] A GPU renderer is not needed yet.** Measured 10/21 (Apple Silicon Mac, SDL's
+  Metal renderer, 1200×900): 400 labelled boxes (800 ops) take 7.2 ms to lay out fresh and
+  0.31 ms cached, 1.9 ms to paint, 1.6 ms to tessellate and submit (0.6 ms of it
+  tessellating); 100 boxes 2.1 / 0.09 / 0.54 / 0.39 ms. Geometry is not the cost; revisit for
+  rounded clips (a stencil) or when a screen's draw passes ~4 ms.
+- **[OPEN] AccessKit on Linux and Windows.** `bindings/accesskit` builds the macOS adapter
+  only; elsewhere the stub, and `ui.sdl3` tells nobody. The same release has the Unix
+  (AT-SPI) and Windows (UIA) adapters; the shim needs their window handles and, on Unix,
+  root-window bounds.
+- **[OPEN] `ui.access`'s actions are unchecked against VoiceOver.** VoiceOver reads the form
+  and its highlight fits each control (10/21, once bounds went over in pixels); pressing,
+  setting and stepping from VoiceOver are tested headless only.
+- **[OPEN] `ui.access`: a slider's value set as text is ignored** — the prelude parses no
+  `f64` (`parse_i64` only). AccessKit sends a slider a number, so nothing needs it yet.
+- **[OPEN] Backend: a private generic struct as another module's type argument cannot be laid
+  out.** `HashMap<string, Cached<e>>` in `ui.layout` failed with "cannot lay out data type
+  Maybe" while `Cached` was private; it is `pub` meanwhile (its doc says why).
+- **[OPEN] Typechecker: a generic call has no context from a field assignment or a generic
+  struct literal's field.** `self.cache = hashmap_new()` and `Host { cache: layout_cache() }`
+  need `::<…>`, though the field's type settles both.
 - **[OPEN] `ui.app`: commands run where the host runs.** A file read holds the loop until it
   ends; async I/O wants a worker and results the platform posts (an `InputEvent` carrying an
   id, since it cannot carry the program's event type).
@@ -730,8 +750,6 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] `ui.layout`: `Node<void>` does not compile.** A payload instantiated at `void` in a
   constructor with other fields lowers as `{ i1, void }` (`Checkable(bool, e)`); `NoEvent`
   stands in. A void field should take no space, as a lone void payload already does.
-- **[OPEN] `ui.layout`: a control's insides show to assistive technology** — a button's
-  text, a slider's parts stack — as roles of their own; AccessKit wants them presentational.
 - **[OPEN] Typechecker: a nullary constructor in a struct literal beside a field mentioning
   its variable** — `Nd { k: L, xs: xs }` for `struct Nd<e> { k: K<e>, xs: []e }` is E073 at
   `L`, though the return type `Nd<e>` settles it; `let k: K<e> = L` first works.

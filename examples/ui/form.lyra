@@ -124,9 +124,9 @@ let view = pure (theme: Theme, state: Form) -> Node<FormEvent> =>
     ]).aligned(MainStart, CrossStretch).with_class("page"),
   ])
 
-/// A field with its label above it.
+/// A field with its label above it, and read to assistive technology by it.
 let labelled = pure (label: string, field: Node<FormEvent>) -> Node<FormEvent> =>
-  column([text(label).with_class("label"), field]).aligned(
+  column([text(label).with_class("label"), Node { field | label: label }]).aligned(
     MainStart,
     CrossStretch
   ).with_style(Style { gap: Some(4.0) })

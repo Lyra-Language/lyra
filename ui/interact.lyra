@@ -66,6 +66,14 @@ import ui.backend.{
   Cursor,
   Arrow,
   IBeam,
+  AccessAction,
+  AccessRequest,
+  AxFocus,
+  AxClick,
+  AxSetValue,
+  AxSetNumber,
+  AxIncrement,
+  AxDecrement,
 }
 import ui.draw.{ Point, Rect, Size }
 import ui.text.{ Fonts, offset_at_x }
@@ -85,7 +93,9 @@ import ui.layout.{
   Vertical,
   Prose,
   interaction_new,
-  layout_with,
+  LayoutCache,
+  layout_cache,
+  layout_cached,
   loose,
   focusable,
   byte_at,
@@ -124,7 +134,20 @@ impl Ui {
     size: Size,
     fonts: mut Fonts
   ) -> Laid<e> => {
-    let laid = layout_with(view, loose(size), fonts, self.state)
+    var cache: LayoutCache<e> = layout_cache()
+    self.frame_cached(view, size, fonts, cache)
+  }
+
+  /// [frame], with each element laid out last frame and unchanged since given back from
+  /// `cache` (`ui.layout`'s `layout_cached`).
+  pub let frame_cached<e> = (
+    self: mut,
+    view: Node<e>,
+    size: Size,
+    fonts: mut Fonts,
+    cache: mut LayoutCache<e>
+  ) -> Laid<e> => {
+    let laid = layout_cached(view, loose(size), fonts, self.state, cache)
     var present: HashMap<string, bool> = hashmap_new()
     note_ids(laid, present)
     for id in self.state.widgets.keys() {
@@ -162,7 +185,50 @@ impl Ui {
       let Some(field) = self.focused_field(laid) else { return [] }
       self.edit(field, (ed) => ed.insert(typed))
     },
+    AccessAction(id, request) => self.access_action(laid, id, request),
     _ => [],
+  }
+
+  /// What assistive technology asked of the element identified as `id`, done as the keyboard
+  /// would do it — the focus moved, a button pressed, a slider stepped — or a value set
+  /// outright: a field's text, a slider's number. (A slider's value as text is not read:
+  /// AccessKit sends a slider a number.)
+  let access_action<e> = (
+    self: mut,
+    laid: Laid<e>,
+    id: string,
+    request: AccessRequest
+  ) -> []e => {
+    let Some(found) = find(laid, id, Point {}) else { return [] }
+    match request {
+      AxFocus => {
+        if focusable(found.laid.kind) { self.state.focus = id }
+        []
+      },
+      AxClick => activated(found.laid),
+      AxIncrement => match found.laid.kind {
+        Ranged(spec) => step_slider(spec, ArrowRight),
+        _ => [],
+      },
+      AxDecrement => match found.laid.kind {
+        Ranged(spec) => step_slider(spec, ArrowLeft),
+        _ => [],
+      },
+      AxSetNumber(n) => match found.laid.kind {
+        Ranged(spec) => changed(spec, f32(n)),
+        _ => [],
+      },
+      AxSetValue(text) => match found.laid.kind {
+        Editable(spec) => {
+          // The caret to the end of the new text, as after typing it.
+          let state = self.widget(id)
+          let end = text.len()
+          self.state.widgets.insert(id, WidgetState { state | caret: end, anchor: end })
+          if text == spec.value { [] } else { [(spec.on_edit)(text)] }
+        },
+        _ => [],
+      },
+    }
   }
 
   /// Tell `platform` where text is being typed: near the caret of the focused text field —

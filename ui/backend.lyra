@@ -54,7 +54,64 @@ pub trait Platform {
   /// Open a web address (or `mailto:`, `file://`) in the program the system chooses for it;
   /// whether it was taken.
   open_url: (mut Self, string) -> bool
+  /// The interface as assistive technology should hear it, each time it changes (`ui.access`
+  /// builds it); a platform with none ignores it.
+  update_access: (mut Self, AccessTree) -> void
 }
+
+/// The interface for assistive technology: its nodes, the root's id and the focused node's.
+pub struct AccessTree {
+  nodes: []AccessNode = [],
+  root: u64 = 0,
+  focus: u64 = 0,
+}
+
+/// One node of an [AccessTree]: its id (`key` hashed — `key` the element's identity), what it
+/// is, its label and value, where it is (logical units, from the window's top left), whether it
+/// is ticked, its number and range (value, least, greatest, step), the actions it offers
+/// (`ACCESS_*`s, or-ed), and its children's ids.
+pub struct AccessNode {
+  key: string,
+  id: u64,
+  role: AccessRole,
+  label: string = "",
+  value: string = "",
+  bounds: Rect = Rect {},
+  toggled: Maybe<bool> = None,
+  numeric: Maybe<(f64, f64, f64, f64)> = None,
+  actions: i32 = 0,
+  children: []u64 = [],
+}
+
+/// Actions an [AccessNode] offers, or-ed: to take the focus, be pressed, have its value set,
+/// and be stepped up or down. (AccessKit's bridge, `bindings.accesskit`, numbers them alike.)
+pub const ACCESS_FOCUS: i32 = 1
+pub const ACCESS_CLICK: i32 = 2
+pub const ACCESS_SET_VALUE: i32 = 4
+pub const ACCESS_INCREMENT: i32 = 8
+pub const ACCESS_DECREMENT: i32 = 16
+
+/// What a node is to assistive technology.
+pub data AccessRole =
+  AxWindow
+  | AxGroup
+  | AxLabel
+  | AxImage
+  | AxButton
+  | AxCheckbox
+  | AxSlider
+  | AxTextInput
+  | AxScroll
+  | AxContainer
+
+/// What assistive technology asks of an element.
+pub data AccessRequest =
+  AxFocus
+  | AxClick
+  | AxSetValue(string)
+  | AxSetNumber(f64)
+  | AxIncrement
+  | AxDecrement
 
 /// The system's look: light or dark.
 pub data Appearance = LightMode | DarkMode
@@ -109,6 +166,9 @@ pub data InputEvent =
   | TextTyped(string)
   /// The system switched between its light and dark look, to this.
   | AppearanceChanged(Appearance)
+  /// Assistive technology asked something of the element identified as this — VoiceOver
+  /// pressing a button, setting a slider — as the keyboard or the pointer would have.
+  | AccessAction(string, AccessRequest)
   /// A system text field ([NativeFields]) identified as the first string was edited: its value
   /// is now the second, with the caret before this rune. Never sent by a desktop platform.
   | FieldEdited(string, string, i64)

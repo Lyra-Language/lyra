@@ -1208,3 +1208,367 @@ quit: false
 		t.Errorf("no last frame: %v", err)
 	}
 }
+
+// Phase 5's layout cache and redraw on demand. **The cache**: five elements laid out afresh,
+// then — the view unchanged — the root given back whole; one paragraph changed, and only its
+// path and itself laid out, its siblings given back; another theme, which is in the key, and
+// everything laid out once; then that again, given back whole. **An idle host** draws once and
+// then waits through fifteen seconds drawing nothing, until a key — and draws once more.
+func TestRun_UiCacheAndIdle(t *testing.T) {
+	got := runUiProgram(t, `import ui.app.{ App, Command, Subscription, host_of }
+import ui.script.{ timed_platform, Waited, Played }
+import ui.backend.{ Renderer, KeyPressed, Tab, Modifiers }
+import ui.draw.{ Size, Color, TextureId }
+import ui.text.{ fonts_new }
+import ui.style.{ Theme, Sheet, light_theme, dark_theme }
+import ui.layout.{
+  Node,
+  NoEvent,
+  LayoutCache,
+  layout_cache,
+  layout_cached,
+  loose,
+  interaction_new,
+  column,
+  text,
+  themed,
+  button,
+}
+
+/// A renderer that draws nothing, counting the frames it is given.
+struct Blank {
+  textures: i64 = 0,
+  drawn: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => { self.drawn += 1 }
+}
+
+let main = () -> u8 => {
+  cached()
+  idle()
+  0
+}
+
+/// Five elements — a theme, a column, three paragraphs — laid out five times: afresh; the same
+/// again (the theme given back whole); one paragraph changed (its path and itself, its two
+/// siblings given back); in another theme (everything, the theme being in the key); and that
+/// again (given back whole).
+let cached = () -> void => {
+  var fonts = fonts_new()
+  var cache: LayoutCache<NoEvent> = layout_cache()
+  let size = loose(Size { w: 200.0, h: 200.0 })
+  for (theme, words) in [
+    (light_theme(), ["a", "b", "c"]),
+    (light_theme(), ["a", "b", "c"]),
+    (light_theme(), ["a", "B", "c"]),
+    (dark_theme(), ["a", "B", "c"]),
+    (dark_theme(), ["a", "B", "c"]),
+  ] {
+    let _ = layout_cached(view(theme, words), size, fonts, interaction_new(), cache)
+    println("cache laid out ${cache.laid_out}, given back ${cache.reused}")
+  }
+}
+
+let view = pure (theme: Theme, words: []string) -> Node<NoEvent> =>
+  themed(theme, Sheet {}, [column([w in words | text(w)])])
+
+data Ev = Pressed
+
+/// An idle host draws once and then waits — however long — drawing nothing until an input
+/// comes; then once more.
+let idle = () -> void => {
+  var platform = timed_platform(
+    [Waited(5000), Waited(5000), Played(KeyPressed(Tab, Modifiers {})), Waited(5000)],
+    Size { w: 200.0, h: 200.0 }
+  )
+  var renderer = Blank {}
+  var fonts = fonts_new()
+  let app = App { view: idle_view, update: idle_update, subscriptions: no_subs, background: Color { r: 0, g: 0, b: 0 } }
+  var host = host_of(app, 0, platform)
+  var passes = 0
+  while host.step(platform, renderer, fonts) { passes += 1 }
+  println("idle: ${passes} passes over ${platform.clock} ms, ${renderer.drawn} frames drawn, ${host.layouts} layouts")
+}
+
+let idle_view = pure (n: i64) -> Node<Ev> => column([text("${n}"), button("go", Pressed)])
+
+let idle_update = pure (n: i64, _: Ev) -> (i64, []Command<Ev>) => (n + 1, [])
+
+let no_subs = pure (_: i64) -> []Subscription<Ev> => []
+`)
+	want := `cache laid out 5, given back 0
+cache laid out 0, given back 1
+cache laid out 3, given back 2
+cache laid out 5, given back 0
+cache laid out 0, given back 1
+idle: 4 passes over 15000 ms, 2 frames drawn, 3 layouts
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// Phase 5's render batching (`ui.sdl3`): ten boxes each with a label are two geometry calls,
+// the boxes and the labels; inside a scroll's clip, still two; and a box drawn over a label
+// stays over it — a third call, not merged into the box under the label. The pixel tests above
+// hold that batching draws what it drew before.
+func TestRun_UiBatchesGeometryCalls(t *testing.T) {
+	skipWithoutText(t)
+	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	t.Setenv("SDL_VIDEODRIVER", "dummy")
+	t.Setenv("SDL_RENDER_DRIVER", "software")
+	t.Setenv("LYRA_STD", repoRoot(t))
+	src := filepath.Join(t.TempDir(), "main.lyra")
+	if err := os.WriteFile(src, []byte(`import ui.sdl3
+import ui.sdl3.{ geometry_calls }
+import ui.draw.{ Point, Size, Color, DrawOp, Rect, Fill, radius, rgb }
+import ui.text.{ fonts_new, glyph_atlas }
+import ui.style.{ Style, insets }
+import ui.layout.{ Node, NoEvent, column, row, text, scroll, Vertical, layout, loose, paint }
+
+/// Ten boxes, each with a label in it: two calls, the boxes and the labels; the same in a
+/// scroll, whose clip begins and ends a run of calls; and two boxes overlapping a label, the
+/// second drawn over it — which must stay over it, so it cannot join the first.
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font")
+    return 1
+  }
+  let Ok(window) = sdl3.open("batch", 400.0, 600.0) else {
+    println("SDL could not open a window")
+    return 2
+  }
+  var platform = window.platform
+  var renderer = window.renderer
+  var atlas = glyph_atlas()
+  let boxes: Node<NoEvent> = column([i in 0..<10 | labelled_box("item ${i}")])
+  let scrolled: Node<NoEvent> = scroll(Vertical, 0.0, boxes)
+  for (name, view) in [("boxes", boxes), ("scrolled", scrolled)] {
+    let laid = layout(view, loose(Size { w: 400.0, h: 600.0 }), fonts)
+    let ops = paint(laid, Point {}, 1.0, fonts, atlas, renderer)
+    println("${name}: ${ops.len()} ops, ${geometry_calls(renderer, rgb(0xFFFFFF), ops)} calls")
+  }
+  // A box, a label over it, and a box over the label: the second box may not join the first.
+  let laid = layout(labelled_box("under"), loose(Size { w: 400.0, h: 600.0 }), fonts)
+  let over = Fill(Rect { x: 0.0, y: 0.0, w: 60.0, h: 30.0 }, radius(0.0), rgb(0xFF0000))
+  let ops = [...paint(laid, Point {}, 1.0, fonts, atlas, renderer), over]
+  println("overlapping: ${ops.len()} ops, ${geometry_calls(renderer, rgb(0xFFFFFF), ops)} calls")
+  sdl3.close(platform, renderer)
+  fonts.close()
+  0
+}
+
+let labelled_box = pure (label: string) -> Node<NoEvent> =>
+  row([text(label)]).with_style(Style {
+    background: Some(rgb(0xDDE6F5)),
+    padding: Some(insets(8.0)),
+    radius: Some(6.0),
+  })
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := captureRun(t, "run", src)
+	if code == 1 && strings.HasPrefix(stdout, "no font") {
+		t.Skip("no font here")
+	}
+	if code == 2 {
+		t.Skipf("SDL could not open a dummy window here: %s", stdout)
+	}
+	if code != 0 {
+		t.Fatalf("exited %d\nstderr: %s", code, stderr)
+	}
+	want := `boxes: 20 ops, 2 calls
+scrolled: 22 ops, 2 calls
+overlapping: 3 ops, 3 calls
+`
+	if stdout != want {
+		t.Errorf("got\n%s\nwant\n%s", stdout, want)
+	}
+}
+
+// Phase 5's accessibility tree (`ui.access`), built from a form as the host hands it to the
+// platform: a node for each paragraph and control — none for the rows and columns between —
+// a field labelled by its `label`, a checkbox ticked or not, a slider's number and range, and
+// the actions each offers (1 focus, 2 click, 4 set value, 8/16 step). Then what VoiceOver
+// does, as `AccessAction` inputs found by label: the name set, the box ticked, the slider
+// stepped twice and set outright, Send pressed — the events the keyboard would raise — and
+// an action for an element no longer there ignored.
+func TestRun_UiAccessibilityTree(t *testing.T) {
+	got := runUiProgram(t, `import ui.app.{ sandbox, host_of }
+import ui.script.{ script_platform, ScriptPlatform }
+import ui.backend.{ AxWindow, AxGroup, AxLabel, AxImage, AxButton, AxCheckbox, AxSlider, AxTextInput, AxScroll, AxContainer, Renderer, InputEvent, AccessAction, AccessTree, AccessNode, AxSetValue, AxClick, AxIncrement, AxFocus, AxSetNumber }
+import ui.access.{ access_node }
+import ui.draw.{ Size, Color, TextureId }
+import ui.text.{ fonts_new, Fonts }
+import ui.layout.{ Node, FieldSpec, SliderSpec, column, row, text, text_input, checkbox, slider, button }
+import std.collections.{ HashMap, hashmap_new }
+
+/// A renderer that draws nothing.
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => {}
+}
+
+struct Form {
+  name: string = "",
+  ticked: bool = false,
+  volume: f32 = 5.0,
+  sent: string = "",
+}
+
+data Ev = Named(string) | Ticked | Moved(f32) | Sent
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  // The tree, as the form first shows.
+  let first = play([], fonts)
+  print_tree(first.0, first.0.root, 0)
+  // Each control by its label, as VoiceOver would find it.
+  var keys: HashMap<string, string> = hashmap_new()
+  for node in first.0.nodes { keys.insert(node.label, node.key) }
+  let name = keys.get("Name") ?? ""
+  let box = keys.get("Tick me") ?? ""
+  let volume = keys.get("Volume") ?? ""
+  let send = keys.get("Send") ?? ""
+  let (tree, form) = play([
+    AccessAction(name, AxFocus),
+    AccessAction(name, AxSetValue("Ada")),
+    AccessAction(box, AxClick),
+    AccessAction(volume, AxIncrement),
+    AccessAction(volume, AxIncrement),
+    AccessAction(send, AxClick),
+  ], fonts)
+  println("after: name ${form.name}, ticked ${form.ticked}, volume ${form.volume}, sent ${form.sent}")
+  println("focus on Name: ${access_node(tree, name).map((n) => n.id) == Some(tree.focus)}")
+  let (_, set) = play([AccessAction(volume, AxSetNumber(9.4)), AccessAction("nothing", AxClick)], fonts)
+  println("set number: volume ${set.volume}")
+  fonts.close()
+  0
+}
+
+/// The form after these inputs, and the tree it last gave the platform.
+let play = (inputs: []InputEvent, fonts: mut Fonts) -> (AccessTree, Form) => {
+  var platform = script_platform(inputs, Size { w: 300.0, h: 300.0 })
+  var renderer = Blank {}
+  let app = sandbox(view, update, Color { r: 255, g: 255, b: 255 })
+  var host = host_of(app, Form {}, platform)
+  while host.step(platform, renderer, fonts) {}
+  (platform.access, host.state)
+}
+
+let view = pure (form: Form) -> Node<Ev> => column([
+  text("Sign up"),
+  column([text("Your name"), Node { text_input(FieldSpec { value: form.name, placeholder: "Ada", on_edit: Named }) | label: "Name" }]),
+  checkbox("Tick me", form.ticked, Ticked),
+  row([text("Volume"), Node { slider(SliderSpec { value: form.volume, min: 0.0, max: 10.0, step: 1.0, on_change: Moved }) | label: "Volume" }]),
+  button("Send", Sent),
+])
+
+let update = pure (form: Form, ev: Ev) -> Form => match ev {
+  Named(n) => Form { form | name: n },
+  Ticked => Form { form | ticked: !form.ticked },
+  Moved(v) => Form { form | volume: v },
+  Sent => Form { form | sent: "yes" },
+}
+
+let print_tree = (tree: AccessTree, id: u64, depth: i64) -> void => {
+  for node in tree.nodes {
+    if node.id != id { continue }
+    var indent = ""
+    for _ in 0..<depth { indent = "${indent}  " }
+    var line = "${indent}${role_name(node)}"
+    if node.label.len() > 0 { line = "${line} label=${node.label}" }
+    if node.value.len() > 0 { line = "${line} value=${node.value}" }
+    if let Some(t) = node.toggled { line = "${line} toggled=${t}" }
+    if let Some((v, a, b, s)) = node.numeric { line = "${line} numeric=${v} in ${a}..${b} by ${s}" }
+    if node.actions != 0 { line = "${line} actions=${node.actions}" }
+    // Where it is depends on the font; that it is somewhere does not.
+    if node.bounds.w <= 0.0 || node.bounds.h <= 0.0 { line = "${line} NO BOUNDS" }
+    println(line)
+    for child in node.children { print_tree(tree, child, depth + 1) }
+  }
+}
+
+let role_name = pure (node: AccessNode) -> string => match node.role {
+  AxWindow => "window",
+  AxGroup => "group",
+  AxLabel => "label",
+  AxImage => "image",
+  AxButton => "button",
+  AxCheckbox => "checkbox",
+  AxSlider => "slider",
+  AxTextInput => "text input",
+  AxScroll => "scroll",
+  AxContainer => "container",
+}
+`)
+	want := `window
+  label value=Sign up
+  label value=Your name
+  text input label=Name actions=5
+  checkbox label=Tick me toggled=false actions=3
+  label value=Volume
+  slider label=Volume numeric=5 in 0..10 by 1 actions=29
+  button label=Send actions=3
+after: name Ada, ticked true, volume 7, sent yes
+focus on Name: true
+set number: volume 9
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// AccessKit's macOS adapter takes a node's bounds in the window's pixels and divides by the
+// backing scale itself, so ui.sdl3 scales the tree's logical bounds at the seam: at scale 2 a
+// node's position and size double, at 1 they stay. Given points instead, VoiceOver's
+// highlight was half size on a Retina display (10/21).
+func TestRun_UiAccessBoundsArePixels(t *testing.T) {
+	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	t.Setenv("LYRA_STD", repoRoot(t))
+	src := filepath.Join(t.TempDir(), "main.lyra")
+	if err := os.WriteFile(src, []byte(`import ui.sdl3.{ access_bounds }
+import ui.draw.{ Rect }
+
+let main = () -> u8 => {
+  let node = Rect { x: 24.0, y: 60.5, w: 300.0, h: 30.0 }
+  let scales: []f32 = [1.0, 2.0, 1.5]
+  for scale in scales {
+    let at = access_bounds(node, scale)
+    println("at ${scale}: ${at.x},${at.y} ${at.w}x${at.h}")
+  }
+  0
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := captureRun(t, "run", src)
+	if code != 0 {
+		t.Fatalf("exited %d\nstderr: %s", code, stderr)
+	}
+	want := "at 1: 24,60.5 300x30\nat 2: 48,121 600x60\nat 1.5: 36,90.75 450x45\n"
+	if stdout != want {
+		t.Errorf("got\n%s\nwant\n%s", stdout, want)
+	}
+}

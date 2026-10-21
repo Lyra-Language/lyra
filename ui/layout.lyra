@@ -566,7 +566,186 @@ pub let layout_with<e> = (
   c: Constraints,
   fonts: mut Fonts,
   ui: Interaction
-) -> Laid<e> => lay(root, c, cascade_root(light_theme()), fonts, ui, "#")
+) -> Laid<e> => {
+  var cache: LayoutCache<e> = layout_cache()
+  layout_cached(root, c, fonts, ui, cache)
+}
+
+/// `root` laid out as [layout_with] does, each element whose node, constraints, cascade (its
+/// theme among it) and framework state are what they were last frame given back as it was
+/// laid out then, from `cache` — then the frame begun in `cache` becomes the last one.
+pub let layout_cached<e> = (
+  root: Node<e>,
+  c: Constraints,
+  fonts: mut Fonts,
+  ui: Interaction,
+  cache: mut LayoutCache<e>
+) -> Laid<e> => {
+  cache.laid_out = 0
+  cache.reused = 0
+  let laid = lay(root, c, cascade_root(light_theme()), fonts, ui, "#", cache)
+  // The root given back is the whole of last frame given back: its entries stand as they were.
+  if cache.laid_out > 0 { cache.last = cache.now }
+  cache.now = hashmap_new::<string, Cached<e>>()
+  laid
+}
+
+/// What laid out each element last frame, and this frame so far, by identity — two frames
+/// at most, so an element gone from the tree is gone from the cache a frame later — and how
+/// many elements the last layout laid out afresh and gave back.
+pub struct LayoutCache<e> {
+  last: HashMap<string, Cached<e>>,
+  now: HashMap<string, Cached<e>>,
+  laid_out: i64 = 0,
+  reused: i64 = 0,
+}
+
+/// One element's layout, and what it was laid out from. (`pub` only because a private generic
+/// struct as another module's type argument does not lay out yet, todo.md.)
+pub struct Cached<e> {
+  node: Node<e>,
+  c: Constraints,
+  cascade: Cascade,
+  state: string,
+  laid: Laid<e>,
+}
+
+/// A cache with nothing in it.
+pub let layout_cache<e> = pure () -> LayoutCache<e> =>
+  LayoutCache {
+    last: hashmap_new::<string, Cached<e>>(),
+    now: hashmap_new::<string, Cached<e>>()
+  }
+
+/// One node within `c`, styled at `cascade`, identified as `id`: last frame's layout of it when
+/// nothing it was laid out from has changed — sound because a view is a pure function of its
+/// state and an element's events are data, so equal inputs lay out equally — else afresh.
+let lay<e> = (
+  node: Node<e>,
+  c: Constraints,
+  cascade: Cascade,
+  fonts: mut Fonts,
+  ui: Interaction,
+  id: string,
+  cache: mut LayoutCache<e>
+) -> Laid<e> => {
+  let state = state_under(ui, id)
+  if let Some(old) = cache.last.get(id) {
+    if old.state == state && old.c == c && same_node(old.node, node, cascade.theme) &&
+      old.cascade == cascade {
+      cache.reused += 1
+      // The layout is last frame's; what its elements raise is this frame's.
+      let laid = refreshed(old.laid, node)
+      // The root needs no entries carried: last frame's all stand (layout_cached).
+      if id != "#" {
+        carry(cache, old.laid)
+        cache.now.insert(id, Cached { old | node: node, laid: laid })
+      }
+      return laid
+    }
+  }
+  cache.laid_out += 1
+  let laid = lay_fresh(node, c, cascade, fonts, ui, id, cache)
+  cache.now.insert(
+    id,
+    Cached { node: node, c: c, cascade: cascade, state: state, laid: laid }
+  )
+  laid
+}
+
+/// Every element below `laid` kept from last frame for the next, as `laid` is — so a change
+/// inside it next frame finds its unchanged siblings.
+let carry<e> = (cache: mut LayoutCache<e>, laid: Laid<e>) -> void => {
+  for child in laid.children {
+    if let Some(old) = cache.last.get(child.laid.id) { cache.now.insert(
+      child.laid.id,
+      old
+    ) }
+    carry(cache, child.laid)
+  }
+}
+
+/// `laid`, laid out from a node equal to `node` in all but its events, with each element's kind
+/// — which says what it raises — taken from `node` and its children's.
+let refreshed<e> = pure (laid: Laid<e>, node: Node<e>) -> Laid<e> => {
+  var children: []Placed<e> = []
+  for k, p in laid.children {
+    var mine = p.laid
+    // Most kinds lay their children out in order, so the child at the same index is the one;
+    // else (a slider's own parts) it is looked for.
+    if k < node.children.len() && child_id(laid.id, node.children[k], k) == p.laid.id {
+      mine = refreshed(p.laid, node.children[k])
+    } else {
+      for i, child in node.children {
+        if child_id(laid.id, child, i) == p.laid.id { mine = refreshed(p.laid, child) }
+      }
+    }
+    children.push(Placed { p | laid: mine })
+  }
+  Laid { laid | kind: node.kind, children: children }
+}
+
+/// The framework's state that reaches the element identified as `id` and those inside it:
+/// focus, hover and press among them, and each one's own state — as a string to compare.
+let state_under = pure (ui: Interaction, id: string) -> string => {
+  let inside = (other: string) -> bool => other == id || other.starts_with("${id}/")
+  var out = ""
+  for holder in [ui.focus, ui.hover, ui.pressed] {
+    out = "${out}|${if inside(holder) { holder } else { "" }}"
+  }
+  for (key, w) in ui.widgets.entries() {
+    if inside(key) {
+      out = "${out}|${key}:${w.scroll ?? -1.0}:${w.caret}:${w.anchor}:${w.field_scroll}"
+    }
+  }
+  out
+}
+
+/// Whether `a` and `b` lay out alike in `theme`: every field and child the same, events aside
+/// — a control's events never change its layout, and a component's sheet compared as its
+/// theme makes it.
+let same_node<e> = (a: Node<e>, b: Node<e>, theme: Theme) -> bool => {
+  if a.tag != b.tag || a.class != b.class || a.part != b.part || a.key != b.key {
+    return false
+  }
+  if a.label != b.label || a.style != b.style || a.children.len() != b.children.len() {
+    return false
+  }
+  if !same_kind(a.kind, b.kind, theme) { return false }
+  for i in 0..<a.children.len() {
+    if !same_node(a.children[i], b.children[i], theme) { return false }
+  }
+  true
+}
+
+let same_kind<e> = (a: Kind<e>, b: Kind<e>, theme: Theme) -> bool => match (a, b) {
+  (Flow(x1, m1, c1), Flow(x2, m2, c2)) => x1 == x2 && m1 == m2 && c1 == c2,
+  (Grow(f1), Grow(f2)) => same_f32(f1, f2),
+  (Layers, Layers) => true,
+  (Pin(e1), Pin(e2)) => e1 == e2,
+  (Inset(i1), Inset(i2)) => i1 == i2,
+  (Place(p1), Place(p2)) => p1 == p2,
+  (Measured(w1, h1), Measured(w2, h2)) => w1 == w2 && h1 == h2,
+  (Scrolls(x1, o1), Scrolls(x2, o2)) => x1 == x2 && same_f32(o1, o2),
+  (Words(t1), Words(t2)) => t1 == t2,
+  (Texels(t1, r1, s1), Texels(t2, r2, s2)) => t1 == t2 && r1 == r2 && s1 == s2,
+  (Theming(t1, s1), Theming(t2, s2)) => t1 == t2 && s1 == s2,
+  (Scope(f1), Scope(f2)) => f1(theme) == f2(theme),
+  (Pressable(_), Pressable(_)) => true,
+  (Checkable(on1, _), Checkable(on2, _)) => on1 == on2,
+  (Ranged(r1), Ranged(r2)) =>
+    same_f32(
+      r1.value,
+      r2.value
+    ) && same_f32(r1.min, r2.min) && same_f32(r1.max, r2.max) &&
+    same_f32(r1.step, r2.step),
+  (Editable(f1), Editable(f2)) =>
+    f1.value == f2.value && f1.placeholder == f2.placeholder,
+  _ => false,
+}
+
+/// Whether two numbers are the same number — what a layout reads of them.
+let same_f32 = pure (a: f32, b: f32) -> bool => !(a < b) && !(a > b)
 
 /// The identity of `node`, child `index` of the node identified as `parent`.
 pub let child_id<e> = pure (parent: string, node: Node<e>, index: i64) -> string =>
@@ -581,14 +760,15 @@ pub let focusable<e> = pure (kind: Kind<e>) -> bool => match kind {
   _ => false,
 }
 
-/// One node within `c`, styled at `cascade`, identified as `id`.
-let lay<e> = (
+/// One node within `c`, styled at `cascade`, identified as `id`, laid out afresh.
+let lay_fresh<e> = (
   node: Node<e>,
   c: Constraints,
   cascade: Cascade,
   fonts: mut Fonts,
   ui: Interaction,
-  id: string
+  id: string,
+  cache: mut LayoutCache<e>
 ) -> Laid<e> => {
   // A theme reaches its own node; a component's sheet — and a control's insides — only what
   // it holds.
@@ -615,10 +795,10 @@ let lay<e> = (
   let ctx = Ctx { cascade: within, ui: ui, id: id, gap: style.gap }
   let body: Body<e> = match node.kind {
     Flow(axis, main, cross) =>
-      lay_line(node.children, axis, main, cross, inner, true, ctx, fonts),
-    Layers => lay_layers(node.children, inner, ctx, fonts),
+      lay_line(node.children, axis, main, cross, inner, true, ctx, fonts, cache),
+    Layers => lay_layers(node.children, inner, ctx, fonts, cache),
     Place(at) => {
-      let content = lay_wrapped(node.children, inner.loosened(), ctx, fonts)
+      let content = lay_wrapped(node.children, inner.loosened(), ctx, fonts, cache)
       let w = if inner.bounded_w() { inner.max_w } else { content.size.w }
       let h = if inner.bounded_h() { inner.max_h } else { content.size.h }
       let size = inner.constrain(Size { w: w, h: h })
@@ -642,7 +822,7 @@ let lay<e> = (
         min_h: wanted.min_h.clamp(inner.min_h, inner.max_h),
         max_h: wanted.max_h.clamp(inner.min_h, inner.max_h),
       }
-      let content = lay_wrapped(node.children, fixed, ctx, fonts)
+      let content = lay_wrapped(node.children, fixed, ctx, fonts, cache)
       Body { size: fixed.constrain(content.size), children: content.children }
     },
     Scrolls(axis, offset) => {
@@ -650,7 +830,7 @@ let lay<e> = (
         Horizontal => Constraints { min_h: inner.min_h, max_h: inner.max_h },
         Vertical => Constraints { min_w: inner.min_w, max_w: inner.max_w },
       }
-      let content = lay_wrapped(node.children, open, ctx, fonts)
+      let content = lay_wrapped(node.children, open, ctx, fonts, cache)
       let size = inner.constrain(Size {
         w: if axis == Horizontal && inner.bounded_w() { inner.max_w } else { content.size.w },
         h: if axis == Vertical && inner.bounded_h() { inner.max_h } else { content.size.h },
@@ -681,11 +861,11 @@ let lay<e> = (
         content: Bitmap(texture, texels, natural)
       }
     },
-    Ranged(spec) => lay_slider(spec, inner, ctx, fonts),
+    Ranged(spec) => lay_slider(spec, inner, ctx, fonts, cache),
     Editable(spec) => lay_field(spec, inner, style, ctx, fonts),
     // A wrapper of its children: Grow, Pin, Inset, Theming, Scope, Pressable and Checkable.
     _ => {
-      let content = lay_wrapped(node.children, inner, ctx, fonts)
+      let content = lay_wrapped(node.children, inner, ctx, fonts, cache)
       Body { size: content.size, children: content.children }
     },
   }
@@ -794,7 +974,8 @@ let lay_wrapped<e> = (
   children: []Node<e>,
   c: Constraints,
   ctx: Ctx,
-  fonts: mut Fonts
+  fonts: mut Fonts,
+  cache: mut LayoutCache<e>
 ) -> Body<e> => {
   if children.len() == 1 {
     let one = lay(
@@ -803,11 +984,12 @@ let lay_wrapped<e> = (
       ctx.cascade,
       fonts,
       ctx.ui,
-      child_id(ctx.id, children[0], 0)
+      child_id(ctx.id, children[0], 0),
+      cache
     )
     return Body { size: one.size, children: [Placed { at: Point {}, laid: one }] }
   }
-  lay_line(children, Vertical, MainStart, CrossStart, c, false, ctx, fonts)
+  lay_line(children, Vertical, MainStart, CrossStart, c, false, ctx, fonts, cache)
 }
 
 /// `children` along `axis` within `c`, `ctx.gap` apart, placed by `main` and `cross` — a row's
@@ -822,7 +1004,8 @@ let lay_line<e> = (
   c: Constraints,
   fill: bool,
   ctx: Ctx,
-  fonts: mut Fonts
+  fonts: mut Fonts,
+  cache: mut LayoutCache<e>
 ) -> Body<e> => {
   let count = children.len()
   if count == 0 { return Body::<e> { size: c.constrain(Size {}) } }
@@ -846,7 +1029,15 @@ let lay_line<e> = (
       continue
     }
     let limits = oriented(axis, 0.0, UNBOUNDED, cross_min, max_cross)
-    let one = lay(child, limits, ctx.cascade, fonts, ctx.ui, child_id(ctx.id, child, i))
+    let one = lay(
+      child,
+      limits,
+      ctx.cascade,
+      fonts,
+      ctx.ui,
+      child_id(ctx.id, child, i),
+      cache
+    )
     used += along(axis, one.size.w, one.size.h)
     laid[i] = Some(one)
   }
@@ -857,7 +1048,15 @@ let lay_line<e> = (
     let share = free * factor / flex
     let main_c = if bounded { (share, share) } else { (0.0, UNBOUNDED) }
     let limits = oriented(axis, main_c.0, main_c.1, cross_min, max_cross)
-    let one = lay(child, limits, ctx.cascade, fonts, ctx.ui, child_id(ctx.id, child, i))
+    let one = lay(
+      child,
+      limits,
+      ctx.cascade,
+      fonts,
+      ctx.ui,
+      child_id(ctx.id, child, i),
+      cache
+    )
     used += along(axis, one.size.w, one.size.h)
     laid[i] = Some(one)
   }
@@ -899,7 +1098,8 @@ let lay_layers<e> = (
   children: []Node<e>,
   c: Constraints,
   ctx: Ctx,
-  fonts: mut Fonts
+  fonts: mut Fonts,
+  cache: mut LayoutCache<e>
 ) -> Body<e> => {
   var laid: []Maybe<Laid<e>> = []
   for _ in children { laid.push(None) }
@@ -913,7 +1113,8 @@ let lay_layers<e> = (
       ctx.cascade,
       fonts,
       ctx.ui,
-      child_id(ctx.id, child, i)
+      child_id(ctx.id, child, i),
+      cache
     )
     w = w.max(one.size.w)
     h = h.max(one.size.h)
@@ -935,7 +1136,8 @@ let lay_layers<e> = (
       ctx.cascade,
       fonts,
       ctx.ui,
-      child_id(ctx.id, child, i)
+      child_id(ctx.id, child, i),
+      cache
     )
     let x = match (edges.left, edges.right) {
       (Some(l), _) => l,
@@ -959,7 +1161,8 @@ let lay_slider<e> = (
   spec: SliderSpec<e>,
   c: Constraints,
   ctx: Ctx,
-  fonts: mut Fonts
+  fonts: mut Fonts,
+  cache: mut LayoutCache<e>
 ) -> Body<e> => {
   let w = (if c.bounded_w() { c.max_w } else { 160.0 }).max(SLIDER_THUMB)
   let size = c.constrain(Size { w: w, h: SLIDER_THUMB })
@@ -971,7 +1174,7 @@ let lay_slider<e> = (
     slider_piece::<e>("fill", 0.0, middle, at + SLIDER_THUMB / 2.0, SLIDER_TRACK),
     slider_piece::<e>("thumb", at, 0.0, SLIDER_THUMB, SLIDER_THUMB),
   ])
-  let one = lay(parts, tight(size), ctx.cascade, fonts, ctx.ui, "${ctx.id}/parts")
+  let one = lay(parts, tight(size), ctx.cascade, fonts, ctx.ui, "${ctx.id}/parts", cache)
   Body { size: size, children: [Placed { at: Point {}, laid: one }] }
 }
 

@@ -522,8 +522,8 @@ such changes on a user module.
 | `pkg/printer` | Reflection AST printer for golden tests | below |
 | `cmd/lyra-lsp` | LSP server | [README](cmd/lyra-lsp/README.md) |
 | `cmd/lyrac` | CLI: `check`/`build`/`run`/`doc` | [README](cmd/lyrac/README.md) |
-| `bindings/` | Per-library FFI binding modules (SDL3, SDL3_image, raylib, jpeg, HarfBuzz, FreeType, tree-sitter, `menubar` with its own Objective-C shim, `pty` with a C one, and Dear ImGui over a downloaded, pinned C++ half — with `bindings.imgui.ui` over it, an interface as a tree of nodes, components and scoped style sheets, and `.lui` markup generated into it by `tools/lui`) | [README](bindings/README.md) |
-| `ui/` | The GUI framework (Lyra): the display list (`ui.draw`), its tessellation (`ui.tess`), the `Platform`/`Renderer` seams (`ui.backend`) and their SDL3 implementation (`ui.sdl3`); text (`ui.text`, HarfBuzz shaping and a FreeType glyph atlas), styles and the cascade (`ui.style`), a constraints layout of `Node<e>` painted as a display list (`ui.layout`), input routed to the program's events with the framework's state by identity (`ui.interact`), the run loop with commands, subscriptions and a `Host` `main` can step for `lyrac run --live` (`ui.app`), and scripted input on a clock of its own (`ui.script`). `tools/lui` writes markup for it (`<script target="ui">`). A root beside `std` and `bindings`, linked by `build.sh` | [README](ui/README.md) |
+| `bindings/` | Per-library FFI binding modules (SDL3, SDL3_image, raylib, jpeg, HarfBuzz, FreeType, tree-sitter, `menubar` with its own Objective-C shim, `pty` with a C one, `accesskit` over AccessKit's pinned, downloaded prebuilt release with an Objective-C shim, and Dear ImGui over a downloaded, pinned C++ half — with `bindings.imgui.ui` over it, an interface as a tree of nodes, components and scoped style sheets, and `.lui` markup generated into it by `tools/lui`) | [README](bindings/README.md) |
+| `ui/` | The GUI framework (Lyra): the display list (`ui.draw`), its tessellation (`ui.tess`), the `Platform`/`Renderer` seams (`ui.backend`) and their SDL3 implementation (`ui.sdl3`); text (`ui.text`, HarfBuzz shaping and a FreeType glyph atlas), styles and the cascade (`ui.style`), a constraints layout of `Node<e>` painted as a display list (`ui.layout`), input routed to the program's events with the framework's state by identity (`ui.interact`), the accessibility tree VoiceOver hears through `bindings.accesskit` (`ui.access`), the run loop with commands, subscriptions and a `Host` `main` can step for `lyrac run --live` (`ui.app`), and scripted input on a clock of its own (`ui.script`). `tools/lui` writes markup for it (`<script target="ui">`). A root beside `std` and `bindings`, linked by `build.sh` | [README](ui/README.md) |
 
 **`pkg/cst`** — `cst.Field(node, "name")` is *the* way to read a grammar field (same nil
 semantics as `ChildByFieldName`, rule 2, but caches the field id — a large per-keystroke win).
@@ -706,7 +706,10 @@ of Markdown.
 - **`build.sh` builds `build/lib/liblyra-imgui.a`** when it can (`bindings/imgui/build.sh`):
   it downloads a pinned, SHA-256-checked ImGui, dear_bindings and FreeType into
   `build/deps/` (not vendored; FreeType compiled into the archive, for `set_font_hinting`),
-  needs SDL3, and skips with a note when offline or without it.
+  needs SDL3, and skips with a note when offline or without it. **And
+  `build/lib/liblyra-accesskit.a`** (`bindings/accesskit/build.sh`): AccessKit's pinned,
+  SHA-256-checked prebuilt macOS library merged with its shim; a do-nothing stub off macOS,
+  offline or without SDL3.
 - **`tools/sdl3-ios.sh`** (not run by `build.sh`, as `llvm-m68k.sh` is not) builds SDL3 for
   `--target ios|ios-simulator` into `build/lib/<platform>/`.
 - **`build.sh` also builds `lyrafmt`** when a C compiler, `libtree-sitter` and the sibling
@@ -844,9 +847,10 @@ function above its declaration went untyped and so unretained (COMPLETED.md 10/1
 triangles through SDL3, behind `Platform`/`Renderer` traits a later backend implements, and
 since phase 2 text, a constraints layout and a styling cascade above it (gate:
 `examples/ui/settings.lyra`), since phase 3 interaction (gate: `examples/ui/form.lyra`,
-a form that works from the keyboard), and since phase 4 markup and reload (gate:
+a form that works from the keyboard), since phase 4 markup and reload (gate:
 `examples/ui/components_view.lui`, `lui`'s ui target, with commands, subscriptions and
-`lyrac run --live`). Its first module found that a type imported under an
+`lyrac run --live`), and since phase 5 a layout cache, frames drawn on demand, batched draws
+and VoiceOver through AccessKit. Its first module found that a type imported under an
 alias was unknown inside a declaration, and that a constructor alias cannot separate two
 constructors of one name; making `Node` generic in its events found that no generic struct
 could be record-updated, that a generic struct's `[]` default had one type for every

@@ -536,6 +536,33 @@ The example's interface is `examples/imgui/components_view.lui`.
   Zed from the grammar in `tree-sitter-lyra/lui/` (`lyra-zed-ext/languages/lui/`) — Lyra in
   `{…}` and `<script>`, CSS in `<style>`.
 
+## `bindings/accesskit/`
+
+A window's accessibility tree for assistive technology — VoiceOver — through
+[AccessKit](https://github.com/AccessKit/accesskit-c)'s macOS adapter, and the actions it asks
+for back. `ui.sdl3` is its one caller; `ui.access` builds the tree it is handed.
+
+- **A snapshot, not callbacks.** AccessKit asks for the tree from a callback, whenever
+  VoiceOver starts listening, and a Lyra closure cannot be one. So the program hands over the
+  whole tree each time it changes — `begin(root, focus)`, an `element(…)` a node, `commit()` —
+  and `accesskit.m` keeps it, builds AccessKit's nodes from it when asked, and sends AccessKit
+  an update when it is already listening. An action request is queued there and an
+  `SDL_EVENT_USER` pushed to wake a program waiting in `wait_event`; `next_request()` takes
+  them. `bindings/menubar`'s pattern.
+- **Roles and actions are numbers** the shim maps (`RoleCode`, `ACTION_*`), `ui.backend`'s
+  `ACCESS_*` alike. A label's text is its *value*, as AccessKit has it. Bounds are in the
+  window's **pixels** (AccessKit divides by the backing scale), from the content's top left.
+- **`start(window)` subclasses SDL's `NSWindow`'s content view** (the subclassing adapter,
+  with the focus forwarder on the window's class) and answers whether it could — `false`
+  off macOS.
+- **Built by `bindings/accesskit/build.sh`**, which `./build.sh` runs, into
+  `build/lib/liblyra-accesskit.a`: AccessKit's **prebuilt release, pinned** (0.23.1) and its
+  zip SHA-256-checked, downloaded into `build/deps/` (not vendored), its static library merged
+  with the compiled shim by `libtool -static`. `-fmodules` records the frameworks. Off macOS,
+  offline or without SDL3 it builds `accesskit_stub.c` instead (every call a no-op, `start`
+  false) and says why. MIT or Apache-2.0 (`NOTICE.md`); the licences are copied beside the
+  archive.
+
 ## `bindings/pty/`
 
 A program on a pseudo-terminal, for a terminal emulator (`../termina`). `spawn(args, cols,

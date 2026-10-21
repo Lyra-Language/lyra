@@ -23,12 +23,14 @@ module ui.app
 //! ```
 //!
 //! **Each pass** ([Host.step]): the events already due — timers, the results of commands,
-//! subscriptions — each through `update`; the view of the state laid out with the framework's
-//! state (`ui.interact`'s `Ui`), painted and drawn; then the platform's input, **waited for**
-//! when there is none — an interface with nothing changing costs nothing while the user is
-//! away — each input routed to the events it raises, `update` applied to each in turn, and the
-//! view laid out again before the next input, so a key pressed after a click acts on what the
-//! click made.
+//! subscriptions — each through `update`; **if anything happened since the last frame** (an
+//! input, an event, or the first pass), the view of the state laid out with the framework's
+//! state (`ui.interact`'s `Ui`) — each element unchanged since last frame given back from the
+//! layout cache — painted and drawn; then the platform's input, **waited for** when there is
+//! none, with no timeout unless a timer, an `Every` or an `EveryFrame` is due — so an idle
+//! interface draws nothing and costs nothing while the user is away — each input routed to the
+//! events it raises, `update` applied to each in turn, and the view laid out again before the
+//! next input, so a key pressed after a click acts on what the click made.
 //!
 //! **`update` is pure**: it answers the next state and the [Command]s it wants carried out — a
 //! file written or read, a timer, the clipboard, a web address opened, the program ended —
@@ -59,8 +61,9 @@ import ui.backend.{
 }
 import ui.draw.{ Point, Size, Color }
 import ui.text.{ Fonts, GlyphAtlas, glyph_atlas }
-import ui.layout.{ Node, Laid, paint }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, paint }
 import ui.interact.{ Ui, ui_new }
+import ui.access.{ access_tree }
 import std.io.{ read_file, write_file }
 import std.env.{ lookup }
 
@@ -146,6 +149,14 @@ pub struct Host<s, e> {
   last_frame: i64 = -1,
   running: bool = true,
   live: bool = false,
+  /// Each element's last layout, for the next pass to give back what has not changed.
+  cache: LayoutCache<e>,
+  /// Whether something has happened since the last frame was drawn, so the next pass draws.
+  dirty: bool = true,
+  /// How many frames have been drawn, and how many times the view has been laid out — for a
+  /// test that an idle program does neither.
+  frames: i64 = 0,
+  layouts: i64 = 0,
   /// The tree as last laid out, after the last input of the last pass — none before the
   /// first. (An array of at most one: a generic struct's `None` default is not settled yet,
   /// todo.md.)
@@ -175,6 +186,7 @@ pub let host_of<s, e, p> where p: Platform = (
     state: state,
     ui: ui_new(),
     atlas: glyph_atlas(),
+    cache: layout_cache::<e>(),
     last_frame: platform.now_ms(),
     live: lookup("LYRA_LIVE_FD").is_some(),
   }
@@ -203,11 +215,27 @@ impl Host<s, e> {
     }
     self.deliver_due(now, platform)
     if !self.running { return false }
-    var laid = self.ui.frame((self.app.view)(self.state), platform.window_size(), fonts)
-    self.ui.place_text_input(laid, platform)
-    let ops = paint(laid, Point {}, platform.scale(), fonts, self.atlas, renderer)
-    renderer.draw(self.app.background, ops)
+    // Drawn only when something may have changed — an input, an event, the first pass — or
+    // every pass under `--live`, where the code itself may have.
+    if self.dirty || self.live || self.shown.len() == 0 {
+      let fresh = self.ui.frame_cached(
+        (self.app.view)(self.state),
+        platform.window_size(),
+        fonts,
+        self.cache
+      )
+      self.layouts += 1
+      self.ui.place_text_input(fresh, platform)
+      let ops = paint(fresh, Point {}, platform.scale(), fonts, self.atlas, renderer)
+      renderer.draw(self.app.background, ops)
+      platform.update_access(access_tree(fresh, self.ui.state.focus))
+      self.frames += 1
+      self.shown = [fresh]
+      self.dirty = false
+    }
+    var laid = self.shown[0]
     for input in platform.next_events(self.wait_ms(now)) {
+      self.dirty = true
       let at = platform.now_ms()
       match input {
         CloseRequested => {
@@ -231,9 +259,15 @@ impl Host<s, e> {
       ) { self.dispatch(event, at, platform) }
       self.deliver_due(at, platform)
       if !self.running { return false }
-      laid = self.ui.frame((self.app.view)(self.state), platform.window_size(), fonts)
+      laid = self.ui.frame_cached(
+        (self.app.view)(self.state),
+        platform.window_size(),
+        fonts,
+        self.cache
+      )
+      self.layouts += 1
+      self.shown = [laid]
     }
-    self.shown = [laid]
     self.running
   }
 
@@ -294,6 +328,7 @@ impl Host<s, e> {
     now: i64,
     platform: mut p
   ) -> void => {
+    self.dirty = true
     let (next, commands) = (self.app.update)(self.state, event)
     self.state = next
     for command in commands {

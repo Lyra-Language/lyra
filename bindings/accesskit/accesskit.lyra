@@ -1,0 +1,153 @@
+@link("lyra-accesskit")
+module bindings.accesskit
+//! A window's accessibility tree, for assistive technology — VoiceOver — through AccessKit's
+//! macOS adapter; and the actions it asks for, back. Elsewhere the archive is a stub: [start]
+//! answers `false` and the rest does nothing.
+//!
+//! **A snapshot, not callbacks**: AccessKit asks for the tree from a callback whenever
+//! VoiceOver starts listening, which a Lyra closure cannot be; so the program hands over the
+//! whole tree each time it changes ([begin], an [element] per node, [commit]) and the C half
+//! (`accesskit.m`) builds AccessKit's nodes from it when asked. Action requests are queued
+//! there, waking a program waiting for input with an SDL event, and taken with [next_request].
+//!
+//! Built by `bindings/accesskit/build.sh` (AccessKit's pinned prebuilt release merged in; MIT
+//! or Apache-2.0, `NOTICE.md`), which `./build.sh` runs.
+
+import std.ffi
+import bindings.sdl3.{ Window }
+
+/// What a node is, as the C half numbers them: `0` a plain container, `1` the window, `2` a
+/// group, `3` a label, `4` an image, `5` a button, `6` a checkbox, `7` a slider, `8` a text
+/// input, `9` a scroll view.
+pub alias RoleCode = i32
+
+/// Actions a node offers, or-ed: focus, click, set value, increment, decrement.
+pub const ACTION_FOCUS: i32 = 1
+pub const ACTION_CLICK: i32 = 2
+pub const ACTION_SET_VALUE: i32 = 4
+pub const ACTION_INCREMENT: i32 = 8
+pub const ACTION_DECREMENT: i32 = 16
+
+/// One queued request: its kind (`1` focus, `2` click, `3` set a text value, `4` increment,
+/// `5` decrement, `6` set a number), the node it is for, and its value.
+pub struct AccessRequestRaw {
+  kind: i32,
+  target: u64,
+  number: f64,
+  text: string,
+}
+
+/// Start listening for assistive technology on `window`; whether this platform can.
+pub let start = (window: Window) -> bool => unsafe { lyra_access_start(window) }
+
+/// Stop listening.
+pub let stop = () -> void => unsafe { lyra_access_stop() }
+
+/// A new tree, rooted at node `root`, `focus` the node with the keyboard's focus.
+pub let begin = (root: u64, focus: u64) -> void =>
+  unsafe { lyra_access_begin(root, focus) }
+
+/// One node of the tree: what it is and says, where it is (in the window's pixels, from its content's top left), whether it
+/// is ticked (`-1` for neither), its number and range when it has one, the actions it offers,
+/// and its children's ids.
+pub let element = (
+  id: u64,
+  role: RoleCode,
+  label: string,
+  value: string,
+  x: f64,
+  y: f64,
+  w: f64,
+  h: f64,
+  toggled: i32,
+  numeric: Maybe<(f64, f64, f64, f64)>,
+  actions: i32,
+  children: []u64
+) -> void => {
+  let (has, n, low, high, step): (i32, f64, f64, f64, f64) = match numeric {
+    Some((v, a, b, s)) => (1, v, a, b, s),
+    None => (0, 0.0, 0.0, 0.0, 0.0),
+  }
+  // No children is a null pointer: `data()` traps on an empty array.
+  let kids: ^u64 = if children.len() == 0 { nullptr } else { unsafe { children.data() } }
+  label.with_cstring((l) => value.with_cstring((v) => unsafe {
+    lyra_access_node(
+      id,
+      role,
+      l,
+      v,
+      x,
+      y,
+      w,
+      h,
+      toggled,
+      has,
+      n,
+      low,
+      high,
+      step,
+      actions,
+      kids,
+      children.len()
+    )
+  }))
+}
+
+/// The tree to assistive technology, if it is listening.
+pub let commit = () -> void => unsafe { lyra_access_commit() }
+
+/// The oldest request assistive technology made, if any.
+pub let next_request = () -> Maybe<AccessRequestRaw> => {
+  var target: u64 = 0
+  var number: f64 = 0.0
+  var text: []u8 = [0; 1024]
+  let kind = unsafe { lyra_access_next(
+    &mut target,
+    &mut number,
+    text.data_mut(),
+    text.len()
+  ) }
+  if kind == 0 { return None }
+  var length = 0
+  while length < text.len() && text[length] != 0 { length += 1 }
+  Some(AccessRequestRaw {
+    kind: kind,
+    target: target,
+    number: number,
+    text: text.slice(0, length).decode_utf8(),
+  })
+}
+
+// ---------------------------------------------------------------------------------------
+// Foreign declarations
+// ---------------------------------------------------------------------------------------
+
+unsafe extern lyra_access_start: (window: Window) -> bool
+unsafe extern lyra_access_stop: () -> void
+unsafe extern lyra_access_begin: (root: u64, focus: u64) -> void
+unsafe extern lyra_access_node: (
+  id: u64,
+  role: i32,
+  label: ^u8,
+  value: ^u8,
+  x: f64,
+  y: f64,
+  w: f64,
+  h: f64,
+  toggled: i32,
+  has_numeric: i32,
+  numeric: f64,
+  min: f64,
+  max: f64,
+  step: f64,
+  actions: i32,
+  children: ^u64,
+  child_count: i64
+) -> void
+unsafe extern lyra_access_commit: () -> void
+unsafe extern lyra_access_next: (
+  target: ^mut u64,
+  number: ^mut f64,
+  text: ^mut u8,
+  cap: i64
+) -> i32

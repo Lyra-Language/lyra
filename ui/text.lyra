@@ -52,7 +52,14 @@ pub struct FontSpec {
 pub struct Fonts {
   faces: []Face = [],
   laid: HashMap<string, TextBlock>,
+  /// The paragraphs laid out before `laid` filled: kept one generation more, so a screen's
+  /// text is found again however often the cache turns over, and the cache never holds more
+  /// than twice [LAID_LIMIT].
+  older: HashMap<string, TextBlock>,
 }
+
+/// How many paragraphs [Fonts] keeps laid out before it starts a new generation.
+pub const LAID_LIMIT: i64 = 2048
 
 /// A paragraph laid out: its lines, top to bottom, and the box they fill — as wide as its
 /// widest line, as tall as its lines.
@@ -113,7 +120,8 @@ pub let offset_at_x = pure (block: TextBlock, x: f32, length: i64) -> i64 => {
 }
 
 /// Fonts with none added.
-pub let fonts_new = pure () -> Fonts => Fonts { laid: hashmap_new() }
+pub let fonts_new = pure () -> Fonts =>
+  Fonts { laid: hashmap_new(), older: hashmap_new() }
 
 /// The font files tried by [Fonts.add_system_font], in order: macOS's, then the common
 /// places Linux distributions keep DejaVu Sans.
@@ -172,9 +180,22 @@ impl Fonts {
     if face < 0 { return TextBlock {} }
     let key = "${face}|${font.size}|${font.line_height}|${width}|${text}"
     if let Some(block) = self.laid.get(key) { return block }
+    if let Some(block) = self.older.get(key) {
+      self.keep(key, block)
+      return block
+    }
     let block = break_lines(self.faces[face], face, text, font, width)
-    self.laid.insert(key, block)
+    self.keep(key, block)
     block
+  }
+
+  /// `block` remembered as `key`'s, a new generation begun when this one is full.
+  let keep = (self: mut, key: string, block: TextBlock) -> void => {
+    if self.laid.len() >= LAID_LIMIT {
+      self.older = self.laid
+      self.laid = hashmap_new::<string, TextBlock>()
+    }
+    self.laid.insert(key, block)
   }
 
   /// Put every font away. The fonts must not be used afterwards.

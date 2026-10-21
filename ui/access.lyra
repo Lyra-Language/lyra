@@ -1,0 +1,163 @@
+module ui.access
+//! The interface as assistive technology hears it: [access_tree] reads a laid-out tree into
+//! an `AccessTree` — what each element is, what it says, where it is and what can be done to
+//! it — which the host hands the platform (`Platform.update_access`) each time it draws. What
+//! assistive technology does back comes in as an `AccessAction` input, which `ui.interact`
+//! handles as the keyboard would.
+//!
+//! ```
+//! let tree = access_tree(laid, ui.state.focus)
+//! platform.update_access(tree)
+//! ```
+//!
+//! **Only what a person hears is a node.** A wrapper with no role — padding, a size, a
+//! place — gives its children to its parent; a row or column does too unless it has a
+//! `label`, since an unnamed group is a stop with nothing to say; and a control is one node,
+//! the text inside a button or beside a checkbox its label rather than nodes of its own.
+//!
+//! **A node's id is its element's identity hashed** (FNV-1a), so it stays the same from one
+//! frame to the next while the element does, which is what lets VoiceOver keep its place.
+
+import ui.backend.{
+  AccessTree,
+  AccessNode,
+  AccessRole,
+  AxWindow,
+  AxGroup,
+  AxLabel,
+  AxImage,
+  AxButton,
+  AxCheckbox,
+  AxSlider,
+  AxTextInput,
+  AxScroll,
+  ACCESS_FOCUS,
+  ACCESS_CLICK,
+  ACCESS_SET_VALUE,
+  ACCESS_INCREMENT,
+  ACCESS_DECREMENT,
+}
+import ui.draw.{ Point, Rect }
+import ui.layout.{
+  Laid,
+  NoRole,
+  GroupRole,
+  TextRole,
+  ImageRole,
+  ButtonRole,
+  CheckboxRole,
+  SliderRole,
+  TextFieldRole,
+  ScrollRole,
+  Checkable,
+  Ranged,
+  Editable,
+  focusable,
+}
+import std.collections.{ Hash }
+
+/// The identity of the window's own node, which no element has.
+pub const WINDOW_KEY: string = "window"
+
+/// `laid` — the window's content, its top-left corner the window's — as assistive technology
+/// should hear it: a window holding its nodes (the system names the window by its title),
+/// with the element identified as `focus` (`""` for none) focused.
+pub let access_tree<e> = pure (laid: Laid<e>, focus: string) -> AccessTree => {
+  var nodes: []AccessNode = []
+  let children = gather(laid, Point {}, nodes)
+  let root = access_id(WINDOW_KEY)
+  nodes.push(AccessNode {
+    key: WINDOW_KEY,
+    id: root,
+    role: AxWindow,
+    bounds: Rect { x: 0.0, y: 0.0, w: laid.size.w, h: laid.size.h },
+    children: children,
+  })
+  AccessTree {
+    nodes: nodes,
+    root: root,
+    focus: if focus.len() > 0 { access_id(focus) } else { root },
+  }
+}
+
+/// The id of the node for the element identified as `key`.
+pub let access_id = pure (key: string) -> u64 => key.hash()
+
+/// The node in `tree` for the element identified as `key`, if it is one.
+pub let access_node = pure (tree: AccessTree, key: string) -> Maybe<AccessNode> => {
+  for node in tree.nodes {
+    if node.key == key { return Some(node) }
+  }
+  None
+}
+
+/// The nodes `laid` (its top-left corner at `origin`) is heard as, added to `nodes` below
+/// their children; the ids of the topmost, in order, for its parent to hold.
+let gather<e> = (laid: Laid<e>, origin: Point, nodes: mut []AccessNode) -> []u64 => {
+  let heard = heard_as(laid)
+  // A control's insides are its label, not nodes; a node's children are its own.
+  var children: []u64 = []
+  if !focusable(laid.kind) {
+    for child in laid.children {
+      let corner = Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
+      for id in gather(child.laid, corner, nodes) { children.push(id) }
+    }
+  }
+  let Some(role) = heard else { return children }
+  let id = access_id(laid.id)
+  nodes.push(node_for(laid, role, id, origin, children))
+  [id]
+}
+
+/// What `laid` is heard as, or nothing for an element that passes its children up.
+let heard_as<e> = pure (laid: Laid<e>) -> Maybe<AccessRole> => match laid.role {
+  NoRole => None,
+  GroupRole => if laid.label.len() > 0 { Some(AxGroup) } else { None },
+  TextRole => if laid.label.len() > 0 { Some(AxLabel) } else { None },
+  ImageRole => Some(AxImage),
+  ButtonRole => Some(AxButton),
+  CheckboxRole => Some(AxCheckbox),
+  SliderRole => Some(AxSlider),
+  TextFieldRole => Some(AxTextInput),
+  ScrollRole => Some(AxScroll),
+}
+
+/// The node for `laid`, heard as `role`.
+let node_for<e> = pure (
+  laid: Laid<e>,
+  role: AccessRole,
+  id: u64,
+  origin: Point,
+  children: []u64
+) -> AccessNode => {
+  let bounds = Rect { x: origin.x, y: origin.y, w: laid.size.w, h: laid.size.h }
+  let node = AccessNode {
+    key: laid.id,
+    id: id,
+    role: role,
+    label: laid.label,
+    bounds: bounds,
+    actions: if focusable(laid.kind) { ACCESS_FOCUS } else { 0 },
+    children: children,
+  }
+  match laid.kind {
+    // A paragraph's text is its value, as AccessKit has it for a label.
+    _ if role == AxLabel => AccessNode { node | label: "", value: laid.label },
+    Checkable(ticked, _) =>
+      AccessNode { node | toggled: Some(ticked), actions: node.actions | ACCESS_CLICK },
+    Ranged(spec) => AccessNode {
+      node |
+      numeric: Some((f64(spec.value), f64(spec.min), f64(spec.max), f64(spec.step))),
+      actions: node.actions | ACCESS_SET_VALUE | ACCESS_INCREMENT | ACCESS_DECREMENT,
+    },
+    // An empty field says what its placeholder asks for.
+    Editable(spec) => AccessNode {
+      node |
+      label: if laid.label.len() > 0 { laid.label } else { spec.placeholder },
+      value: spec.value,
+      actions: node.actions | ACCESS_SET_VALUE,
+    },
+    _ if role == AxButton => AccessNode { node | actions: node.actions | ACCESS_CLICK },
+    _ => node,
+  }
+}

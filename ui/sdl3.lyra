@@ -160,7 +160,29 @@ import ui.backend.{
   Move,
   NotAllowed,
   Busy,
+  AccessRole,
+  AccessRequest,
+  AccessAction,
+  AxWindow,
+  AxGroup,
+  AxLabel,
+  AxImage,
+  AxButton,
+  AxCheckbox,
+  AxSlider,
+  AxTextInput,
+  AxScroll,
+  AxContainer,
+  AxFocus,
+  AxClick,
+  AxSetValue,
+  AxSetNumber,
+  AxIncrement,
+  AxDecrement,
 }
+import bindings.accesskit
+import bindings.accesskit.{ AccessRequestRaw }
+import std.collections.{ HashMap, hashmap_new }
 import ui.draw.{
   Point,
   Size,
@@ -219,7 +241,12 @@ pub let open = (title: string, width: f32, height: f32) -> Result<SdlWindow, str
   }
   canvas.set_vsync(true)
   Ok(SdlWindow {
-    platform: SdlPlatform { window: window, look: system_look() },
+    platform: SdlPlatform {
+      window: window,
+      look: system_look(),
+      listening: accesskit.start(window),
+      access_keys: hashmap_new(),
+    },
     renderer: SdlRenderer { canvas: canvas, window: window },
   })
 }
@@ -229,6 +256,7 @@ pub let close = (platform: SdlPlatform, renderer: SdlRenderer) -> void => {
   for texture in renderer.textures { destroy_texture(texture) }
   destroy_renderer(renderer.canvas)
   if let Some(shown) = platform.cursor { destroy_cursor(shown) }
+  if platform.listening { accesskit.stop() }
   destroy_window(platform.window)
   quit()
 }
@@ -243,6 +271,10 @@ pub struct SdlPlatform {
   shape: Cursor = Arrow,
   /// The system's look as last reported, to say when it changes.
   look: Appearance = LightMode,
+  /// Whether assistive technology can be told about the window (AccessKit's adapter is on
+  /// it — macOS), and the element each node of the tree it was last told stands for.
+  listening: bool = false,
+  access_keys: HashMap<u64, string>,
 }
 
 impl Platform for SdlPlatform {
@@ -253,6 +285,14 @@ impl Platform for SdlPlatform {
     while let Some(event) = next {
       if let Some(input) = translate(event, per_point) { events.push(input) }
       next = poll_event()
+    }
+    // What assistive technology asked for; its request woke the wait above.
+    while let Some(raw) = accesskit.next_request() {
+      let Some(element) = self.access_keys.get(raw.target) else { continue }
+      if let Some(request) = access_request(raw) { events.push(AccessAction(
+        element,
+        request
+      )) }
     }
     // SDL's own theme event wakes the wait above; the look is read rather than the event
     // bound, so a change is said once whatever woke it.
@@ -296,7 +336,68 @@ impl Platform for SdlPlatform {
   now_ms = (self) => i64(ticks())
   appearance = pure (self) => self.look
   open_url = (self, url) => open_url(url)
+  update_access = (self, tree) => {
+    if !self.listening { return }
+    let pixels = self.scale()
+    self.access_keys = hashmap_new::<u64, string>()
+    accesskit.begin(tree.root, tree.focus)
+    for node in tree.nodes {
+      self.access_keys.insert(node.id, node.key)
+      let at = access_bounds(node.bounds, pixels)
+      accesskit.element(
+        node.id,
+        role_code(node.role),
+        node.label,
+        node.value,
+        f64(at.x),
+        f64(at.y),
+        f64(at.w),
+        f64(at.h),
+        match node.toggled {
+          Some(ticked) => if ticked { 1 } else { 0 },
+          None => -1,
+        },
+        node.numeric,
+        node.actions,
+        node.children
+      )
+    }
+    accesskit.commit()
+  }
 }
+
+/// A node's bounds as AccessKit's macOS adapter takes them: in the window's **pixels**, from
+/// the top left of its content, which it divides by the backing scale itself. `scale` is pixels
+/// a logical unit ([SdlPlatform.scale]); given points, VoiceOver's highlight on a Retina
+/// display was half the size of the control and at half its offset.
+pub let access_bounds = pure (bounds: Rect, scale: f32) -> Rect => bounds.scaled(scale)
+
+/// A role as `bindings.accesskit` numbers it.
+let role_code = pure (role: AccessRole) -> i32 => match role {
+  AxWindow => 1,
+  AxGroup => 2,
+  AxLabel => 3,
+  AxImage => 4,
+  AxButton => 5,
+  AxCheckbox => 6,
+  AxSlider => 7,
+  AxTextInput => 8,
+  AxScroll => 9,
+  AxContainer => 0,
+}
+
+/// A request from `bindings.accesskit` as the interface has it, or `None` for a kind it does
+/// not know.
+let access_request = pure (raw: AccessRequestRaw) -> Maybe<AccessRequest> =>
+  match raw.kind {
+    1 => Some(AxFocus),
+    2 => Some(AxClick),
+    3 => Some(AxSetValue(raw.text)),
+    4 => Some(AxIncrement),
+    5 => Some(AxDecrement),
+    6 => Some(AxSetNumber(raw.number)),
+    _ => None,
+  }
 
 /// The system's look, light unless it says dark.
 let system_look = () -> Appearance =>
@@ -442,7 +543,7 @@ impl Renderer for SdlRenderer {
     update_texture_area(self.textures[index], area, image.argb)
   }
   draw = (self, background, ops) => {
-    paint(self, background, ops)
+    let _ = paint(self, background, ops)
     self.canvas.present()
   }
 }
@@ -454,13 +555,20 @@ pub let capture = (
   background: Color,
   ops: []DrawOp
 ) -> Maybe<Image> => {
-  paint(renderer, background, ops)
+  let _ = paint(renderer, background, ops)
   let Some(frame) = renderer.canvas.read_pixels() else { return None }
   Some(Image { width: frame.width, height: frame.height, argb: frame.argb })
 }
 
-/// Clear to `background` and draw `ops`, scaled to pixels, without showing them.
-let paint = (renderer: SdlRenderer, background: Color, ops: []DrawOp) -> void => {
+/// Clear to `background` and draw `ops`, scaled to pixels, without showing them; how many
+/// geometry calls it took.
+///
+/// **Ops are batched**: each piece — a fill, a border, a run of glyphs, a picture — joins the
+/// latest batch drawing from its texture (or from none, for fills and borders) unless a batch
+/// after that one overlaps it, which it would then be drawn under instead of over; else it
+/// starts a batch of its own. A screen of boxes with labels in them is two calls, the boxes and
+/// the labels, whatever their number. A clip ends every batch.
+let paint = (renderer: SdlRenderer, background: Color, ops: []DrawOp) -> i64 => {
   let canvas = renderer.canvas
   let scale = window_display_scale(renderer.window)
   canvas.clear_clip()
@@ -472,44 +580,55 @@ let paint = (renderer: SdlRenderer, background: Color, ops: []DrawOp) -> void =>
   })
   canvas.clear()
   canvas.set_draw_blend(BLEND_ALPHA)
-  var shapes = Mesh {}
+  var batches: []Batch = []
+  var calls = 0
   var clips: []Rect = []
   for op in ops {
     match op {
-      Fill(at, radii, color) =>
-        fill(shapes, at.scaled(scale), radii.scaled(scale), color),
-      Border(at, radii, width, color) =>
-        border(shapes, at.scaled(scale), radii.scaled(scale), width * scale, color),
+      Fill(at, radii, color) => {
+        let k = batch_for(batches, -1, [at.scaled(scale).inset(-1.0)])
+        fill(batches[k].mesh, at.scaled(scale), radii.scaled(scale), color)
+      },
+      Border(at, radii, width, color) => {
+        let k = batch_for(batches, -1, [at.scaled(scale).inset(-1.0)])
+        border(
+          batches[k].mesh,
+          at.scaled(scale),
+          radii.scaled(scale),
+          width * scale,
+          color
+        )
+      },
       Glyphs(id, glyphs, color) => {
-        flush(canvas, shapes)
         let Some(texture) = texture_of(renderer, id) else { continue }
-        var mesh = Mesh {}
+        let k = batch_for(
+          batches,
+          i64(id),
+          [union_of([g in glyphs | g.at.scaled(scale)])]
+        )
         for g in glyphs {
-          quad(mesh, g.at.scaled(scale), in_texture(g.texels, texture), color)
+          quad(batches[k].mesh, g.at.scaled(scale), in_texture(g.texels, texture), color)
         }
-        canvas.draw_textured_geometry(texture, vertices(mesh), mesh.indices)
       },
       Picture(id, texels, at) => {
-        flush(canvas, shapes)
         let Some(texture) = texture_of(renderer, id) else { continue }
-        var mesh = Mesh {}
+        let k = batch_for(batches, i64(id), [at.scaled(scale)])
         quad(
-          mesh,
+          batches[k].mesh,
           at.scaled(scale),
           in_texture(texels, texture),
           Color { r: 255, g: 255, b: 255 }
         )
-        canvas.draw_textured_geometry(texture, vertices(mesh), mesh.indices)
       },
       PushClip(at, _) => {
-        flush(canvas, shapes)
+        calls += flush(renderer, batches)
         let inside = at.scaled(scale)
         let narrowed = if clips.len() == 0 { inside } else { clips[clips.len() - 1].intersect(inside) }
         clips.push(narrowed)
         canvas.set_clip(pixel_rect(narrowed))
       },
       PopClip => {
-        flush(canvas, shapes)
+        calls += flush(renderer, batches)
         if clips.len() > 0 {
           clips = clips.slice(0, clips.len() - 1)
         }
@@ -521,13 +640,89 @@ let paint = (renderer: SdlRenderer, background: Color, ops: []DrawOp) -> void =>
       },
     }
   }
-  flush(canvas, shapes)
+  calls + flush(renderer, batches)
 }
 
-/// Draw the shapes gathered so far, and start again.
-let flush = (canvas: Canvas, shapes: mut Mesh) -> void => {
-  canvas.draw_geometry(vertices(shapes), shapes.indices)
-  shapes = Mesh {}
+/// The geometry calls `ops` take drawn over `background` — drawn, not shown: what a test of
+/// the batching counts.
+pub let geometry_calls = (
+  renderer: SdlRenderer,
+  background: Color,
+  ops: []DrawOp
+) -> i64 =>
+  paint(renderer, background, ops)
+
+/// Triangles drawn in one call: from texture number `texture` (`-1` for none), the pixel
+/// rectangles its pieces cover — a run of glyphs as one — and their union, to rule most
+/// overlaps out at once.
+struct Batch {
+  texture: i64,
+  mesh: Mesh = Mesh {},
+  covers: []Rect = [],
+  bounds: Rect = Rect {},
+}
+
+/// The batch a piece drawing from `texture` and covering `covers` joins — the latest drawing
+/// from the same, if no later batch overlaps the piece — or a new one; its index.
+let batch_for = (batches: mut []Batch, texture: i64, covers: []Rect) -> i64 => {
+  let piece = union_of(covers)
+  var k = batches.len() - 1
+  while k >= 0 {
+    if batches[k].texture == texture { break }
+    if !batches[k].bounds.intersect(piece).is_empty() && overlaps(
+      batches[k].covers,
+      covers
+    ) {
+      k = -1
+      break
+    }
+    k -= 1
+  }
+  if k < 0 {
+    batches.push(Batch { texture: texture, bounds: piece })
+    k = batches.len() - 1
+  }
+  for r in covers { batches[k].covers.push(r) }
+  batches[k].bounds = union_of([batches[k].bounds, piece])
+  k
+}
+
+/// The smallest rectangle holding all of `rects` (an empty one for none).
+let union_of = pure (rects: []Rect) -> Rect => {
+  if rects.len() == 0 { return Rect {} }
+  var left = rects[0].x
+  var top = rects[0].y
+  var right = rects[0].x + rects[0].w
+  var bottom = rects[0].y + rects[0].h
+  for r in rects {
+    if r.is_empty() { continue }
+    left = left.min(r.x)
+    top = top.min(r.y)
+    right = right.max(r.x + r.w)
+    bottom = bottom.max(r.y + r.h)
+  }
+  Rect { x: left, y: top, w: right - left, h: bottom - top }
+}
+
+/// Whether any of `a` overlaps any of `b`.
+let overlaps = pure (a: []Rect, b: []Rect) -> bool =>
+  a.any((x) => b.any((y) => !x.intersect(y).is_empty()))
+
+/// Draw `batches` in order, each in one call, and empty them; how many calls that was.
+let flush = (renderer: SdlRenderer, batches: mut []Batch) -> i64 => {
+  var calls = 0
+  for b in batches {
+    if b.mesh.indices.len() == 0 { continue }
+    if b.texture < 0 {
+      renderer.canvas.draw_geometry(vertices(b.mesh), b.mesh.indices)
+    } else {
+      let Some(texture) = texture_of(renderer, TextureId(b.texture)) else { continue }
+      renderer.canvas.draw_textured_geometry(texture, vertices(b.mesh), b.mesh.indices)
+    }
+    calls += 1
+  }
+  batches = []
+  calls
 }
 
 /// A mesh's corners as SDL's — the same eight floats, field for field.
