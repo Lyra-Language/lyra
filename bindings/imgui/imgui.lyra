@@ -497,7 +497,11 @@ pub let title_bar_end = (host: Host, after_button: (string) -> void) -> void => 
 /// as they are; whether it was clicked. Its glyph is the program's, drawn over ImGui's last
 /// item (`get_item_rect_min`/`max`). `after_button` is called with `name` once it is drawn,
 /// for a test to find it by.
-pub let title_bar_button = (host: Host, name: string, after_button: (string) -> void) -> bool => {
+pub let title_bar_button = (
+  host: Host,
+  name: string,
+  after_button: (string) -> void
+) -> bool => {
   let pressed = name.with_cstring((n) => unsafe { lyra_imgui_title_bar_button(host, n) })
   after_button(name)
   pressed
@@ -733,7 +737,12 @@ unsafe extern lyra_imgui_host_window_buttons_left: (host: Host) -> bool
 unsafe extern lyra_imgui_title_bar_start: (host: Host) -> void
 
 @symbol("lyra_imgui_title_bar")
-unsafe extern lyra_imgui_title_bar: (host: Host, title: ^u8, buttons: i32, trailing: f32) -> void
+unsafe extern lyra_imgui_title_bar: (
+  host: Host,
+  title: ^u8,
+  buttons: i32,
+  trailing: f32
+) -> void
 
 @symbol("lyra_imgui_title_bar_button")
 unsafe extern lyra_imgui_title_bar_button: (host: Host, id: ^u8) -> bool
