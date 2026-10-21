@@ -708,6 +708,19 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 10/21] Phase 5, polish** — a layout cache by identity, frames drawn on demand,
   batched geometry calls, and an accessibility tree to VoiceOver through AccessKit
   (COMPLETED.md, 10/21).
+- **[DONE 10/21] Flex and grid** — `flex`, `grid`, layout style properties, `<Flex>`/`<Grid>`
+  and CSS's properties in lui; demo `examples/ui/layouts_view.lui` (COMPLETED.md, 10/21).
+- **[OPEN] Grid: no named areas, no negative lines, no `justify-content`/`align-content`.**
+  `grid-template-areas`, `grid-area: name`, lines counted from the end (`-1`) and packing
+  the tracks themselves are not built; tracks always stretch (CSS's `normal`).
+- **[OPEN] Flex and grid: no margins and no percentages but `flex-basis`.** CSS's auto
+  margins (pushing an item to the end) and `width: 50%` would each need a length type in
+  `Style`; `align-self: baseline` reads only a row's first line.
+- **[OPEN] Layout: intrinsic widths are measured afresh each time** — a flex item's or grid
+  item's min- and max-content, outside the cache. A container unchanged is reused whole, but
+  one that changes re-measures every item; memoize by identity if a large grid shows it.
+- **[OPEN] `order` reorders Tab's focus too**: the laid-out children are in `order`'s order,
+  and `focus_order` walks them. CSS keeps the document's order for focus.
 - **[OPEN] A GPU renderer is not needed yet.** Measured 10/21 (Apple Silicon Mac, SDL's
   Metal renderer, 1200×900): 400 labelled boxes (800 ops) take 7.2 ms to lay out fresh and
   0.31 ms cached, 1.9 ms to paint, 1.6 ms to tessellate and submit (0.6 ms of it

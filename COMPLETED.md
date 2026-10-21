@@ -9,6 +9,39 @@ Newest first.
 
 ## Dated log
 
+### 10/21/26 — `ui/`: CSS's flexbox and grid in `ui.layout`
+
+- **One protocol**: flex and grid lay out inside the constraints protocol, constraints down
+  and sizes up. Intrinsic measurement is used only where CSS needs it: a flex item's base
+  size and automatic least size, and grid's content-sized tracks. A block's rules decide
+  what is definite: its width when bounded, its height only when fixed. So `fr` rows and a
+  growing column need a `height`, as in a browser.
+- **Configured by style, not by the builder**. `flex(children)` and `grid(children)` take
+  nothing else. Direction, wrap, justify and align, tracks, gaps and every item property are
+  `Style` fields, so a sheet sets them and the cascade decides, as CSS does.
+- **Every element honours `width`, `height` and their least and greatest.** CSS's clamps
+  need them, and they were the one sizing a sheet could not do. The parent's constraints
+  still win.
+- **Row, Column and Expanded stay Flutter's.** Making them wrappers over flex would change
+  how their children are measured (unbounded, an Expanded's tight share) under every
+  existing screen and pixel test. Flex is the CSS-faithful path beside them.
+- **The freeze loop is CSS §9.7 as written**: freeze inflexible items, scale shrink by the
+  base, take only part of the free space when the factors sum below 1, then freeze the
+  items that hit the larger total violation. The automatic least size reads the item's
+  content without its own `width`, as CSS's content-size suggestion does. Reading the
+  `width` too kept a `width: 200` item from shrinking at all.
+- **Grid placement works in the flow's own axes** (major and minor), so the column flow is
+  the row flow transposed rather than a second copy.
+- **Checked against hand-worked CSS**, child rect by child rect: 18 flex cases and 11 grid
+  cases (`TestRun_UiFlex`, `TestRun_UiGrid`).
+- **lui**: `<Flex>` and `<Grid>` take their properties as attributes, and every CSS layout
+  property reads in a style or sheet with its values checked. A component's call now takes
+  `class`/`style`/`key` on the component's node: without it a dashboard tile, the one item
+  a grid sees, could not be told to span. A later declaration replaces an earlier one; two
+  values for one field had been refused by lyrac.
+- **`ui.layout` became a directory module** (`ui/layout/{layout,flex,grid}.lyra`), the
+  first outside `std` that is not one file.
+
 ### 10/21/26 — `ui/`, phase 5: a layout cache, frames on demand, batched draws, VoiceOver
 
 The GUI's polish phase. Each step was measured, then tested (`TestRun_UiCacheAndIdle`,

@@ -1,0 +1,101 @@
+<!--
+  Flex and grid, as markup: a list of cards that wraps to the window's width, and a dashboard
+  grid. `build/lui examples/ui/layouts_view.lui` writes layouts_view.lyra beside it, which
+  layouts.lyra runs; resize the window and the cards reflow, add some and they wrap.
+-->
+
+<script target="ui">
+  import ui.style.{ Theme, light_theme }
+
+  /// What the buttons ask for.
+  pub data Event = MoreCards | FewerCards
+
+  pub struct State {
+    cards: i64 = 7,
+  }
+
+  /// `s` after `event`.
+  pub let update = pure (s: State, event: Event) -> State => match event {
+    MoreCards => State { s | cards: s.cards + 1 },
+    FewerCards => State { s | cards: (s.cards - 1).max(0) },
+  }
+
+  /// What each card says.
+  let blurb = pure (i: i64) -> string => if i % 3 == 0 {
+    "A card with more to say than the others, so its text wraps onto a few lines."
+  } else {
+    "A short card."
+  }
+</script>
+
+<style global theme={Theme} name="layouts_sheet">
+  .page { background: $colors.background; padding: $space.xl; gap: $space.l }
+  Text.title { font-size: 20 }
+  .toolbar { gap: $space.s }
+  .card {
+    background: $colors.surface;
+    border-color: $colors.border;
+    border-width: 1;
+    radius: 10;
+    padding: $space.l;
+    gap: $space.s;
+    flex: 1 1 180;
+    min-width: 150
+  }
+  .tile {
+    background: $colors.surface;
+    border-color: $colors.border;
+    border-width: 1;
+    radius: 10;
+    padding: $space.m;
+    gap: $space.xs
+  }
+  .wide { grid-column: span 2 }
+  .tall { grid-row: span 2 }
+  .everything { grid-column: 1 / span 4 }
+  Text.figure { font-size: 28; color: $colors.accent }
+  Text.label { color: $colors.muted; font-size: 13 }
+</style>
+
+<!-- The page for a state. -->
+<component name="view" props={{ s: State }} event={Event}>
+  <Themed theme={light_theme()} sheet={layouts_sheet(light_theme())}>
+    <Scroll axis="vertical">
+      <Column class="page" cross="stretch">
+        <Text class="title">Cards</Text>
+        <Row class="toolbar">
+          <Button on_click={MoreCards}>Add a card</Button>
+          <Button on_click={FewerCards}>Remove one</Button>
+        </Row>
+        <Flex wrap="wrap" gap="12" align="start">
+          <for each={i in 0..<s.cards}>
+            <Column class="card" key="card {i}">
+              <Text class="title">Card {i + 1}</Text>
+              <Text>{blurb(i)}</Text>
+            </Column>
+          </for>
+        </Flex>
+        <Text class="title">Dashboard</Text>
+        <Grid columns="repeat(4, 1fr)" auto-rows="minmax(90, auto)" gap="12">
+          <tile class="everything" label="This week" figure="1,284 visits"/>
+          <tile class="wide tall" label="Sign-ups" figure="312"/>
+          <tile label="Errors" figure="3"/>
+          <tile label="Uptime" figure="99.9%"/>
+          <tile class="wide" label="Slowest page" figure="840 ms"/>
+          <tile label="Cards" figure="{s.cards}"/>
+          <tile label="Queue" figure="0"/>
+          <tile class="wide" label="Storage" figure="61%"/>
+        </Grid>
+      </Column>
+    </Scroll>
+  </Themed>
+</component>
+
+<!-- A dashboard tile: what it counts, and the count. A call's `class` is on the tile itself,
+     so `.wide` spans its grid's columns. -->
+<component name="tile" props={{ label: string, figure: string }}>
+  <Column class="tile">
+    <Text class="label">{label}</Text>
+    <Text class="figure">{figure}</Text>
+  </Column>
+</component>

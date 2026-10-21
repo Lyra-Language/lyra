@@ -762,8 +762,13 @@ impl Writer {
     let Some(c) = found else {
       return Err("${t.line}: no component ${t.name} in this file or one it imports (<import src=\"…\"/>); call one written in Lyra as {${t.name}(…)}")
     }
+    // In the ui target a call takes the common attributes too — `class`, `style`, `key` —
+    // on the component's own node, where its parent's layout (a grid's `grid-column`) reads
+    // them; a prop of the same name is the prop.
+    let is_prop = (name: string) -> bool => c.props.any((p) => p.name == name)
     for a in t.attrs {
-      if c.props.filter((p) => p.name == a.name).len() == 0 {
+      let common = self.target == UI && UI_COMMON.any((n) => n == a.name)
+      if !is_prop(a.name) && !common {
         return Err("${a.line}: component ${c.name} has no prop ${a.name}")
       }
     }
@@ -783,7 +788,9 @@ impl Writer {
         },
       }
     }
-    Ok("${c.name}(${args.join(", ")})")
+    let made = "${c.name}(${args.join(", ")})"
+    if self.target != UI { return Ok(made) }
+    self.ui_modifiers(Tag { t | attrs: [a in t.attrs | !is_prop(a.name) | a] }, made)
   }
 
   /// An attribute's value as the Lyra its field takes.
@@ -862,7 +869,12 @@ impl Writer {
   let imports = pure (self) -> string => {
     var import_lines: []string = []
     if self.target == UI {
-      for (module, names) in UI_MODULES {
+      for (module, listed) in UI_MODULES {
+        // `ui.style`'s layout names are kept in a list of their own.
+        let names = if module == "ui.style" { [
+          ...listed,
+          ...LAYOUT_NAMES
+        ] } else { listed }
         let mine = [n in names | self.used.any((u) => u == n) | n]
         if mine.len() > 0 { import_lines.push("import ${module}.{ ${mine.join(", ")} }") }
       }
@@ -1048,10 +1060,64 @@ const UI_MODULES = [
       "checkbox",
       "slider",
       "text_input",
+      "flex",
+      "grid",
     ],
   ),
-  ("ui.style", ["Style", "Sheet", "Rule", "Theme", "Insets", "insets", "insets_xy"]),
+  ("ui.style", [
+    "Style",
+    "Sheet",
+    "Rule",
+    "Theme",
+    "Insets",
+    "insets",
+    "insets_xy",
+  ]),
   ("ui.draw", ["Size", "Rect", "Color", "rgb", "rgba"]),
+]
+
+/// The names of `ui.style` that its layout properties are written with, which a module
+/// imports as it uses them.
+const LAYOUT_NAMES = [
+  "FlexRow",
+  "FlexRowReverse",
+  "FlexColumn",
+  "FlexColumnReverse",
+  "NoWrap",
+  "Wrap",
+  "WrapReverse",
+  "JustifyStart",
+  "JustifyEnd",
+  "JustifyCenter",
+  "JustifyBetween",
+  "JustifyAround",
+  "JustifyEvenly",
+  "JustifyStretch",
+  "AlignStart",
+  "AlignEnd",
+  "AlignCenter",
+  "AlignStretch",
+  "AlignBaseline",
+  "BasisAuto",
+  "BasisLength",
+  "BasisFraction",
+  "TrackPx",
+  "TrackFr",
+  "TrackAuto",
+  "TrackMinContent",
+  "TrackMaxContent",
+  "px",
+  "fr",
+  "auto_track",
+  "min_content",
+  "max_content",
+  "minmax",
+  "repeat_tracks",
+  "GridSpan",
+  "FlowRow",
+  "FlowColumn",
+  "FlowRowDense",
+  "FlowColumnDense",
 ]
 
 /// What a ui element writes: the builder it calls and how its markup becomes the call.
@@ -1072,6 +1138,9 @@ data UiShape =
   | ShapeBare(string)
   /// A theme and sheet for its children.
   | ShapeThemed
+  /// A flex container or a grid: its attributes are style properties (`direction="column"`
+  /// is `flex-direction: column`), which a sheet may set as well.
+  | ShapeLayout(string)
 
 /// The attributes every ui element takes: its classes, the part of its component it is, its
 /// key, its label for assistive technology, and its inline style.
@@ -1222,6 +1291,35 @@ impl Writer {
         let items = self.nodes_of(t.children, "${indent}  ")?
         "themed(${required(t, "theme")?}, ${required(t, "sheet")?}, ${self.listed(items, indent)})"
       },
+      ShapeLayout(builder) => {
+        self.use(builder)
+        let items = self.nodes_of(t.children, "${indent}  ")?
+        let made = "${builder}(${self.listed(items, indent)})"
+        // Each attribute is the style property it names.
+        var fields: []string = []
+        for a in t.attrs {
+          if UI_COMMON.any((n) => n == a.name) { continue }
+          let property = layout_attribute(builder, a.name)
+          let set: Maybe<Result<[]string, string>> = match a.value {
+            Quoted(text) => layout_declaration(property, text),
+            Braced(code) =>
+              if NUMBER_PROPERTIES.any((n) => n == property) { Some(Ok(["${property}: Some(${code})"])) } else {
+                Some(Err("${a.name} of <${t.name}> is written as text, not {…}"))
+              },
+            Bare => Some(Err("${a.name} of <${t.name}> needs a value")),
+          }
+          match set {
+            Some(Ok(more)) => { for f in more { fields = with_field(fields, f) } },
+            Some(Err(what)) => return Err("${a.line}: ${what}"),
+            None => return Err("${a.line}: <${t.name}> has no attribute ${a.name}"),
+          }
+        }
+        if fields.len() == 0 { made } else {
+          self.use("Style")
+          self.ui_uses_in(fields)
+          "${made}.with_style(Style { ${fields.join(", ")} })"
+        }
+      },
     }
     self.ui_modifiers(t, base)
   }
@@ -1305,8 +1403,16 @@ impl Writer {
   /// The names of `ui.style` and `ui.draw` a style's fields use.
   let ui_uses_in = (self: mut, fields: []string) -> void => {
     for f in fields {
-      for name in ["rgb(", "rgba(", "insets(", "insets_xy(", "Insets {"] {
-        if f.contains(name) { self.use(name.replace("(", "").replace(" {", "")) }
+      for word in identifiers(f) {
+        let known = [
+          "rgb",
+          "rgba",
+          "insets",
+          "insets_xy",
+          "Insets"
+        ].any((n) => n == word) ||
+          LAYOUT_NAMES.any((n) => n == word)
+        if known { self.use(word) }
       }
     }
   }
@@ -1355,7 +1461,318 @@ let ui_kind = pure (tag: string) -> Maybe<(UiShape, []string)> => match tag {
   "TextInput" => Some((ShapeBare("text_input"), ["value", "placeholder", "on_edit"])),
   "Image" => Some((ShapeBare("image"), ["texture", "texels", "width", "height"])),
   "Themed" => Some((ShapeThemed, ["theme", "sheet"])),
+  "Flex" => Some((ShapeLayout("flex"), FLEX_ATTRIBUTES)),
+  "Grid" => Some((ShapeLayout("grid"), GRID_ATTRIBUTES)),
   _ => None,
+}
+
+/// A `<Flex>`'s attributes and a `<Grid>`'s: style properties, short where CSS's names are
+/// long (`direction` is `flex-direction`, `columns` is `grid-template-columns`).
+const FLEX_ATTRIBUTES = [
+  "direction",
+  "wrap",
+  "justify",
+  "align",
+  "align-content",
+  "gap",
+  "row-gap",
+  "column-gap"
+]
+const GRID_ATTRIBUTES = [
+  "columns",
+  "rows",
+  "gap",
+  "row-gap",
+  "column-gap",
+  "flow",
+  "justify-items",
+  "align-items",
+  "auto-columns",
+  "auto-rows"
+]
+
+/// The style property (in `ui.style`'s spelling) attribute `name` of `builder`'s element sets.
+let layout_attribute = pure (builder: string, name: string) -> string => match name {
+  "direction" => "flex_direction",
+  "wrap" => "flex_wrap",
+  "justify" => "justify_content",
+  "align" => "align_items",
+  "columns" => "grid_template_columns",
+  "rows" => "grid_template_rows",
+  "flow" => "grid_auto_flow",
+  "auto-columns" => "grid_auto_columns",
+  "auto-rows" => "grid_auto_rows",
+  other => other.replace("-", "_"),
+}
+
+/// The layout properties a `{…}` value may give: lengths.
+const NUMBER_PROPERTIES = [
+  "gap",
+  "row_gap",
+  "column_gap",
+  "width",
+  "height",
+  "min_width",
+  "max_width",
+  "min_height",
+  "max_height"
+]
+
+/// The `ui.style` fields layout declaration `name: value` sets (`name` with `_` for `-`) —
+/// sizes, flex and grid properties, as CSS writes them — or `None` for a name that is not
+/// one. An unknown value is an error naming the ones there are.
+let layout_declaration = pure (
+  name: string,
+  value: string
+) -> Maybe<Result<[]string, string>> => {
+  let one = (
+    field: string,
+    made: Result<string, string>
+  ) -> Maybe<Result<[]string, string>> =>
+    Some(made.map((v) => ["${field}: Some(${v})"]))
+  match name {
+    "width" => one(name, ui_number(value)),
+    "height" => one(name, ui_number(value)),
+    "min_width" => one(name, ui_number(value)),
+    "max_width" => one(name, ui_number(value)),
+    "min_height" => one(name, ui_number(value)),
+    "max_height" => one(name, ui_number(value)),
+    "row_gap" => one(name, ui_number(value)),
+    "column_gap" => one(name, ui_number(value)),
+    "gap" => one(name, ui_number(value)),
+    "flex_direction" => one(name, word_of(name, value, [
+      ("row", "FlexRow"),
+      ("row-reverse", "FlexRowReverse"),
+      ("column", "FlexColumn"),
+      ("column-reverse", "FlexColumnReverse"),
+    ])),
+    "flex_wrap" => one(name, word_of(name, value, [("nowrap", "NoWrap"), ("wrap", "Wrap"), ("wrap-reverse", "WrapReverse")])),
+    "justify_content" => one(name, word_of(name, value, JUSTIFY_WORDS)),
+    "align_content" =>
+      one(name, word_of(name, value, [...JUSTIFY_WORDS, ("stretch", "JustifyStretch")])),
+    "align_items" => one(name, word_of(name, value, ALIGN_WORDS)),
+    "align_self" => one(name, word_of(name, value, ALIGN_WORDS)),
+    "justify_items" => one(name, word_of(name, value, ALIGN_WORDS)),
+    "justify_self" => one(name, word_of(name, value, ALIGN_WORDS)),
+    "flex_grow" => one("grow", number(value)),
+    "flex_shrink" => one("shrink", number(value)),
+    "flex_basis" => one("basis", basis_of(value)),
+    "order" => one(name, integer(value)),
+    "flex" => Some(flex_shorthand(value)),
+    "grid_template_columns" => one("grid_columns", track_list(value)),
+    "grid_template_rows" => one("grid_rows", track_list(value)),
+    "grid_auto_columns" => one(name, one_track(value)),
+    "grid_auto_rows" => one(name, one_track(value)),
+    "grid_auto_flow" => one("grid_flow", word_of(name, value, [
+      ("row", "FlowRow"),
+      ("column", "FlowColumn"),
+      ("dense", "FlowRowDense"),
+      ("row dense", "FlowRowDense"),
+      ("column dense", "FlowColumnDense"),
+    ])),
+    "grid_column" => one(name, grid_line(value)),
+    "grid_row" => one(name, grid_line(value)),
+    _ => None,
+  }
+}
+
+const JUSTIFY_WORDS = [
+  ("start", "JustifyStart"),
+  ("flex-start", "JustifyStart"),
+  ("end", "JustifyEnd"),
+  ("flex-end", "JustifyEnd"),
+  ("center", "JustifyCenter"),
+  ("space-between", "JustifyBetween"),
+  ("space-around", "JustifyAround"),
+  ("space-evenly", "JustifyEvenly"),
+]
+
+const ALIGN_WORDS = [
+  ("start", "AlignStart"),
+  ("flex-start", "AlignStart"),
+  ("end", "AlignEnd"),
+  ("flex-end", "AlignEnd"),
+  ("center", "AlignCenter"),
+  ("stretch", "AlignStretch"),
+  ("baseline", "AlignBaseline"),
+]
+
+/// `value` as the constructor `words` pairs it with, or an error listing the words.
+let word_of = pure (
+  name: string,
+  value: string,
+  words: [](string, string)
+) -> Result<string, string> => {
+  let said = value.trim().split_when((c) => c == ' ').join(" ")
+  for (word, made) in words {
+    if word == said { return Ok(made) }
+  }
+  let all = [w in words | w.0]
+  Err("${name.replace("_", "-")} is ${all.join(", ")}, not ${value}")
+}
+
+/// A whole number, as Lyra.
+let integer = pure (value: string) -> Result<string, string> => {
+  let Some(n) = value
+    .trim()
+    .parse_i64() else { return Err("${value} is not a whole number") }
+  Ok("${n}")
+}
+
+/// `flex-basis`: `auto`, a length, or a percentage of the container.
+let basis_of = pure (value: string) -> Result<string, string> => {
+  let v = value.trim()
+  if v == "auto" || v == "content" { return Ok("BasisAuto") }
+  if let Some(part) = v.strip_suffix("%") {
+    let n = number(part)?
+    return Ok("BasisFraction(${n} / 100.0)")
+  }
+  Ok("BasisLength(${ui_number(v)?})")
+}
+
+/// CSS's `flex` shorthand: `none` (0 0 auto), `auto` (1 1 auto), or a grow, a shrink and a
+/// basis — `flex: 1` is `1 1 0`.
+let flex_shorthand = pure (value: string) -> Result<[]string, string> => {
+  let parts = value.trim().split_when((c) => c == ' ')
+  if parts.len() == 1 && parts[0] == "none" {
+    return Ok(["grow: Some(0.0)", "shrink: Some(0.0)", "basis: Some(BasisAuto)"])
+  }
+  if parts.len() == 1 && parts[0] == "auto" {
+    return Ok(["grow: Some(1.0)", "shrink: Some(1.0)", "basis: Some(BasisAuto)"])
+  }
+  if parts.len() == 0 || parts.len() > 3 {
+    return Err("flex is none, auto, or a grow, a shrink and a basis, not ${value}")
+  }
+  let grow = number(parts[0])?
+  let shrink = if parts.len() >= 2 { number(parts[1])? } else { "1.0" }
+  let basis = if parts.len() == 3 { basis_of(parts[2])? } else { "BasisLength(0.0)" }
+  Ok(["grow: Some(${grow})", "shrink: Some(${shrink})", "basis: Some(${basis})"])
+}
+
+/// A track list — `100 1fr auto min-content max-content minmax(100, 1fr) repeat(3, 1fr)` —
+/// as Lyra's `[]Track`.
+let track_list = pure (value: string) -> Result<string, string> => {
+  let items = top_level(value.trim(), ' ')?
+  var out: []string = []
+  for item in items {
+    if let Some(inner) = call_args(item, "repeat") {
+      let args = top_level(inner, ',')?
+      if args.len() != 2 { return Err("repeat is repeat(count, tracks), not ${item}") }
+      let count = integer(args[0])?
+      out.push("...repeat_tracks(${count}, ${track_list(args[1])?})")
+    } else {
+      out.push(one_track(item)?)
+    }
+  }
+  Ok("[${out.join(", ")}]")
+}
+
+/// One track: a size, or `minmax(least, most)`.
+let one_track = pure (value: string) -> Result<string, string> => {
+  let v = value.trim()
+  if let Some(inner) = call_args(v, "minmax") {
+    let args = top_level(inner, ',')?
+    if args.len() != 2 { return Err("minmax is minmax(least, most), not ${v}") }
+    return Ok("minmax(${track_size(args[0])?}, ${track_size(args[1])?})")
+  }
+  match v {
+    "auto" => Ok("auto_track()"),
+    "min-content" => Ok("min_content()"),
+    "max-content" => Ok("max_content()"),
+    _ => {
+      if let Some(share) = v.strip_suffix("fr") { return Ok("fr(${number(share)?})") }
+      match ui_number(v) {
+        Ok(n) => Ok("px(${n})"),
+        Err(_) => Err("a track is a length, Nfr, auto, min-content, max-content, minmax(…) or repeat(…), not ${v}"),
+      }
+    },
+  }
+}
+
+/// One bound of `minmax(…)`.
+let track_size = pure (value: string) -> Result<string, string> => {
+  let v = value.trim()
+  match v {
+    "auto" => Ok("TrackAuto"),
+    "min-content" => Ok("TrackMinContent"),
+    "max-content" => Ok("TrackMaxContent"),
+    _ => {
+      if let Some(share) = v.strip_suffix("fr") { return Ok("TrackFr(${number(share)?})") }
+      Ok("TrackPx(${ui_number(v)?})")
+    },
+  }
+}
+
+/// `grid-column` and `grid-row`: `2`, `span 2`, `1 / 3` (lines), or `2 / span 3`.
+let grid_line = pure (value: string) -> Result<string, string> => {
+  let halves = [h in value.split("/") | h.trim()]
+  let span_of = (text: string) -> Maybe<string> =>
+    text.strip_prefix("span ").map((n) => n.trim())
+  let bad = "grid lines are N, span N, N / M or N / span M, not ${value}"
+  match halves.len() {
+    1 => match span_of(halves[0]) {
+      Some(n) => Ok("GridSpan { span: ${integer(n)?} }"),
+      None => Ok("GridSpan { start: ${integer(halves[0])?} }"),
+    },
+    2 => {
+      let start = halves[0].parse_i64() ?? 0
+      if start < 1 { return Err(bad) }
+      match span_of(halves[1]) {
+        Some(n) => Ok("GridSpan { start: ${start}, span: ${integer(n)?} }"),
+        None => {
+          let end = halves[1].parse_i64() ?? 0
+          if end <= start { return Err(bad) }
+          Ok("GridSpan { start: ${start}, span: ${end - start} }")
+        },
+      }
+    },
+    _ => Err(bad),
+  }
+}
+
+/// `text`'s arguments if it is a call to `name` (`repeat(3, 1fr)` → `3, 1fr`).
+let call_args = pure (text: string, name: string) -> Maybe<string> => {
+  let Some(rest) = text.strip_prefix("${name}(") else { return None }
+  rest.strip_suffix(")")
+}
+
+/// `text` split at `by` outside parentheses, empty pieces dropped.
+let top_level = pure (text: string, by: rune) -> Result<[]string, string> => {
+  var out: []string = []
+  var depth = 0
+  var piece = ""
+  for c in text {
+    if c == '(' { depth += 1 }
+    if c == ')' {
+      depth -= 1
+      if depth < 0 { return Err("unbalanced ) in ${text}") }
+    }
+    if c == by && depth == 0 {
+      if piece.trim().len() > 0 { out.push(piece.trim()) }
+      piece = ""
+    } else {
+      piece = "${piece}${c}"
+    }
+  }
+  if depth != 0 { return Err("unbalanced ( in ${text}") }
+  if piece.trim().len() > 0 { out.push(piece.trim()) }
+  Ok(out)
+}
+
+/// The identifiers in `code`, in order.
+let identifiers = pure (code: string) -> []string => {
+  var out: []string = []
+  var word = ""
+  for c in code {
+    if c.is_ascii_alpha() || c.is_ascii_digit() || c == '_' {
+      word = "${word}${c}"
+    } else {
+      if word.len() > 0 { out.push(word) }
+      word = ""
+    }
+  }
+  if word.len() > 0 { out.push(word) }
+  out
 }
 
 let main_align = pure (word: string) -> Result<string, string> => match word {
@@ -1419,6 +1836,13 @@ let ui_declarations = pure (
       "rounding" => "radius",
       other => other,
     }
+    if let Some(set) = layout_declaration(name, given) {
+      match set {
+        Ok(more) => { for f in more { fields = with_field(fields, f) } },
+        Err(what) => return Err("${line}: ${what}"),
+      }
+      continue
+    }
     let lyra: Result<string, string> = match name {
       "color" => ui_color(given),
       "background" => ui_color(given),
@@ -1426,19 +1850,25 @@ let ui_declarations = pure (
       "border_width" => ui_number(given),
       "radius" => ui_number(given),
       "rounding" => ui_number(given),
-      "gap" => ui_number(given),
       "opacity" => ui_number(given),
       "font_size" => ui_number(given),
       "line_height" => ui_number(given),
       "padding" => ui_padding(given),
-      _ => Err("no style property ${name} in ui (color, background, border-color, border-width, radius, gap, opacity, font-size, line-height, padding)"),
+      _ => Err("no style property ${name} in ui (color, background, border-color, border-width, radius, gap, opacity, font-size, line-height, padding; width, height and their min- and max-; row-gap, column-gap; flex, flex-direction, flex-wrap, flex-grow, flex-shrink, flex-basis, order, justify-content, align-content, align-items, align-self; grid-template-columns, grid-template-rows, grid-auto-columns, grid-auto-rows, grid-auto-flow, grid-column, grid-row, justify-items, justify-self)"),
     }
     match lyra {
-      Ok(v) => fields.push("${field}: Some(${v})"),
+      Ok(v) => { fields = with_field(fields, "${field}: Some(${v})") },
       Err(what) => return Err("${line}: ${what}"),
     }
   }
   Ok(fields)
+}
+
+/// `fields` with `field` (`name: value`) set: an earlier value of the same field dropped, as a
+/// later declaration wins in CSS.
+let with_field = pure (fields: []string, field: string) -> []string => {
+  let name = field.slice(0, field.index(":") ?? field.len())
+  [...[f in fields | !f.starts_with("${name}:") | f], field]
 }
 
 /// A token `$a.b` as the theme's `t.a.b`, if `value` is one.

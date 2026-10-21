@@ -1572,3 +1572,240 @@ let main = () -> u8 => {
 		t.Errorf("got\n%s\nwant\n%s", stdout, want)
 	}
 }
+
+// ui.layout's flex container against CSS: each line is what a browser lays out for the same
+// boxes (worked by hand from CSS Flexbox §9). Justify's six values sharing 120 over three
+// items; grow from a zero basis with one item held to its max-width, the other taking the
+// rest; shrink with one held at its min-width and one not shrinking; shrink in proportion to
+// the base; wrap with gaps, lines stretched and centred by align-content in a fixed height,
+// and wrap-reverse; order; row-reverse; a column of fixed height whose item grows; align-items
+// center; and the automatic least size — an item no narrower than its min-content.
+func TestRun_UiFlex(t *testing.T) {
+	got := runUiProgram(t, `import ui.draw.{ Size }
+import ui.text.{ fonts_new, Fonts }
+import ui.style.{
+  Style,
+  FlexRowReverse,
+  FlexColumn,
+  Wrap,
+  WrapReverse,
+  Justify,
+  JustifyStart,
+  JustifyEnd,
+  JustifyCenter,
+  JustifyBetween,
+  JustifyAround,
+  JustifyEvenly,
+  AlignCenter,
+  BasisLength,
+}
+import ui.layout.{ Node, NoEvent, Laid, flex, sized, layout, loose }
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  // Justify: 50 + 80 + 50 in 300 leaves 120.
+  for (name, how) in [
+    ("start", JustifyStart),
+    ("end", JustifyEnd),
+    ("center", JustifyCenter),
+    ("between", JustifyBetween),
+    ("around", JustifyAround),
+    ("evenly", JustifyEvenly),
+  ] {
+    show(name, flex([block("a", 50.0, 20.0), block("b", 80.0, 20.0), block("c", 50.0, 20.0)]).with_style(Style { justify_content: Some(how) }), fonts)
+  }
+  // Grow from a basis of 0, the second held to 50: the first takes the rest.
+  show("grow clamped", flex([
+    grown("a", 1.0, Style {}),
+    grown("b", 1.0, Style { max_width: Some(50.0) }),
+    block("c", 100.0, 20.0),
+  ]), fonts)
+  // 500 into 300, c not shrinking: a held to 150 by its least, b takes the rest of the cut.
+  show("shrink clamped", flex([
+    block("a", 200.0, 20.0).with_style(Style { min_width: Some(150.0) }),
+    block("b", 200.0, 20.0),
+    block("c", 100.0, 20.0).with_style(Style { shrink: Some(0.0) }),
+  ]), fonts)
+  // Shrinking is in proportion to the base: 100 and 300 give up 25 and 75.
+  show("shrink weighted", flex([block("a", 100.0, 20.0), block("b", 300.0, 20.0)]), fonts)
+  let five = [i in 0..<5 | block("${i}", 100.0, 20.0)]
+  show("wrap", flex(five).with_style(Style { flex_wrap: Some(Wrap), gap: Some(10.0) }), fonts)
+  show("wrap stretched lines", flex(five).with_style(Style { flex_wrap: Some(Wrap), gap: Some(10.0), height: Some(140.0) }), fonts)
+  show("wrap centred lines", flex(five).with_style(Style { flex_wrap: Some(Wrap), gap: Some(10.0), height: Some(140.0), align_content: Some(JustifyCenter) }), fonts)
+  show("wrap-reverse", flex(five).with_style(Style { flex_wrap: Some(WrapReverse), gap: Some(10.0) }), fonts)
+  show("order", flex([
+    block("a", 10.0, 20.0).with_style(Style { order: Some(2) }),
+    block("b", 20.0, 20.0),
+    block("c", 30.0, 20.0).with_style(Style { order: Some(1) }),
+  ]), fonts)
+  show("row-reverse", flex([block("a", 50.0, 20.0), block("b", 80.0, 20.0)]).with_style(Style { flex_direction: Some(FlexRowReverse) }), fonts)
+  // A column 200 tall: a grows into what b leaves, both as wide as the column.
+  show("column", flex([
+    sized::<NoEvent>(None, None).keyed("a").with_style(Style { height: Some(50.0), grow: Some(1.0) }),
+    sized::<NoEvent>(None, None).keyed("b").with_style(Style { height: Some(30.0) }),
+  ]).with_style(Style { flex_direction: Some(FlexColumn), height: Some(200.0) }), fonts)
+  show("align center", flex([block("a", 50.0, 20.0), block("b", 50.0, 40.0)]).with_style(Style { height: Some(100.0), align_items: Some(AlignCenter) }), fonts)
+  // An item no narrower than its min-content: a wrapping row of 60 and 40 shrinks to 60, not 30.
+  show("automatic least", flex([
+    flex([block("w1", 60.0, 10.0), block("w2", 40.0, 10.0)]).keyed("words").with_style(Style { flex_wrap: Some(Wrap) }),
+    block("x", 50.0, 10.0).with_style(Style { shrink: Some(0.0) }),
+  ]).with_style(Style { width: Some(80.0) }), fonts)
+  0
+}
+
+let block = pure (key: string, w: f32, h: f32) -> Node<NoEvent> =>
+  sized::<NoEvent>(None, None).keyed(key).with_style(Style { width: Some(w), height: Some(h) })
+
+let grown = pure (key: string, grow: f32, style: Style) -> Node<NoEvent> =>
+  sized::<NoEvent>(None, None).keyed(key).with_style(Style { style | grow: Some(grow), basis: Some(BasisLength(0.0)), height: Some(20.0) })
+
+let show = (name: string, view: Node<NoEvent>, fonts: mut Fonts) -> void => {
+  let laid = layout(view, loose(Size { w: 300.0, h: 400.0 }), fonts)
+  var line = "${name} (${laid.size.w}x${laid.size.h}):"
+  for p in laid.children {
+    let parts = p.laid.id.split(":")
+    let key = parts[parts.len() - 1]
+    line = "${line} ${key}@${p.at.x},${p.at.y} ${p.laid.size.w}x${p.laid.size.h}"
+  }
+  println(line)
+}
+`)
+	want := `start (300x20): a@0,0 50x20 b@50,0 80x20 c@130,0 50x20
+end (300x20): a@120,0 50x20 b@170,0 80x20 c@250,0 50x20
+center (300x20): a@60,0 50x20 b@110,0 80x20 c@190,0 50x20
+between (300x20): a@0,0 50x20 b@110,0 80x20 c@250,0 50x20
+around (300x20): a@20,0 50x20 b@110,0 80x20 c@230,0 50x20
+evenly (300x20): a@30,0 50x20 b@110,0 80x20 c@220,0 50x20
+grow clamped (300x20): a@0,0 150x20 b@150,0 50x20 c@200,0 100x20
+shrink clamped (300x20): a@0,0 150x20 b@150,0 50x20 c@200,0 100x20
+shrink weighted (300x20): a@0,0 75x20 b@75,0 225x20
+wrap (300x80): 0@0,0 100x20 1@110,0 100x20 2@0,30 100x20 3@110,30 100x20 4@0,60 100x20
+wrap stretched lines (300x140): 0@0,0 100x20 1@110,0 100x20 2@0,50 100x20 3@110,50 100x20 4@0,100 100x20
+wrap centred lines (300x140): 0@0,30 100x20 1@110,30 100x20 2@0,60 100x20 3@110,60 100x20 4@0,90 100x20
+wrap-reverse (300x80): 0@0,60 100x20 1@110,60 100x20 2@0,30 100x20 3@110,30 100x20 4@0,0 100x20
+order (300x20): b@0,0 20x20 c@20,0 30x20 a@50,0 10x20
+row-reverse (300x20): a@250,0 50x20 b@170,0 80x20
+column (300x200): a@0,0 300x170 b@0,170 300x30
+align center (300x100): a@0,40 50x20 b@50,30 50x40
+automatic least (80x20): words@0,0 60x20 x@60,0 50x10
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// ui.layout's grid against CSS (worked by hand from CSS Grid §8 and §12): px and fr columns
+// with a gap; an auto track grown to its max-content, a min-content one, fr taking the rest;
+// spans placed by the sparse cursor; a hole left by a span, filled when the flow is dense;
+// items with lines given beside auto-placed ones; minmax(100px, 1fr) wide, and narrower than
+// its least; a column flow; an item centred in its cell; and fr rows sharing a fixed height.
+func TestRun_UiGrid(t *testing.T) {
+	got := runUiProgram(t, `import ui.draw.{ Size }
+import ui.text.{ fonts_new, Fonts }
+import ui.style.{
+  Style,
+  Track,
+  GridSpan,
+  Wrap,
+  FlowColumn,
+  FlowRowDense,
+  AlignCenter,
+  TrackPx,
+  TrackFr,
+  px,
+  fr,
+  auto_track,
+  min_content,
+  minmax,
+  repeat_tracks,
+}
+import ui.layout.{ Node, NoEvent, flex, grid, sized, layout, loose }
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  show("px and fr", grid([cell("a"), cell("b"), cell("c")]).with_style(Style {
+    grid_columns: Some([px(100.0), fr(1.0), fr(2.0)]),
+    column_gap: Some(10.0),
+  }), 300.0, fonts)
+  // auto grows to its max-content (100), min-content stays at 60, fr takes the rest.
+  show("auto and min-content", grid([words("a"), words("b"), block("c", 30.0, 20.0)]).with_style(Style {
+    grid_columns: Some([auto_track(), min_content(), fr(1.0)]),
+  }), 300.0, fonts)
+  let thirds = Some(repeat_tracks(3, [fr(1.0)]))
+  show("spans", grid([
+    cell("a").with_style(Style { grid_column: Some(GridSpan { span: 2 }) }),
+    cell("b"),
+    cell("c"),
+    cell("d").with_style(Style { grid_column: Some(GridSpan { span: 2 }) }),
+    cell("e"),
+  ]).with_style(Style { grid_columns: thirds }), 300.0, fonts)
+  let holes = [
+    cell("a"),
+    cell("b").with_style(Style { grid_column: Some(GridSpan { span: 3 }) }),
+    cell("c"),
+  ]
+  show("sparse", grid(holes).with_style(Style { grid_columns: thirds }), 300.0, fonts)
+  show("dense", grid(holes).with_style(Style { grid_columns: thirds, grid_flow: Some(FlowRowDense) }), 300.0, fonts)
+  show("placed", grid([
+    cell("a").with_style(Style { grid_column: Some(GridSpan { start: 3 }), grid_row: Some(GridSpan { start: 1 }) }),
+    cell("b").with_style(Style { grid_column: Some(GridSpan { start: 1, span: 2 }), grid_row: Some(GridSpan { start: 2 }) }),
+    cell("c"),
+    cell("d"),
+  ]).with_style(Style { grid_columns: Some(repeat_tracks(3, [px(50.0)])) }), 300.0, fonts)
+  let floor = Style { grid_columns: Some([minmax(TrackPx(100.0), TrackFr(1.0)), px(50.0)]) }
+  show("minmax", grid([cell("a"), cell("b")]).with_style(floor), 300.0, fonts)
+  show("minmax narrow", grid([cell("a"), cell("b")]).with_style(floor), 120.0, fonts)
+  show("column flow", grid([block("a", 30.0, 20.0), block("b", 30.0, 20.0), block("c", 30.0, 20.0)]).with_style(Style {
+    grid_rows: Some([px(20.0), px(20.0)]),
+    grid_flow: Some(FlowColumn),
+  }), 300.0, fonts)
+  show("centred", grid([block("a", 40.0, 20.0)]).with_style(Style {
+    grid_columns: Some([px(100.0)]),
+    grid_rows: Some([px(50.0)]),
+    justify_items: Some(AlignCenter),
+    align_items: Some(AlignCenter),
+  }), 300.0, fonts)
+  show("fr rows", grid([sized::<NoEvent>(None, None).keyed("a"), sized::<NoEvent>(None, None).keyed("b")]).with_style(Style {
+    grid_rows: Some([fr(1.0), fr(3.0)]),
+    height: Some(100.0),
+  }), 300.0, fonts)
+  0
+}
+
+/// A cell 20 tall, as wide as its column.
+let cell = pure (key: string) -> Node<NoEvent> =>
+  sized::<NoEvent>(None, None).keyed(key).with_style(Style { height: Some(20.0) })
+
+let block = pure (key: string, w: f32, h: f32) -> Node<NoEvent> =>
+  sized::<NoEvent>(None, None).keyed(key).with_style(Style { width: Some(w), height: Some(h) })
+
+/// Two "words", 60 and 40 wide: min-content 60, max-content 100.
+let words = pure (key: string) -> Node<NoEvent> =>
+  flex([block("w1", 60.0, 10.0), block("w2", 40.0, 10.0)]).keyed(key).with_style(Style { flex_wrap: Some(Wrap) })
+
+let show = (name: string, view: Node<NoEvent>, width: f32, fonts: mut Fonts) -> void => {
+  let laid = layout(view, loose(Size { w: width, h: 400.0 }), fonts)
+  var line = "${name} (${laid.size.w}x${laid.size.h}):"
+  for p in laid.children {
+    let parts = p.laid.id.split(":")
+    line = "${line} ${parts[parts.len() - 1]}@${p.at.x},${p.at.y} ${p.laid.size.w}x${p.laid.size.h}"
+  }
+  println(line)
+}
+`)
+	want := `px and fr (300x20): a@0,0 100x20 b@110,0 60x20 c@180,0 120x20
+auto and min-content (300x20): a@0,0 100x20 b@100,0 60x20 c@160,0 30x20
+spans (300x60): a@0,0 200x20 b@200,0 100x20 c@0,20 100x20 d@100,20 200x20 e@0,40 100x20
+sparse (300x60): a@0,0 100x20 b@0,20 300x20 c@0,40 100x20
+dense (300x40): a@0,0 100x20 b@0,20 300x20 c@100,0 100x20
+placed (300x40): a@100,0 50x20 b@0,20 100x20 c@0,0 50x20 d@50,0 50x20
+minmax (300x20): a@0,0 250x20 b@250,0 50x20
+minmax narrow (120x20): a@0,0 100x20 b@100,0 50x20
+column flow (300x40): a@0,0 30x20 b@0,20 30x20 c@150,0 30x20
+centred (300x50): a@30,15 40x20
+fr rows (300x100): a@0,0 300x25 b@0,25 300x75
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}

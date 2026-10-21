@@ -508,8 +508,13 @@ The example's interface is `examples/imgui/components_view.lui`.
   at="top-left">`, `<Scroll axis offset>`, `<SizedBox width height>`, `<Text>`, `<Button
   on_click>`, `<Checkbox checked on_toggle>`, `<Slider value min max step on_change>`,
   `<TextInput value placeholder on_edit>`, `<Image texture texels width height>`, `<Themed
-  theme sheet>`), and every element takes `class`, `part`, `key` (its identity, `.keyed`),
-  `label` (for assistive technology) and `style`. A `<for>` there holds one element.
+  theme sheet>`, `<Flex direction wrap justify align align-content gap row-gap column-gap>`,
+  `<Grid columns rows gap row-gap column-gap flow justify-items align-items auto-columns
+  auto-rows>` — a `<Flex>`'s or `<Grid>`'s attributes are the style properties they name,
+  written as CSS writes them), and every element takes `class`, `part`, `key` (its identity,
+  `.keyed`), `label` (for assistive technology) and `style` — **a component's call too**,
+  on the component's own node (a prop of that name is the prop), so `<tile class="wide"/>`
+  spans its grid's columns. A `<for>` there holds one element.
 - **Styling for `ui`**: a component's `<style>` is a sheet made from the theme it is drawn
   in (`component_of`); a top-level `<style global theme={AppTheme} name="app_sheet">` is a
   `pub` function of that theme (`Theme` by default) answering the sheet, for `<Themed
@@ -517,7 +522,16 @@ The example's interface is `examples/imgui/components_view.lui`.
   `t.colors.accent`, `$space.m` `t.space.m` — wherever a number or colour goes (not in an
   inline `style`, which has no theme); properties `color`, `background`, `border-color`,
   `border-width`, `radius` (or `rounding`), `gap`, `opacity`, `font-size`, `line-height`,
-  `padding` (one, two — across then down — or four). Each rule is marked with its line, so
+  `padding` (one, two — across then down — or four); and layout's, as CSS writes them:
+  `width`, `height` and their `min-`/`max-`, `row-gap`, `column-gap`, `flex` (`none`, `auto`,
+  or grow, shrink and basis — `flex: 1` is `1 1 0`), `flex-direction`, `flex-wrap`,
+  `flex-grow`, `flex-shrink`, `flex-basis` (`auto`, a length, `N%`), `order`,
+  `justify-content`, `align-content`, `align-items`, `align-self`, `justify-items`,
+  `justify-self`, `grid-template-columns`/`-rows` (lengths, `Nfr`, `auto`, `min-content`,
+  `max-content`, `minmax(a, b)`, `repeat(n, …)`), `grid-auto-columns`/`-rows`,
+  `grid-auto-flow` (`row`, `column`, `dense`) and `grid-column`/`grid-row` (`N`, `span N`,
+  `N / M`, `N / span M`). An unknown value is an error listing the ones there are; a later
+  declaration replaces an earlier one, as in CSS. Each rule is marked with its line, so
   `lui map` puts a token lyrac refuses back at it. **Parts**: `Comp::part` and
   `Comp.class::part` are checked against the parts the component's markup marks
   (`part="title"`) — or a control's (`Checkbox::box`, `Slider::thumb`,

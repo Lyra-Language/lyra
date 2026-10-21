@@ -1,0 +1,108 @@
+// Flex and grid: the markup of layouts_view.lui run by `ui.app` — a list of cards that wraps
+// to the window's width and a dashboard grid of spanning tiles.
+//
+//     build/lui examples/ui/layouts_view.lui      # after editing the markup
+//     lyrac run examples/ui/layouts.lyra
+//     lyrac run examples/ui/layouts.lyra -- --width 520 --script "Tab Enter" --png FILE
+//
+// Resize the window and the cards reflow; Add a card and they wrap. **The second form**
+// plays a script (`ui.script`) at a window `--width` wide, prints how many cards it left, and
+// with `--png FILE` writes the last frame — headless with `SDL_VIDEODRIVER=dummy
+// SDL_RENDER_DRIVER=software`.
+
+import ui.sdl3
+import ui.sdl3.{ SdlRenderer, capture }
+import ui.app.{ sandbox, run }
+import ui.script.{ script_platform, parse_script }
+import ui.draw.{ Point, Size, Color }
+import ui.text.{ Fonts, fonts_new, glyph_atlas }
+import ui.style.{ light_theme }
+import ui.layout.{ layout, loose, paint }
+import layouts_view.{ State, view, update }
+import std.collections.{ parse_args }
+import std.png.{ write_png }
+import std.io.{ write_bytes }
+
+const HEIGHT: f32 = 760.0
+
+let main = () -> u8 => {
+  let args = parse_args(["--script", "--png", "--width"])
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let width = f32(args.value("--width").flat_map((w) => w.parse_i64()) ?? 900)
+  let opened = sdl3.open("Layouts", width, HEIGHT)
+  let window = match opened {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      fonts.close()
+      return 2
+    },
+  }
+  var platform = window.platform
+  var renderer = window.renderer
+  let background = light_theme().colors.background
+  let app = sandbox(view, update, background)
+  var status: u8 = 0
+  if let Some(script) = args.value("--script") {
+    match parse_script(script) {
+      Ok(inputs) => {
+        var scripted = script_platform(inputs, Size { w: width, h: HEIGHT })
+        let last = run(app, State {}, scripted, renderer, fonts)
+        println("cards: ${last.cards}")
+        if let Some(path) = args.value("--png") {
+          if !save(
+            renderer,
+            fonts,
+            last,
+            background,
+            Size { w: width, h: HEIGHT },
+            path
+          ) {
+            status = 1
+          }
+        }
+      },
+      Err(why) => {
+        println("the script: ${why}")
+        status = 1
+      },
+    }
+  } else {
+    let _ = run(app, State {}, platform, renderer, fonts)
+  }
+  sdl3.close(platform, renderer)
+  fonts.close()
+  status
+}
+
+/// The view of `state` drawn `size` large without showing it, and written to `path` as a PNG.
+let save = (
+  renderer: SdlRenderer,
+  fonts: Fonts,
+  state: State,
+  background: Color,
+  size: Size,
+  path: string
+) -> bool => {
+  var r = renderer
+  var f = fonts
+  var atlas = glyph_atlas()
+  let laid = layout(view(state), loose(size), f)
+  let list = paint(laid, Point {}, 1.0, f, atlas, r)
+  let Some(frame) = capture(r, background, list) else { return false }
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(u8((p >> 24) & 0xFF))
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(png) => write_bytes(path, png),
+    Err(_) => false,
+  }
+}

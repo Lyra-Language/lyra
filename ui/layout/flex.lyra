@@ -1,0 +1,497 @@
+module ui.layout
+//! The flex container ([flex]): CSS's flexbox layout algorithm (CSS Flexible Box Layout §9)
+//! inside the constraints protocol — an item's flex base size and hypothetical main size, lines
+//! collected for `flex_wrap`, flexible lengths resolved by the freeze loop with each item's least
+//! and greatest main size, then lines and items placed across.
+//!
+//! **Where CSS's sizes come from here**: the container's width is definite when its
+//! constraints bound it (a block fills the width it is given); its height only when they fix it
+//! (a `height`, a stretching parent) — so a column's items grow into a height that is set, and
+//! otherwise the column is as tall as its lines. An item's content size along a row is its
+//! max-content width ([intrinsic_width]), and its automatic least size its min-content width;
+//! down a column, its height laid out at its width. Lengths include padding (`border-box`).
+
+import ui.style.{
+  Computed,
+  FlexRow,
+  FlexRowReverse,
+  FlexColumnReverse,
+  NoWrap,
+  WrapReverse,
+  Justify,
+  JustifyEnd,
+  JustifyCenter,
+  JustifyBetween,
+  JustifyAround,
+  JustifyEvenly,
+  JustifyStretch,
+  AlignEnd,
+  AlignCenter,
+  AlignStretch,
+  AlignBaseline,
+  BasisAuto,
+  BasisLength,
+  BasisFraction,
+}
+
+/// `children` laid out as a flex container computed as `style`, within `c` (inside its
+/// padding).
+let lay_flex<e> = (
+  children: []Node<e>,
+  style: Computed,
+  c: Constraints,
+  ctx: Ctx,
+  fonts: mut Fonts,
+  cache: mut LayoutCache<e>
+) -> Body<e> => {
+  if children.len() == 0 { return Body::<e> { size: c.constrain(Size {}) } }
+  let horizontal = style.flex_direction == FlexRow || style.flex_direction == FlexRowReverse
+  let axis = if horizontal { Horizontal } else { Vertical }
+  let reverse = style.flex_direction == FlexRowReverse ||
+    style.flex_direction == FlexColumnReverse
+  let main_gap = if horizontal { style.column_gap } else { style.row_gap }
+  let cross_gap = if horizontal { style.row_gap } else { style.column_gap }
+  // A block fills its width; its height is definite only when fixed.
+  let width_definite = c.bounded_w()
+  let height_definite = c.bounded_h() && c.min_h >= c.max_h
+  let main_definite = if horizontal { width_definite } else { height_definite }
+  let cross_definite = if horizontal { height_definite } else { width_definite }
+  let main_avail = along(axis, c.max_w, c.max_h)
+  let cross_avail = along(axis, c.max_h, c.max_w)
+  let multi_line = style.flex_wrap != NoWrap
+  // Items in `order`, ties in the tree's.
+  var order: []i64 = []
+  var styles: []Computed = []
+  for i, child in children {
+    styles.push(styled_at(child, ctx.cascade, ctx.ui, child_id(ctx.id, child, i)).style)
+    order.push(i)
+  }
+  order = stable_by_order(order, styles)
+  // Each item's base size, its least and greatest main size, and its hypothetical size.
+  var items: []Flexing = []
+  for i in order {
+    let child = children[i]
+    let item = styles[i]
+    let id = child_id(ctx.id, child, i)
+    let main_size = if horizontal { item.width } else { item.height }
+    let fixed: Maybe<f32> = match item.basis {
+      BasisLength(n) => Some(n),
+      BasisFraction(f) => if main_definite { Some(f * main_avail) } else { main_size },
+      BasisAuto => main_size,
+    }
+    let base = match fixed {
+      Some(n) => n,
+      None => content_main(child, horizontal, false, cross_avail, ctx, id, fonts),
+    }
+    let most = (if horizontal { item.max_width } else { item.max_height }) ?? UNBOUNDED
+    let asked_least = if horizontal { item.min_width } else { item.min_height }
+    // CSS's automatic least size: the content's least, no more than a size asked for; none
+    // for a scroll, which shows what does not fit.
+    var least: f32 = 0.0
+    if let Some(m) = asked_least {
+      least = m
+    } else if !is_scroll(child) {
+      let floor = content_main(child, horizontal, true, cross_avail, ctx, id, fonts)
+      least = (main_size ?? floor).min(floor).min(most)
+    }
+    items.push(Flexing {
+      index: i,
+      base: base,
+      least: least,
+      most: most.max(least),
+      target: base.clamp(least, most.max(least)),
+      grow: item.grow.max(0.0),
+      shrink: item.shrink.max(0.0),
+    })
+  }
+  // Lines: as many items as fit the main size, at least one a line.
+  var lines: [][]Flexing = []
+  var line: []Flexing = []
+  var used: f32 = 0.0
+  for item in items {
+    let extra = if line.len() == 0 { item.target } else { main_gap + item.target }
+    if multi_line && main_definite && line.len() > 0 && used + extra > main_avail {
+      lines.push(line)
+      line = []
+      used = item.target
+    } else {
+      used += extra
+    }
+    line.push(item)
+  }
+  lines.push(line)
+  // Each line's flexible lengths, then its items laid out at them, measured across.
+  var longest: f32 = 0.0
+  var laid_lines: []FlexLine<e> = []
+  for items_of in lines {
+    let gaps = main_gap * f32(items_of.len() - 1)
+    let sizes = if main_definite { resolved(
+      items_of,
+      main_avail - gaps
+    ) } else { items_of }
+    var laid: []Laid<e> = []
+    var thick: f32 = 0.0
+    var above: f32 = 0.0
+    var below: f32 = 0.0
+    var length = gaps
+    for item in sizes {
+      let child = children[item.index]
+      let own = styles[item.index]
+      let limits = oriented(axis, item.target, item.target, 0.0, cross_avail)
+      let one = lay(
+        child,
+        limits,
+        ctx.cascade,
+        fonts,
+        ctx.ui,
+        child_id(ctx.id, child, item.index),
+        cache
+      )
+      let across = along(axis, one.size.h, one.size.w)
+      let how = own.align_self ?? style.align_items
+      if how == AlignBaseline && horizontal {
+        let line_at = baseline(one) ?? across
+        above = above.max(line_at)
+        below = below.max(across - line_at)
+      }
+      thick = thick.max(across)
+      length += item.target
+      laid.push(one)
+    }
+    thick = thick.max(above + below)
+    longest = longest.max(length)
+    laid_lines.push(FlexLine {
+      items: sizes,
+      laid: laid,
+      cross: thick,
+      baseline: above,
+      length: length
+    })
+  }
+  let main_size = if main_definite { main_avail } else {
+    longest.clamp(along(axis, c.min_w, c.min_h), main_avail)
+  }
+  // Across: a single line fills a definite cross size; lines share what is left by
+  // `align_content`.
+  var crosses: []f32 = [l in laid_lines | l.cross]
+  if !multi_line && cross_definite { crosses[0] = cross_avail }
+  var total_cross = cross_gap * f32(crosses.len() - 1)
+  for x in crosses { total_cross += x }
+  let cross_size = if cross_definite { cross_avail } else {
+    total_cross.clamp(along(axis, c.min_h, c.min_w), cross_avail)
+  }
+  let cross_free = cross_size - total_cross
+  if multi_line && style.align_content == JustifyStretch && cross_free > 0.0 {
+    let each = cross_free / f32(crosses.len())
+    crosses = [x in crosses | x + each]
+  }
+  let content_free = if multi_line && style.align_content != JustifyStretch { cross_free } else { 0.0 }
+  let spread = shared(style.align_content, content_free, crosses.len(), cross_gap)
+  var cross_pen = spread.0
+  var placed: []Placed<e> = []
+  for k, l in laid_lines {
+    let line_cross = crosses[k]
+    let line_at = if style.flex_wrap == WrapReverse {
+      cross_size - cross_pen - line_cross
+    } else {
+      cross_pen
+    }
+    let free = main_size - l.length
+    let step = shared(style.justify_content, free, l.items.len(), main_gap)
+    var pen = step.0
+    for j, item in l.items {
+      let own = styles[item.index]
+      let child = children[item.index]
+      var one = l.laid[j]
+      let how = own.align_self ?? style.align_items
+      let cross_auto = (if horizontal { own.height } else { own.width }).is_none()
+      if how == AlignStretch && cross_auto {
+        let least = (if horizontal { own.min_height } else { own.min_width }) ?? 0.0
+        let most = (if horizontal { own.max_height } else { own.max_width }) ?? UNBOUNDED
+        let thick = line_cross.clamp(least, most.max(least))
+        if (along(axis, one.size.h, one.size.w) - thick).abs() > 0.001 {
+          one = lay(
+            child,
+            oriented(axis, item.target, item.target, thick, thick),
+            ctx.cascade,
+            fonts,
+            ctx.ui,
+            child_id(ctx.id, child, item.index),
+            cache
+          )
+        }
+      }
+      let thick = along(axis, one.size.h, one.size.w)
+      let across = match how {
+        AlignEnd => line_cross - thick,
+        AlignCenter => (line_cross - thick) / 2.0,
+        AlignBaseline =>
+          if horizontal { l.baseline - (baseline(one) ?? thick) } else { 0.0 },
+        _ => 0.0,
+      }
+      let length = along(axis, one.size.w, one.size.h)
+      let at_main = if reverse { main_size - pen - length } else { pen }
+      let cross_at = if style.flex_wrap == WrapReverse {
+        line_at + line_cross - across - thick
+      } else {
+        line_at + across
+      }
+      placed.push(Placed { at: oriented_point(axis, at_main, cross_at), laid: one })
+      pen += length + step.1
+    }
+    cross_pen += line_cross + spread.1
+  }
+  Body { size: oriented_size(axis, main_size, cross_size), children: placed }
+}
+
+/// One flex item while its line is resolved: its index among the container's children, its
+/// flex base size, its least and greatest main size, its main size so far, its factors, and
+/// whether the freeze loop has settled it.
+struct Flexing {
+  index: i64,
+  base: f32,
+  least: f32,
+  most: f32,
+  target: f32,
+  grow: f32,
+  shrink: f32,
+  frozen: bool = false,
+}
+
+/// A line of items laid out: the items with their main sizes, their layouts, how thick the
+/// line is, its items' common baseline (from its top) and its length with its gaps.
+struct FlexLine<e> {
+  items: []Flexing,
+  laid: []Laid<e>,
+  cross: f32,
+  baseline: f32,
+  length: f32,
+}
+
+/// `order` (indices into `styles`) sorted by each item's `order`, ties kept in place.
+let stable_by_order = pure (order: []i64, styles: []Computed) -> []i64 => {
+  var out = [...order]
+  // Insertion sort: stable, and a container's items are few.
+  for i in 1..<out.len() {
+    var j = i
+    while j > 0 && styles[out[j - 1]].order > styles[out[j]].order {
+      let held = out[j]
+      out[j] = out[j - 1]
+      out[j - 1] = held
+      j -= 1
+    }
+  }
+  out
+}
+
+/// A line's items' main sizes, flexed into `room` (the line's main size less its gaps) by
+/// CSS's §9.7: grow when the hypothetical sizes leave room, else shrink; an item with no
+/// factor for that, or whose base is already past its hypothetical size that way, frozen at
+/// it; then, until every item is frozen, the free space shared by the factors (shrink by the
+/// factor times the base), each share clamped to the item's least and greatest, and the
+/// items the clamping moved most frozen.
+let resolved = pure (line: []Flexing, room: f32) -> []Flexing => {
+  var items = [...line]
+  var hypothetical: f32 = 0.0
+  for item in items { hypothetical += item.target }
+  let growing = hypothetical < room
+  for k, item in items {
+    let factor = if growing { item.grow } else { item.shrink }
+    let past = if growing { item.base > item.target } else { item.base < item.target }
+    if factor <= 0.0 || past { items[k] = Flexing { item | frozen: true } }
+  }
+  let initial = room - sized_total(items)
+  loop {
+    if items.all((i) => i.frozen) { break }
+    var free = room - sized_total(items)
+    var factors: f32 = 0.0
+    var scaled: f32 = 0.0
+    for item in items {
+      if item.frozen { continue }
+      factors += if growing { item.grow } else { item.shrink }
+      scaled += item.shrink * item.base
+    }
+    // Factors summing below 1 take only that part of the free space.
+    if factors < 1.0 && (initial * factors).abs() < free.abs() { free = initial * factors }
+    var violation: f32 = 0.0
+    var wanted: []f32 = []
+    for item in items {
+      if item.frozen {
+        wanted.push(item.target)
+        continue
+      }
+      let flexed = if growing {
+        item.base + free * item.grow / factors
+      } else if scaled > 0.0 {
+        item.base + free * (item.shrink * item.base) / scaled
+      } else {
+        item.base
+      }
+      let clamped = flexed.clamp(item.least, item.most)
+      violation += clamped - flexed
+      wanted.push(flexed)
+    }
+    for k, item in items {
+      if item.frozen { continue }
+      let clamped = wanted[k].clamp(item.least, item.most)
+      let freeze = if violation.abs() < 0.0001 {
+        true
+      } else if violation > 0.0 {
+        clamped > wanted[k]
+      } else {
+        clamped < wanted[k]
+      }
+      items[k] = Flexing { item | target: clamped, frozen: freeze }
+    }
+  }
+  items
+}
+
+/// The main sizes a line's items take now: a frozen item's size, an unfrozen one's base.
+let sized_total = pure (items: []Flexing) -> f32 => {
+  var sum: f32 = 0.0
+  for item in items { sum += if item.frozen { item.target } else { item.base } }
+  sum
+}
+
+/// Where the first item of `count` starts and how far each next one starts after the last
+/// one's end, sharing `free` space by `how` with `gap` between: CSS's distribution, with its
+/// fallbacks when there is too little room (`JustifyBetween` to the start, around and evenly
+/// to the centre).
+let shared = pure (how: Justify, free: f32, count: i64, gap: f32) -> (f32, f32) => {
+  let n = f32(count)
+  match how {
+    JustifyEnd => (free, gap),
+    JustifyCenter => (free / 2.0, gap),
+    JustifyBetween =>
+      if free > 0.0 && count > 1 { (0.0, gap + free / (n - 1.0)) } else { (0.0, gap) },
+    JustifyAround =>
+      if free > 0.0 { (free / n / 2.0, gap + free / n) } else { (free / 2.0, gap) },
+    JustifyEvenly =>
+      if free > 0.0 { (free / (n + 1.0), gap + free / (n + 1.0)) } else { (free / 2.0, gap) },
+    _ => (0.0, gap),
+  }
+}
+
+/// `child`'s content size along the container's main axis: across a row its max-content width,
+/// or with `least` its min-content width; down a column its height laid out at the cross size
+/// it would have (as wide as the container allows), the same either way.
+let content_main<e> = (
+  child: Node<e>,
+  horizontal: bool,
+  least: bool,
+  cross_avail: f32,
+  ctx: Ctx,
+  id: string,
+  fonts: mut Fonts
+) -> f32 => {
+  if horizontal { return intrinsic_width(
+    child,
+    least,
+    ctx.cascade,
+    fonts,
+    ctx.ui,
+    id,
+    !least
+  ) }
+  var scratch = layout_cache::<e>()
+  let limits = Constraints { max_w: cross_avail }
+  lay(child, limits, ctx.cascade, fonts, ctx.ui, id, scratch).size.h
+}
+
+/// Whether `node` scrolls — which needs no room for what it shows.
+let is_scroll<e> = pure (node: Node<e>) -> bool => match node.kind {
+  Scrolls(_, _) => true,
+  _ => false,
+}
+
+/// The first baseline in `laid`, down from its top: its own text's first line, else its first
+/// child's that has one.
+let baseline<e> = pure (laid: Laid<e>) -> Maybe<f32> => {
+  if let Prose(block) = laid.content {
+    if block.lines.len() > 0 { return Some(laid.content_at.y + block.lines[0].baseline) }
+  }
+  for child in laid.children {
+    if let Some(b) = baseline(child.laid) { return Some(child.at.y + b) }
+  }
+  None
+}
+
+/// `node`'s width at its narrowest without overflowing — with `least`, CSS's min-content width,
+/// its longest word — or on one line (max-content): its `width` if it asks for one and `own`
+/// says to read it, else its content's, with its padding, within its least and greatest width.
+/// (CSS's automatic least size of a flex item reads its content, its `width` aside.) Measured
+/// outside the cache: a measurement is not the layout the cache keeps.
+let intrinsic_width<e> = (
+  node: Node<e>,
+  least: bool,
+  cascade: Cascade,
+  fonts: mut Fonts,
+  ui: Interaction,
+  id: string,
+  own: bool = true
+) -> f32 => {
+  let styled = styled_at(node, cascade, ui, id)
+  let style = styled.style
+  let floor = style.min_width ?? 0.0
+  let ceiling = (style.max_width ?? UNBOUNDED).max(floor)
+  if let Some(w) = style.width { if own { return w.clamp(floor, ceiling) } }
+  let gaps = f32((node.children.len() - 1).max(0))
+  let content = match node.kind {
+    Words(text) =>
+      fonts.lay_out(text, style.font, if least { 0.0 } else { UNBOUNDED }).width,
+    Texels(_, _, natural) => natural.w,
+    Measured(Some(w), _) => w,
+    Flow(Horizontal, _, _) =>
+      children_width(node, least, true, styled.within, fonts, ui, id) + style.gap * gaps,
+    Flexbox => {
+      let along_row = style.flex_direction == FlexRow || style.flex_direction == FlexRowReverse
+      if along_row && !(least && style.flex_wrap != NoWrap) {
+        children_width(node, least, true, styled.within, fonts, ui, id) +
+          style.column_gap * gaps
+      } else {
+        children_width(node, least, false, styled.within, fonts, ui, id)
+      }
+    },
+    Gridbox =>
+      grid_intrinsic_width(node.children, style, least, styled.within, fonts, ui, id),
+    Scrolls(Horizontal, _) =>
+      if least { 0.0 } else { children_width(node, least, false, styled.within, fonts, ui, id) },
+    // A control's width is the one it chooses with all the room it wants.
+    Ranged(_) => return measured_width(node, cascade, fonts, ui, id),
+    Editable(_) => return measured_width(node, cascade, fonts, ui, id),
+    _ => children_width(node, least, false, styled.within, fonts, ui, id),
+  }
+  (content + styled.space.horizontal()).clamp(floor, ceiling)
+}
+
+/// `node`'s children's intrinsic widths, summed (side by side) or the widest (`side_by_side`
+/// false).
+let children_width<e> = (
+  node: Node<e>,
+  least: bool,
+  side_by_side: bool,
+  within: Cascade,
+  fonts: mut Fonts,
+  ui: Interaction,
+  id: string
+) -> f32 => {
+  var out: f32 = 0.0
+  for i, child in node.children {
+    let w = intrinsic_width(child, least, within, fonts, ui, child_id(id, child, i))
+    out = if side_by_side { out + w } else { out.max(w) }
+  }
+  out
+}
+
+/// `node`'s width laid out with all the room it wants, outside the cache.
+let measured_width<e> = (
+  node: Node<e>,
+  cascade: Cascade,
+  fonts: mut Fonts,
+  ui: Interaction,
+  id: string
+) -> f32 => {
+  var scratch = layout_cache::<e>()
+  lay(node, Constraints {}, cascade, fonts, ui, id, scratch).size.w
+}

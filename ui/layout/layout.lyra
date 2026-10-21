@@ -28,7 +28,8 @@ module ui.layout
 //! from its top-left corner, its settled style and what it draws. [paint] turns that into
 //! `ui.draw`'s display list.
 //!
-//! **Elements**: [row] and [column] (with a `gap`, and main- and cross-axis alignment),
+//! **Elements**: [flex] and [grid] (CSS's flexbox and grid, configured by style properties;
+//! `flex.lyra`, `grid.lyra`), [row] and [column] (with a `gap`, and main- and cross-axis alignment),
 //! [expanded] (a share of a row's or column's free space), [stack] and [positioned], [padding],
 //! [align], [sized], [scroll], [text], [image], [themed] (a theme and a global sheet for a
 //! subtree) and [component] (a scoped sheet); and the controls [button], [checkbox],
@@ -136,6 +137,12 @@ pub data Kind<e> =
   | Ranged(SliderSpec<e>)
   /// A one-line text field.
   | Editable(FieldSpec<e>)
+  /// A flex container (CSS's flexbox), laid out by its computed style: direction, wrap,
+  /// justify and align, gaps, and each item's grow, shrink, basis, order and self-alignment.
+  | Flexbox
+  /// A grid (CSS's grid layout), laid out by its computed style: column and row tracks, gaps,
+  /// placement and alignment.
+  | Gridbox
 
 /// A slider's value between `min` and `max`, moved in steps of `step` (`0.0` for none) from
 /// the keyboard, and the event for a new value.
@@ -222,6 +229,27 @@ pub let column<e> = pure (children: []Node<e>) -> Node<e> => {
 pub let expanded<e> = pure (child: Node<e>, flex: f32 = 1.0) -> Node<e> => {
   let kind: Kind<e> = Grow(flex)
   Node { kind: kind, tag: "Expanded", children: [child] }
+}
+
+/// A flex container, after CSS's: its items along a row (or a column, or either reversed, by
+/// `flex_direction`), wrapping onto more lines by `flex_wrap`, each line's free space shared
+/// by `justify_content` and the items' `grow` and `shrink`, and lines and items placed across
+/// by `align_content`, `align_items` and an item's `align_self` — all style properties, so a
+/// sheet can set them (`Flex.cards`). A row fills the width it is given; its height is its
+/// lines' unless `height` (or a parent) fixes it.
+pub let flex<e> = pure (children: []Node<e>) -> Node<e> => {
+  let kind: Kind<e> = Flexbox
+  Node { kind: kind, tag: "Flex", children: children }
+}
+
+/// A grid, after CSS's: its items in the cells of `grid_columns` and `grid_rows` (tracks of
+/// [px](ui.style), [fr](ui.style), `auto`, min- and max-content, `minmax` and
+/// `repeat_tracks`), placed where their `grid_column` and `grid_row` say or flowed into the
+/// next free cell by `grid_flow`, and aligned in their cells by `justify_items`,
+/// `align_items` and an item's own `justify_self` and `align_self`.
+pub let grid<e> = pure (children: []Node<e>) -> Node<e> => {
+  let kind: Kind<e> = Gridbox
+  Node { kind: kind, tag: "Grid", children: children }
 }
 
 /// Children over one another, the first at the bottom; as large as the largest that is not
@@ -417,6 +445,8 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
     placeholder: spec.placeholder,
     on_edit: (text: string) -> b => f((spec.on_edit)(text)),
   }),
+  Flexbox => Flexbox,
+  Gridbox => Gridbox,
 }
 
 // ── Constraints ──────────────────────────────────────────────────────────────
@@ -741,6 +771,8 @@ let same_kind<e> = (a: Kind<e>, b: Kind<e>, theme: Theme) -> bool => match (a, b
     same_f32(r1.step, r2.step),
   (Editable(f1), Editable(f2)) =>
     f1.value == f2.value && f1.placeholder == f2.placeholder,
+  (Flexbox, Flexbox) => true,
+  (Gridbox, Gridbox) => true,
   _ => false,
 }
 
@@ -763,34 +795,21 @@ pub let focusable<e> = pure (kind: Kind<e>) -> bool => match kind {
 /// One node within `c`, styled at `cascade`, identified as `id`, laid out afresh.
 let lay_fresh<e> = (
   node: Node<e>,
-  c: Constraints,
+  given: Constraints,
   cascade: Cascade,
   fonts: mut Fonts,
   ui: Interaction,
   id: string,
   cache: mut LayoutCache<e>
 ) -> Laid<e> => {
-  // A theme reaches its own node; a component's sheet — and a control's insides — only what
-  // it holds.
-  let own = match node.kind {
-    Theming(theme, sheet) => cascade.themed(theme, sheet),
-    _ => cascade,
-  }
-  let classes = with_state(node.class, id, ui)
-  let style = own.compute(node.tag, classes, node.part, node.style)
-  let within = match node.kind {
-    Scope(sheet_of) =>
-      own.in_component(node.tag, node.class, sheet_of(own.theme)).inside(style),
-    _ => if focusable(node.kind) {
-      own.in_component(node.tag, node.class, Sheet {}).inside(style)
-    } else {
-      own.inside(style)
-    },
-  }
-  let space = match node.kind {
-    Inset(extra) => style.padding.plus(extra),
-    _ => style.padding,
-  }
+  let styled = styled_at(node, cascade, ui, id)
+  let own = styled.own
+  let style = styled.style
+  let within = styled.within
+  let classes = styled.classes
+  let space = styled.space
+  // The sizes the element asks for, within what its parent allows.
+  let c = sized_by(given, style)
   let inner = c.deflate(space)
   let ctx = Ctx { cascade: within, ui: ui, id: id, gap: style.gap }
   let body: Body<e> = match node.kind {
@@ -863,6 +882,8 @@ let lay_fresh<e> = (
     },
     Ranged(spec) => lay_slider(spec, inner, ctx, fonts, cache),
     Editable(spec) => lay_field(spec, inner, style, ctx, fonts),
+    Flexbox => lay_flex(node.children, style, inner, ctx, fonts, cache),
+    Gridbox => lay_grid(node.children, style, inner, ctx, fonts, cache),
     // A wrapper of its children: Grow, Pin, Inset, Theming, Scope, Pressable and Checkable.
     _ => {
       let content = lay_wrapped(node.children, inner, ctx, fonts, cache)
@@ -892,6 +913,81 @@ let lay_fresh<e> = (
     field: body.field,
     children: children,
   }
+}
+
+/// A node's style where it stands: the cascade at the node (`own`, a theme's own), its
+/// classes with the framework's states, its computed style, the cascade its children are
+/// styled at, and the space inside its edge.
+struct Styled {
+  own: Cascade,
+  classes: string,
+  style: Computed,
+  within: Cascade,
+  space: Insets,
+}
+
+/// `node`'s [Styled], at `cascade`, identified as `id` — what laying it out starts from, and
+/// what a flex container or grid reads of an item before it lays the item out.
+let styled_at<e> = (
+  node: Node<e>,
+  cascade: Cascade,
+  ui: Interaction,
+  id: string
+) -> Styled => {
+  // A theme reaches its own node; a component's sheet — and a control's insides — only what
+  // it holds.
+  let own = match node.kind {
+    Theming(theme, sheet) => cascade.themed(theme, sheet),
+    _ => cascade,
+  }
+  let classes = with_state(node.class, id, ui)
+  let style = own.compute(node.tag, classes, node.part, node.style)
+  let within = match node.kind {
+    Scope(sheet_of) =>
+      own.in_component(node.tag, node.class, sheet_of(own.theme)).inside(style),
+    _ => if focusable(node.kind) {
+      own.in_component(node.tag, node.class, Sheet {}).inside(style)
+    } else {
+      own.inside(style)
+    },
+  }
+  let space = match node.kind {
+    Inset(extra) => style.padding.plus(extra),
+    _ => style.padding,
+  }
+  Styled { own: own, classes: classes, style: style, within: within, space: space }
+}
+
+/// `c` narrowed to the `width`, `height` and their least and greatest that `style` asks for —
+/// each within `c`, which wins, as a parent's constraints do. A least beats a greatest, as in
+/// CSS.
+let sized_by = pure (c: Constraints, style: Computed) -> Constraints => {
+  let w = narrowed(c.min_w, c.max_w, style.width, style.min_width, style.max_width)
+  let h = narrowed(c.min_h, c.max_h, style.height, style.min_height, style.max_height)
+  Constraints { min_w: w.0, max_w: w.1, min_h: h.0, max_h: h.1 }
+}
+
+/// A least and greatest `lo`…`hi` narrowed to `exact` (or to `least`…`most`), within themselves.
+let narrowed = pure (
+  lo: f32,
+  hi: f32,
+  exact: Maybe<f32>,
+  least: Maybe<f32>,
+  most: Maybe<f32>
+) -> (f32, f32) => {
+  if exact.is_none() && least.is_none() && most.is_none() { return (lo, hi) }
+  let floor = least ?? 0.0
+  let ceiling = (most ?? UNBOUNDED).max(floor)
+  let want_lo = match exact {
+    Some(x) => x.clamp(floor, ceiling),
+    None => floor,
+  }
+  let want_hi = match exact {
+    Some(x) => x.clamp(floor, ceiling),
+    None => ceiling,
+  }
+  let top = hi.max(lo)
+  (want_lo.max(lo).min(top), want_hi.min(top).max(want_lo.max(lo).min(top)))
 }
 
 /// What lays a node's children out needs besides them: the cascade they are styled at, the
@@ -938,6 +1034,8 @@ let role_of<e> = pure (kind: Kind<e>) -> Role => match kind {
   Texels(_, _, _) => ImageRole,
   Scrolls(_, _) => ScrollRole,
   Flow(_, _, _) => GroupRole,
+  Flexbox => GroupRole,
+  Gridbox => GroupRole,
   Layers => GroupRole,
   Scope(_) => GroupRole,
   _ => NoRole,
@@ -1021,11 +1119,11 @@ let lay_line<e> = (
   for _ in 0..<count { laid.push(None) }
   // Children that do not grow first: what they take is what the growing ones share.
   var used = gap * f32(count - 1)
-  var flex: f32 = 0.0
+  var factors: f32 = 0.0
   for i, child in children {
     let factor = grow_factor(child)
     if factor > 0.0 {
-      flex += factor
+      factors += factor
       continue
     }
     let limits = oriented(axis, 0.0, UNBOUNDED, cross_min, max_cross)
@@ -1041,11 +1139,11 @@ let lay_line<e> = (
     used += along(axis, one.size.w, one.size.h)
     laid[i] = Some(one)
   }
-  let free = if bounded { (max_main - used).max(0.0) } else { 0.0 }
+  let spare = if bounded { (max_main - used).max(0.0) } else { 0.0 }
   for i, child in children {
     let factor = grow_factor(child)
     if factor <= 0.0 { continue }
-    let share = free * factor / flex
+    let share = spare * factor / factors
     let main_c = if bounded { (share, share) } else { (0.0, UNBOUNDED) }
     let limits = oriented(axis, main_c.0, main_c.1, cross_min, max_cross)
     let one = lay(

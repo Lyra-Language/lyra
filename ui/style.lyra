@@ -83,7 +83,8 @@ pub struct Style {
   radius: Maybe<f32> = None,
   /// Space between the element's edge and what is inside it.
   padding: Maybe<Insets> = None,
-  /// Space between a Row's or Column's children.
+  /// Space between a Row's or Column's children; a flex container's or grid's `row_gap` and
+  /// `column_gap` where those are unset.
   gap: Maybe<f32> = None,
   /// The font. Inherited.
   font: Maybe<FontSpec> = None,
@@ -94,7 +95,127 @@ pub struct Style {
   line_height: Maybe<f32> = None,
   /// 0–1, multiplied into the parent's: inherited that way.
   opacity: Maybe<f32> = None,
+  /// The element's width and height, and the least and greatest each may be — within what
+  /// its parent allows, which wins (lengths include padding: CSS's `box-sizing: border-box`).
+  width: Maybe<f32> = None,
+  height: Maybe<f32> = None,
+  min_width: Maybe<f32> = None,
+  max_width: Maybe<f32> = None,
+  min_height: Maybe<f32> = None,
+  max_height: Maybe<f32> = None,
+  /// Space between a flex container's or a grid's rows, and between its columns (each
+  /// `gap` where unset). For a flex row, `column_gap` is between its items and `row_gap`
+  /// between its lines.
+  row_gap: Maybe<f32> = None,
+  column_gap: Maybe<f32> = None,
+  /// A flex container's: its main axis and direction, whether its items wrap onto more lines,
+  /// how free space is shared along a line (`justify-content`) and across lines
+  /// (`align-content`), and how items sit across their line (`align-items`).
+  flex_direction: Maybe<FlexDirection> = None,
+  flex_wrap: Maybe<LineWrap> = None,
+  justify_content: Maybe<Justify> = None,
+  align_content: Maybe<Justify> = None,
+  align_items: Maybe<ItemAlign> = None,
+  /// A grid's: how items sit in their cells along a row (`justify-items`; `align_items` is
+  /// across), its column and row tracks, the size of a track the template does not give, and
+  /// how items without a place are placed.
+  justify_items: Maybe<ItemAlign> = None,
+  grid_columns: Maybe<[]Track> = None,
+  grid_rows: Maybe<[]Track> = None,
+  grid_auto_columns: Maybe<Track> = None,
+  grid_auto_rows: Maybe<Track> = None,
+  grid_flow: Maybe<GridFlow> = None,
+  /// An item's, in a flex container: its share of free space, how much it gives up when
+  /// there is too little, its size before either, and where it goes in its container's order
+  /// (lower first, ties in the tree's order).
+  grow: Maybe<f32> = None,
+  shrink: Maybe<f32> = None,
+  basis: Maybe<Basis> = None,
+  order: Maybe<i64> = None,
+  /// An item's own `align-items` (and, in a grid, `justify-items`).
+  align_self: Maybe<ItemAlign> = None,
+  justify_self: Maybe<ItemAlign> = None,
+  /// An item's place in a grid: its first column or row line and how many tracks it spans.
+  grid_column: Maybe<GridSpan> = None,
+  grid_row: Maybe<GridSpan> = None,
 }
+
+/// A flex container's main axis, and which way along it its items go (CSS's
+/// `flex-direction`).
+pub data FlexDirection = FlexRow | FlexRowReverse | FlexColumn | FlexColumnReverse
+
+/// Whether a flex container's items wrap onto more lines, and which way the lines stack
+/// (`flex-wrap`).
+pub data LineWrap = NoWrap | Wrap | WrapReverse
+
+/// How free space along an axis is shared: CSS's `justify-content` and `align-content`
+/// values. `JustifyStretch` is `align-content`'s alone — lines grown to fill.
+pub data Justify =
+  JustifyStart
+  | JustifyEnd
+  | JustifyCenter
+  | JustifyBetween
+  | JustifyAround
+  | JustifyEvenly
+  | JustifyStretch
+
+/// Where an item sits across its line or within its grid cell (`align-items`,
+/// `justify-items` and their `-self`s). `AlignBaseline` lines a flex row's items up by their
+/// first lines of text, and is `AlignStart` for an item with none.
+pub data ItemAlign = AlignStart | AlignEnd | AlignCenter | AlignStretch | AlignBaseline
+
+/// A flex item's size before it grows or shrinks (`flex-basis`): its content's (or its
+/// `width`/`height`), a length, or a fraction of its container's main size.
+pub data Basis = BasisAuto | BasisLength(f32) | BasisFraction(f32)
+
+/// One bound of a grid track's size: a length, a share of the free space (`fr`), or what the
+/// content needs — `auto`, its min-content or its max-content size.
+pub data TrackSize = TrackPx(f32) | TrackFr(f32) | TrackAuto | TrackMinContent | TrackMaxContent
+
+/// A grid track sized between two bounds — CSS's `minmax(min, max)`; one size is both.
+pub struct Track {
+  min: TrackSize,
+  max: TrackSize,
+}
+
+/// A track `length` units wide (or tall).
+pub let px = pure (length: f32) -> Track =>
+  Track { min: TrackPx(length), max: TrackPx(length) }
+
+/// A track taking `share` of the free space — at least its content's `auto` minimum, as
+/// CSS's `1fr` is `minmax(auto, 1fr)`.
+pub let fr = pure (share: f32) -> Track => Track { min: TrackAuto, max: TrackFr(share) }
+
+/// A track as large as its content, and stretched into what space is left.
+pub let auto_track = pure () -> Track => Track { min: TrackAuto, max: TrackAuto }
+
+/// A track as narrow as its content can be, or as wide as it would be on one line.
+pub let min_content = pure () -> Track =>
+  Track { min: TrackMinContent, max: TrackMinContent }
+pub let max_content = pure () -> Track =>
+  Track { min: TrackMaxContent, max: TrackMaxContent }
+
+/// A track at least `min` and at most `max` (`max` below `min` is `min`).
+pub let minmax = pure (min: TrackSize, max: TrackSize) -> Track =>
+  Track { min: min, max: max }
+
+/// `tracks` `count` times over: CSS's `repeat(count, …)`.
+pub let repeat_tracks = pure (count: i64, tracks: []Track) -> []Track => {
+  var out: []Track = []
+  for _ in 0..<count { for t in tracks { out.push(t) } }
+  out
+}
+
+/// An item's place along a grid's columns or rows: the line it starts at (1 the first, as
+/// in CSS; 0 for auto-placement) and how many tracks it spans.
+pub struct GridSpan {
+  start: i64 = 0,
+  span: i64 = 1,
+}
+
+/// How a grid places items without a place (`grid-auto-flow`): along the rows or down the
+/// columns, filling earlier holes when `Dense`.
+pub data GridFlow = FlowRow | FlowColumn | FlowRowDense | FlowColumnDense
 
 impl Style {
   /// This style laid over `base`: each field this one sets, else `base`'s.
@@ -110,6 +231,33 @@ impl Style {
     font_size: self.font_size.or(base.font_size),
     line_height: self.line_height.or(base.line_height),
     opacity: self.opacity.or(base.opacity),
+    width: self.width.or(base.width),
+    height: self.height.or(base.height),
+    min_width: self.min_width.or(base.min_width),
+    max_width: self.max_width.or(base.max_width),
+    min_height: self.min_height.or(base.min_height),
+    max_height: self.max_height.or(base.max_height),
+    row_gap: self.row_gap.or(base.row_gap),
+    column_gap: self.column_gap.or(base.column_gap),
+    flex_direction: self.flex_direction.or(base.flex_direction),
+    flex_wrap: self.flex_wrap.or(base.flex_wrap),
+    justify_content: self.justify_content.or(base.justify_content),
+    align_content: self.align_content.or(base.align_content),
+    align_items: self.align_items.or(base.align_items),
+    justify_items: self.justify_items.or(base.justify_items),
+    grid_columns: self.grid_columns.or(base.grid_columns),
+    grid_rows: self.grid_rows.or(base.grid_rows),
+    grid_auto_columns: self.grid_auto_columns.or(base.grid_auto_columns),
+    grid_auto_rows: self.grid_auto_rows.or(base.grid_auto_rows),
+    grid_flow: self.grid_flow.or(base.grid_flow),
+    grow: self.grow.or(base.grow),
+    shrink: self.shrink.or(base.shrink),
+    basis: self.basis.or(base.basis),
+    order: self.order.or(base.order),
+    align_self: self.align_self.or(base.align_self),
+    justify_self: self.justify_self.or(base.justify_self),
+    grid_column: self.grid_column.or(base.grid_column),
+    grid_row: self.grid_row.or(base.grid_row),
   }
 }
 
@@ -283,6 +431,36 @@ pub struct Computed {
   gap: f32 = 0.0,
   font: FontSpec = FontSpec {},
   opacity: f32 = 1.0,
+  /// The sizes asked for; `None` for auto.
+  width: Maybe<f32> = None,
+  height: Maybe<f32> = None,
+  min_width: Maybe<f32> = None,
+  max_width: Maybe<f32> = None,
+  min_height: Maybe<f32> = None,
+  max_height: Maybe<f32> = None,
+  row_gap: f32 = 0.0,
+  column_gap: f32 = 0.0,
+  flex_direction: FlexDirection = FlexRow,
+  flex_wrap: LineWrap = NoWrap,
+  justify_content: Justify = JustifyStart,
+  /// CSS's `normal` for a flex container's lines: stretched.
+  align_content: Justify = JustifyStretch,
+  align_items: ItemAlign = AlignStretch,
+  justify_items: ItemAlign = AlignStretch,
+  grid_columns: []Track = [],
+  grid_rows: []Track = [],
+  grid_auto_columns: Track = Track { min: TrackAuto, max: TrackAuto },
+  grid_auto_rows: Track = Track { min: TrackAuto, max: TrackAuto },
+  grid_flow: GridFlow = FlowRow,
+  grow: f32 = 0.0,
+  shrink: f32 = 1.0,
+  basis: Basis = BasisAuto,
+  order: i64 = 0,
+  /// `None` for the container's `align_items` (or `justify_items`).
+  align_self: Maybe<ItemAlign> = None,
+  justify_self: Maybe<ItemAlign> = None,
+  grid_column: GridSpan = GridSpan {},
+  grid_row: GridSpan = GridSpan {},
 }
 
 /// Where an element stands in the cascade: the theme in force, the global rules (outermost
@@ -362,6 +540,33 @@ impl Cascade {
         line_height: s.line_height ?? base_font.line_height,
       },
       opacity: self.inherited.opacity * (s.opacity ?? 1.0),
+      width: s.width,
+      height: s.height,
+      min_width: s.min_width,
+      max_width: s.max_width,
+      min_height: s.min_height,
+      max_height: s.max_height,
+      row_gap: s.row_gap ?? s.gap ?? 0.0,
+      column_gap: s.column_gap ?? s.gap ?? 0.0,
+      flex_direction: s.flex_direction ?? FlexRow,
+      flex_wrap: s.flex_wrap ?? NoWrap,
+      justify_content: s.justify_content ?? JustifyStart,
+      align_content: s.align_content ?? JustifyStretch,
+      align_items: s.align_items ?? AlignStretch,
+      justify_items: s.justify_items ?? AlignStretch,
+      grid_columns: s.grid_columns ?? [],
+      grid_rows: s.grid_rows ?? [],
+      grid_auto_columns: s.grid_auto_columns ?? auto_track(),
+      grid_auto_rows: s.grid_auto_rows ?? auto_track(),
+      grid_flow: s.grid_flow ?? FlowRow,
+      grow: s.grow ?? 0.0,
+      shrink: s.shrink ?? 1.0,
+      basis: s.basis ?? BasisAuto,
+      order: s.order ?? 0,
+      align_self: s.align_self,
+      justify_self: s.justify_self,
+      grid_column: s.grid_column ?? GridSpan {},
+      grid_row: s.grid_row ?? GridSpan {},
     }
   }
 

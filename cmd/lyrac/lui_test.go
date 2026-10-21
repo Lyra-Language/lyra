@@ -510,6 +510,12 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"import", ui + "<import src=\"nope.lui\"/>", "x.lui:2: cannot read nope.lui"},
 		{"imported prop", ui + "<import src=\"w.lui\"/>\n<component name=\"a\">\n  <badge word=\"hi\"/>\n</component>", "x.lui:4: component badge has no prop word"},
 		{"imported part", ui + "<import src=\"w.lui\"/>\n<style global>\n  badge::lable { color: #fff }\n</style>", "x.lui:4: badge has no part lable (its parts: label)"},
+		{"flex value", ui + "<component name=\"a\">\n  <Flex wrap=\"wraps\"/>\n</component>", "x.lui:3: flex-wrap is nowrap, wrap, wrap-reverse, not wraps"},
+		{"track", ui + "<component name=\"a\">\n  <Grid columns=\"1fr bogus\"/>\n</component>", "x.lui:3: a track is a length, Nfr, auto, min-content, max-content, minmax(…) or repeat(…), not bogus"},
+		{"grid attribute", ui + "<component name=\"a\">\n  <Grid colums=\"1fr\"/>\n</component>", "x.lui:3: <Grid> has no attribute colums"},
+		{"grid line", ui + "<component name=\"a\">\n  <Text style=\"grid-column: 3 / 2\">x</Text>\n</component>", "x.lui:3: grid lines are N, span N, N / M or N / span M, not 3 / 2"},
+		{"justify stretch", ui + "<component name=\"a\">\n  <Text style=\"justify-content: stretch\">x</Text>\n</component>", "x.lui:3: justify-content is start, flex-start, end, flex-end, center, space-between, space-around, space-evenly, not stretch"},
+		{"braced word", ui + "<component name=\"a\">\n  <Flex direction={d}/>\n</component>", "x.lui:3: direction of <Flex> is written as text, not {…}"},
 	}
 	for _, c := range cases {
 		path := filepath.Join(dir, "x.lui")
@@ -628,5 +634,82 @@ let main = () -> u8 => {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("mapped output lacks %q:\n%s", want, out)
 		}
+	}
+}
+
+// The ui target's flex and grid: <Flex> and <Grid> attributes are the style properties they
+// name, and every CSS layout property reads in a style or a sheet — flex's shorthand (`1`,
+// `none`, `2 0 auto`), a basis as a percentage, order, the alignments, track lists with fr,
+// minmax and repeat, a dense column flow, grid lines with spans — a later declaration
+// replacing an earlier one, as in CSS; and the module checks clean.
+func TestLui_UiTargetFlexAndGrid(t *testing.T) {
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script target="ui">
+  pub data Ev = Go
+</script>
+<style global name="app_sheet">
+  .item { flex: 1; min-width: 120; order: 2; align-self: center }
+  .fixed { flex: none; flex-basis: 25% }
+  .cell { grid-column: 2 / span 3; grid-row: 1 / 3; justify-self: end }
+</style>
+<component name="view" event={Ev}>
+  <Column>
+    <Flex direction="column-reverse" wrap="wrap-reverse" justify="space-between" align="baseline" align-content="stretch" gap="8" row-gap={12.0}>
+      <Text class="item">a</Text>
+      <Text class="fixed" style="flex: 2 0 auto; max-height: 40">b</Text>
+    </Flex>
+    <Grid columns="100 1fr minmax(min-content, 2fr) repeat(2, auto max-content)" rows="auto" flow="column dense" justify-items="center" auto-rows="minmax(80, auto)">
+      <Text class="cell">c</Text>
+    </Grid>
+  </Column>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"flex_direction: Some(FlexColumnReverse), flex_wrap: Some(WrapReverse), justify_content: Some(JustifyBetween), align_items: Some(AlignBaseline), align_content: Some(JustifyStretch), gap: Some(8.0), row_gap: Some(12.0)",
+		"grid_columns: Some([px(100.0), fr(1.0), minmax(TrackMinContent, TrackFr(2.0)), ...repeat_tracks(2, [auto_track(), max_content()])])",
+		"grid_flow: Some(FlowColumnDense), justify_items: Some(AlignCenter), grid_auto_rows: Some(minmax(TrackPx(80.0), TrackAuto))",
+		"grow: Some(1.0), shrink: Some(1.0), basis: Some(BasisLength(0.0)), min_width: Some(120.0), order: Some(2), align_self: Some(AlignCenter)",
+		"grow: Some(0.0), shrink: Some(0.0), basis: Some(BasisFraction(25.0 / 100.0)) }",
+		"grow: Some(2.0), shrink: Some(0.0), basis: Some(BasisAuto), max_height: Some(40.0)",
+		"grid_column: Some(GridSpan { start: 2, span: 3 }), grid_row: Some(GridSpan { start: 1, span: 2 }), justify_self: Some(AlignEnd)",
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	t.Setenv("LYRA_STD", repoRoot(t))
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+}
+
+// The layouts example — a wrapping card list and a dashboard grid in markup, a component
+// call's class spanning its tile — is what lui makes from it, and checks clean.
+func TestLui_LayoutsExampleIsCurrentAndChecks(t *testing.T) {
+	skipWithoutText(t)
+	lui := buildLui(t)
+	root := repoRoot(t)
+	if b, err := exec.Command(lui, "--check", filepath.Join(root, "examples", "ui", "layouts_view.lui")).CombinedOutput(); err != nil {
+		t.Fatalf("examples/ui/layouts_view.lyra is stale: %v\n%s", err, b)
+	}
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(root, "examples", "ui", "layouts.lyra"))
+	if code != 0 {
+		t.Fatalf("checking the example exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if out := stdout + stderr; strings.Contains(out, "warning") {
+		t.Errorf("the example or its generated view warns:\n%s", out)
 	}
 }

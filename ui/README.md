@@ -17,8 +17,8 @@ A root of its own beside `std/` and `bindings/` (`build.sh` links it into `build
 | `ui.backend` | The two seams: `Platform` (window, events, scale, text input, clipboard, cursor) and `Renderer` (`upload`, `update`, `draw(background, ops)`), and `InputEvent`, `Key`, `Modifiers`, `PointerButton`, `Cursor`; `AccessTree`/`AccessNode`/`AccessRole`/`AccessRequest` and `ACCESS_*`, for `Platform.update_access` and the `AccessAction` input; and `NativeFields` (a phone's own text fields placed by identity, edits back as `FieldEdited`), declared and not yet implemented. | no |
 | `ui.sdl3` | Both traits over `bindings.sdl3`: `open` → `SdlWindow { platform, renderer }`, `close`, and `capture` (a frame read back, for tests). Draws through `SDL_RenderGeometry`, a call a run of ops on one texture (`geometry_calls` counts them); on macOS tells VoiceOver through `bindings.accesskit`. | SDL3, AccessKit |
 | `ui.text` | `Fonts` (font files by family; `add_system_font` tries `SYSTEM_FONTS`), `FontSpec` (family, size, `line_height`), `lay_out` → `TextBlock` (lines of placed glyphs, cached by text, font and width), and `GlyphAtlas`, which renders glyphs into one texture through `Renderer.update` and answers a `Glyphs` op. | HarfBuzz, FreeType |
-| `ui.style` | `Style` (all `Maybe`), `Insets`, `Rule`/`Sheet`, `Theme` (`Palette`, `Spacing`, radius, font, `elements` sheet; `light_theme`, `dark_theme`), and the cascade: `Cascade` settles an element's tag, classes, part and inline style into `Computed`. | no |
-| `ui.layout` | `Node<e>` (kind, tag, class, part, style, children, key, label; `e` the program's event type, `NoEvent` for none) built by `row`, `column`, `expanded`, `stack`, `positioned`, `padding`, `align`, `sized`, `scroll`, `text`, `image`, `themed`, `component` and the controls `button`, `checkbox`, `slider`, `text_input`, and `.with_class`/`.with_style`/`.with_part`/`.keyed`/`.labelled`/`.aligned`; `layout`/`layout_with(node, Constraints, fonts, Interaction) -> Laid<e>` (each with its identity, role, label, focus ring and a field's caret) and `paint(laid, origin, scale, fonts, atlas, renderer) -> []DrawOp`. | no (text through `ui.text`) |
+| `ui.style` | `Style` (all `Maybe`), `Insets`, `Rule`/`Sheet`, `Theme` (`Palette`, `Spacing`, radius, font, `elements` sheet; `light_theme`, `dark_theme`), its layout properties (sizes, flex's and grid's — `FlexDirection`, `LineWrap`, `Justify`, `ItemAlign`, `Basis`, tracks built by `px`, `fr`, `auto_track`, `min_content`, `max_content`, `minmax`, `repeat_tracks`, `GridSpan`, `GridFlow`), and the cascade: `Cascade` settles an element's tag, classes, part and inline style into `Computed`. | no |
+| `ui.layout` | `Node<e>` (kind, tag, class, part, style, children, key, label; `e` the program's event type, `NoEvent` for none) built by `row`, `column`, `flex`, `grid`, `expanded`, `stack`, `positioned`, `padding`, `align`, `sized`, `scroll`, `text`, `image`, `themed`, `component` and the controls `button`, `checkbox`, `slider`, `text_input`, and `.with_class`/`.with_style`/`.with_part`/`.keyed`/`.labelled`/`.aligned`; `layout`/`layout_with(node, Constraints, fonts, Interaction) -> Laid<e>` (each with its identity, role, label, focus ring and a field's caret) and `paint(laid, origin, scale, fonts, atlas, renderer) -> []DrawOp`. Flex and grid are in `ui/layout/flex.lyra` and `grid.lyra` (one module, a directory). | no (text through `ui.text`) |
 | `ui.interact` | `Ui`: the framework's state by identity (focus, hover, press, scroll offsets, carets, selections, undo), `frame` (lay out and drop what left the tree), `handle(laid, input, platform) -> []e`, `place_text_input`; `hit`, `control_at`, `find`, `focus_order`; `Editing`, a field's editing operations. | no |
 | `ui.app` | `App { view, update: (s, e) -> (s, []Command<e>), subscriptions: (s) -> []Subscription<e>, background }` (`sandbox(view, update, bg)` for a plain update); `Command` (`WriteFile`, `ReadFile`, `After`, `CopyText`, `PasteText`, `OpenUrl`, `QuitApp`), `Subscription` (`EveryFrame`, `Every`, `OnResize`, `OnAppearance`); `run`, and `Host` (`host_of`, `step`) for a loop of `main`'s own — which `lyrac run --live` needs. | no |
 | `ui.access` | `access_tree(laid, focus) -> AccessTree`: the laid-out tree as assistive technology hears it, a node for each paragraph, image, scroll and control (and labelled group), ids its identities hashed; `access_id`, `access_node`. | no |
@@ -47,6 +47,24 @@ layer — implements the two traits; the display list is the whole contract.
   or column with a limit along its axis fills it (Flutter's `mainAxisSize.max`) and shares
   what its fixed children leave among its `expanded` ones; a wrapper hands one child its own
   constraints and lays several out as a column. A row's child may overflow its width.
+- **Flex and grid are CSS's** (`flex`, `grid`), inside the same protocol, configured wholly
+  by style properties so a sheet can set them (`Flex.cards { flex_wrap: Wrap }`). Flex follows
+  CSS Flexbox §9: an item's base size (its `basis`, else its `width`, else its max-content
+  width), its automatic least size (its min-content width, none for a scroll), lines for
+  `flex_wrap`, the freeze loop growing or shrinking each line with every item's least and
+  greatest, then `align_content`, `align_items`/`align_self` (baseline by first lines of
+  text) and `justify_content`, reversed for the `-reverse` directions; `order` sorts items,
+  ties in the tree's order. Grid follows CSS Grid §8 and §12: placement by lines, then items
+  locked to a row, then the rest by `grid_flow` (dense optional); column tracks sized from
+  the items' min- and max-content widths, rows from their heights at those widths; fixed,
+  intrinsic, maximized, `fr` and stretched `auto` tracks; items aligned in their areas. **A
+  container's width is definite when bounded and its height only when fixed**, as a CSS block's
+  is — so `fr` rows and a growing column need a `height`. **Every element honours `width`,
+  `height` and their `min_`/`max_`** (border-box; within its parent's constraints, which
+  win). Row, Column and Expanded stay as they are — Flutter's, measuring children unbounded —
+  beside them. **Intrinsic widths** (`intrinsic_width`) are measured outside the layout cache,
+  so the cache keeps only real layouts; an unchanged flex container or grid is given back
+  whole like any element.
 - **The cascade is five layers**, each beating the ones below whatever their specificity:
   the theme's `elements`, the global sheets (`themed`'s, outermost first, one layer), the
   enclosing component's scoped sheet (never reaching a component inside it; made from the
@@ -124,6 +142,9 @@ layer — implements the two traits; the display list is the whole contract.
   interface as markup for the `ui` target (a global sheet of `$tokens`, components with parts,
   a command, a timer, the system's look followed), run by `examples/ui/components.lyra`, whose
   loop is `main`'s (`lyrac run --live`); `--script` plays steps headless.
+- `examples/ui/layouts_view.lui` — flex and grid in markup: a card list wrapping to the
+  window's width and a dashboard grid of spanning tiles, run by `examples/ui/layouts.lyra`
+  (`--width W --script "…" --png FILE` headless).
 - `examples/ui/form.lyra` — phase 3's gate, a form that works from the keyboard: two
   fields, a checkbox, a slider and Submit, run by `ui.app`. `--script "…"` plays input
   instead of waiting for a user and prints the state it left; `--png FILE` the last frame.
@@ -141,3 +162,5 @@ layer — implements the two traits; the display list is the whole contract.
   Phase 5's: `TestRun_UiCacheAndIdle` (what the layout cache lays out and gives back; an idle
   host draws nothing), `TestRun_UiBatchesGeometryCalls` (the draws a frame takes),
   `TestRun_UiAccessibilityTree` (a form's tree, and VoiceOver's actions driving it).
+  `TestRun_UiFlex` and `TestRun_UiGrid` hold flex and grid to hand-worked CSS results, child
+  rect by child rect; `TestLui_UiTargetFlexAndGrid` the markup's layout properties.
