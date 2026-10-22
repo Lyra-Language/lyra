@@ -505,10 +505,19 @@ func isAssignable(from, to types.Type) bool {
 	// and reports a real reason ("mutates a captured binding") rather than a shape mismatch.
 	// TypesEqual still distinguishes them, so trait-signature matching and anything else
 	// asking about identity sees two different types.
+	//
+	// **A function that never returns fits any return type**, its parameters the same:
+	// `(_: string) => panic("…")` is a `(string) -> never`, and wherever a `(string) -> Ev`
+	// is wanted it can stand, as its `panic` could stand for an `Ev` — a default for a
+	// callback that must not be called (`FieldSpec.on_edit` on a read-only field) is one.
 	if fromLam, ok := from.(*types.LambdaType); ok {
 		if toLam, ok := to.(*types.LambdaType); ok {
+			returns := fromLam.ReturnType
+			if _, never := returns.Type.(types.NeverType); never {
+				returns = toLam.ReturnType
+			}
 			return types.TypesEqual(
-				&types.LambdaType{Parameters: fromLam.Parameters, ReturnType: fromLam.ReturnType},
+				&types.LambdaType{Parameters: fromLam.Parameters, ReturnType: returns},
 				&types.LambdaType{Parameters: toLam.Parameters, ReturnType: toLam.ReturnType},
 			)
 		}

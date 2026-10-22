@@ -85,16 +85,7 @@ let lay_flex<e> = (
       None => content_main(child, horizontal, false, cross_avail, ctx, id, fonts),
     }
     let most = (if horizontal { item.max_width } else { item.max_height }) ?? UNBOUNDED
-    let asked_least = if horizontal { item.min_width } else { item.min_height }
-    // CSS's automatic least size: the content's least, no more than a size asked for; none
-    // for a scroll, which shows what does not fit.
-    var least: f32 = 0.0
-    if let Some(m) = asked_least {
-      least = m
-    } else if !is_scroll(child) {
-      let floor = content_main(child, horizontal, true, cross_avail, ctx, id, fonts)
-      least = (main_size ?? floor).min(floor).min(most)
-    }
+    let least = item_least(child, item, horizontal, cross_avail, ctx, id, fonts)
     items.push(Flexing {
       index: i,
       base: base,
@@ -403,6 +394,27 @@ let content_main<e> = (
   lay(child, limits, ctx.cascade, fonts, ctx.ui, id, scratch).size.h
 }
 
+/// A flex item's least main size: the one its style asks for (`min-width: 0` lets it shrink
+/// to nothing), else CSS's automatic least size — its content's least, no more than a size
+/// asked for or its greatest; none for a scroll, which shows what does not fit.
+let item_least<e> = (
+  child: Node<e>,
+  item: Computed,
+  horizontal: bool,
+  cross_avail: f32,
+  ctx: Ctx,
+  id: string,
+  fonts: mut Fonts
+) -> f32 => {
+  let asked = if horizontal { item.min_width } else { item.min_height }
+  if let Some(m) = asked { return m }
+  if is_scroll(child) { return 0.0 }
+  let floor = content_main(child, horizontal, true, cross_avail, ctx, id, fonts)
+  let main_size = if horizontal { item.width } else { item.height }
+  let most = (if horizontal { item.max_width } else { item.max_height }) ?? UNBOUNDED
+  (main_size ?? floor).min(floor).min(most)
+}
+
 /// Whether `node` scrolls — which needs no room for what it shows: a Scroll element, or any
 /// element whose overflow is not visible (CSS's automatic least size is none for them).
 let is_scroll<e> = pure (node: Node<e>) -> bool => match node.kind {
@@ -427,6 +439,11 @@ let baseline<e> = pure (laid: Laid<e>) -> Maybe<f32> => {
 /// says to read it, else its content's, with its padding, within its least and greatest width.
 /// (CSS's automatic least size of a flex item reads its content, its `width` aside.) Measured
 /// outside the cache: a measurement is not the layout the cache keeps.
+///
+/// With `shrunk` too, it is the width below which the content overflows rather than its
+/// min-content: a flex row's items count at their least as flex shrinks them ([item_least]),
+/// so an item's `min-width: 0` lets it go. A scroller widens its content only to this — a
+/// browser never widens it at all, so a row whose field asks `min-width: 0` fits its window.
 let intrinsic_width<e> = (
   node: Node<e>,
   least: bool,
@@ -435,7 +452,8 @@ let intrinsic_width<e> = (
   ui: Interaction,
   id: string,
   own: bool = true,
-  contents: bool = false
+  contents: bool = false,
+  shrunk: bool = false
 ) -> f32 => {
   let styled = styled_at(node, cascade, ui, id)
   let style = styled.style
@@ -457,30 +475,43 @@ let intrinsic_width<e> = (
     Texels(_, _, natural) => natural.w,
     Measured(Some(w), _) => w,
     Flow(Horizontal, _, _) =>
-      children_width(node, least, true, styled.within, fonts, ui, id) + style.gap * gaps,
+      children_width(node, least, true, styled.within, fonts, ui, id, shrunk) + style.gap * gaps,
     Flexbox => {
       let along_row = style.flex_direction == FlexRow || style.flex_direction == FlexRowReverse
-      if along_row && !(least && style.flex_wrap != NoWrap) {
-        children_width(node, least, true, styled.within, fonts, ui, id) +
+      if least && shrunk && along_row {
+        // The items at their least: summed on one line, the widest when they wrap.
+        let ctx = Ctx { cascade: styled.within, ui: ui, id: id, gap: style.gap }
+        var sum: f32 = 0.0
+        var widest: f32 = 0.0
+        for i, child in node.children {
+          let child_at = child_id(id, child, i)
+          let item = styled_at(child, styled.within, ui, child_at).style
+          let w = item_least(child, item, true, UNBOUNDED, ctx, child_at, fonts)
+          sum += w
+          widest = widest.max(w)
+        }
+        if style.flex_wrap != NoWrap { widest } else { sum + style.column_gap * gaps }
+      } else if along_row && !(least && style.flex_wrap != NoWrap) {
+        children_width(node, least, true, styled.within, fonts, ui, id, shrunk) +
           style.column_gap * gaps
       } else {
-        children_width(node, least, false, styled.within, fonts, ui, id)
+        children_width(node, least, false, styled.within, fonts, ui, id, shrunk)
       }
     },
     Gridbox =>
       grid_intrinsic_width(node.children, style, least, styled.within, fonts, ui, id),
     Scrolls(Horizontal, _) =>
-      if least { 0.0 } else { children_width(node, least, false, styled.within, fonts, ui, id) },
+      if least { 0.0 } else { children_width(node, least, false, styled.within, fonts, ui, id, shrunk) },
     // A control's width is the one it chooses with all the room it wants.
     Ranged(_) => return measured_width(node, cascade, fonts, ui, id),
     Editable(_) => return measured_width(node, cascade, fonts, ui, id),
-    _ => children_width(node, least, false, styled.within, fonts, ui, id),
+    _ => children_width(node, least, false, styled.within, fonts, ui, id, shrunk),
   }
   (content + styled.space.horizontal()).clamp(floor, ceiling)
 }
 
 /// `node`'s children's intrinsic widths, summed (side by side) or the widest (`side_by_side`
-/// false).
+/// false), `shrunk` as [intrinsic_width] takes it.
 let children_width<e> = (
   node: Node<e>,
   least: bool,
@@ -488,11 +519,22 @@ let children_width<e> = (
   within: Cascade,
   fonts: mut Fonts,
   ui: Interaction,
-  id: string
+  id: string,
+  shrunk: bool = false
 ) -> f32 => {
   var out: f32 = 0.0
   for i, child in node.children {
-    let w = intrinsic_width(child, least, within, fonts, ui, child_id(id, child, i))
+    let w = intrinsic_width(
+      child,
+      least,
+      within,
+      fonts,
+      ui,
+      child_id(id, child, i),
+      true,
+      false,
+      shrunk
+    )
     out = if side_by_side { out + w } else { out.max(w) }
   }
   out

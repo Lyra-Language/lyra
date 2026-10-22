@@ -80,6 +80,10 @@ pub struct App<s, e> {
   /// nothing (the default) for no limit, and a side of nothing for none that way.
   min_size: Size = Size {},
   max_size: Size = Size {},
+  /// Whether the user may resize the window across and down: a side that may not is held to
+  /// the size the window opened at, and a window that may neither does not resize at all.
+  resize_x: bool = true,
+  resize_y: bool = true,
   /// What the window does with a view that does not fit it — CSS's `overflow` on the page:
   /// scrolled, with bars while it does not fit, by default. Set on the view's root unless its
   /// own style says otherwise.
@@ -294,10 +298,7 @@ impl Host<s, e> {
     if !self.running { return false }
     // Drawn only when something may have changed — an input, an event, the first pass — or
     // every pass under `--live`, where the code itself may have.
-    if self.shown.len() == 0 { platform.set_size_limits(
-      self.app.min_size,
-      self.app.max_size
-    ) }
+    if self.shown.len() == 0 { self.limit_size(platform) }
     // A transition moving draws every frame too, until it arrives.
     if self.dirty || self.live || self.shown.len() == 0 || self.ui.animating() { self.redraw(
       platform,
@@ -371,6 +372,21 @@ impl Host<s, e> {
     self.shown = [fresh]
     self.drawn_at = platform.window_size()
     self.dirty = false
+  }
+
+  /// `App`'s least and greatest size handed to the platform — the first pass's — with a side
+  /// that may not resize held at both to the size the window has, within them.
+  let limit_size<p> where p: Platform = (self, platform: mut p) -> void => {
+    let held = platform.window_size().held(self.app.min_size, self.app.max_size)
+    let least = Size {
+      w: if self.app.resize_x { self.app.min_size.w } else { held.w },
+      h: if self.app.resize_y { self.app.min_size.h } else { held.h },
+    }
+    let most = Size {
+      w: if self.app.resize_x { self.app.max_size.w } else { held.w },
+      h: if self.app.resize_y { self.app.max_size.h } else { held.h },
+    }
+    platform.set_size_limits(least, most)
   }
 
   /// How long the pass may wait for input from `now`: not at all while events wait, a frame

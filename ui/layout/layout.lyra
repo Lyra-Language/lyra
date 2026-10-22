@@ -177,10 +177,13 @@ pub struct SliderSpec<e> {
 }
 
 /// A text field's value — the program's, set from its state each frame — the text shown while
-/// it is empty, and the event for an edit, carrying the value as the edit leaves it.
+/// it is empty, whether it is read-only (focused, selected and copied, never edited: HTML's
+/// `readonly`, CSS's `:read-only`), and the event for an edit, carrying the value as the edit
+/// leaves it.
 pub struct FieldSpec<e> {
   value: string,
   placeholder: string = "",
+  read_only: bool = false,
   on_edit: (string) -> e,
 }
 
@@ -394,6 +397,15 @@ pub let slider<e> = pure (spec: SliderSpec<e>) -> Node<e> =>
 pub let text_input<e> = pure (spec: FieldSpec<e>) -> Node<e> =>
   Node { kind: Editable(spec), tag: "TextInput", label: spec.placeholder }
 
+/// A read-only text field showing `value`: its text can be selected and copied, but raises no
+/// edit, so it asks for none.
+pub let read_only_input<e> = pure (value: string) -> Node<e> =>
+  text_input(FieldSpec::<e> {
+    value: value,
+    read_only: true,
+    on_edit: (_: string) -> e => panic("a read-only field raised an edit"),
+  })
+
 impl Node<e> {
   /// The node with these classes, space-separated (`"card wide"`), added to its own.
   pub let with_class = pure (self, classes: string) -> Node<e> =>
@@ -469,6 +481,7 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
   Editable(spec) => Editable(FieldSpec {
     value: spec.value,
     placeholder: spec.placeholder,
+    read_only: spec.read_only,
     on_edit: (text: string) -> b => f((spec.on_edit)(text)),
   }),
   Flexbox => Flexbox,
@@ -798,7 +811,9 @@ let state_under = pure (ui: Interaction, id: string) -> string => {
   out
 }
 
-/// `node`'s min-content width, from last frame's layout of it when the node, its cascade,
+/// `node`'s narrowest — the width below which its content overflows, a flex row's items at
+/// their least (`intrinsic_width`'s `shrunk`), so `min-width: 0` lets an item go as it does
+/// in a browser — from last frame's layout of it when the node, its cascade,
 /// the focus, hover and press inside it and its media answers are as they were — what the
 /// width depends on, so a resize or a scroll gives it back — else measured.
 let narrowest_of<e> = (
@@ -823,7 +838,7 @@ let narrowest_of<e> = (
       }
     }
   }
-  intrinsic_width(node, true, cascade, fonts, ui, id, false, true)
+  intrinsic_width(node, true, cascade, fonts, ui, id, false, true, true)
 }
 
 /// The focus, hover and press at or inside `id` — the part of [state_under] that can change a
@@ -1237,7 +1252,7 @@ pub struct Scroller {
   track: Computed,
   thumb_x: Computed,
   thumb_y: Computed,
-  /// The element's min-content width (across only), and the focus, hover and press it was
+  /// The element's narrowest width (across only, [narrowest_of]), and the focus, hover and press it was
   /// measured under — kept so a resize, which cannot change it, need not measure it again.
   narrowest: f32 = 0.0,
   marks: string = "",
@@ -1349,11 +1364,12 @@ let with_state = pure (classes: string, id: string, ui: Interaction) -> string =
   out
 }
 
-/// `classes` with the states `node` itself says it is in: `:checked` for a ticked checkbox,
-/// and a control `:disabled` or `:enabled`.
+/// `classes` with the states `node` itself says it is in: `:checked` for a ticked checkbox, a
+/// field `:read-only` or `:read-write`, and a control `:disabled` or `:enabled`.
 let with_own_state<e> = pure (classes: string, node: Node<e>) -> string => {
   var states: []string = []
   if let Checkable(true, _) = node.kind { states.push(":checked") }
+  if let Editable(spec) = node.kind { states.push(if spec.read_only { ":read-only" } else { ":read-write" }) }
   if node.disabled { states.push(":disabled") } else if focusable(node.kind) { states.push(":enabled") }
   if states.len() == 0 { return classes }
   if classes.len() == 0 { states.join(" ") } else { "${classes} ${states.join(" ")}" }

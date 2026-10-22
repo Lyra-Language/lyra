@@ -125,7 +125,7 @@ impl Platform for ScriptPlatform {
       },
       Dragged(size) => {
         self.next += 1
-        self.size = held(size, self.least, self.most)
+        self.size = size.held(self.least, self.most)
         if let Some(redraw) = self.hook {
           self.dragged += 1
           redraw()
@@ -136,7 +136,7 @@ impl Platform for ScriptPlatform {
         self.next += 1
         match input {
           Resized(size) => {
-            self.size = held(size, self.least, self.most)
+            self.size = size.held(self.least, self.most)
             return [Resized(self.size)]
           },
           AppearanceChanged(look) => { self.look = look },
@@ -163,19 +163,8 @@ impl Platform for ScriptPlatform {
   set_size_limits = (self, least, most) => {
     self.least = least
     self.most = most
-    self.size = held(self.size, least, most)
+    self.size = self.size.held(least, most)
   }
-}
-
-/// `size` within `least` and `most`, each side a limit only where it is more than nothing.
-let held = pure (size: Size, least: Size, most: Size) -> Size => Size {
-  w: within(size.w, least.w, most.w),
-  h: within(size.h, least.h, most.h),
-}
-
-let within = pure (value: f32, least: f32, most: f32) -> f32 => {
-  let floor = value.max(least)
-  if most > 0.0 { floor.min(most.max(least)) } else { floor }
 }
 
 /// The inputs `script` writes down, or what is wrong with it — a script of inputs alone,

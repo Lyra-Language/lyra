@@ -415,8 +415,12 @@ func globalNames(program *ast.Program, symTable *symbols.SymbolTable) map[string
 	// shadows the builtin for the typechecker; treating it as global here would
 	// only mean *not* capturing it, which surfaces as a loud unbound-identifier
 	// error in the backend rather than wrong code.)
+	//
+	// `panic` was missing until 10/22, so any closure that could panic failed in the backend
+	// with "no type recorded for captured binding" — the same symptom as the extern case
+	// below, from the backend's `lowerFunctionCallExpr` switch and this list drifting.
 	for _, name := range []string{
-		"print", "println", "read_line", "dir_names", "random_seed", "wall_clock_nanos",
+		"print", "println", "panic", "read_line", "dir_names", "random_seed", "wall_clock_nanos",
 		"set_raw_mode", "read_key", "terminal_size", "wait_for_key_ms",
 		"program_arg_count", "program_arg", "pointer_at",
 	} {

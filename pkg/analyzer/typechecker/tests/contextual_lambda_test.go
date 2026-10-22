@@ -249,3 +249,21 @@ let app<b> = (n: i64, f: (i64) -> b) -> b => f(n)
 		})
 	}
 }
+
+// A lambda that never returns stands wherever a function of its parameters is wanted, whatever
+// that function returns — as its `panic` stands for any value. `(_: string) => panic("…")` is
+// a `(string) -> never`, refused for a `(string) -> Ev` until 10/22; a callback that must not
+// be called (a read-only field's edit) is the use. The parameters still have to agree.
+func TestContextualLambda_ANeverReturningLambdaFitsAnyReturn(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+data Ev = Typed(string)
+let f: (string) -> Ev = (_: string) => panic("not to be called")
+let g: (i64) -> i64 = (x: i64) => panic("not to be called")`, false)
+	assertNoErrors(t, res)
+	res = parseCollectAndCheck(t, `
+data Ev = Typed(string)
+let f: (string) -> Ev = (_: i64) => panic("not to be called")`, false)
+	if len(res.errors) == 0 {
+		t.Errorf("a never-returning lambda of other parameters was accepted")
+	}
+}

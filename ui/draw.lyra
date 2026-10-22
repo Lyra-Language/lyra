@@ -34,6 +34,13 @@ pub struct Size {
   h: f32 = 0.0,
 }
 
+/// The size held within `least` and `most`, each side a limit only where it is more than
+/// nothing — a window's, between `App.min_size` and `App.max_size`.
+pub let held = pure (self: Size, least: Size, most: Size) -> Size => Size {
+  w: held_side(self.w, least.w, most.w),
+  h: held_side(self.h, least.h, most.h),
+}
+
 /// An axis-aligned rectangle: its top-left corner and its size. A rectangle with no width or
 /// no height is empty, and draws nothing.
 pub struct Rect {
@@ -334,3 +341,8 @@ impl Radii {
 /// they do.
 let side_room = pure (length: f32, need: f32) -> f32 =>
   if need <= length || need <= 0.0 { 1.0 } else { length.max(0.0) / need }
+
+let held_side = pure (value: f32, least: f32, most: f32) -> f32 => {
+  let floor = value.max(least)
+  if most > 0.0 { floor.min(most.max(least)) } else { floor }
+}

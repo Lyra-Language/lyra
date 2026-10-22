@@ -58,7 +58,8 @@ pub trait Platform {
   /// builds it); a platform with none ignores it.
   update_access: (mut Self, AccessTree) -> void
   /// The least and greatest size the user may make the window, in logical units — a size of
-  /// nothing for no limit; the window resized into them if it is outside.
+  /// nothing for no limit; the window resized into them if it is outside. A side whose least
+  /// and greatest are one size does not resize, and a window held so both ways not at all.
   set_size_limits: (mut Self, Size, Size) -> void
   /// Call `hook` each time the system asks for a frame while the window is resized by
   /// dragging and the program's own loop is held (macOS) — never from inside the hook's own

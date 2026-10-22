@@ -9,6 +9,50 @@ Newest first.
 
 ## Dated log
 
+### 10/22/26 — 7GUIs' counter: a read-only field, and two compiler fixes it found
+
+- **Any closure that could panic failed to compile.** The capture analysis lists the
+  compiler's own free functions (`println`, …) so calling one is not a capture, and `panic` was
+  missing. The backend's switch over the same functions had it, and the two lists had drifted
+  (rule 8). A local lambda with `panic` anywhere in its body was "no type recorded for captured
+  binding \"panic\"" in the backend, on a program the front end accepted.
+  `TestCaptures_PanicIsNotACapture`.
+- **A function that never returns now fits any return type** with the same parameters
+  (`isAssignable`): `(_: string) => panic("…")` is a `(string) -> never`, refused for a
+  `(string) -> Ev` before, though its `panic` fits an `Ev`. A callback that must never be called
+  is the use. `TestContextualLambda_ANeverReturningLambdaFitsAnyReturn`.
+- **A read-only text field**, which 7GUIs' counter asks for: `FieldSpec.read_only`,
+  `read_only_input(value)` and lui's `<TextInput readonly>` (HTML's), with `:read-only` and
+  `:read-write`. It refuses every edit and keeps focus, caret, selection and copy. Avram's
+  markup had reached for `on_edit={NoOp}` to the same end.
+- **Not a field default.** `on_edit` defaulting to a never-called lambda on the generic
+  `FieldSpec<e>` was the first design. But a field default is one AST node shared by every
+  literal that omits it (`applyDefaultFields`), so it cannot carry a return type per
+  instantiation: unannotated it lowered with none, and annotated `-> e` it was not specialized
+  (todo.md). A generic builder is specialized per call, so `read_only_input` holds the lambda,
+  and lui writes the lambda itself with the component's event type.
+- **`<window width height>`** writes `WINDOW_SIZE`, the size the window opens at, so the
+  counter's size lives in its markup. Only when given, and only both: the window is opened by
+  `main` before `App` exists, so it is a constant for `main`, not an `App` field, and there is
+  no size of nothing to fall back on for a missing side. `TestLui_UiTargetWindowSize`.
+- **`<window resize resize_x resize_y>`**, `App.resize_x`/`resize_y`. No new `Platform`
+  method: a side that may not resize is a side whose least and greatest size are one, which
+  `set_size_limits` already carries (and a `ScriptPlatform` already holds to), so the host
+  hands that and `ui.sdl3` reads both sides held as not resizable (`SDL_SetWindowResizable`),
+  which drops the edges and the zoom button. The clamp to the limits moved from `ui.script`
+  to `ui.draw` (`Size.held`) for the host to share. `TestRun_UiWindowResizeAxes`.
+- **`min-width: 0` on a flex item now lets the window's content fit.** The counter's row (a
+  growing field and a button) in a 200-wide window scrolled sideways whatever the field asked:
+  a scroller lays its content out across at the port's width widened to the content's
+  min-content (10/21's choice, against an unbounded width), and a row's min-content sums its
+  items' — a field's is its 160, which `min-width` cannot lower. A browser never widens it, so
+  there `min-width: 0` lets the field shrink. The widening now goes to the width below which
+  the content *overflows* (`intrinsic_width`'s `shrunk`): a flex row's items at their least as
+  flex shrinks them (`item_least`, the one rule `lay_flex` uses too), the rest as before. Only
+  the scroller measures so: an item's own automatic minimum is still CSS's min-content, so a
+  nested row overflows as it does in a browser. Grid tracks are not yet measured this way.
+  `TestRun_UiWindowFitsAShrinkingFlexItem`.
+
 ### 10/22/26 — `ui/`: states are CSS's pseudo-classes
 
 - **`Button:hover`, not `Button.hover`.** The framework used to add `hover`, `pressed` and

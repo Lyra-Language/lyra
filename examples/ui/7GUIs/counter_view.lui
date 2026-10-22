@@ -1,0 +1,26 @@
+<window width="200" height="64" resize={false} />
+
+<script target="ui">
+  import ui.app.{ Command, Subscription }
+
+  pub data Event = Increment
+
+  pub struct State { count: u32 }
+
+  pub let update = pure (s: State, event: Event) -> (State, []Command<Event>) => match event {
+    Increment => (State { s | count: s.count + 1 }, []),
+  }
+
+  pub let subscriptions = pure (_: State) -> []Subscription<Event> => []
+</script>
+
+<component name="view" props={{ s: State }} event={Event}>
+  <style>
+    Flex { padding: $space.l; gap: $space.m; }
+    TextInput { flex-grow: 1; min-width: 0 }
+  </style>
+  <Flex>
+    <TextInput value={"${s.count}"} readonly disabled />
+    <Button on_click={Increment}>Count</Button>
+  </Flex>
+</component>

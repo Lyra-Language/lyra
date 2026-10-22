@@ -535,7 +535,7 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"media nested", ui + "<style global>\n  @media (min-width: 1) {\n    @media (max-width: 2) {\n      .a { gap: 1 }\n    }\n  }\n</style>", "x.lui:4: an @media inside an @media"},
 		{"at-rule", ui + "<style global>\n  @supports (x: y) {\n  }\n</style>", "x.lui:3: @supports is not an at-rule of a <style>; @media is"},
 		{"selector in a list", ui + "<style global>\n  .a,\n  Column Text { gap: 1 }\n</style>", "x.lui:4: Column Text is not a selector ui reads"},
-		{"pseudo-class", ui + "<style global>\n  .a:visited { gap: 1 }\n</style>", "x.lui:3: .a:visited: :visited is not a pseudo-class ui has (hover, active, focus, focus-visible, focus-within, checked, disabled, enabled)"},
+		{"pseudo-class", ui + "<style global>\n  .a:visited { gap: 1 }\n</style>", "x.lui:3: .a:visited: :visited is not a pseudo-class ui has (hover, active, focus, focus-visible, focus-within, checked, read-only, read-write, disabled, enabled)"},
 		{"state class", ui + "<style global>\n  Button.pressed { gap: 1 }\n</style>", "x.lui:3: Button.pressed: a state is a pseudo-class, as in CSS: write :active, not .pressed"},
 		{"class on a part", ui + "<style global>\n  Slider::thumb.big { gap: 1 }\n</style>", "x.lui:3: Slider::thumb.big: a part takes pseudo-classes after it (Comp::part:hover), not classes"},
 		{"pseudo-element", ui + "<style global>\n  .a::before:hover { gap: 1 }\n</style>", "x.lui:3: .a::before:hover is not a selector ui reads"},
@@ -556,10 +556,15 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"transition timing", ui + "<style global>\n  .a { transition-timing-function: bouncy }\n</style>", "x.lui:3: transition-timing-function is ease, linear, ease-in, ease-out, ease-in-out, cubic-bezier(x1, y1, x2, y2) or steps(n[, jump-start|jump-end]), not bouncy"},
 		{"transition delay", ui + "<style global>\n  .a { transition-delay: soon }\n</style>", "x.lui:3: transition-delay is a time, Nms or Ns, not soon"},
 		{"transition longhand", ui + "<style global>\n  .a { transition-propery: opacity }\n</style>", "x.lui:3: no style property transition-propery in ui"},
+		{"readonly text", ui + "<script target=\"ui\">\n  pub data Ev = Go\n</script>\n<component name=\"a\" event={Ev}>\n  <TextInput value=\"x\" readonly=\"yes\"/>\n</component>", "x.lui:6: readonly is bare or {condition}, not text"},
+		{"readonly condition", ui + "<script target=\"ui\">\n  pub data Ev = Go\n</script>\n<component name=\"a\" event={Ev}>\n  <TextInput value=\"x\" readonly={true}/>\n</component>", "x.lui:6: <TextInput> needs on_edit"},
 		{"overflow value", ui + "<style global>\n  .a { overflow: sideways }\n</style>", "x.lui:3: overflow is visible, hidden, clip, scroll or auto, not sideways"},
 		{"overflow many", ui + "<style global>\n  .a { overflow: auto auto hidden }\n</style>", "x.lui:3: overflow is one or two of visible, hidden, clip, scroll, auto, not auto auto hidden"},
 		{"overflow-y value", ui + "<component name=\"a\">\n  <Column style=\"overflow-y: scrolls\"/>\n</component>", "x.lui:3: overflow is visible, hidden, clip, scroll or auto, not scrolls"},
 		{"window overflow", ui + "<window overflow=\"wrap\"/>", "x.lui:2: overflow is visible, hidden, clip, scroll or auto, not wrap"},
+		{"window width alone", ui + "<window width=\"300\"/>", "x.lui:2: <window> takes width and height together"},
+		{"window size", ui + "<window size=\"300\"/>", "x.lui:2: <window> has no attribute size"},
+		{"window resize text", ui + "<window resize_x=\"false\"/>", "x.lui:2: resize_x is bare or {condition}, not text"},
 	}
 	for _, c := range cases {
 		path := filepath.Join(dir, "x.lui")
@@ -965,6 +970,64 @@ func TestLui_UiTargetOverflow(t *testing.T) {
 	}
 }
 
+// `<window width height>` makes WINDOW_SIZE, the size `main` opens the window at, and
+// `resize`, `resize_x` and `resize_y` WINDOW_RESIZE_X and _Y, a side's own before `resize`; a
+// window without them makes none.
+func TestLui_UiTargetWindowSize(t *testing.T) {
+	t.Parallel()
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script target="ui">
+  pub data Ev = Go
+</script>
+<window width="320" height={240.0 / 2.0} min-width="200" resize={false} resize_x/>
+<component name="view" event={Ev}>
+  <Column/>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"pub const WINDOW_SIZE: Size = Size { w: 320.0, h: 240.0 / 2.0 }",
+		"pub const WINDOW_MIN_SIZE: Size = Size { w: 200.0, h: 0.0 }",
+		"pub const WINDOW_RESIZE_X: bool = true",
+		"pub const WINDOW_RESIZE_Y: bool = false",
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	plain := strings.Replace(source, ` width="320" height={240.0 / 2.0}`, "", 1)
+	plain = strings.Replace(plain, ` resize={false} resize_x`, "", 1)
+	if err := os.WriteFile(path, []byte(plain), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it without the window's size and resizing: %v\n%s", err, b)
+	}
+	if generated, err = os.ReadFile(filepath.Join(dir, "view.lyra")); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(generated), "WINDOW_SIZE") ||
+		strings.Contains(string(generated), "WINDOW_RESIZE") {
+		t.Errorf("a window without its size or resizing made constants for them:\n%s", generated)
+	}
+}
+
 // The overflow example — scrollers down, across, both ways, hidden and nested, in a window
 // that scrolls — is what lui makes from it, and checks clean.
 func TestLui_OverflowExampleIsCurrentAndChecks(t *testing.T) {
@@ -1023,6 +1086,47 @@ func TestLui_UiTargetTransitions(t *testing.T) {
 		`transition: Some([Transition { property: "all", duration: 250.0, timing: TimingEase, delay: 0.0 }])`,
 		`transition: Some([])`,
 		`transition: Some([Transition { property: "color", duration: 1000.0, timing: TimingSteps(1, false), delay: 0.0 }])`,
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+}
+
+// A read-only field in markup, HTML's readonly: bare, it needs no on_edit (one that must never
+// be called is written for it); as a condition it keeps its on_edit for while the condition
+// does not hold. The module checks clean.
+func TestLui_UiTargetReadOnlyField(t *testing.T) {
+	t.Parallel()
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script target="ui">
+  pub data Event = Typed(string)
+</script>
+<component name="view" props={{ count: i64, locked: bool }} event={Event}>
+  <TextInput value={"${count}"} readonly />
+  <TextInput value="name" readonly={locked} on_edit={Typed}/>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`text_input(FieldSpec { value: "${count}", read_only: true, on_edit: (_: string) -> Event => panic("a read-only field raised an edit") })`,
+		`text_input(FieldSpec { value: "name", read_only: locked, on_edit: (value: string) -> Event => Typed(value) })`,
 	} {
 		if !strings.Contains(string(generated), want) {
 			t.Errorf("the generated module lacks %q:\n%s", want, generated)

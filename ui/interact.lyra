@@ -349,7 +349,7 @@ impl Ui {
           let state = self.widget(id)
           let end = text.len()
           self.state.widgets.insert(id, WidgetState { state | caret: end, anchor: end })
-          if text == spec.value { [] } else { [(spec.on_edit)(text)] }
+          if text == spec.value || spec.read_only { [] } else { [(spec.on_edit)(text)] }
         },
         _ => [],
       },
@@ -784,6 +784,8 @@ impl Ui {
       )
       return []
     }
+    // A read-only field moves its caret and selection, and changes nothing.
+    if spec.read_only { return [] }
     let history = [...state.undo, Edit { value: spec.value, caret: before.caret }]
     self.state.widgets.insert(field.laid.id, WidgetState {
       state |
@@ -798,7 +800,7 @@ impl Ui {
   let undo<e> = (self: mut, field: Found<e>) -> []e => {
     let Editable(spec) = field.laid.kind else { return [] }
     let state = self.widget(field.laid.id)
-    if state.undo.len() == 0 { return [] }
+    if state.undo.len() == 0 || spec.read_only { return [] }
     let last = state.undo[state.undo.len() - 1]
     self.state.widgets.insert(field.laid.id, WidgetState {
       state |

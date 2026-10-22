@@ -210,3 +210,15 @@ let main = () -> u8 => {
 }
 `, "", "", "")
 }
+
+// A closure that may panic captures nothing for it: `panic` is the compiler's, as `println`
+// is. It was missing from the builtins until 10/22, and the backend refused every such
+// closure ("no type recorded for captured binding \"panic\"").
+func TestCaptures_PanicIsNotACapture(t *testing.T) {
+	assertCaptures(t, `
+let main = () -> u8 => {
+  let check = (x: i64) -> i64 => if x > 0 { x } else { panic("negative") }
+  u8(check(3))
+}
+`, "", "")
+}

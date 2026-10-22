@@ -1990,6 +1990,62 @@ let view = pure (_: i64) -> Node<NoEvent> => sized::<NoEvent>(None, None)
 	}
 }
 
+// App's resize_x and resize_y hold a side that may not resize to the size the window opened
+// at (within min_size and max_size), through the same limits: one side, then both.
+func TestRun_UiWindowResizeAxes(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, host_of, sandbox }
+import ui.script.{ timed_platform, Played }
+import ui.backend.{ Renderer, Resized }
+import ui.draw.{ Size, Color, TextureId }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, NoEvent, sized }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => {}
+}
+
+/// Opened at 300x300 below a least width of 360: across, it is held at 360 and only its
+/// height follows; held both ways, it stays as it opened.
+let main = () -> u8 => {
+  let blank = App { sandbox(view, (n: i64, _: NoEvent) => n, Color { r: 0, g: 0, b: 0 }) | min_size: Size { w: 360.0 } }
+  show(App { blank | resize_x: false })
+  println("--")
+  show(App { blank | resize_x: false, resize_y: false })
+  0
+}
+
+let show = (app: App<i64, NoEvent>) -> void => {
+  var platform = timed_platform([
+    Played(Resized(Size { w: 500.0, h: 600.0 })),
+    Played(Resized(Size { w: 100.0, h: 100.0 })),
+  ], Size { w: 300.0, h: 300.0 })
+  var renderer = Blank {}
+  var fonts = fonts_new()
+  var host = host_of(app, 0, platform)
+  while host.step(platform, renderer, fonts) {
+    let size = platform.window_size()
+    println("${size.w}x${size.h}")
+  }
+}
+
+let view = pure (_: i64) -> Node<NoEvent> => sized::<NoEvent>(None, None)
+`)
+	want := "360x600\n360x100\n--\n360x300\n360x300\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // The Layouts demo's view resized 1,700 times — every 0.75 of a unit from 1300 wide to 300,
 // then back and forth across its 560 and 860 breakpoints by fractions — must settle every
 // pass, and within a minute: a layout loop that does not end fails here rather than hanging
@@ -2645,6 +2701,70 @@ a window scrolled to its end, then taller, clamps: window 0,180
 	}
 }
 
+// The window widens its content only to the width below which it overflows: a flex row of a
+// growing field and a button in a window narrower than the field's own 160 overflows and
+// scrolls, as in a browser, until the field asks min-width: 0 — then the row fits the window
+// and the field takes what the button leaves. 7GUIs' counter is the case.
+func TestRun_UiWindowFitsAShrinkingFlexItem(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ sandbox, running, step_running }
+import ui.script.{ timed_platform }
+import ui.backend.{ Renderer }
+import ui.draw.{ Size, Color, TextureId }
+import ui.text.{ fonts_new }
+import ui.style.{ Style, insets }
+import ui.layout.{ Node, FieldSpec, flex, text_input, button }
+
+/// A renderer that draws nothing.
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => {}
+}
+
+data Ev = Go | Typed(string)
+
+/// The field's least width: its content's (None), or what it asks for.
+let view = pure (least: Maybe<f32>) -> Node<Ev> => flex([
+  text_input(FieldSpec { value: "0", on_edit: Typed }).with_style(Style { grow: Some(1.0), min_width: least }),
+  button("Count", Go),
+]).with_style(Style { padding: Some(insets(16.0)), gap: Some(8.0) })
+
+let main = () -> u8 => {
+  let cases: []Maybe<f32> = [None, Some(0.0)]
+  for least in cases {
+    var platform = timed_platform([], Size { w: 200.0, h: 64.0 })
+    var renderer = Blank {}
+    var fonts = fonts_new()
+    let window = running(sandbox(view, (s: Maybe<f32>, _: Ev) => s, Color { r: 0, g: 0, b: 0 }), least, platform, renderer, fonts)
+    while step_running(window) {}
+    let laid = window.host.shown[0]
+    let Some(sc) = laid.scroller else { return 1 }
+    let field = laid.children[0]
+    let count = laid.children[1]
+    println("min-width ${least ?? -1.0}: window ${sc.port.w} of ${sc.content.w}; field ${field.at.x} to ${field.at.x + field.laid.size.w}, button ${count.at.x} to ${count.at.x + count.laid.size.w}")
+  }
+  0
+}
+`)
+	// The port is the window inside the row's padding, 168. Without min-width the field keeps
+	// its 160 and the row overflows to 196, scrolled; with it, the row is 168 and the field
+	// takes what the button (its padding alone: no font is loaded) leaves.
+	want := `min-width -1: window 168 of 196; field 16 to 176, button 184 to 212
+min-width 0: window 168 of 168; field 16 to 148, button 156 to 184
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // Transitions, frame by frame at clock times set by hand: CSS's timing curves; colours mixed
 // premultiplied; nothing moving on the first frame; an opacity fading its child with it; a
 // background named in the transition moving while a radius not named jumps; padding moving
@@ -2983,6 +3103,67 @@ off held: 0 events
   go: hover enabled
   off: disabled
   tick: checked enabled
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A read-only field (read_only_input, lui's readonly): it takes the focus, moves its caret,
+// selects and copies, and raises no edit for typing, deleting, pasting, cutting or undo; the
+// cascade sees it :read-only.
+func TestRun_UiReadOnlyField(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new }
+import ui.script.{ script_platform, parse_script }
+import std.collections
+import ui.draw.{ Size, Color }
+import ui.text.{ Fonts, fonts_new }
+import ui.style.{ Style, Rule, Sheet, light_theme }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, read_only_input, themed, tight }
+
+data Ev = Edited(string)
+
+/// A read-only field takes the focus, moves its caret, selects and copies, and raises no edit
+/// for typing, deleting, pasting, cutting or an assistive technology's new value; the cascade
+/// sees it :read-only.
+let main = () -> u8 => {
+  var ui = ui_new()
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var cache: LayoutCache<Ev> = layout_cache()
+  var platform = script_platform([], Size { w: 300.0, h: 100.0 })
+  for script in ["Tab", "'x' Backspace Delete", "Primary+a Primary+c", "Primary+v Primary+x Primary+z", "Home Shift+End"] {
+    let Ok(inputs) = parse_script(script) else { return 1 }
+    var raised = 0
+    for input in inputs {
+      let laid = frame(ui, cache, fonts)
+      raised += ui.handle(laid, input, platform).len()
+    }
+    let laid = frame(ui, cache, fonts)
+    let field = laid.children[0].laid.children[0].laid
+    let state = ui.state.widgets.get(field.id)
+    let caret = state.map((w) => w.caret) ?? -1
+    let anchor = state.map((w) => w.anchor) ?? -1
+    println("${script}: ${raised} events, caret ${caret} anchor ${anchor}, clipboard '${platform.clip}', focused ${ui.state.focus == field.id}, read-only look ${field.style.background == Some(Color { r: 1, g: 2, b: 3 })}")
+  }
+  0
+}
+
+let frame = (ui: mut Ui, cache: mut LayoutCache<Ev>, fonts: mut Fonts) -> Laid<Ev> =>
+  ui.frame_within(view(), tight(Size { w: 300.0, h: 100.0 }), fonts, cache)
+
+let view = pure () -> Node<Ev> => themed::<Ev>(light_theme(), sheet, [column([read_only_input::<Ev>("42")])])
+
+let sheet = Sheet { rules: [
+  Rule { selector: "TextInput:read-only", style: Style { background: Some(Color { r: 1, g: 2, b: 3 }) } },
+] }
+`)
+	want := `Tab: 0 events, caret 2 anchor 0, clipboard '', focused true, read-only look true
+'x' Backspace Delete: 0 events, caret 2 anchor 0, clipboard '', focused true, read-only look true
+Primary+a Primary+c: 0 events, caret 2 anchor 0, clipboard '42', focused true, read-only look true
+Primary+v Primary+x Primary+z: 0 events, caret 2 anchor 2, clipboard '42', focused true, read-only look true
+Home Shift+End: 0 events, caret 2 anchor 0, clipboard '42', focused true, read-only look true
 `
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)

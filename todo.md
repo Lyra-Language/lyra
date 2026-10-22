@@ -804,6 +804,11 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 10/22] `ui`: states as pseudo-classes** — `:hover`, `:active`, `:focus`,
   `:focus-visible`, `:focus-within`, `:checked`, `:disabled`, `:enabled`, class-level
   specificity; the class form dropped (COMPLETED.md, 10/22).
+- **[OPEN] A generic struct's lambda default has one type for every instantiation.** A field
+  default is the declaration's own AST node (`applyDefaultFields`), so `on_edit: (string) -> e =
+  (_: string) => panic("…")` lowers with no return type, and with `-> e` written it is not
+  specialized ("cannot assign (string) -> e to (string) -> Ev"). The `[]` case was fixed 10/21;
+  a lambda needs the default instantiated (or elaborated) per literal.
 - **[OPEN] `ui`: a disabled control is not told to assistive technology** (AccessKit's
   `disabled` flag), nor disabled through its ancestors (CSS's disabled `fieldset`).
 - **[OPEN] `ui.interact`: a caret moves by rune, not grapheme cluster.** `é` written as `e`

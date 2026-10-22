@@ -52,7 +52,7 @@
 //   `<Positioned left top right bottom width height>`, `<Padding all | x y | top …>`,
 //   `<Align at="center">`, `<Scroll axis offset>`, `<SizedBox width height>`, `<Text>`,
 //   `<Button on_click>`, `<Checkbox checked on_toggle>`, `<Slider value min max step
-//   on_change>`, `<TextInput value placeholder on_edit>`, `<Image texture texels width height>`
+//   on_change>`, `<TextInput value placeholder readonly on_edit>`, `<Image texture texels width height>`
 //   and `<Themed theme sheet>`; any of them takes `class`, `part`, `key`, `label` and `style`.
 //   A component is named for its parts' rules and its sheet is a function of the theme
 //   (`component_of`). The default target is `bindings.imgui.ui`, as before.
@@ -376,20 +376,28 @@ pub let generate_with = pure (
   Ok("${out.join("\n\n")}\n")
 }
 
-/// A `<window min-width="420" min-height="480" max-width max-height/>`: the least and
-/// greatest size the user may make the window, as `WINDOW_MIN_SIZE` and `WINDOW_MAX_SIZE` —
-/// `App`'s `min_size` and `max_size`, which the program's `main` passes on (a side not given
-/// is no limit).
+/// A `<window width="520" height="640" min-width="420" min-height="480" max-width
+/// max-height/>`: the size the window opens at, as `WINDOW_SIZE` (only when given, for the
+/// program's `main` to open it with), and the least and greatest size the user may make it,
+/// as `WINDOW_MIN_SIZE` and `WINDOW_MAX_SIZE` — `App`'s `min_size` and `max_size`, which
+/// `main` passes on (a side not given is no limit). `resize={false}` holds the window to its
+/// size, and `resize_x`/`resize_y` one side, overriding `resize` for theirs: `WINDOW_RESIZE_X`
+/// and `WINDOW_RESIZE_Y`, `App`'s `resize_x` and `resize_y`, when any of the three is given.
 let window_limits = pure (t: Tag, file: string) -> Result<string, string> => {
   for a in t.attrs {
     if ![
+      "width",
+      "height",
       "min-width",
       "min-height",
       "max-width",
       "max-height",
+      "resize",
+      "resize_x",
+      "resize_y",
       "overflow"
     ].any((n) => n == a.name) {
-      return Err("${a.line}: <window> has no attribute ${a.name} (min-width, min-height, max-width, max-height, overflow)")
+      return Err("${a.line}: <window> has no attribute ${a.name} (width, height, min-width, min-height, max-width, max-height, resize, resize_x, resize_y, overflow)")
     }
   }
   if t.children.len() > 0 && words_of(t.children)
@@ -401,6 +409,38 @@ let window_limits = pure (t: Tag, file: string) -> Result<string, string> => {
   }
   let least = "Size { w: ${side("min-width")?}, h: ${side("min-height")?} }"
   let most = "Size { w: ${side("max-width")?}, h: ${side("max-height")?} }"
+  // `width` and `height` — the size it opens at — together or not at all: a window has no
+  // size of nothing to fall back on for the other.
+  let width = number_attr(t, "width")?
+  let height = number_attr(t, "height")?
+  if (width.len() == 0) != (height.len() == 0) {
+    return Err("${t.line}: <window> takes width and height together")
+  }
+  let opening = if width.len() == 0 {
+    ""
+  } else {
+    "\n/// The size the window opens at, for the program's `main` to open it with.\npub const WINDOW_SIZE: Size = Size { w: ${width}, h: ${height} }"
+  }
+  // `resize`, `resize_x` and `resize_y`: bare or `{condition}`, as `disabled` is; a side's
+  // own attribute before `resize`, and resizable when neither is given.
+  let flag = (name: string) -> Result<Maybe<string>, string> =>
+    match attr_named(t.attrs, name) {
+      None => Ok(None),
+      Some(a) => match a.value {
+        Quoted(_) => Err("${a.line}: ${name} is bare or {condition}, not text: ${name} or ${name}={false}"),
+        other => Ok(Some(attr_lyra(other))),
+      },
+    }
+  let both = flag("resize")?
+  let across = flag("resize_x")?
+  let down = flag("resize_y")?
+  let resizing = if both.is_none() && across.is_none() && down.is_none() {
+    ""
+  } else {
+    let x = across.or(both) ?? "true"
+    let y = down.or(both) ?? "true"
+    "\n/// Whether the user may resize the window across and down, for `App`'s `resize_x` and\n/// `resize_y`.\npub const WINDOW_RESIZE_X: bool = ${x}\npub const WINDOW_RESIZE_Y: bool = ${y}"
+  }
   // `overflow` — what the window does with a page that does not fit it — when given.
   let overflow = match t.text_attr("overflow") {
     Some(word) => {
@@ -409,7 +449,7 @@ let window_limits = pure (t: Tag, file: string) -> Result<string, string> => {
     },
     None => "",
   }
-  Ok("/// From ${file}, line ${t.line}: the least and greatest size of the window, for `App`'s\n/// `min_size` and `max_size` (nothing for no limit).\npub const WINDOW_MIN_SIZE: Size = ${least}\npub const WINDOW_MAX_SIZE: Size = ${most}${overflow}")
+  Ok("/// From ${file}, line ${t.line}: the least and greatest size of the window, for `App`'s\n/// `min_size` and `max_size` (nothing for no limit).\npub const WINDOW_MIN_SIZE: Size = ${least}\npub const WINDOW_MAX_SIZE: Size = ${most}${opening}${resizing}${overflow}")
 }
 
 /// Another file's components, for this one's to call: the module they are in and their
@@ -1359,7 +1399,24 @@ impl Writer {
             if let Some(a) = attr_named(t.attrs, "placeholder") {
               fields.push("placeholder: ${attr_lyra(a.value)}")
             }
-            fields.push("on_edit: ${self.changes(t, "on_edit", "string")?}")
+            // HTML's `readonly`: bare, the field never edits and needs no on_edit; or a
+            // condition, which needs one for while it does not hold.
+            let read_only = attr_named(t.attrs, "readonly")
+            if let Some(a) = read_only {
+              match a.value {
+                Quoted(_) => return Err("${a.line}: readonly is bare or {condition}, not text: readonly or readonly={!s.editing}"),
+                other => fields.push("read_only: ${attr_lyra(other)}"),
+              }
+            }
+            let bare = match read_only {
+              Some(a) => a.value == Bare,
+              None => false,
+            }
+            if bare && attr_named(t.attrs, "on_edit").is_none() {
+              fields.push("on_edit: (_: string) -> ${self.event} => panic(\"a read-only field raised an edit\")")
+            } else {
+              fields.push("on_edit: ${self.changes(t, "on_edit", "string")?}")
+            }
             "text_input(FieldSpec { ${fields.join(", ")} })"
           },
           _ => {
@@ -1557,7 +1614,8 @@ let ui_kind = pure (tag: string) -> Maybe<(UiShape, []string)> => match tag {
   "Button" => Some((ShapeLabelled("button"), ["on_click"])),
   "Checkbox" => Some((ShapeLabelled("checkbox"), ["checked", "on_toggle"])),
   "Slider" => Some((ShapeBare("slider"), ["value", "min", "max", "step", "on_change"])),
-  "TextInput" => Some((ShapeBare("text_input"), ["value", "placeholder", "on_edit"])),
+  "TextInput" =>
+    Some((ShapeBare("text_input"), ["value", "placeholder", "readonly", "on_edit"])),
   "Image" => Some((ShapeBare("image"), ["texture", "texels", "width", "height"])),
   "Themed" => Some((ShapeThemed, ["theme", "sheet"])),
   "Flex" => Some((ShapeLayout("flex"), FLEX_ATTRIBUTES)),
@@ -2882,6 +2940,8 @@ const PSEUDO_CLASSES = [
   "focus-visible",
   "focus-within",
   "checked",
+  "read-only",
+  "read-write",
   "disabled",
   "enabled",
 ]

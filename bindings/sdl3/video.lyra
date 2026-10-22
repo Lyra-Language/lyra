@@ -55,6 +55,9 @@ unsafe extern sdl_set_window_minimum_size: (window: Window, w: i32, h: i32) -> b
 @symbol("SDL_SetWindowMaximumSize")
 unsafe extern sdl_set_window_maximum_size: (window: Window, w: i32, h: i32) -> bool
 
+@symbol("SDL_SetWindowResizable")
+unsafe extern sdl_set_window_resizable: (window: Window, resizable: bool) -> bool
+
 @symbol("SDL_SetWindowTitle")
 unsafe extern sdl_set_window_title: (window: Window, title: ^u8) -> bool
 
@@ -99,6 +102,10 @@ pub let set_window_minimum_size = (window: Window, width: i32, height: i32) -> b
 
 pub let set_window_maximum_size = (window: Window, width: i32, height: i32) -> bool =>
   unsafe { sdl_set_window_maximum_size(window, width, height) }
+
+/// Whether the user may resize the window at all (`WINDOW_RESIZABLE` after it is made).
+pub let set_window_resizable = (window: Window, resizable: bool) -> bool =>
+  unsafe { sdl_set_window_resizable(window, resizable) }
 
 /// The window's title bar.
 pub let set_window_title = (window: Window, title: string) -> bool =>

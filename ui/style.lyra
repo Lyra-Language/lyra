@@ -852,8 +852,8 @@ pub let specificity = pure (selector: string, tag: string, classes: string) -> i
 
 /// The states an element can be in, as CSS's pseudo-classes: the pointer over it or inside it,
 /// pressed on it or inside it (`active`), the focus on it, on it from the keyboard
-/// (`focus-visible`) or inside it (`focus-within`), a checkbox ticked, and a control disabled
-/// or not.
+/// (`focus-visible`) or inside it (`focus-within`), a checkbox ticked, a text field read-only
+/// or not, and a control disabled or not.
 pub const PSEUDO_CLASSES: []string = [
   "hover",
   "active",
@@ -861,6 +861,8 @@ pub const PSEUDO_CLASSES: []string = [
   "focus-visible",
   "focus-within",
   "checked",
+  "read-only",
+  "read-write",
   "disabled",
   "enabled",
 ]

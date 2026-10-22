@@ -70,7 +70,9 @@ layer — implements the two traits; the display list is the whole contract.
 - **Overflow is CSS's** (`overflow_x`, `overflow_y`: `OverflowVisible`, `OverflowHidden`,
   `OverflowClip`, `OverflowScroll`, `OverflowAuto`; lui's `overflow` takes one or two). An axis
   that is not visible clips, and lays its content out unbounded down (`max_h` `UNBOUNDED`) or,
-  across, at least its min-content width; the element's own size stays within its
+  across, at least its narrowest — the width below which it overflows, a flex row's items at
+  their least, so an item's `min-width: 0` lets the row fit as it would in a browser, which
+  never widens it (`narrowest_of`); the element's own size stays within its
   constraints. The content's size and the offset are the `Laid`'s `scroller`. **Offsets live in
   `Ui` by identity** (`scroll` down, `scroll_x` across) and are clamped to the content at every
   layout, so a window grown past the end pulls back; `clip` and `hidden` take no input but a
@@ -120,7 +122,12 @@ layer — implements the two traits; the display list is the whole contract.
   in the same place, each with its own specificity.
 - **The window's least and greatest size** are `App.min_size` and `App.max_size`, which the
   host hands `Platform.set_size_limits` on its first pass (`ui.sdl3`: SDL's minimum and maximum
-  window size; `ScriptPlatform` holds its resize steps to them).
+  window size; `ScriptPlatform` holds its resize steps to them). The size it opens at is
+  `main`'s, given to `gpu.open`/`sdl3.open` — lui's `<window width height>` writes it as
+  `WINDOW_SIZE`. **`App.resize_x` and `App.resize_y`** (both `true` unless set; lui's `resize`,
+  `resize_x`, `resize_y`) hold a side that may not resize to the size the window opened at,
+  within those limits: the host hands that side's least and greatest as one size
+  (`Host.limit_size`), and `ui.sdl3` makes a window held so both ways not resizable at all.
 - **Live resizing, every program's**: AppKit holds the main thread while a window's edge is
   dragged, so a program's loop gets nothing until the drag ends. `ui.app`'s `run` — and a
   program with its own loop, through `running`, `follow_resizes` and `step_running` — hands the
@@ -155,7 +162,8 @@ layer — implements the two traits; the display list is the whole contract.
   every one around it — the deepest under the pointer and its ancestors, as CSS's — `:focus`,
   `:focus-visible` (the focus came from Tab or assistive technology, not a click),
   `:focus-within` (it or something in it has the focus), `:checked` (a ticked checkbox), and
-  `:disabled`/`:enabled` (a control, by `Node.disabled_if`). A selector puts them on a compound
+  `:read-only`/`:read-write` (a text field), and `:disabled`/`:enabled` (a control, by
+  `Node.disabled_if`). A selector puts them on a compound
   (`Button.primary:hover`, `:hover` alone) or a part (`Slider:hover::thumb`, the component's;
   `Slider::thumb:active`, the part's), each — like a class — adding 10 to its specificity.
   **A class is only ever the program's**: the framework adds none, and a class named `hover` is
@@ -164,6 +172,10 @@ layer — implements the two traits; the display list is the whole contract.
   like any element, and gives up the focus or press it held when it becomes disabled. A focused control gets
   a ring in the theme's `focus` colour. A control's insides are parts (`Checkbox::box`,
   `Slider::thumb`, `TextInput::placeholder`); `control_rules` gives a theme its defaults.
+- **A read-only field** (`FieldSpec.read_only`, `read_only_input(value)`, lui's `readonly`) is
+  HTML's `readonly`: focused, its caret moved, selected and copied, but typing, deleting,
+  cutting, pasting, undo and an assistive technology's new value raise no edit, and it needs
+  no `on_edit` (`read_only_input` gives it one that is never called).
 - **The keyboard**: Tab/Shift-Tab through the controls in the tree's order, wrapping; Space
   and Enter press; the arrows, Page Up/Down, Home and End move a slider; a field edits by rune
   (not yet grapheme cluster), by word with Alt (Control off a Mac), to the ends with Command or
@@ -264,6 +276,10 @@ layer — implements the two traits; the display list is the whole contract.
   `TestRun_UiMediaQueries` breakpoints, a media rule against specificity, `not` and a comma,
   and a host resized within a breakpoint (given back) and across one (relaid out);
   `TestRun_UiWindowSizeLimits` the window held to its least and greatest size;
+  `TestRun_UiWindowResizeAxes` a side, then both, held from resizing;
+  `TestRun_UiWindowFitsAShrinkingFlexItem` a row whose field asks `min-width: 0` fitting its
+  window, and overflowing it without;
+  `TestLui_UiTargetWindowSize` the markup's `<window width height resize resize_x resize_y>`;
   `TestRun_UiLiveResize` a drag redrawing at each new size from inside the wait.
   `TestRun_UiEffectsInTheCascade` the effects' order and a compound selector and hover through a
   child; `TestRun_UiFallbackShadowsAndGradients` the fallback's pixels; `TestRun_UiGpuReadback`
@@ -275,5 +291,7 @@ layer — implements the two traits; the display list is the whole contract.
   named list against `all`, an opacity fading a child, no layout for paint-only properties and
   idle on arrival; `TestRun_UiTransitionsDrawOnlyWhileMoving` the host's frames;
   `TestLui_UiTargetTransitions` the markup's.
+  `TestRun_UiPseudoClasses` the states; `TestRun_UiReadOnlyField` a read-only field;
+  `TestLui_UiTargetReadOnlyField` the markup's `readonly`.
   `TestRun_UiFlex` and `TestRun_UiGrid` hold flex and grid to hand-worked CSS results, child
   rect by child rect; `TestLui_UiTargetFlexAndGrid` the markup's layout properties.
