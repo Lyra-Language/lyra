@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -328,7 +327,7 @@ func TestCollector_CollectsFromSourceIntoTheGoldens(t *testing.T) {
 			if err := os.WriteFile(source, []byte(c.source), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			got, err := exec.Command(bin, source).Output()
+			got, err := command(t, bin, source).Output()
 			if err != nil {
 				t.Fatalf("the collector exited non-zero on %q: %v", c.source, err)
 			}
@@ -360,7 +359,7 @@ func TestCollector_SkipsWhatItDoesNotYetCollect(t *testing.T) {
 	if err := os.WriteFile(source, []byte(program), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := exec.Command(bin, source).Output()
+	got, err := command(t, bin, source).Output()
 	if err != nil {
 		t.Fatalf("the collector exited non-zero: %v", err)
 	}
@@ -385,7 +384,7 @@ func TestCollector_ATopLevelCommentIsNotAStatement(t *testing.T) {
 		[]byte("// a leading comment\nlet a = 1\n// a trailing one\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := exec.Command(bin, source).Output()
+	got, err := command(t, bin, source).Output()
 	if err != nil {
 		t.Fatalf("the collector exited non-zero: %v", err)
 	}

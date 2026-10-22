@@ -27,8 +27,9 @@ import (
 // ±30 and 0 minutes around the readings either side, in *wall-clock* arithmetic — which is
 // what lands inside a 30-minute gap (Lord Howe) as readily as a 60-minute one.
 func TestExample_DisambiguationMatchesPython(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	if _, err := os.Stat("/usr/share/zoneinfo"); err != nil {
 		t.Skip("no /usr/share/zoneinfo on this machine")
 	}
@@ -36,7 +37,7 @@ func TestExample_DisambiguationMatchesPython(t *testing.T) {
 	if err != nil {
 		t.Skip("python3 is not on PATH, and it is the oracle here")
 	}
-	if out, err := exec.Command(python, "-c", "import zoneinfo").CombinedOutput(); err != nil {
+	if out, err := command(t, python, "-c", "import zoneinfo").CombinedOutput(); err != nil {
 		t.Skipf("python3 has no zoneinfo: %s", out)
 	}
 
@@ -138,7 +139,7 @@ for line in sys.stdin:
 
 func runFeeding(t *testing.T, bin string, args []string, input string) string {
 	t.Helper()
-	cmd := exec.Command(bin, args...)
+	cmd := command(t, bin, args...)
 	cmd.Stdin = strings.NewReader(input)
 	out, err := cmd.Output()
 	if err != nil {
@@ -191,8 +192,9 @@ func localsAroundTransitions(loc *time.Location) []string {
 // Python says the same thing in its own idiom: a naive add and then localize is the
 // calendar rule, and `timedelta` on an aware datetime is the exact one.
 func TestExample_ZonedArithmeticMatchesPython(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	if _, err := os.Stat("/usr/share/zoneinfo"); err != nil {
 		t.Skip("no /usr/share/zoneinfo on this machine")
 	}

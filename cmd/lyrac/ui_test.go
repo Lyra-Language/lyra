@@ -28,6 +28,7 @@ import (
 // softens an edge (half a pixel either side of it) lands half a pixel out and a hairline
 // shows as two half-strength pixels. A GPU renderer keeps the half pixels.
 func TestRun_UiDrawsADisplayList(t *testing.T) {
+	t.Parallel()
 	frame := drawUiExample(t, filepath.Join(repoRoot(t), "examples", "ui", "shapes.lyra"))
 	if b := frame.Bounds(); b.Dx() != 360 || b.Dy() != 240 {
 		t.Fatalf("the frame is %dx%d, want 360x240 (one pixel a unit)", b.Dx(), b.Dy())
@@ -91,7 +92,8 @@ func TestRun_UiDrawsADisplayList(t *testing.T) {
 // two contours and a fan, a border four contours and three bands, every index in range,
 // and nothing at all for an empty rectangle, a clear colour or a border of no width.
 func TestRun_UiGeometry(t *testing.T) {
-	t.Setenv("LYRA_STD", repoRoot(t))
+	t.Parallel()
+	setenv(t, "LYRA_STD", repoRoot(t))
 	src := filepath.Join(t.TempDir(), "main.lyra")
 	if err := os.WriteFile(src, []byte(`import ui.draw.{ Rect, Radii, Point, Color, rgb, rgba, radius }
 import ui.tess.{ Mesh, fill, border, quad }
@@ -163,18 +165,18 @@ func drawUiExample(t *testing.T, src string) image.Image {
 // printed as well — skipping too where it found no font ("no font").
 func drawUiExampleWith(t *testing.T, src string, extra ...string) (image.Image, string) {
 	t.Helper()
-	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
 		t.Skip("no SDL3")
 	}
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "LYRA_STD", repoRoot(t))
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "ui")
 	if _, stderr, code := captureRun(t, "build", "-o", bin, src); code != 0 {
 		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
 	}
 	shot := filepath.Join(dir, "frame.png")
-	cmd := exec.Command(bin, append([]string{"--frames", "1", "--png", shot}, extra...)...)
-	cmd.Env = append(os.Environ(), "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+	cmd := command(t, bin, append([]string{"--frames", "1", "--png", shot}, extra...)...)
+	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
 	out, err := cmd.CombinedOutput()
 	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 &&
 		strings.Contains(string(out), "SDL could not") {
@@ -216,7 +218,7 @@ func near(a, b [3]int, tolerance int) bool {
 // through `ui.text`, whether or not a program draws any text.
 func skipWithoutText(t *testing.T) {
 	t.Helper()
-	if err := exec.Command("pkg-config", "--exists", "harfbuzz", "freetype2").Run(); err != nil {
+	if err := command(t, "pkg-config", "--exists", "harfbuzz", "freetype2").Run(); err != nil {
 		t.Skip("no HarfBuzz or FreeType")
 	}
 }
@@ -225,7 +227,7 @@ func skipWithoutText(t *testing.T) {
 func runUiProgram(t *testing.T, program string) string {
 	t.Helper()
 	skipWithoutText(t)
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "LYRA_STD", repoRoot(t))
 	src := filepath.Join(t.TempDir(), "main.lyra")
 	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
 		t.Fatal(err)
@@ -245,6 +247,7 @@ func runUiProgram(t *testing.T, program string) string {
 // element's; centring; a row's child overflowing its width but held to its height; and a
 // scroll moving its content up by the offset, clipped, never past the content's end.
 func TestRun_UiLayout(t *testing.T) {
+	t.Parallel()
 	got := runUiProgram(t, `import ui.draw.{ Size }
 import ui.text.{ fonts_new }
 import ui.style.{ Style, insets }
@@ -339,6 +342,7 @@ constrain 20 0 2 0
 // and a themed subtree takes its theme's text colour. Each rule sets a different gray, so the
 // gray an element ends with names the rule that won.
 func TestRun_UiCascade(t *testing.T) {
+	t.Parallel()
 	got := runUiProgram(t, `import ui.draw.{ Size, Color }
 import ui.text.{ fonts_new }
 import ui.style.{ Style, Sheet, Rule, Theme, light_theme, dark_theme, specificity }
@@ -454,6 +458,7 @@ dark: 242 14 1 false
 // accent; a paragraph narrower than its text breaks into lines; and the dark-themed card is
 // that theme's surface with light text on it.
 func TestRun_UiLaysOutAScreen(t *testing.T) {
+	t.Parallel()
 	skipWithoutText(t)
 	frame, out := drawUiExampleWith(t, filepath.Join(repoRoot(t), "examples", "ui", "settings.lyra"), "--boxes")
 	if b := frame.Bounds(); b.Dx() != 420 || b.Dy() != 560 {
@@ -569,6 +574,7 @@ type uiBox struct{ x, y, w, h float64 }
 // FreeType's public layout fixes for an LP64 machine; this holds them to a C compiler's
 // `offsetof` against the FreeType installed here.
 func TestFreetypeOffsets(t *testing.T) {
+	t.Parallel()
 	skipWithoutText(t)
 	cc := os.Getenv("LYRA_CC")
 	if cc == "" {
@@ -577,7 +583,7 @@ func TestFreetypeOffsets(t *testing.T) {
 	if _, err := exec.LookPath(cc); err != nil {
 		t.Skipf("no %s", cc)
 	}
-	flags, err := exec.Command("pkg-config", "--cflags", "freetype2").Output()
+	flags, err := command(t, "pkg-config", "--cflags", "freetype2").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -599,10 +605,10 @@ int main(void) {
 	}
 	bin := filepath.Join(dir, "offsets")
 	args := append(strings.Fields(string(flags)), src, "-o", bin)
-	if out, err := exec.Command(cc, args...).CombinedOutput(); err != nil {
+	if out, err := command(t, cc, args...).CombinedOutput(); err != nil {
 		t.Fatalf("compiling: %v\n%s", err, out)
 	}
-	measured, err := exec.Command(bin).Output()
+	measured, err := command(t, bin).Output()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -635,6 +641,7 @@ int main(void) {
 // holding the accent a gap inside the border, its corners less round by the inset. **Roles and labels**: each control's role, and its
 // label its visible text unless it was given one.
 func TestRun_UiInteraction(t *testing.T) {
+	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ sandbox, run }
 import ui.script.{ ScriptPlatform, script_platform, parse_script }
 import ui.interact.{ ui_new, find }
@@ -904,20 +911,21 @@ roles group '' | text 'Title' | button 'Save' | text 'Save' | checkbox 'Loud' | 
 // the checkbox and tick it with Space, Tab to the slider and step it twice, Tab to Submit and
 // press Enter — leaves the state a user would have, and the last frame is drawn.
 func TestRun_UiFormFromTheKeyboard(t *testing.T) {
+	t.Parallel()
 	skipWithoutText(t)
-	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
 		t.Skip("no SDL3")
 	}
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "LYRA_STD", repoRoot(t))
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "form")
 	if _, stderr, code := captureRun(t, "build", "-o", bin, filepath.Join(repoRoot(t), "examples", "ui", "form.lyra")); code != 0 {
 		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
 	}
 	shot := filepath.Join(dir, "form.png")
-	cmd := exec.Command(bin, "--script",
+	cmd := command(t, bin, "--script",
 		"Tab 'Ada' Tab 'ada@example.com' Tab Space Tab Right Right Tab Enter", "--png", shot)
-	cmd.Env = append(os.Environ(), "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
 	out, err := cmd.CombinedOutput()
 	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 &&
 		strings.Contains(string(out), "SDL could not") {
@@ -997,7 +1005,8 @@ result: Thanks, Ada: ada@example.com, with the newsletter, volume 7.
 // own event into the program's. **`QuitApp`** ends the program before the script does, and a
 // web address asked for is opened.
 func TestRun_UiCommandsAndSubscriptions(t *testing.T) {
-	t.Setenv("UI_TMP", t.TempDir())
+	t.Parallel()
+	setenv(t, "UI_TMP", t.TempDir())
 	got := runUiProgram(t, `import ui.app.{
   App,
   Command,
@@ -1171,21 +1180,22 @@ frames 8 over 100ms; clock 2100; script 21 of 23; opened https://example.com
 // the slider stepped, a swatch picked, Sound turned off, a reset asked for and confirmed, and
 // the notice it showed cleared by its timer two seconds on.
 func TestRun_UiComponentsPort(t *testing.T) {
+	t.Parallel()
 	skipWithoutText(t)
-	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
 		t.Skip("no SDL3")
 	}
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "LYRA_STD", repoRoot(t))
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "components")
 	if _, stderr, code := captureRun(t, "build", "-o", bin, filepath.Join(repoRoot(t), "examples", "ui", "components.lyra")); code != 0 {
 		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
 	}
-	cmd := exec.Command(bin, "--script",
+	cmd := command(t, bin, "--script",
 		"Tab Tab Tab Enter Tab Tab Tab 'Ada' Tab Enter Tab Right Right Tab Tab Enter Tab Tab Space Tab Tab Enter Shift+Tab Shift+Tab Enter wait:2500",
 		"--png", filepath.Join(dir, "end.png"), "--save-to", filepath.Join(dir, "name.txt"))
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
 	out, err := cmd.CombinedOutput()
 	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 &&
 		strings.Contains(string(out), "SDL could not") {
@@ -1218,6 +1228,7 @@ quit: false
 // everything laid out once; then that again, given back whole. **An idle host** draws once and
 // then waits through fifteen seconds drawing nothing, until a key — and draws once more.
 func TestRun_UiCacheAndIdle(t *testing.T) {
+	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ App, Command, Subscription, host_of }
 import ui.script.{ timed_platform, Waited, Played }
 import ui.backend.{ Renderer, KeyPressed, Tab, Modifiers }
@@ -1323,13 +1334,14 @@ idle: 4 passes over 15000 ms, 2 frames drawn, 3 layouts
 // stays over it — a third call, not merged into the box under the label. The pixel tests above
 // hold that batching draws what it drew before.
 func TestRun_UiBatchesGeometryCalls(t *testing.T) {
+	t.Parallel()
 	skipWithoutText(t)
-	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
 		t.Skip("no SDL3")
 	}
-	t.Setenv("SDL_VIDEODRIVER", "dummy")
-	t.Setenv("SDL_RENDER_DRIVER", "software")
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "SDL_VIDEODRIVER", "dummy")
+	setenv(t, "SDL_RENDER_DRIVER", "software")
+	setenv(t, "LYRA_STD", repoRoot(t))
 	src := filepath.Join(t.TempDir(), "main.lyra")
 	if err := os.WriteFile(src, []byte(`import ui.sdl3
 import ui.sdl3.{ geometry_calls }
@@ -1407,6 +1419,7 @@ overlapping: 3 ops, 3 calls
 // stepped twice and set outright, Send pressed — the events the keyboard would raise — and
 // an action for an element no longer there ignored.
 func TestRun_UiAccessibilityTree(t *testing.T) {
+	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ sandbox, host_of }
 import ui.script.{ script_platform, ScriptPlatform }
 import ui.backend.{ AxWindow, AxGroup, AxLabel, AxImage, AxButton, AxCheckbox, AxSlider, AxTextInput, AxScroll, AxContainer, Renderer, InputEvent, AccessAction, AccessTree, AccessNode, AxSetValue, AxClick, AxIncrement, AxFocus, AxSetNumber }
@@ -1546,10 +1559,11 @@ set number: volume 9
 // node's position and size double, at 1 they stay. Given points instead, VoiceOver's
 // highlight was half size on a Retina display (10/21).
 func TestRun_UiAccessBoundsArePixels(t *testing.T) {
-	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+	t.Parallel()
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
 		t.Skip("no SDL3")
 	}
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "LYRA_STD", repoRoot(t))
 	src := filepath.Join(t.TempDir(), "main.lyra")
 	if err := os.WriteFile(src, []byte(`import ui.sdl3.{ access_bounds }
 import ui.draw.{ Rect }
@@ -1584,6 +1598,7 @@ let main = () -> u8 => {
 // and wrap-reverse; order; row-reverse; a column of fixed height whose item grows; align-items
 // center; and the automatic least size — an item no narrower than its min-content.
 func TestRun_UiFlex(t *testing.T) {
+	t.Parallel()
 	got := runUiProgram(t, `import ui.draw.{ Size }
 import ui.text.{ fonts_new, Fonts }
 import ui.style.{
@@ -1703,6 +1718,7 @@ automatic least (80x20): words@0,0 60x20 x@60,0 50x10
 // items with lines given beside auto-placed ones; minmax(100px, 1fr) wide, and narrower than
 // its least; a column flow; an item centred in its cell; and fr rows sharing a fixed height.
 func TestRun_UiGrid(t *testing.T) {
+	t.Parallel()
 	got := runUiProgram(t, `import ui.draw.{ Size }
 import ui.text.{ fonts_new, Fonts }
 import ui.style.{
@@ -1820,6 +1836,7 @@ fr rows (300x100): a@0,0 300x25 b@0,25 300x75
 // cache (only the root and column are laid out), and crossing min-width 500 or 800 relays the
 // whole grid out at its new columns.
 func TestRun_UiMediaQueries(t *testing.T) {
+	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ host_of, sandbox }
 import ui.script.{ timed_platform, Played }
 import ui.backend.{ Renderer, Resized, DarkMode }
@@ -1921,6 +1938,7 @@ resized to 300x500: 1 columns, heights 10 10 10 10, laid out 7, given back 0
 // pass, and ScriptPlatform holds its resize steps to them as a window would be held, each
 // side on its own: below the least width and above the greatest, then within both.
 func TestRun_UiWindowSizeLimits(t *testing.T) {
+	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ App, host_of, sandbox }
 import ui.script.{ timed_platform, Played }
 import ui.backend.{ Renderer, Resized }
@@ -1978,9 +1996,10 @@ let view = pure (_: i64) -> Node<NoEvent> => sized::<NoEvent>(None, None)
 // a window (the demo froze while its edge was dragged, 10/21). And controls that fill their
 // width are measured at CONTROL_WIDTH in a flex row, never an unbounded width.
 func TestRun_UiResizeSettles(t *testing.T) {
+	t.Parallel()
 	skipWithoutText(t)
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 	view, err := os.ReadFile(filepath.Join(root, "examples", "ui", "layouts_view.lyra"))
 	if err != nil {
@@ -2070,14 +2089,14 @@ let main = () -> u8 => {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, filepath.Join(dir, "stress")).CombinedOutput()
+	out, err := commandContext(t, ctx, filepath.Join(dir, "stress")).CombinedOutput()
 	if ctx.Err() != nil {
 		t.Fatalf("resizing the demo did not settle within a minute:\n%s", out)
 	}
 	if err != nil || !strings.Contains(string(out), "done: 1734 passes") {
 		t.Errorf("resizing the demo: %v\n%s", err, out)
 	}
-	out, err = exec.Command(filepath.Join(dir, "controls")).CombinedOutput()
+	out, err = command(t, filepath.Join(dir, "controls")).CombinedOutput()
 	if want := "300: 0+160 160+160 320+0\n1000: 0+160 160+160 320+100\n"; err != nil || string(out) != want {
 		t.Errorf("controls in a flex row: %v\ngot\n%s\nwant\n%s", err, out, want)
 	}
@@ -2088,13 +2107,14 @@ let main = () -> u8 => {
 // is red at its left, blue at its right and purple between; a radial one is white in its
 // middle. (The exact falloff is ui.gpu's, tested against the Gaussian in gpu_test.go.)
 func TestRun_UiFallbackShadowsAndGradients(t *testing.T) {
+	t.Parallel()
 	skipWithoutText(t)
-	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
 		t.Skip("no SDL3")
 	}
-	t.Setenv("SDL_VIDEODRIVER", "dummy")
-	t.Setenv("SDL_RENDER_DRIVER", "software")
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "SDL_VIDEODRIVER", "dummy")
+	setenv(t, "SDL_RENDER_DRIVER", "software")
+	setenv(t, "LYRA_STD", repoRoot(t))
 	src := filepath.Join(t.TempDir(), "main.lyra")
 	if err := os.WriteFile(src, []byte(`import ui.sdl3
 import ui.sdl3.{ capture }
@@ -2187,6 +2207,7 @@ let box = pure (style: Style) -> Node<NoEvent> =>
 // replacing the whole shadow list; and hovering the element inside the second card hovers the
 // card, as CSS's :hover reaches ancestors.
 func TestRun_UiEffectsInTheCascade(t *testing.T) {
+	t.Parallel()
 	got := runUiProgram(t, `import ui.draw.{
   Point,
   Size,
@@ -2320,10 +2341,11 @@ hover #/0/1/0:
 // in a layer blurred by 8 is grey at its edge, symmetric either side, black within, white
 // clear of it.
 func TestRun_UiGpuReadback(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" {
 		t.Skip("ui.gpu's shaders are Metal's")
 	}
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "LYRA_STD", repoRoot(t))
 	src := filepath.Join(t.TempDir(), "main.lyra")
 	if err := os.WriteFile(src, []byte(`import ui.gpu
 import ui.gpu.{ keep_frames, read_frame }
@@ -2423,6 +2445,7 @@ let main = () -> u8 => {
 // dragged, and the running window draws a frame laid out at the new size there and then — the
 // same size twice draws once — with no input reaching the loop.
 func TestRun_UiLiveResize(t *testing.T) {
+	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ sandbox, running, follow_resizes, step_running }
 import ui.script.{ timed_platform, Dragged, Waited, Step }
 import ui.backend.{ Renderer }
@@ -2485,6 +2508,7 @@ pass 4: 3 frames, last at 520x300, root 520 wide, 3 drags
 // axes bubbling from the innermost scroller that can move to the window, a thumb dragged,
 // a track paged, the keyboard, Tab revealing what it focuses, and a clamp on resize.
 func TestRun_UiOverflow(t *testing.T) {
+	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ sandbox, running, step_running }
 import ui.script.{ timed_platform, parse_steps }
 import ui.backend.{ Renderer }

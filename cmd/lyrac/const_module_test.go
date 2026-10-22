@@ -24,8 +24,9 @@ import (
 // comments on both say why: a bare name is one slot for the whole program, and a private
 // declaration is not the whole program's.
 func TestExec_PrivateConstsDoNotCollideAcrossModules(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 	files := map[string]string{
 		"lib.lyra": `module lib

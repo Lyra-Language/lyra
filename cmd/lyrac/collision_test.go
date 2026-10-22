@@ -14,8 +14,9 @@ import (
 // meet one-sidedly — by the looker's mask against the other's layers — and a collider
 // hits only the map's tiles on a layer it looks for.
 func TestRun_CollisionShapesOverlap(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	src := filepath.Join(t.TempDir(), "main.lyra")
 	if err := os.WriteFile(src, []byte(`import std.genesis.collision
 import std.genesis.collision.{ Shape, Collider }

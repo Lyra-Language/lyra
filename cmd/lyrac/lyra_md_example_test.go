@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -19,8 +18,9 @@ import (
 // at the span level what is *not* a delimiter, which is most of the difficulty of
 // emphasis and all of the reason `snake_case_names` survives a paragraph intact.
 func TestExample_LyraMdRendersBlocks(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	bin := filepath.Join(t.TempDir(), "lyra-md")
 	if _, stderr, code := captureRun(t, "build", "-o", bin,
 		filepath.Join(root, "examples", "lyra-md", "lyra-md.lyra")); code != 0 {
@@ -32,7 +32,7 @@ func TestExample_LyraMdRendersBlocks(t *testing.T) {
 		if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := exec.Command(bin, path).Output()
+		out, err := command(t, bin, path).Output()
 		if err != nil {
 			t.Fatalf("rendering failed: %v", err)
 		}
@@ -137,7 +137,7 @@ func TestExample_LyraMdRendersBlocks(t *testing.T) {
 	}
 
 	// A missing file is reported against the name the user typed, and exits 1.
-	out, err := exec.Command(bin, filepath.Join(t.TempDir(), "nope.md")).CombinedOutput()
+	out, err := command(t, bin, filepath.Join(t.TempDir(), "nope.md")).CombinedOutput()
 	if err == nil {
 		t.Errorf("a missing file exited 0")
 	}

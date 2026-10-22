@@ -24,8 +24,9 @@ import (
 // decoding of the same bytes. An interlaced image, a chunk with a bad CRC and a file that
 // is not a PNG are refused, each saying why.
 func TestRun_PngReadsEveryColourType(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 
 	const w, h = 7, 5
@@ -323,7 +324,8 @@ func abs(v int) int {
 // rows run past a stored deflate block's 65,535 bytes, so the stream is several blocks; and
 // it refuses pixels that are not the size it is told.
 func TestRun_PngWritesWhatGoReads(t *testing.T) {
-	t.Setenv("LYRA_STD", repoRoot(t))
+	t.Parallel()
+	setenv(t, "LYRA_STD", repoRoot(t))
 	dir := t.TempDir()
 	at := func(x, y int) [4]uint8 {
 		return [4]uint8{uint8(x*7 + y), uint8(255 - x - y*3), uint8(x * y), uint8(40 + x + y)}
@@ -397,7 +399,8 @@ let save = (w: i64, h: i64, path: string) -> void => {
 // std.base64 agrees with Go's encoding/base64 both ways on every length round a group of
 // three, and refuses what is not base64, saying where.
 func TestRun_Base64AgreesWithGo(t *testing.T) {
-	t.Setenv("LYRA_STD", repoRoot(t))
+	t.Parallel()
+	setenv(t, "LYRA_STD", repoRoot(t))
 	var inputs [][]byte
 	for n := 0; n <= 9; n++ {
 		b := make([]byte, n)

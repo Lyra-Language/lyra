@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -28,9 +27,10 @@ func genesisToolchainOrSkip(t *testing.T) {
 }
 
 func TestGenesis_BuildsARunnableROM(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	out := filepath.Join(t.TempDir(), "backdrop.bin")
 	_, stderr, code := captureRun(t, "build", "-o", out, filepath.Join(root, "examples", "genesis", "backdrop.lyra"))
 	if code != 0 {
@@ -57,9 +57,10 @@ func TestGenesis_BuildsARunnableROM(t *testing.T) {
 // d0, every argument after it a register off. The backend passes and returns every
 // aggregate through memory there; the screen is green when each tuple is right.
 func TestGenesis_AnAggregateCallIsRightWhenNotInlined(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "lyra.toml"), []byte("target = \"genesis\"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -119,9 +120,10 @@ let main = () -> void => {
 }
 
 func TestGenesis_APanicTurnsTheScreenRed(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "lyra.toml"), []byte("target = \"genesis\"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -151,9 +153,10 @@ let main = () -> void => {
 // 64-bit division the 68000 has no instruction for: the ROM must link it from
 // compiler-rt and still reach the panic screen.
 func TestGenesis_AnIndexOutOfBoundsTurnsTheScreenRed(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "lyra.toml"), []byte("target = \"genesis\"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -181,9 +184,10 @@ let main = () -> void => {
 // A heap allocation the front end does not see is still refused, by the link, with the
 // reason — not a linker's "undefined symbol".
 func TestGenesis_AnAllocationIsExplainedAtTheLink(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "lyra.toml"), []byte("target = \"genesis\"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -208,9 +212,10 @@ let main = () -> void => unsafe { port().write_volatile(table[1]) }
 // the hero stands in the middle with the pad let go, and ends pressed into the
 // bottom-right corner with right and down held (the edge stop makes the place exact).
 func TestGenesis_TheWalkerWalks(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	out := filepath.Join(t.TempDir(), "walker.bin")
 	if _, stderr, code := captureRun(t, "build", "-o", out, filepath.Join(root, "examples", "genesis", "walker.lyra")); code != 0 {
 		t.Fatalf("build exited %d: %s", code, stderr)
@@ -258,8 +263,8 @@ func runROM(t *testing.T, romPath, frames, hold string) screen {
 	if hold != "" {
 		args = append(args, "--hold", hold)
 	}
-	cmd := exec.Command(emulator, args...)
-	cmd.Env = append(os.Environ(), "SDL_VIDEODRIVER=dummy")
+	cmd := command(t, emulator, args...)
+	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("sheliak: %v\n%s", err, out)
 	}
@@ -320,9 +325,10 @@ func screenOf(t *testing.T, romPath string) string {
 // turns from red to blue only if the runtime's vector reaches the handler, the handler
 // preserves what it interrupts, and the shared variable is read afresh each time round.
 func TestGenesis_AVBlankHandlerRuns(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	out := filepath.Join(t.TempDir(), "vblank.bin")
 	if _, stderr, code := captureRun(t, "build", "-o", out, filepath.Join(root, "examples", "genesis", "vblank.lyra")); code != 0 {
 		t.Fatalf("build exited %d: %s", code, stderr)
@@ -340,16 +346,17 @@ func TestGenesis_AVBlankHandlerRuns(t *testing.T) {
 // first, linking last — and, on a first build into an empty cache, one for each runtime
 // object compiled, which a second build reads from the cache instead.
 func TestGenesis_ProgressReportsEachStage(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	// An empty cache, wherever os.UserCacheDir looks on this system — the toolchain,
 	// found under the real home by default, named first.
 	tc, _ := findM68kToolchain()
-	t.Setenv("LYRA_M68K_LLVM", tc.root)
+	setenv(t, "LYRA_M68K_LLVM", tc.root)
 	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	setenv(t, "HOME", home)
+	setenv(t, "XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 	src := filepath.Join(root, "examples", "genesis", "backdrop.lyra")
 	out := filepath.Join(t.TempDir(), "backdrop.bin")
 	stages := func() []string {
@@ -400,9 +407,10 @@ func TestGenesis_ProgressReportsEachStage(t *testing.T) {
 // 0001 fixes; without it the screen is red, the table's first colour (09/30, found by
 // Vega's animations).
 func TestGenesis_AVariableIndexIntoALocalArray(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "lyra.toml"), []byte("target = \"genesis\"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -461,9 +469,10 @@ let find = (first: u16, name: u16) -> u16 => {
 // the screen's pixels 8–16 across and 0–8 down — and the cells past the map's edge must
 // be blank, so nothing else is drawn.
 func TestGenesis_WritePlaneShowsAMap(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "lyra.toml"), []byte("target = \"genesis\"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -515,6 +524,7 @@ let main = () -> void => {
 // be green — tile 1's colour, set only once a later blank has come, so an interrupt held
 // and never let go fails too, the screen left red.
 func TestGenesis_APlaneDrawnUnderTheVBlankInterruptKeepsEveryCell(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	rom := genesisProgram(t, "race", `import std.genesis.vdp
 import std.genesis.sprites
@@ -567,7 +577,7 @@ let main = () -> void => {
 func genesisProgram(t *testing.T, name, source string) string {
 	t.Helper()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "lyra.toml"), []byte("target = \"genesis\"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -590,6 +600,7 @@ func genesisProgram(t *testing.T, name, source string) string {
 // a column written as it came into view puts there; (62, 35), below its first 32 rows, only
 // a row written as it came into view — each across the plane's wrap.
 func TestGenesis_ACameraScrollsAMapBiggerThanAPlane(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	out := genesisProgram(t, "scroll", `import std.genesis.vdp
 import std.genesis.camera
@@ -633,6 +644,7 @@ let main = () -> void => {
 // default, the middle third. A zone the game sets moves that edge, and one narrower than
 // the sprite keeps it centred.
 func TestGenesis_TheCameraFollowsInTheMiddleThird(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	for _, c := range []struct {
 		name string
@@ -686,6 +698,7 @@ let main = () -> void => {
 // then up to y 0. (10, 20) comes into view only by a column written going left, (30, 5)
 // only by a row written going up — neither was in the plane the view started with.
 func TestGenesis_ACameraScrollsBack(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	out := genesisProgram(t, "back", `import std.genesis.vdp
 import std.genesis.camera
@@ -732,6 +745,7 @@ let main = () -> void => {
 // not a sprite that happens to have stopped. Then by colliders (10/02): a tile on a layer
 // the sprite's collider looks for stops it, and one on another layer does not.
 func TestGenesis_ASolidTileStopsASprite(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	// The collider cases: the wall's tile is on layer 2 (water); a collider looking for it
 	// stops there, one looking only for layer 1 (walls) walks through.
@@ -832,6 +846,7 @@ func spriteBounds(s screen, color string) (x0, y0, x1, y1 int) {
 // and an i16 multiply past i16, whose overflow flag that backend answered "never" for, so
 // it wrapped in silence. The first must run (green), the second trap (the runtime's red).
 func TestGenesis_CheckedMultipliesRunOnThe68000(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	for _, c := range []struct{ name, body, want string }{
 		{"four i32 multiplies run", `let zero = i32(pad.read(1))
@@ -868,6 +883,7 @@ let main = () -> void => {
 // thousands of cycles each) on operands of every width — divisors under 16 bits and past
 // them, signs both ways — and folds the answers into one word, which must be the host's.
 func TestGenesis_ArithmeticHelpersAgreeWithTheHost(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	seed := uint32(2463534242)
 	next := func() uint32 {
@@ -948,6 +964,7 @@ let word = (v: i64) -> u32 => u32(v & 0xFFFFFFFF)
 // TestGenesis_WriteCellSetsOneCell puts one tile into plane A's cell (2, 1) with
 // vdp.write_cell: it must show at pixels 16–24 across and 8–16 down, and nothing else.
 func TestGenesis_WriteCellSetsOneCell(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	out := genesisProgram(t, "cell", `import std.genesis.vdp
 
@@ -976,6 +993,7 @@ let main = () -> void => {
 // A's own cell in that row is not shown at all — the window is drawn there instead. Where
 // a game keeps its score once plane A is a map (vdp.window_rows, 10/02).
 func TestGenesis_TheWindowDoesNotScroll(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	out := genesisProgram(t, "window", `import std.genesis.vdp
 
@@ -1015,6 +1033,7 @@ let main = () -> void => {
 // is another one, and the hero's position came out as garbage once his game grew stars
 // (10/01). Patch 0003 keeps the 16→32 extensions to data registers.
 func TestGenesis_NoExtendIntoAnAddressRegister(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	tc, err := findM68kToolchain()
 	if err != nil {
@@ -1036,7 +1055,7 @@ entry:
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	asm, err := exec.Command(tc.tool("llc"), "-mtriple=m68k-unknown-elf", "-mcpu=M68000", "-O2", ll, "-o", "-").CombinedOutput()
+	asm, err := command(t, tc.tool("llc"), "-mtriple=m68k-unknown-elf", "-mcpu=M68000", "-O2", ll, "-o", "-").CombinedOutput()
 	if err != nil {
 		t.Fatalf("llc: %v\n%s", err, asm)
 	}
@@ -1052,6 +1071,7 @@ entry:
 // count kept there read garbage and the music player ran past its buffer (10/16; seen once
 // LLVM inlined less, as a large game makes it).
 func TestGenesis_ARegisterStructReturnIsNotPopped(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	tc, err := findM68kToolchain()
 	if err != nil {
@@ -1079,7 +1099,7 @@ entry:
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	asm, err := exec.Command(tc.tool("llc"), "-mtriple=m68k-unknown-elf", "-mcpu=M68000", "-O2", ll, "-o", "-").CombinedOutput()
+	asm, err := command(t, tc.tool("llc"), "-mtriple=m68k-unknown-elf", "-mcpu=M68000", "-O2", ll, "-o", "-").CombinedOutput()
 	if err != nil {
 		t.Fatalf("llc: %v\n%s", err, asm)
 	}
@@ -1100,6 +1120,7 @@ entry:
 // the struct came back as whatever its slot held. The copies are LLVM's `llvm.memcpy` and
 // `llvm.memset` now, which take the target's own length (10/11).
 func TestGenesis_ALargeStructReturnsAndPassesThroughMemory(t *testing.T) {
+	t.Parallel()
 	genesisToolchainOrSkip(t)
 	out := genesisProgram(t, "large", `import std.genesis.vdp
 import std.genesis.pad

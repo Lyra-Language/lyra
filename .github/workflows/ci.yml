@@ -141,8 +141,9 @@ jobs:
       # runner's own numbers are the ones worth watching drift in — without -v
       # they are visible only on the run that already failed.
       #
-      # -timeout 30m: cmd/lyrac's ui tests each compile and link a whole program and run
-      # one at a time (t.Setenv forbids t.Parallel), past go test's default 10 minutes.
+      # -timeout 30m: headroom. cmd/lyrac's tests each compile and link a whole program;
+      # they run in parallel, but a runner has few cores and they once took the package
+      # past go test's default 10 minutes.
       - name: Test with coverage
         working-directory: lyra
         run: go test -v -timeout 30m -coverpkg=./... -coverprofile=cover.out ./...

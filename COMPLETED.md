@@ -9,6 +9,28 @@ Newest first.
 
 ## Dated log
 
+### 10/22/26 — `cmd/lyrac`'s tests run in parallel: 711 s to 179 s
+
+- **The package had become serial and slow.** About eighty tests set `LYRA_STD` with
+  `t.Setenv`, which changes the process's environment and so forbids `t.Parallel`, and
+  `captureRun` ran the compiler in-process with `os.Stdout` swapped — global either way. The
+  ui tests compile and link a whole program each (15–45 s), and the package reached 711 s on
+  this Mac (12 cores, user time ≈ wall time), past `go test`'s default ten minutes.
+- **lyrac now runs as a process of its own**: `captureRun` starts the test binary as lyrac
+  (`asLyrac`, the `LYRAC_TEST_AS_LYRAC` hook `TestMain` already had), with the test's own
+  environment. `setenv(t, …)` records a variable for what that test starts, and `command(t, …)`
+  carries it to the programs and tools it runs. 167 tests call `t.Parallel()`; the ones that
+  call the compiler in-process with the process's environment or swapped globals (`watch`,
+  `linkFlags`, `useColor`), the collector differential tests, and the Simulator's stay serial,
+  and Go runs those first. 179 s now (user 832 s).
+- **Coverage still counts**: under `-cover`, the lyrac processes get `GOCOVERDIR` set to the
+  test binary's own `-test.gocoverdir`, whose files `go test` merges into the profile.
+- **One race found on the way**: Genesis's object cache wrote its intermediate `.ll` and
+  `.tmp` under names shared by every build of the same source, so two builds at once could
+  write each other's; they are each build's own now (`scratchFile`), the object landing by
+  rename as before.
+- CI keeps `-timeout 30m` as headroom: a runner has few cores.
+
 ### 10/21/26 — `ui/`: CSS's overflow, scrollbars, and a window that scrolls
 
 - **Overflow is a style property per axis**, `overflow_x`/`overflow_y`, with CSS's five values,

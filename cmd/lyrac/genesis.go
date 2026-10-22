@@ -256,14 +256,23 @@ func cachedObject(tc m68kToolchain, source string, extra []string, compiling fun
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return rom.Object{}, err
 	}
-	ll := obj + ".ll"
+	// The steps' files are this build's own, so two builds of one source at once (tests in
+	// parallel) never write each other's; the object lands whole by rename.
+	ll, err := scratchFile(dir, filepath.Base(obj)+"-*.ll")
+	if err != nil {
+		return rom.Object{}, err
+	}
+	defer os.Remove(ll)
 	args := append([]string{"--target=m68k-unknown-elf", "-mcpu=68000", "-O2",
 		"-ffreestanding", "-fno-builtin", "-fno-common", "-S", "-emit-llvm"}, extra...)
 	if err := runTool(tc.tool("clang"), append(args, source, "-o", ll)...); err != nil {
 		return rom.Object{}, err
 	}
-	defer os.Remove(ll)
-	tmp := obj + ".tmp"
+	tmp, err := scratchFile(dir, filepath.Base(obj)+"-*.tmp")
+	if err != nil {
+		return rom.Object{}, err
+	}
+	defer os.Remove(tmp)
 	if err := runTool(tc.tool("llc"), append(append([]string{}, genesisFlags...), "-O2", ll, "-o", tmp)...); err != nil {
 		return rom.Object{}, err
 	}
@@ -272,6 +281,15 @@ func cachedObject(tc m68kToolchain, source string, extra []string, compiling fun
 	}
 	data, err := os.ReadFile(obj)
 	return rom.Object{Name: filepath.Base(source), Bytes: data}, err
+}
+
+// scratchFile is a new, empty file's path in dir, named by pattern (os.CreateTemp's).
+func scratchFile(dir, pattern string) (string, error) {
+	f, err := os.CreateTemp(dir, pattern)
+	if err != nil {
+		return "", err
+	}
+	return f.Name(), f.Close()
 }
 
 // runTool runs one toolchain step, its output becoming the error when it fails.

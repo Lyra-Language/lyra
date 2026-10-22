@@ -18,8 +18,9 @@ import (
 // The months are chosen for their edges: one starting on a Tuesday, one starting on the
 // grid's last column, and one whose first row is ISO week 53 of the *previous* year.
 func TestExample_CalendarPrintsAMonth(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	bin := filepath.Join(t.TempDir(), "calendar")
 	if _, stderr, code := captureRun(t, "build", "-o", bin,
 		filepath.Join(root, "examples", "calendar", "calendar.lyra")); code != 0 {
@@ -27,7 +28,7 @@ func TestExample_CalendarPrintsAMonth(t *testing.T) {
 	}
 	print := func(t *testing.T, date string) string {
 		t.Helper()
-		out, err := exec.Command(bin, "--print", date).Output()
+		out, err := command(t, bin, "--print", date).Output()
 		if err != nil {
 			t.Fatalf("--print %s: %v", date, err)
 		}
@@ -98,7 +99,7 @@ func TestExample_CalendarPrintsAMonth(t *testing.T) {
 		"2026-09-18T23:30 PT2H Late deploy\n"+
 		"2026-09-18T17:00 Ship it\n"+
 		"2026-09-20 Alice's birthday\n")
-	withEvents, err := exec.Command(bin, "--events", events, "--print", "2026-09-18").Output()
+	withEvents, err := command(t, bin, "--events", events, "--print", "2026-09-18").Output()
 	if err != nil {
 		t.Fatalf("--events: %v", err)
 	}
@@ -118,7 +119,7 @@ func TestExample_CalendarPrintsAMonth(t *testing.T) {
 	// The sample file shipped beside the example parses, so the command its header gives
 	// works — it is the first thing anyone trying the calendar runs.
 	sample := filepath.Join(root, "examples", "calendar", "events.txt")
-	if out, err := exec.Command(bin, "--events", sample, "--print", "2026-09-18").CombinedOutput(); err != nil ||
+	if out, err := command(t, bin, "--events", sample, "--print", "2026-09-18").CombinedOutput(); err != nil ||
 		!strings.Contains(string(out), "Release day") {
 		t.Errorf("examples/calendar/events.txt should load and show 18 September's events: %v\n%s", err, out)
 	}
@@ -134,7 +135,7 @@ func TestExample_CalendarPrintsAMonth(t *testing.T) {
 	} {
 		bad := filepath.Join(t.TempDir(), "bad.txt")
 		writeFile(t, bad, c.file)
-		out, err := exec.Command(bin, "--events", bad, "--print", "2026-09-18").CombinedOutput()
+		out, err := command(t, bin, "--events", bad, "--print", "2026-09-18").CombinedOutput()
 		if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 1 {
 			t.Errorf("%q should exit 1, got %v", c.file, err)
 		}
@@ -144,7 +145,7 @@ func TestExample_CalendarPrintsAMonth(t *testing.T) {
 	}
 
 	// A date that does not exist is a usage error, reported against what was typed.
-	out, err := exec.Command(bin, "--print", "2026-02-30").CombinedOutput()
+	out, err := command(t, bin, "--print", "2026-02-30").CombinedOutput()
 	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 2 {
 		t.Errorf("--print 2026-02-30 should exit 2, got %v", err)
 	}

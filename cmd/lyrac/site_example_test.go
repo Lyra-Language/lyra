@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,8 +21,9 @@ import (
 // page's title taken from its first heading, and is the walk the same walk `lyrafmt` does
 // (sorted, skipping dotfiles, not following links into itself).
 func TestExample_SiteRendersATree(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	bin := filepath.Join(t.TempDir(), "site")
 	if _, stderr, code := captureRun(t, "build", "-o", bin,
 		filepath.Join(root, "examples", "lyra-md", "site.lyra")); code != 0 {
@@ -64,7 +64,7 @@ func TestExample_SiteRendersATree(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "does", "not", "exist")
 	// **A broken link fails the build**, which is what makes this a checker as well as a
 	// builder: a site whose links do not resolve is the thing a reader notices first.
-	stdout, err := exec.Command(bin, source, out, "--title", "Lyra Docs").CombinedOutput()
+	stdout, err := command(t, bin, source, out, "--title", "Lyra Docs").CombinedOutput()
 	if err == nil {
 		t.Errorf("a site with a broken link exited 0:\n%s", stdout)
 	}
@@ -183,8 +183,9 @@ func TestExample_SiteRendersATree(t *testing.T) {
 // its **executable bit** (`std.io.is_executable`, over `access`), so a copied script still
 // runs — the rest of the mode still does not travel, for the `stat` reason `std.io` gives.
 func TestExample_SiteResolvesDirectoryLinks(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	bin := filepath.Join(t.TempDir(), "site")
 	if _, stderr, code := captureRun(t, "build", "-o", bin,
 		filepath.Join(root, "examples", "lyra-md", "site.lyra")); code != 0 {
@@ -218,7 +219,7 @@ func TestExample_SiteResolvesDirectoryLinks(t *testing.T) {
 	}
 
 	out := filepath.Join(t.TempDir(), "out")
-	stdout, err := exec.Command(bin, source, out, "--title", "Lyra Docs").CombinedOutput()
+	stdout, err := command(t, bin, source, out, "--title", "Lyra Docs").CombinedOutput()
 	// One broken link and one only: `nowhere/` names a directory with no index page.
 	if err == nil {
 		t.Errorf("a directory link that goes nowhere exited 0:\n%s", stdout)

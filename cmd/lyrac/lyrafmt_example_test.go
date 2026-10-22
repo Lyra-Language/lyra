@@ -36,7 +36,7 @@ func treeSitterEnv(t *testing.T) string {
 	if err != nil {
 		t.Skip("clang not found on PATH")
 	}
-	libdir, err := exec.Command("pkg-config", "--variable=libdir", "tree-sitter").Output()
+	libdir, err := command(t, "pkg-config", "--variable=libdir", "tree-sitter").Output()
 	if err != nil {
 		t.Skip("the tree-sitter runtime is not installed (pkg-config tree-sitter); brew install tree-sitter")
 	}
@@ -48,16 +48,16 @@ func treeSitterEnv(t *testing.T) string {
 	lib := t.TempDir()
 	for _, src := range []string{"parser.c", "scanner.c"} {
 		obj := filepath.Join(lib, strings.TrimSuffix(src, ".c")+".o")
-		if out, err := exec.Command(clang, "-O1", "-std=c11", "-c", filepath.Join(grammar, src), "-I", grammar, "-o", obj).CombinedOutput(); err != nil {
+		if out, err := command(t, clang, "-O1", "-std=c11", "-c", filepath.Join(grammar, src), "-I", grammar, "-o", obj).CombinedOutput(); err != nil {
 			t.Fatalf("compiling %s: %v\n%s", src, err, out)
 		}
 	}
-	if out, err := exec.Command("ar", "rcs", filepath.Join(lib, "libtree-sitter-lyra.a"),
+	if out, err := command(t, "ar", "rcs", filepath.Join(lib, "libtree-sitter-lyra.a"),
 		filepath.Join(lib, "parser.o"), filepath.Join(lib, "scanner.o")).CombinedOutput(); err != nil {
 		t.Fatalf("archiving the grammar: %v\n%s", err, out)
 	}
-	t.Setenv("LYRA_STD", root)
-	t.Setenv("LIBRARY_PATH", lib+string(os.PathListSeparator)+strings.TrimSpace(string(libdir)))
+	setenv(t, "LYRA_STD", root)
+	setenv(t, "LIBRARY_PATH", lib+string(os.PathListSeparator)+strings.TrimSpace(string(libdir)))
 	return root
 }
 
@@ -76,6 +76,7 @@ func buildLinkedToTreeSitter(t *testing.T, source string) string {
 }
 
 func TestExample_LyrafmtRoundTrips(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
 	bin := buildLyrafmt(t)
 	files := []string{
@@ -85,7 +86,7 @@ func TestExample_LyrafmtRoundTrips(t *testing.T) {
 		filepath.Join(root, "bindings", "treesitter", "treesitter.lyra"),
 	}
 	// With no rule in force the output is the input: `--check` finds nothing to change.
-	if out, err := exec.Command(bin, append([]string{"--roundtrip", "--check"}, files...)...).CombinedOutput(); err != nil {
+	if out, err := command(t, bin, append([]string{"--roundtrip", "--check"}, files...)...).CombinedOutput(); err != nil {
 		t.Fatalf("the round trip changed a file: %v\n%s", err, out)
 	}
 	// Every rule at once, on a file that breaks each of them: indentation (a wrapped
@@ -204,7 +205,7 @@ let raw_line = () -> string =>
   ` + bt + `starts a line` + bt + `
 let raw_tail = () -> string => #` + bt + `holds a ` + bt + ` backtick` + bt + `#
 `
-	got, err := exec.Command(bin, ugly).Output()
+	got, err := command(t, bin, ugly).Output()
 	if err != nil {
 		t.Fatalf("formatting failed: %v", err)
 	}
@@ -215,7 +216,7 @@ let raw_tail = () -> string => #` + bt + `holds a ` + bt + ` backtick` + bt + `#
 	if err := os.WriteFile(formatted, got, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(bin, "--check", formatted).CombinedOutput(); err != nil {
+	if out, err := command(t, bin, "--check", formatted).CombinedOutput(); err != nil {
 		t.Errorf("formatting is not a fixed point: %v\n%s", err, out)
 	}
 	// **The output must still be a program.** A formatter that rewrites a gap holding a
@@ -225,7 +226,7 @@ let raw_tail = () -> string => #` + bt + `holds a ` + bt + ` backtick` + bt + `#
 		t.Errorf("the formatted file no longer checks (exit %d):\n%s", code, stderr)
 	}
 	// Every file above is formatted already, so `--check` passes on all of them.
-	if out, err := exec.Command(bin, append([]string{"--check"}, files...)...).CombinedOutput(); err != nil {
+	if out, err := command(t, bin, append([]string{"--check"}, files...)...).CombinedOutput(); err != nil {
 		t.Errorf("--check on formatted files: %v\n%s", err, out)
 	}
 
@@ -258,7 +259,7 @@ let raw_tail = () -> string => #` + bt + `holds a ` + bt + ` backtick` + bt + `#
 	if err := os.Symlink(filepath.Join(tree, "sub"), filepath.Join(tree, "link")); err != nil {
 		t.Fatal(err)
 	}
-	walked, err := exec.Command(bin, "--check", tree).Output()
+	walked, err := command(t, bin, "--check", tree).Output()
 	if err == nil {
 		t.Errorf("--check over a tree needing changes exited 0")
 	}
@@ -270,7 +271,7 @@ let raw_tail = () -> string => #` + bt + `holds a ` + bt + ` backtick` + bt + `#
 	}
 	// **A path named on the command line is never filtered** — the convention every tool
 	// that skips dotfiles keeps. The skip is a rule about walking, not about the file.
-	named, err := exec.Command(bin, filepath.Join(tree, ".dotfile.lyra")).Output()
+	named, err := command(t, bin, filepath.Join(tree, ".dotfile.lyra")).Output()
 	if err != nil {
 		t.Fatalf("formatting a named dotfile: %v", err)
 	}
@@ -287,7 +288,7 @@ let raw_tail = () -> string => #` + bt + `holds a ` + bt + ` backtick` + bt + `#
 	if err := os.WriteFile(filepath.Join(tree, ".lyrafmtignore"), []byte(ignore), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ignored, err := exec.Command(bin, "--check", tree).Output()
+	ignored, err := command(t, bin, "--check", tree).Output()
 	if err == nil {
 		t.Errorf("--check over a tree still needing changes exited 0")
 	}
@@ -295,7 +296,7 @@ let raw_tail = () -> string => #` + bt + `holds a ` + bt + ` backtick` + bt + `#
 		t.Errorf("with .lyrafmtignore the walk reported:\n%s\nwant:\n%s", got, want)
 	}
 	// The ignored file, asked for by name.
-	askedFor, err := exec.Command(bin, filepath.Join(tree, "a.lyra")).Output()
+	askedFor, err := command(t, bin, filepath.Join(tree, "a.lyra")).Output()
 	if err != nil {
 		t.Fatalf("formatting an ignored file by name: %v", err)
 	}
@@ -315,6 +316,7 @@ let raw_tail = () -> string => #` + bt + `holds a ` + bt + ` backtick` + bt + `#
 // first version of this rule broke both, and the output — a `c` stranded at the end of a
 // line, a column of field names — is what sent it back.
 func TestExample_LyrafmtBreaksChains(t *testing.T) {
+	t.Parallel()
 	bin := buildLyrafmt(t)
 	cases := []struct{ name, src, want string }{
 		{
@@ -363,7 +365,7 @@ func TestExample_LyrafmtBreaksChains(t *testing.T) {
 			if err := os.WriteFile(path, []byte(c.src), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			got, err := exec.Command(bin, path).Output()
+			got, err := command(t, bin, path).Output()
 			if err != nil {
 				t.Fatalf("formatting: %v", err)
 			}
@@ -388,6 +390,7 @@ func TestExample_LyrafmtBreaksChains(t *testing.T) {
 // precedence at one indent — a formatter lying about grouping, which is worse than a long
 // line.
 func TestExample_LyrafmtBreaksConditions(t *testing.T) {
+	t.Parallel()
 	bin := buildLyrafmt(t)
 	cases := []struct{ name, src, want string }{
 		{
@@ -428,7 +431,7 @@ func TestExample_LyrafmtBreaksConditions(t *testing.T) {
 			if err := os.WriteFile(path, []byte(c.src), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			got, err := exec.Command(bin, path).Output()
+			got, err := command(t, bin, path).Output()
 			if err != nil {
 				t.Fatalf("formatting: %v", err)
 			}
@@ -454,6 +457,7 @@ func TestExample_LyrafmtBreaksConditions(t *testing.T) {
 // `└` and `┘`, three bytes each, and counting bytes made an 89-column line measure 93 and
 // broke it. The budget counts characters.
 func TestExample_LyrafmtBreaksAfterArrow(t *testing.T) {
+	t.Parallel()
 	bin := buildLyrafmt(t)
 	cases := []struct{ name, src, want string }{
 		{
@@ -503,7 +507,7 @@ func TestExample_LyrafmtBreaksAfterArrow(t *testing.T) {
 			if err := os.WriteFile(path, []byte(c.src), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			got, err := exec.Command(bin, path).Output()
+			got, err := command(t, bin, path).Output()
 			if err != nil {
 				t.Fatalf("formatting: %v", err)
 			}
@@ -520,13 +524,14 @@ func TestExample_LyrafmtBreaksAfterArrow(t *testing.T) {
 // continuation of the first. Found formatting `bindings.imgui`, the first module to link
 // two libraries.
 func TestExample_LyrafmtAttributesStayFlush(t *testing.T) {
+	t.Parallel()
 	bin := buildLyrafmt(t)
 	src := "@link(\"a\")\n@link(\"b\", pkg: \"b\")\nmodule m\n\n@symbol(\"x\")\n@link(\"c\")\nunsafe extern f: () -> void\n"
 	path := filepath.Join(t.TempDir(), "in.lyra")
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := exec.Command(bin, path).Output()
+	got, err := command(t, bin, path).Output()
 	if err != nil {
 		t.Fatalf("formatting: %v", err)
 	}
@@ -539,6 +544,7 @@ func TestExample_LyrafmtAttributesStayFlush(t *testing.T) {
 // sit under `inherent_members`, which had to join the block-like kinds: owned by the list,
 // every member after the first was indented as a continuation of the one before.
 func TestExample_LyrafmtIndentsInherentMembers(t *testing.T) {
+	t.Parallel()
 	bin := buildLyrafmt(t)
 	src := "impl Person {\n/// Greets.\n     pub let say_hi = (self) =>\n   println(self.name)\n  let birthday = (self: mut, age: u8) => {\n        self.age = age\n    }\n}\n"
 	want := "impl Person {\n  /// Greets.\n  pub let say_hi = (self) =>\n    println(self.name)\n  let birthday = (self: mut, age: u8) => {\n    self.age = age\n  }\n}\n"
@@ -546,7 +552,7 @@ func TestExample_LyrafmtIndentsInherentMembers(t *testing.T) {
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := exec.Command(bin, path).Output()
+	got, err := command(t, bin, path).Output()
 	if err != nil {
 		t.Fatalf("formatting: %v", err)
 	}
@@ -561,6 +567,7 @@ func TestExample_LyrafmtIndentsInherentMembers(t *testing.T) {
 // every member — one long member split the `<t, e>` of every member. Found formatting
 // `std/prelude/result.lyra` once its methods moved into `impl Result<t, e>`.
 func TestExample_LyrafmtKeepsTypeListsWhole(t *testing.T) {
+	t.Parallel()
 	bin := buildLyrafmt(t)
 	src := "impl Result<t, e> {\n" +
 		"  pub let is_ok<t, e> = pure noalloc (self) -> bool => true\n" +
@@ -586,7 +593,7 @@ func TestExample_LyrafmtKeepsTypeListsWhole(t *testing.T) {
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := exec.Command(bin, path).Output()
+	got, err := command(t, bin, path).Output()
 	if err != nil {
 		t.Fatalf("formatting: %v", err)
 	}
@@ -598,6 +605,7 @@ func TestExample_LyrafmtKeepsTypeListsWhole(t *testing.T) {
 // Parentheses hold nothing apart: `( self )` closes up to `(self)`, as a hand-joined list
 // leaves it. A trailing comma before `)` stays the author's business.
 func TestExample_LyrafmtClosesUpParentheses(t *testing.T) {
+	t.Parallel()
 	bin := buildLyrafmt(t)
 	src := "let f = pure ( a: i64, b: i64 ) -> i64 => g( a, b )\n"
 	want := "let f = pure (a: i64, b: i64) -> i64 => g(a, b)\n"
@@ -605,7 +613,7 @@ func TestExample_LyrafmtClosesUpParentheses(t *testing.T) {
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := exec.Command(bin, path).Output()
+	got, err := command(t, bin, path).Output()
 	if err != nil {
 		t.Fatalf("formatting: %v", err)
 	}

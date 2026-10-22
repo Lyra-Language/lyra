@@ -12,8 +12,9 @@ import (
 // call through `?`. Each input exercises one path, and the wrong-kind message is the one
 // worth pinning: its "should be" half comes from the impl the annotation picked.
 func TestExample_Config(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	bin := filepath.Join(t.TempDir(), "config")
 	if _, stderr, code := captureRun(t, "build", "-o", bin, filepath.Join(root, "examples", "config", "config.lyra")); code != 0 {
 		t.Fatalf("building the example exited %d\nstderr: %s", code, stderr)
@@ -28,7 +29,7 @@ func TestExample_Config(t *testing.T) {
 		{"nowhere.json", "config: cannot read " + filepath.Join(root, "examples", "config", "nowhere.json") + "\n", 1},
 	} {
 		t.Run(c.file, func(t *testing.T) {
-			out, err := exec.Command(bin, filepath.Join(root, "examples", "config", c.file)).CombinedOutput()
+			out, err := command(t, bin, filepath.Join(root, "examples", "config", c.file)).CombinedOutput()
 			code := 0
 			if err != nil {
 				ee, ok := err.(*exec.ExitError)

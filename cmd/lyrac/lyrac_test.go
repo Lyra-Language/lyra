@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +12,7 @@ import (
 // --- dispatch & usage -------------------------------------------------------
 
 func TestRun_NoArgs(t *testing.T) {
+	t.Parallel()
 	stdout, stderr, code := captureRun(t)
 	if code != 2 {
 		t.Errorf("exit code = %d, want 2", code)
@@ -26,6 +26,7 @@ func TestRun_NoArgs(t *testing.T) {
 }
 
 func TestRun_TooFewArgs(t *testing.T) {
+	t.Parallel()
 	// A command with no file path still fails the len(args) < 2 guard.
 	_, stderr, code := captureRun(t, "check")
 	if code != 2 {
@@ -37,6 +38,7 @@ func TestRun_TooFewArgs(t *testing.T) {
 }
 
 func TestRun_UnknownCommand(t *testing.T) {
+	t.Parallel()
 	_, stderr, code := captureRun(t, "frobnicate", "x.lyra")
 	if code != 2 {
 		t.Errorf("exit code = %d, want 2", code)
@@ -52,6 +54,7 @@ func TestRun_UnknownCommand(t *testing.T) {
 // --- check ------------------------------------------------------------------
 
 func TestCheck_Clean(t *testing.T) {
+	t.Parallel()
 	stdout, stderr, code := captureRun(t, "check", fixture("ok.lyra"))
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
@@ -62,6 +65,7 @@ func TestCheck_Clean(t *testing.T) {
 }
 
 func TestCheck_TypeError(t *testing.T) {
+	t.Parallel()
 	_, stderr, code := captureRun(t, "check", fixture("typeerr.lyra"))
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
@@ -70,6 +74,7 @@ func TestCheck_TypeError(t *testing.T) {
 }
 
 func TestCheck_SyntaxError(t *testing.T) {
+	t.Parallel()
 	_, stderr, code := captureRun(t, "check", fixture("syntax.lyra"))
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
@@ -78,6 +83,7 @@ func TestCheck_SyntaxError(t *testing.T) {
 }
 
 func TestCheck_WarningIsNotAnError(t *testing.T) {
+	t.Parallel()
 	// A warning-only program prints the warning but still exits 0.
 	_, stderr, code := captureRun(t, "check", fixture("warn.lyra"))
 	if code != 0 {
@@ -87,6 +93,7 @@ func TestCheck_WarningIsNotAnError(t *testing.T) {
 }
 
 func TestCheck_MissingFile(t *testing.T) {
+	t.Parallel()
 	_, stderr, code := captureRun(t, "check", fixture("does_not_exist.lyra"))
 	if code != 2 {
 		t.Errorf("exit code = %d, want 2 (IO failure)", code)
@@ -100,6 +107,7 @@ func TestCheck_MissingFile(t *testing.T) {
 
 // TestBuild_Clean is the default build: an executable, no IR left behind.
 func TestBuild_Clean(t *testing.T) {
+	t.Parallel()
 	requireCC(t)
 	path := copyFixtureToTemp(t, "ok.lyra")
 	stdout, stderr, code := captureRun(t, "build", path)
@@ -111,7 +119,7 @@ func TestBuild_Clean(t *testing.T) {
 		t.Errorf("stdout missing build summary naming %s:\n%s", exe, stdout)
 	}
 	// The artifact is an executable that runs, not just a file that exists.
-	if err := exec.Command(exe).Run(); err != nil {
+	if err := command(t, exe).Run(); err != nil {
 		t.Errorf("running %s: %v", exe, err)
 	}
 	// The .ll is scratch, so it must not be left in the user's source tree.
@@ -121,18 +129,20 @@ func TestBuild_Clean(t *testing.T) {
 }
 
 func TestBuild_OutputPath(t *testing.T) {
+	t.Parallel()
 	requireCC(t)
 	path := copyFixtureToTemp(t, "ok.lyra")
 	exe := filepath.Join(filepath.Dir(path), "renamed")
 	if _, stderr, code := captureRun(t, "build", "-o", exe, path); code != 0 {
 		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
 	}
-	if err := exec.Command(exe).Run(); err != nil {
+	if err := command(t, exe).Run(); err != nil {
 		t.Errorf("running %s: %v", exe, err)
 	}
 }
 
 func TestBuild_KeepLL(t *testing.T) {
+	t.Parallel()
 	requireCC(t)
 	path := copyFixtureToTemp(t, "ok.lyra")
 	if _, stderr, code := captureRun(t, "build", "--keep-ll", path); code != 0 {
@@ -147,6 +157,7 @@ func TestBuild_KeepLL(t *testing.T) {
 // TestBuild_EmitLLVM stops at the IR, which is the one build that needs no C
 // compiler at all — hence no requireCC.
 func TestBuild_EmitLLVM(t *testing.T) {
+	t.Parallel()
 	path := copyFixtureToTemp(t, "ok.lyra")
 	stdout, stderr, code := captureRun(t, "build", "--emit-llvm", path)
 	if code != 0 {
@@ -165,6 +176,7 @@ func TestBuild_EmitLLVM(t *testing.T) {
 // and still leave the IR behind, since that is all the user has to compile once
 // they install one.
 func TestBuild_MissingCC(t *testing.T) {
+	t.Parallel()
 	path := copyFixtureToTemp(t, "ok.lyra")
 	_, stderr, code := captureRun(t, "build", "--cc", "definitely-not-a-compiler", path)
 	if code != 1 {
@@ -181,6 +193,7 @@ func TestBuild_MissingCC(t *testing.T) {
 // TestRunCmd_Clean runs a program end to end: its stdout is the command's, and
 // nothing is left in the source directory.
 func TestRunCmd_Clean(t *testing.T) {
+	t.Parallel()
 	requireCC(t)
 	path := copyFixtureToTemp(t, "hello.lyra")
 	stdout, stderr, code := captureRun(t, "run", path)
@@ -204,6 +217,7 @@ func TestRunCmd_Clean(t *testing.T) {
 // TestRunCmd_ExitCode is the reason run cannot report build failures with a
 // status of its own: the program's `main` picks it.
 func TestRunCmd_ExitCode(t *testing.T) {
+	t.Parallel()
 	requireCC(t)
 	path := copyFixtureToTemp(t, "exit7.lyra")
 	if _, stderr, code := captureRun(t, "run", path); code != 7 {
@@ -212,6 +226,7 @@ func TestRunCmd_ExitCode(t *testing.T) {
 }
 
 func TestRunCmd_Diagnostics(t *testing.T) {
+	t.Parallel()
 	// A program that doesn't compile fails before anything is executed, and the
 	// diagnostic is the compiler's, on stderr.
 	stdout, stderr, code := captureRun(t, "run", fixture("typeerr.lyra"))
@@ -229,6 +244,7 @@ func TestRunCmd_Diagnostics(t *testing.T) {
 // TestRunCmd_RejectsBuildFlags: run keeps no artifact, so a flag choosing where
 // one lands is refused rather than silently ignored.
 func TestRunCmd_RejectsBuildFlags(t *testing.T) {
+	t.Parallel()
 	for _, flag := range []string{"-o", "--emit-llvm", "--keep-ll"} {
 		args := []string{"run", flag, "x.lyra"}
 		if flag == "-o" {
@@ -245,6 +261,7 @@ func TestRunCmd_RejectsBuildFlags(t *testing.T) {
 }
 
 func TestBuild_BadFlags(t *testing.T) {
+	t.Parallel()
 	cases := [][]string{
 		{"build", "--frobnicate", "x.lyra"},
 		{"build", "-o"},               // -o with no value
@@ -259,6 +276,7 @@ func TestBuild_BadFlags(t *testing.T) {
 }
 
 func TestBuild_MissingMain(t *testing.T) {
+	t.Parallel()
 	// A library (no `main`) is a valid check but not a valid build. This also
 	// exercises printDiagnostics' no-source-location branch: the "no entry
 	// point" diagnostic has no line:col, so it prints as "<path>: error: …".
@@ -270,6 +288,7 @@ func TestBuild_MissingMain(t *testing.T) {
 }
 
 func TestBuild_BackendError(t *testing.T) {
+	t.Parallel()
 	// unsupported.lyra type-checks and has a valid entry point but uses `yield from`
 	// over a range, which the LLVM backend cannot lower yet, so lowerAndEmit reports a
 	// backend error and no .ll is written. The assertion is deliberately loose (exit
@@ -290,6 +309,7 @@ func TestBuild_BackendError(t *testing.T) {
 // --- small pure helpers -----------------------------------------------------
 
 func TestReplaceExt(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		path, ext, want string
 	}{
@@ -307,6 +327,7 @@ func TestReplaceExt(t *testing.T) {
 }
 
 func TestSeverityLabel(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		sev  diag.Severity
 		want string
@@ -326,6 +347,7 @@ func TestSeverityLabel(t *testing.T) {
 // Colour wraps the whole `severity [code]` span and falls back to red for an
 // unknown severity, matching severityLabel's fallback to "error".
 func TestColorize(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		sev  diag.Severity
 		want string
@@ -373,6 +395,7 @@ func TestUseColor(t *testing.T) {
 // 3x on ordinary code (15925us against 5087us on a string scan) for roughly 50ms
 // of link time on a 2000-line module.
 func TestBuild_OptLevel(t *testing.T) {
+	t.Parallel()
 	t.Run("defaults to -O2", func(t *testing.T) {
 		path := copyFixtureToTemp(t, "ok.lyra")
 		stdout, stderr, code := captureRun(t, "build", "--emit-llvm", path)
@@ -428,6 +451,7 @@ func TestBuild_OptLevel(t *testing.T) {
 
 // `--emit-llvm -o` writes the IR where it was told and nowhere else.
 func TestBuild_EmitLLVM_OutNamesTheIR(t *testing.T) {
+	t.Parallel()
 	path := copyFixtureToTemp(t, "ok.lyra")
 	out := filepath.Join(t.TempDir(), "chosen.ll")
 	stdout, stderr, code := captureRun(t, "build", "--emit-llvm", "-o", out, path)
@@ -447,6 +471,7 @@ func TestBuild_EmitLLVM_OutNamesTheIR(t *testing.T) {
 // IR, reporting it as the output would suggest compiling the file into itself — which is
 // what the old code printed, since it reused the executable path unconditionally.
 func TestBuild_EmitLLVM_HintDoesNotCompileTheIRIntoItself(t *testing.T) {
+	t.Parallel()
 	path := copyFixtureToTemp(t, "ok.lyra")
 	out := filepath.Join(t.TempDir(), "chosen.ll")
 	stdout, stderr, code := captureRun(t, "build", "--emit-llvm", "-o", out, path)
@@ -464,6 +489,7 @@ func TestBuild_EmitLLVM_HintDoesNotCompileTheIRIntoItself(t *testing.T) {
 // `--keep-ll -o` puts **both** artifacts where they were asked for, which is what that
 // flag's own help has always promised ("beside the executable").
 func TestBuild_KeepLL_OutTakesTheIRAlong(t *testing.T) {
+	t.Parallel()
 	requireCC(t)
 	path := copyFixtureToTemp(t, "ok.lyra")
 	exe := filepath.Join(t.TempDir(), "prog")
@@ -485,6 +511,7 @@ func TestBuild_KeepLL_OutTakesTheIRAlong(t *testing.T) {
 
 // A plain build with `-o` still leaves no IR anywhere: the executable is the artifact.
 func TestBuild_OutLeavesNoIR(t *testing.T) {
+	t.Parallel()
 	requireCC(t)
 	path := copyFixtureToTemp(t, "ok.lyra")
 	exe := filepath.Join(t.TempDir(), "prog")
@@ -501,6 +528,7 @@ func TestBuild_OutLeavesNoIR(t *testing.T) {
 // Without `-o`, both modes are exactly as they were — the default is what most builds use
 // and the fix must not move it.
 func TestBuild_NoOutIsUnchanged(t *testing.T) {
+	t.Parallel()
 	path := copyFixtureToTemp(t, "ok.lyra")
 	if _, stderr, code := captureRun(t, "build", "--emit-llvm", path); code != 0 {
 		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
@@ -526,6 +554,7 @@ func TestBuild_NoOutIsUnchanged(t *testing.T) {
 // backend harness takes one source string. `--emit-llvm` is the whole assertion: the bug
 // was a refusal to lower, and emitting IR needs no C compiler.
 func TestBuild_APrivateNestedStructSizesFromAnotherModule(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	lib := `module lib
 struct Inner { a: i32, b: i32 }

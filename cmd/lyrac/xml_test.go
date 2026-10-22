@@ -19,8 +19,9 @@ import (
 // print exactly as Go's own reading of it. Malformed documents are refused, each saying
 // why and on which line; and a prefix stays part of a name, since namespaces are not read.
 func TestRun_XmlReadsWhatGoReads(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 
 	var files []string

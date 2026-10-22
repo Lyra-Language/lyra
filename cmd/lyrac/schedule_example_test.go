@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,8 +22,9 @@ import (
 // zone database is a record of — so Go locates each zone's real transitions and the cases
 // are built around them.
 func TestExample_ScheduleAcrossTransitions(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	if _, err := os.Stat("/usr/share/zoneinfo"); err != nil {
 		t.Skip("no /usr/share/zoneinfo on this machine")
 	}
@@ -35,7 +35,7 @@ func TestExample_ScheduleAcrossTransitions(t *testing.T) {
 	}
 	run := func(t *testing.T, args ...string) []string {
 		t.Helper()
-		out, err := exec.Command(bin, args...).Output()
+		out, err := command(t, bin, args...).Output()
 		if err != nil {
 			t.Fatalf("running %v failed: %v", args, err)
 		}

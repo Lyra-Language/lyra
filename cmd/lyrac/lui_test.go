@@ -16,7 +16,7 @@ func buildLui(t *testing.T) string {
 		t.Skip("no C compiler to build lui")
 	}
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	lui := filepath.Join(t.TempDir(), "lui")
 	if _, stderr, code := captureRun(t, "build", "-o", lui, filepath.Join(root, "tools", "lui", "lui.lyra")); code != 0 {
 		t.Fatalf("building lui exited %d\nstderr: %s", code, stderr)
@@ -28,9 +28,10 @@ func buildLui(t *testing.T) string {
 // by hand, or a lui change not rerun, fails here — and the program around it checks clean,
 // which is the markup's Lyra checked by lyrac.
 func TestLui_ExampleIsCurrentAndChecks(t *testing.T) {
+	t.Parallel()
 	lui := buildLui(t)
 	root := repoRoot(t)
-	if b, err := exec.Command(lui, "--check", filepath.Join(root, "examples", "imgui", "components_view.lui")).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, "--check", filepath.Join(root, "examples", "imgui", "components_view.lui")).CombinedOutput(); err != nil {
 		t.Fatalf("components_view.lyra is stale: %v\n%s", err, b)
 	}
 	stdout, stderr, code := captureRun(t, "check", filepath.Join(root, "examples", "imgui", "components.lyra"))
@@ -45,6 +46,7 @@ func TestLui_ExampleIsCurrentAndChecks(t *testing.T) {
 // A mistake in markup is reported at its line in the .lui, saying what is wrong — not
 // left to lyrac to report in the generated module.
 func TestLui_ReportsMistakesAtTheirLine(t *testing.T) {
+	t.Parallel()
 	lui := buildLui(t)
 	dir := t.TempDir()
 	cases := []struct{ name, source, want string }{
@@ -67,7 +69,7 @@ func TestLui_ReportsMistakesAtTheirLine(t *testing.T) {
 		if err := os.WriteFile(path, []byte(c.source), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := exec.Command(lui, path).CombinedOutput()
+		out, err := command(t, lui, path).CombinedOutput()
 		if err == nil {
 			t.Errorf("%s: lui accepted it", c.name)
 			continue
@@ -81,6 +83,7 @@ func TestLui_ReportsMistakesAtTheirLine(t *testing.T) {
 // The value-bearing elements Vega's Settings needed — a combo of selectables, a form's
 // field, a centered window, a width in ems — generate Lyra that checks clean.
 func TestLui_ComboFormAndEmWidths(t *testing.T) {
+	t.Parallel()
 	lui := buildLui(t)
 	dir := t.TempDir()
 	source := `<script>
@@ -104,7 +107,7 @@ func TestLui_ComboFormAndEmWidths(t *testing.T) {
 	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
 		t.Fatalf("lui refused it: %v\n%s", err, b)
 	}
 	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
@@ -127,6 +130,7 @@ func TestLui_ComboFormAndEmWidths(t *testing.T) {
 // inputs; a lambda written out carries what the constructor needs besides (`Paint("fg", v)`).
 // The module checks clean.
 func TestLui_SliderColorEditAndHint(t *testing.T) {
+	t.Parallel()
 	lui := buildLui(t)
 	dir := t.TempDir()
 	source := `<script>
@@ -142,7 +146,7 @@ func TestLui_SliderColorEditAndHint(t *testing.T) {
 	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
 		t.Fatalf("lui refused it: %v\n%s", err, b)
 	}
 	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
@@ -172,6 +176,7 @@ func TestLui_SliderColorEditAndHint(t *testing.T) {
 // (and with none, an empty attributes struct), a Space, and Groups side by side in a Row;
 // the module checks clean.
 func TestLui_GapFormRowAndSpace(t *testing.T) {
+	t.Parallel()
 	lui := buildLui(t)
 	dir := t.TempDir()
 	source := `<component name="view" props={{ go: e }}>
@@ -200,7 +205,7 @@ func TestLui_GapFormRowAndSpace(t *testing.T) {
 	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
 		t.Fatalf("lui refused it: %v\n%s", err, b)
 	}
 	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
@@ -231,6 +236,7 @@ func TestLui_GapFormRowAndSpace(t *testing.T) {
 // A shortcut's modifiers and keys as a Linux terminal's menus show them: Alt alone (no
 // primary modifier), a named key, and every modifier at once; the module checks clean.
 func TestLui_ShortcutsWithAltAndNamedKeys(t *testing.T) {
+	t.Parallel()
 	lui := buildLui(t)
 	dir := t.TempDir()
 	source := `<script>
@@ -250,7 +256,7 @@ func TestLui_ShortcutsWithAltAndNamedKeys(t *testing.T) {
 	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
 		t.Fatalf("lui refused it: %v\n%s", err, b)
 	}
 	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
@@ -276,6 +282,7 @@ func TestLui_ShortcutsWithAltAndNamedKeys(t *testing.T) {
 // element's attribute at its tag's line, one in a script at its own line, and a line
 // naming no generated module left as it is.
 func TestLui_MapPutsErrorsBackAtTheMarkup(t *testing.T) {
+	t.Parallel()
 	lui := buildLui(t)
 	dir := t.TempDir()
 	source := `<script>
@@ -293,12 +300,12 @@ func TestLui_MapPutsErrorsBackAtTheMarkup(t *testing.T) {
 	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
 		t.Fatalf("lui refused it: %v\n%s", err, b)
 	}
 	stdout, stderr, _ := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
 	diagnostics := stdout + stderr + "unrelated.lyra:3:4: error: left alone\n"
-	cmd := exec.Command(lui, "map")
+	cmd := command(t, lui, "map")
 	cmd.Stdin = strings.NewReader(diagnostics)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -321,6 +328,7 @@ func TestLui_MapPutsErrorsBackAtTheMarkup(t *testing.T) {
 
 // `lui --watch` generates at once, and again when the markup changes.
 func TestLui_WatchRegeneratesOnChange(t *testing.T) {
+	t.Parallel()
 	lui := buildLui(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "view.lui")
@@ -341,7 +349,7 @@ func TestLui_WatchRegeneratesOnChange(t *testing.T) {
 		return false
 	}
 	write("First")
-	cmd := exec.Command(lui, "--watch", path)
+	cmd := command(t, lui, "--watch", path)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -359,6 +367,7 @@ func TestLui_WatchRegeneratesOnChange(t *testing.T) {
 // and under --watch it is walked again on every pass, so a file added after the watch
 // began is generated as it appears.
 func TestLui_DirectoriesAndNewFilesUnderWatch(t *testing.T) {
+	t.Parallel()
 	lui := buildLui(t)
 	dir := t.TempDir()
 	view := func(label string) string {
@@ -376,7 +385,7 @@ func TestLui_DirectoriesAndNewFilesUnderWatch(t *testing.T) {
 	put("top.lui", view("Top"))
 	put("deep/down/nested.lui", view("Nested"))
 	put(".hidden/skipped.lui", view("Hidden"))
-	if b, err := exec.Command(lui, dir).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, dir).CombinedOutput(); err != nil {
 		t.Fatalf("lui on a directory failed: %v\n%s", err, b)
 	}
 	for _, rel := range []string{"top.lyra", "deep/down/nested.lyra"} {
@@ -387,15 +396,15 @@ func TestLui_DirectoriesAndNewFilesUnderWatch(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".hidden/skipped.lyra")); err == nil {
 		t.Error("a hidden directory's markup was generated")
 	}
-	if b, err := exec.Command(lui, "--check", dir).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, "--check", dir).CombinedOutput(); err != nil {
 		t.Errorf("--check on the directory just generated failed: %v\n%s", err, b)
 	}
 	empty := t.TempDir()
-	if b, err := exec.Command(lui, empty).CombinedOutput(); err == nil || !strings.Contains(string(b), "no .lui file") {
+	if b, err := command(t, lui, empty).CombinedOutput(); err == nil || !strings.Contains(string(b), "no .lui file") {
 		t.Errorf("a directory with no markup should be refused, said %q", b)
 	}
 
-	cmd := exec.Command(lui, "--watch", dir)
+	cmd := command(t, lui, "--watch", dir)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -417,6 +426,7 @@ func TestLui_DirectoriesAndNewFilesUnderWatch(t *testing.T) {
 // a slot's name interpolated as any attribute is (a component naming its caller's slot).
 // The module checks clean.
 func TestLui_InputsModalAndSlot(t *testing.T) {
+	t.Parallel()
 	lui := buildLui(t)
 	dir := t.TempDir()
 	source := `<script>
@@ -440,7 +450,7 @@ func TestLui_InputsModalAndSlot(t *testing.T) {
 	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
 		t.Fatalf("lui refused it: %v\n%s", err, b)
 	}
 	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
@@ -469,10 +479,11 @@ func TestLui_InputsModalAndSlot(t *testing.T) {
 // The ui target's example — components_view.lui ported from bindings.imgui.ui — is what lui
 // makes from its markup, and the program running it checks clean, warnings and all.
 func TestLui_UiTargetExampleIsCurrentAndChecks(t *testing.T) {
+	t.Parallel()
 	skipWithoutText(t)
 	lui := buildLui(t)
 	root := repoRoot(t)
-	if b, err := exec.Command(lui, "--check", filepath.Join(root, "examples", "ui", "components_view.lui")).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, "--check", filepath.Join(root, "examples", "ui", "components_view.lui")).CombinedOutput(); err != nil {
 		t.Fatalf("examples/ui/components_view.lyra is stale: %v\n%s", err, b)
 	}
 	stdout, stderr, code := captureRun(t, "check", filepath.Join(root, "examples", "ui", "components.lyra"))
@@ -489,6 +500,7 @@ func TestLui_UiTargetExampleIsCurrentAndChecks(t *testing.T) {
 // style in the bindings.imgui.ui target, an unknown target, a <for> of several elements, an
 // import lui cannot read, and a misspelt prop of an imported component.
 func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
+	t.Parallel()
 	lui := buildLui(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "w.lui"), []byte("<script target=\"ui\"></script>\n<component name=\"badge\" props={{ words: string }}>\n  <Text part=\"label\">{words}</Text>\n</component>\n"), 0o644); err != nil {
@@ -541,7 +553,7 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		if err := os.WriteFile(path, []byte(c.source), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := exec.Command(lui, path).CombinedOutput()
+		out, err := command(t, lui, path).CombinedOutput()
 		if err == nil {
 			t.Errorf("%s: lui accepted it", c.name)
 			continue
@@ -558,6 +570,7 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 // `--target ui` names the target for a file that does not. A mistake lyrac finds in a token
 // (`$colours`) or a script is put back at its markup line by `lui map`.
 func TestLui_UiTargetAcrossFilesTokensAndMap(t *testing.T) {
+	t.Parallel()
 	skipWithoutText(t)
 	lui := buildLui(t)
 	dir := t.TempDir()
@@ -592,7 +605,7 @@ func TestLui_UiTargetAcrossFilesTokensAndMap(t *testing.T) {
 		}
 	}
 	for _, name := range []string{"widgets.lui", "view.lui"} {
-		if b, err := exec.Command(lui, "--target", "ui", filepath.Join(dir, name)).CombinedOutput(); err != nil {
+		if b, err := command(t, lui, "--target", "ui", filepath.Join(dir, name)).CombinedOutput(); err != nil {
 			t.Fatalf("lui refused %s: %v\n%s", name, err, b)
 		}
 	}
@@ -626,7 +639,7 @@ let main = () -> u8 => {
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "LYRA_STD", repoRoot(t))
 	stdout, stderr, code := captureRun(t, "run", main)
 	if code != 0 || stdout != "view Themed\n" {
 		t.Errorf("running it exited %d, printed %q\nstderr: %s", code, stdout, stderr)
@@ -638,11 +651,11 @@ let main = () -> u8 => {
 	if err := os.WriteFile(filepath.Join(dir, "view.lui"), []byte(broken), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if b, err := exec.Command(lui, "--target", "ui", filepath.Join(dir, "view.lui")).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, "--target", "ui", filepath.Join(dir, "view.lui")).CombinedOutput(); err != nil {
 		t.Fatalf("lui refused the broken view: %v\n%s", err, b)
 	}
 	so, se, _ := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
-	cmd := exec.Command(lui, "map")
+	cmd := command(t, lui, "map")
 	cmd.Stdin = strings.NewReader(so + se)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -662,6 +675,7 @@ let main = () -> u8 => {
 // minmax and repeat, a dense column flow, grid lines with spans — a later declaration
 // replacing an earlier one, as in CSS; and the module checks clean.
 func TestLui_UiTargetFlexAndGrid(t *testing.T) {
+	t.Parallel()
 	lui := buildLui(t)
 	dir := t.TempDir()
 	source := `<script target="ui">
@@ -688,7 +702,7 @@ func TestLui_UiTargetFlexAndGrid(t *testing.T) {
 	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
 		t.Fatalf("lui refused it: %v\n%s", err, b)
 	}
 	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
@@ -708,7 +722,7 @@ func TestLui_UiTargetFlexAndGrid(t *testing.T) {
 			t.Errorf("the generated module lacks %q:\n%s", want, generated)
 		}
 	}
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "LYRA_STD", repoRoot(t))
 	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
 	if code != 0 || strings.Contains(stdout+stderr, "warning") {
 		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
@@ -718,10 +732,11 @@ func TestLui_UiTargetFlexAndGrid(t *testing.T) {
 // The layouts example — a wrapping card list and a dashboard grid in markup, a component
 // call's class spanning its tile — is what lui makes from it, and checks clean.
 func TestLui_LayoutsExampleIsCurrentAndChecks(t *testing.T) {
+	t.Parallel()
 	skipWithoutText(t)
 	lui := buildLui(t)
 	root := repoRoot(t)
-	if b, err := exec.Command(lui, "--check", filepath.Join(root, "examples", "ui", "layouts_view.lui")).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, "--check", filepath.Join(root, "examples", "ui", "layouts_view.lui")).CombinedOutput(); err != nil {
 		t.Fatalf("examples/ui/layouts_view.lyra is stale: %v\n%s", err, b)
 	}
 	stdout, stderr, code := captureRun(t, "check", filepath.Join(root, "examples", "ui", "layouts.lyra"))
@@ -739,6 +754,7 @@ func TestLui_LayoutsExampleIsCurrentAndChecks(t *testing.T) {
 // part selectors among them; and the module checks clean. In the bindings.imgui.ui target
 // @media is refused.
 func TestLui_UiTargetMediaAndSelectorLists(t *testing.T) {
+	t.Parallel()
 	lui := buildLui(t)
 	dir := t.TempDir()
 	source := `<script target="ui">
@@ -763,7 +779,7 @@ func TestLui_UiTargetMediaAndSelectorLists(t *testing.T) {
 	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
 		t.Fatalf("lui refused it: %v\n%s", err, b)
 	}
 	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
@@ -784,7 +800,7 @@ func TestLui_UiTargetMediaAndSelectorLists(t *testing.T) {
 			t.Errorf("the generated module lacks %q:\n%s", want, generated)
 		}
 	}
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "LYRA_STD", repoRoot(t))
 	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
 	if code != 0 || strings.Contains(stdout+stderr, "warning") {
 		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
@@ -793,7 +809,7 @@ func TestLui_UiTargetMediaAndSelectorLists(t *testing.T) {
 	if err := os.WriteFile(imgui, []byte("<component name=\"a\">\n  <style>\n    @media (min-width: 1) {\n      Button { color: #fff }\n    }\n  </style>\n  <Text>x</Text>\n</component>\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(lui, imgui).CombinedOutput(); err == nil || !strings.Contains(string(out), "imgui.lui:4: @media is the ui target's") {
+	if out, err := command(t, lui, imgui).CombinedOutput(); err == nil || !strings.Contains(string(out), "imgui.lui:4: @media is the ui target's") {
 		t.Errorf("an @media in the imgui target: %v %s", err, out)
 	}
 }
@@ -802,6 +818,7 @@ func TestLui_UiTargetMediaAndSelectorLists(t *testing.T) {
 // and by side, a stop at a percentage, a radial circle, filter and backdrop-filter blur, and
 // a compound selector (.card.hover); and the module checks clean.
 func TestLui_UiTargetEffects(t *testing.T) {
+	t.Parallel()
 	lui := buildLui(t)
 	dir := t.TempDir()
 	source := `<script target="ui">
@@ -824,7 +841,7 @@ func TestLui_UiTargetEffects(t *testing.T) {
 	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
 		t.Fatalf("lui refused it: %v\n%s", err, b)
 	}
 	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
@@ -844,7 +861,7 @@ func TestLui_UiTargetEffects(t *testing.T) {
 			t.Errorf("the generated module lacks %q:\n%s", want, generated)
 		}
 	}
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "LYRA_STD", repoRoot(t))
 	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
 	if code != 0 || strings.Contains(stdout+stderr, "warning") {
 		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
@@ -854,10 +871,11 @@ func TestLui_UiTargetEffects(t *testing.T) {
 // The effects example — shadows, gradients, a frosted backdrop and a blurred line in markup —
 // is what lui makes from it, and checks clean.
 func TestLui_EffectsExampleIsCurrentAndChecks(t *testing.T) {
+	t.Parallel()
 	skipWithoutText(t)
 	lui := buildLui(t)
 	root := repoRoot(t)
-	if b, err := exec.Command(lui, "--check", filepath.Join(root, "examples", "ui", "effects_view.lui")).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, "--check", filepath.Join(root, "examples", "ui", "effects_view.lui")).CombinedOutput(); err != nil {
 		t.Fatalf("examples/ui/effects_view.lyra is stale: %v\n%s", err, b)
 	}
 	stdout, stderr, code := captureRun(t, "check", filepath.Join(root, "examples", "ui", "effects.lyra"))
@@ -873,6 +891,7 @@ func TestLui_EffectsExampleIsCurrentAndChecks(t *testing.T) {
 // then y, `overflow-x` and `overflow-y` one each, in a sheet and inline; `<window
 // overflow>` makes WINDOW_OVERFLOW, and a window without it makes none.
 func TestLui_UiTargetOverflow(t *testing.T) {
+	t.Parallel()
 	lui := buildLui(t)
 	dir := t.TempDir()
 	source := `<script target="ui">
@@ -895,7 +914,7 @@ func TestLui_UiTargetOverflow(t *testing.T) {
 	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
 		t.Fatalf("lui refused it: %v\n%s", err, b)
 	}
 	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
@@ -913,7 +932,7 @@ func TestLui_UiTargetOverflow(t *testing.T) {
 			t.Errorf("the generated module lacks %q:\n%s", want, generated)
 		}
 	}
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "LYRA_STD", repoRoot(t))
 	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
 	if code != 0 || strings.Contains(stdout+stderr, "warning") {
 		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
@@ -922,7 +941,7 @@ func TestLui_UiTargetOverflow(t *testing.T) {
 	if err := os.WriteFile(path, []byte(plain), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
 		t.Fatalf("lui refused it without the window's overflow: %v\n%s", err, b)
 	}
 	if generated, err = os.ReadFile(filepath.Join(dir, "view.lyra")); err != nil {
@@ -936,10 +955,11 @@ func TestLui_UiTargetOverflow(t *testing.T) {
 // The overflow example — scrollers down, across, both ways, hidden and nested, in a window
 // that scrolls — is what lui makes from it, and checks clean.
 func TestLui_OverflowExampleIsCurrentAndChecks(t *testing.T) {
+	t.Parallel()
 	skipWithoutText(t)
 	lui := buildLui(t)
 	root := repoRoot(t)
-	if b, err := exec.Command(lui, "--check", filepath.Join(root, "examples", "ui", "overflow_view.lui")).CombinedOutput(); err != nil {
+	if b, err := command(t, lui, "--check", filepath.Join(root, "examples", "ui", "overflow_view.lui")).CombinedOutput(); err != nil {
 		t.Fatalf("examples/ui/overflow_view.lyra is stale: %v\n%s", err, b)
 	}
 	stdout, stderr, code := captureRun(t, "check", filepath.Join(root, "examples", "ui", "overflow.lyra"))

@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -18,8 +17,9 @@ import (
 // The rule from lyra/CLAUDE.md's Testing section: a test for a diagnostic whose fix names
 // a standard-library function belongs where the standard library is real.
 func TestSpreadAdvice_ToRunesCompilesAndRuns(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 
 	dir := t.TempDir()
 	src := filepath.Join(dir, "spread.lyra")
@@ -37,7 +37,7 @@ let main = () -> void => {
 	if _, stderr, code := captureRun(t, "build", "-o", bin, src); code != 0 {
 		t.Fatalf("the advice does not compile: exited %d\nstderr: %s", code, stderr)
 	}
-	out, err := exec.Command(bin).CombinedOutput()
+	out, err := command(t, bin).CombinedOutput()
 	if err != nil {
 		t.Fatalf("running failed: %v\n%s", err, out)
 	}

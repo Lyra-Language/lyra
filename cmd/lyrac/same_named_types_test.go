@@ -13,6 +13,7 @@ import (
 // the declaration it names from the method's own module now, and each call reaches its own
 // module's `bump` — the beta one writing fields at offsets the alpha one does not have.
 func TestMethodCall_SameNamedTypesInTwoModules(t *testing.T) {
+	t.Parallel()
 	requireCC(t)
 	dir := t.TempDir()
 	files := map[string]string{
@@ -62,6 +63,7 @@ let main = () -> void => {
 // the real one ran the real one's code over its own struct). The discriminant is the
 // type's declaration key where its name is declared more than once.
 func TestMethodCall_SameNamedTypesGenericMethods(t *testing.T) {
+	t.Parallel()
 	requireCC(t)
 	dir := t.TempDir()
 	files := map[string]string{

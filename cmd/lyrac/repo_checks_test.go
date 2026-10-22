@@ -47,6 +47,7 @@ func editorRoot(t *testing.T, repo string) string {
 }
 
 func TestRepo_EveryLyraFileChecksUnderBothRoots(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
 	var files []string
 	for _, dir := range []string{"std", "examples", "bindings", "ui"} {
@@ -73,7 +74,7 @@ func TestRepo_EveryLyraFileChecksUnderBothRoots(t *testing.T) {
 		{"beside the executable", editorRoot(t, root)},
 	} {
 		t.Run(roots.name, func(t *testing.T) {
-			t.Setenv("LYRA_STD", roots.std)
+			setenv(t, "LYRA_STD", roots.std)
 			for _, file := range files {
 				rel, _ := filepath.Rel(root, file)
 				_, stderr, code := captureRun(t, "check", file)

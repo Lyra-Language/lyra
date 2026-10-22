@@ -11,7 +11,7 @@ import (
 // is switched off so a test's expected output is only what the file itself declares.
 func writeModule(t *testing.T, name, src string) string {
 	t.Helper()
-	t.Setenv("LYRA_NO_PRELUDE", "1")
+	setenv(t, "LYRA_NO_PRELUDE", "1")
 	dir := t.TempDir()
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
@@ -21,6 +21,7 @@ func writeModule(t *testing.T, name, src string) string {
 }
 
 func TestDoc_WritesAPagePerModule(t *testing.T) {
+	t.Parallel()
 	src := "module demo.math\n" +
 		"//! Arithmetic helpers.\n\n" +
 		"/// Adds two numbers.\n" +
@@ -62,6 +63,7 @@ func TestDoc_WritesAPagePerModule(t *testing.T) {
 // its surface and said nothing is the silent incompleteness this command exists to
 // avoid.
 func TestDoc_ReportsCoverageWithoutStrict(t *testing.T) {
+	t.Parallel()
 	path := writeModule(t, "m.lyra", "module m\n/// Documented.\npub let a = pure () -> i64 => 1\npub let b = pure () -> i64 => 2\n")
 	stdout, _, code := captureRun(t, "doc", path, "-o", filepath.Join(t.TempDir(), "docs"))
 	if code != 0 {
@@ -73,6 +75,7 @@ func TestDoc_ReportsCoverageWithoutStrict(t *testing.T) {
 }
 
 func TestDoc_StrictFailsOnAGap(t *testing.T) {
+	t.Parallel()
 	path := writeModule(t, "m.lyra", "module m\npub let undocumented = pure () -> i64 => 1\n")
 	_, stderr, code := captureRun(t, "doc", path, "-o", filepath.Join(t.TempDir(), "docs"), "--strict")
 	if code == 0 {
@@ -86,6 +89,7 @@ func TestDoc_StrictFailsOnAGap(t *testing.T) {
 // An undocumented declaration is still on the page. Dropping it would make the page
 // misrepresent what the module exports.
 func TestDoc_UndocumentedIsStillListed(t *testing.T) {
+	t.Parallel()
 	path := writeModule(t, "m.lyra", "module m\npub let bare = pure () -> i64 => 1\n")
 	out := filepath.Join(t.TempDir(), "docs")
 	if _, _, code := captureRun(t, "doc", path, "-o", out); code != 0 {
@@ -101,6 +105,7 @@ func TestDoc_UndocumentedIsStillListed(t *testing.T) {
 }
 
 func TestDoc_PrivateNeedsTheFlag(t *testing.T) {
+	t.Parallel()
 	src := "module m\npub let shown = pure () -> i64 => 1\nlet hidden = pure () -> i64 => 2\n"
 	path := writeModule(t, "m.lyra", src)
 
@@ -126,6 +131,7 @@ func TestDoc_PrivateNeedsTheFlag(t *testing.T) {
 // Documenting a program that does not type-check would print `?` wherever a type failed
 // to resolve and publish the result as though it were the API.
 func TestDoc_RefusesAProgramThatDoesNotTypeCheck(t *testing.T) {
+	t.Parallel()
 	path := writeModule(t, "m.lyra", "module m\npub let broken = pure () -> i64 => \"not an int\"\n")
 	_, stderr, code := captureRun(t, "doc", path, "-o", filepath.Join(t.TempDir(), "docs"))
 	if code == 0 {
@@ -137,6 +143,7 @@ func TestDoc_RefusesAProgramThatDoesNotTypeCheck(t *testing.T) {
 }
 
 func TestDoc_UsageOnMissingPath(t *testing.T) {
+	t.Parallel()
 	_, _, code := captureRun(t, "doc")
 	if code != 2 {
 		t.Errorf("exit %d, want 2 for a missing path", code)

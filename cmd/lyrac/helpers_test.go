@@ -2,49 +2,116 @@ package main
 
 import (
 	"bytes"
-	"io"
+	"context"
+	"errors"
+	"flag"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
 )
 
-// captureRun invokes run(args) with os.Stdout and os.Stderr redirected to
-// pipes, returning everything the CLI wrote to each stream plus its exit code.
-// The pipes are drained concurrently so a large amount of output can't deadlock
-// on a full pipe buffer.
+// captureRun runs lyrac with args as its own process — this test binary, which TestMain
+// makes lyrac (asLyrac) — in t's environment (setenv), returning everything it wrote to
+// stdout and stderr and its exit code. A process of its own, rather than run(args) here,
+// so tests run in parallel: each has its own stdout, stderr and environment.
 func captureRun(t *testing.T, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
-
-	origOut, origErr := os.Stdout, os.Stderr
-	outR, outW, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	errR, errW, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	os.Stdout, os.Stderr = outW, errW
-
-	var wg sync.WaitGroup
+	cmd := asLyrac(t, args...)
 	var outBuf, errBuf bytes.Buffer
-	wg.Add(2)
-	go func() { defer wg.Done(); _, _ = io.Copy(&outBuf, outR) }()
-	go func() { defer wg.Done(); _, _ = io.Copy(&errBuf, errR) }()
-
-	code = run(args)
-
-	_ = outW.Close()
-	_ = errW.Close()
-	wg.Wait()
-	os.Stdout, os.Stderr = origOut, origErr
-	_ = outR.Close()
-	_ = errR.Close()
-
+	cmd.Stdout, cmd.Stderr = &outBuf, &errBuf
+	if err := cmd.Run(); err != nil {
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) {
+			t.Fatalf("running lyrac %v: %v", args, err)
+		}
+		code = exit.ExitCode()
+	}
 	return outBuf.String(), errBuf.String(), code
+}
+
+// asLyrac is the command running lyrac with args as its own process, in t's environment: this
+// test binary, which TestMain makes lyrac when LYRAC_TEST_AS_LYRAC is set. Under -cover it
+// writes its coverage where the test binary's own goes, so the run counts.
+func asLyrac(t *testing.T, args ...string) *exec.Cmd {
+	cmd := command(t, os.Args[0], args...)
+	cmd.Env = append(cmd.Env, "LYRAC_TEST_AS_LYRAC=1")
+	if dir := coverDir(); dir != "" {
+		cmd.Env = append(cmd.Env, "GOCOVERDIR="+dir)
+	}
+	return cmd
+}
+
+// command is exec.Command in t's environment (setenv): for a program or tool a test starts.
+func command(t *testing.T, name string, args ...string) *exec.Cmd {
+	cmd := exec.Command(name, args...)
+	cmd.Env = environ(t)
+	return cmd
+}
+
+// commandContext is exec.CommandContext in t's environment.
+func commandContext(t *testing.T, ctx context.Context, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = environ(t)
+	return cmd
+}
+
+// coverDir is where the test binary writes its coverage counters under -cover (go test merges
+// every file there into the profile), or "".
+func coverDir() string {
+	if f := flag.Lookup("test.gocoverdir"); f != nil {
+		return f.Value.String()
+	}
+	return ""
+}
+
+// Each test's environment for what it starts, by test name: set with setenv rather than
+// t.Setenv, which changes this process's environment and so forbids t.Parallel.
+var (
+	testEnvMu sync.Mutex
+	testEnvs  = map[string]map[string]string{}
+)
+
+// setenv sets key to value for the processes t and its subtests start (captureRun, asLyrac,
+// command), until t ends.
+func setenv(t *testing.T, key, value string) {
+	t.Helper()
+	testEnvMu.Lock()
+	defer testEnvMu.Unlock()
+	name := t.Name()
+	if testEnvs[name] == nil {
+		testEnvs[name] = map[string]string{}
+		t.Cleanup(func() {
+			testEnvMu.Lock()
+			defer testEnvMu.Unlock()
+			delete(testEnvs, name)
+		})
+	}
+	testEnvs[name][key] = value
+}
+
+// environ is this process's environment with what setenv set for t and every test around it,
+// the innermost last (a later entry wins).
+func environ(t *testing.T) []string {
+	env := os.Environ()
+	testEnvMu.Lock()
+	defer testEnvMu.Unlock()
+	parts := strings.Split(t.Name(), "/")
+	for i := range parts {
+		set := testEnvs[strings.Join(parts[:i+1], "/")]
+		keys := make([]string, 0, len(set))
+		for k := range set {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			env = append(env, k+"="+set[k])
+		}
+	}
+	return env
 }
 
 // fixture returns the repo-relative path to a committed testdata/*.lyra file.

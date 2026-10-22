@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -27,8 +26,9 @@ import (
 // the last 8, so 55 is the largest message that fits its own block, 56 forces a second one
 // that is all padding, and 64 is an exact block whose padding is a whole extra one.
 func TestExample_ChecksumMatchesCryptoSHA256(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	bin := filepath.Join(t.TempDir(), "checksum")
 	if _, stderr, code := captureRun(t, "build", "-o", bin,
 		filepath.Join(root, "examples", "checksum", "checksum.lyra")); code != 0 {
@@ -45,7 +45,7 @@ func TestExample_ChecksumMatchesCryptoSHA256(t *testing.T) {
 			if err := os.WriteFile(path, data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			out, err := exec.Command(bin, path).Output()
+			out, err := command(t, bin, path).Output()
 			if err != nil {
 				t.Fatalf("hashing %d bytes failed: %v", n, err)
 			}
@@ -58,7 +58,7 @@ func TestExample_ChecksumMatchesCryptoSHA256(t *testing.T) {
 	}
 
 	// Standard input has no name, and is written `-` as every checksum tool writes it.
-	stdin := exec.Command(bin, "-")
+	stdin := command(t, bin, "-")
 	stdin.Stdin = strings.NewReader("hello world\n")
 	out, err := stdin.Output()
 	if err != nil {
@@ -74,8 +74,9 @@ func TestExample_ChecksumMatchesCryptoSHA256(t *testing.T) {
 // everything passes every test made of files that match, so the cases here are the ones
 // where it must not: a file whose bytes changed, and a file that is no longer there.
 func TestExample_ChecksumChecksAList(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	bin := filepath.Join(t.TempDir(), "checksum")
 	if _, stderr, code := captureRun(t, "build", "-o", bin,
 		filepath.Join(root, "examples", "checksum", "checksum.lyra")); code != 0 {
@@ -91,7 +92,7 @@ func TestExample_ChecksumChecksAList(t *testing.T) {
 		}
 	}
 	list := filepath.Join(dir, "sums.txt")
-	sums, err := exec.Command(bin, kept, changed, gone).Output()
+	sums, err := command(t, bin, kept, changed, gone).Output()
 	if err != nil {
 		t.Fatalf("writing the list failed: %v", err)
 	}
@@ -100,7 +101,7 @@ func TestExample_ChecksumChecksAList(t *testing.T) {
 	}
 
 	// Nothing has moved yet: every line matches and the exit code says so.
-	if out, err := exec.Command(bin, "--check", list).Output(); err != nil {
+	if out, err := command(t, bin, "--check", list).Output(); err != nil {
 		t.Errorf("checking an untouched list exited non-zero: %v\n%s", err, out)
 	} else if got := strings.Count(string(out), ": OK"); got != 3 {
 		t.Errorf("checking an untouched list reported %d OK, want 3:\n%s", got, out)
@@ -113,7 +114,7 @@ func TestExample_ChecksumChecksAList(t *testing.T) {
 	if err := os.Remove(gone); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command(bin, "--check", list).Output()
+	out, err := command(t, bin, "--check", list).Output()
 	if err == nil {
 		t.Errorf("a list with a changed and a missing file exited 0:\n%s", out)
 	}

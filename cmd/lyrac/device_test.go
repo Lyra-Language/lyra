@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -94,27 +93,27 @@ func TestTarget_SignsAnAppForADevice(t *testing.T) {
 	if _, err := findProfile("dev.lyra.walker"); err != nil {
 		t.Skip(err)
 	}
-	t.Setenv("LYRA_STD", build)
+	setenv(t, "LYRA_STD", build)
 	exe := filepath.Join(t.TempDir(), "walker")
 	src := filepath.Join(repoRoot(t), "examples", "game", "walker.lyra")
 	if _, stderr, code := captureRun(t, "build", "--target", "ios", "-o", exe, src); code != 0 {
 		t.Fatalf("build: exit %d; %s", code, stderr)
 	}
 	app := exe + ".app"
-	if out, err := exec.Command("codesign", "--verify", "--strict", app).CombinedOutput(); err != nil {
+	if out, err := command(t, "codesign", "--verify", "--strict", app).CombinedOutput(); err != nil {
 		t.Fatalf("the app's signature does not verify: %v\n%s", err, out)
 	}
 	if _, err := os.Stat(filepath.Join(app, "embedded.mobileprovision")); err != nil {
 		t.Errorf("no profile in the app: %v", err)
 	}
-	ents, err := exec.Command("codesign", "-d", "--entitlements", "-", "--xml", app).Output()
+	ents, err := command(t, "codesign", "-d", "--entitlements", "-", "--xml", app).Output()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(ents), ".dev.lyra.walker</string>") {
 		t.Errorf("the entitlements do not name the app:\n%s", ents)
 	}
-	details, _ := exec.Command("codesign", "-dvv", app).CombinedOutput()
+	details, _ := command(t, "codesign", "-dvv", app).CombinedOutput()
 	if !strings.Contains(string(details), "Authority=Apple Development") {
 		t.Errorf("not signed by a development identity:\n%s", details)
 	}

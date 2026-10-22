@@ -18,8 +18,9 @@ import (
 // colliders, gathered by 64-pixel band, are searched only in the bands a collider reaches;
 // and a map's edges, not kept in, stop nothing.
 func TestRun_EntitiesMoveCollideAndMeet(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	src := filepath.Join(t.TempDir(), "main.lyra")
 	if err := os.WriteFile(src, []byte(`import std.genesis.collision
 import std.genesis.collision.{ Shape, Collider }

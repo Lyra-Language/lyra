@@ -16,8 +16,9 @@ import (
 // process takes it, and the two agree only because `load` is what sorts. Numbering the
 // display separately would pass a single-command test and fail here at the first `done`.
 func TestExample_TodoSession(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "todo")
 	if _, stderr, code := captureRun(t, "build", "-o", bin, filepath.Join(root, "examples", "todo.lyra")); code != 0 {
@@ -26,7 +27,7 @@ func TestExample_TodoSession(t *testing.T) {
 	list := filepath.Join(dir, "list.txt")
 	todo := func(args ...string) (string, int) {
 		t.Helper()
-		out, err := exec.Command(bin, append([]string{"-f", list}, args...)...).CombinedOutput()
+		out, err := command(t, bin, append([]string{"-f", list}, args...)...).CombinedOutput()
 		code := 0
 		if err != nil {
 			ee, ok := err.(*exec.ExitError)

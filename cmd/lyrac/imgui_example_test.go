@@ -13,8 +13,9 @@ import (
 // example checks the binding it imports — every wrapper, handle and constant — and needs
 // no ImGui, SDL3 or C compiler, so it runs everywhere the suite does.
 func TestExample_ImGuiPixelsChecksClean(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	stdout, stderr, code := captureRun(t, "check", filepath.Join(root, "examples", "imgui", "pixels.lyra"))
 	if code != 0 {
 		t.Fatalf("checking the example exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
@@ -29,6 +30,7 @@ func TestExample_ImGuiPixelsChecksClean(t *testing.T) {
 // generator change not rerun, fails here. The JSON is downloaded by bindings/imgui/build.sh,
 // so this skips on a checkout that never ran it.
 func TestImGuiGenerator_ReproducesCommittedBinding(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
 	matches, _ := filepath.Glob(filepath.Join(root, "build", "deps", "DearBindings_*", "dcimgui.json"))
 	if len(matches) != 1 {
@@ -37,7 +39,7 @@ func TestImGuiGenerator_ReproducesCommittedBinding(t *testing.T) {
 	if _, err := exec.LookPath("clang"); err != nil && os.Getenv("LYRA_CC") == "" {
 		t.Skip("no C compiler to build the generator")
 	}
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 	gen := filepath.Join(dir, "gen")
 	if _, stderr, code := captureRun(t, "build", "-o", gen,
@@ -45,7 +47,7 @@ func TestImGuiGenerator_ReproducesCommittedBinding(t *testing.T) {
 		t.Fatalf("building the generator exited %d\nstderr: %s", code, stderr)
 	}
 	outLyra, outCpp := filepath.Join(dir, "generated.lyra"), filepath.Join(dir, "generated.cpp")
-	if b, err := exec.Command(gen, matches[0], outLyra, outCpp).CombinedOutput(); err != nil {
+	if b, err := command(t, gen, matches[0], outLyra, outCpp).CombinedOutput(); err != nil {
 		t.Fatalf("the generator failed: %v\n%s", err, b)
 	}
 	for _, name := range []string{"generated.lyra", "generated.cpp"} {

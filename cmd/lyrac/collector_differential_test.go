@@ -231,7 +231,7 @@ func TestCollector_AgreesWithTheGoCollector(t *testing.T) {
 			if err := os.WriteFile(source, []byte(c.source), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			got, err := exec.Command(bin, source).Output()
+			got, err := command(t, bin, source).Output()
 			if err != nil {
 				t.Fatalf("the Lyra collector exited non-zero on %q: %v", c.source, err)
 			}
@@ -299,7 +299,7 @@ func TestCollector_AgreesWithTheGoCollectorOnLocations(t *testing.T) {
 			if err := os.WriteFile(source, []byte(c.source), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			got, err := exec.Command(bin, "--locations", source).Output()
+			got, err := command(t, bin, "--locations", source).Output()
 			if err != nil {
 				t.Fatalf("the Lyra collector exited non-zero on %q: %v", c.source, err)
 			}
@@ -347,7 +347,7 @@ func TestCollector_RefusesTheArgumentsTheGoCollectorRefuses(t *testing.T) {
 				t.Fatalf("the Go collector refused nothing in %q", c.source)
 			}
 
-			got, err := exec.Command(bin, "--diagnostics", source).Output()
+			got, err := command(t, bin, "--diagnostics", source).Output()
 			var exit *exec.ExitError
 			if !errors.As(err, &exit) || exit.ExitCode() != 1 {
 				t.Errorf("--diagnostics should exit 1 on a refusal; got %v", err)
@@ -365,7 +365,7 @@ func TestCollector_RefusesTheArgumentsTheGoCollectorRefuses(t *testing.T) {
 				args []string
 				want string
 			}{{nil, tree}, {[]string{"--locations"}, withLocations}} {
-				got, err := exec.Command(bin, append(mode.args, source)...).Output()
+				got, err := command(t, bin, append(mode.args, source)...).Output()
 				if !errors.As(err, &exit) || exit.ExitCode() != 1 {
 					t.Errorf("a refusal should fail the exit code with the tree printed; got %v", err)
 				}

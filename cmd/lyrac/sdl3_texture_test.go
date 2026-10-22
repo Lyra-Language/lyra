@@ -14,10 +14,11 @@ import (
 // in as. Headless: SDL's dummy video driver with the software renderer, which is what
 // std.game's checks run under too (offscreen still wants OpenGL). Skipped without SDL3.
 func TestRun_SDL3TextureRoundTrip(t *testing.T) {
-	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+	t.Parallel()
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
 		t.Skip("no SDL3")
 	}
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "LYRA_STD", repoRoot(t))
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.lyra")
 	if err := os.WriteFile(src, []byte(`import bindings.sdl3.{ init, quit, INIT_VIDEO, create_window, destroy_window }
@@ -51,8 +52,8 @@ let main = () -> u8 => {
 	if _, stderr, code := captureRun(t, "build", "-o", bin, src); code != 0 {
 		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
 	}
-	cmd := exec.Command(bin)
-	cmd.Env = append(os.Environ(), "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+	cmd := command(t, bin)
+	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
 	out, err := cmd.Output()
 	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
 		t.Skip("SDL could not open a dummy window and software renderer here")

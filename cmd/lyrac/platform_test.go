@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -28,7 +27,7 @@ const platformWant = "args 3, /usr true, clock true"
 
 func writePlatformProgram(t *testing.T) string {
 	t.Helper()
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "LYRA_STD", repoRoot(t))
 	src := filepath.Join(t.TempDir(), "where.lyra")
 	if err := os.WriteFile(src, []byte(platformProgram), 0o644); err != nil {
 		t.Fatal(err)
@@ -88,7 +87,7 @@ func TestTarget_BuildsForAnIOSDevice(t *testing.T) {
 	if _, stderr, code := captureRun(t, "build", "--target", "ios", "-o", exe, src); code != 0 {
 		t.Fatalf("build for ios: exit %d; %s", code, stderr)
 	}
-	out, err := exec.Command("otool", "-l", exe).Output()
+	out, err := command(t, "otool", "-l", exe).Output()
 	if err != nil {
 		t.Fatalf("otool: %v", err)
 	}
@@ -142,7 +141,7 @@ let main = () -> u8 => {
 			t.Errorf("the Info.plist lacks %s", want)
 		}
 	}
-	if out, err := exec.Command("codesign", "--verify", exe+".app").CombinedOutput(); err != nil {
+	if out, err := command(t, "codesign", "--verify", exe+".app").CombinedOutput(); err != nil {
 		t.Errorf("the app is not signed: %v\n%s", err, out)
 	}
 }
@@ -179,7 +178,7 @@ func requireSimulatorSDL3(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(build, "lib", "ios-simulator", "lib", "libSDL3.a")); err != nil {
 		t.Skip("no SDL3 for the iOS Simulator; tools/sdl3-ios.sh builds it")
 	}
-	t.Setenv("LYRA_STD", build)
+	setenv(t, "LYRA_STD", build)
 }
 
 // requireLinuxCross skips without zig to link a Linux program or Docker to run one.
@@ -189,7 +188,7 @@ func requireLinuxCross(t *testing.T) {
 	if _, err := findZig(); err != nil {
 		t.Skip(err)
 	}
-	if err := exec.Command("docker", "info").Run(); err != nil {
+	if err := command(t, "docker", "info").Run(); err != nil {
 		t.Skip("no Docker to run a Linux program in")
 	}
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,8 +12,9 @@ import (
 // `TZ=` means something to the tools that read it; `Some("")` and `None` keep the two
 // sayable, and a wrapper returning `""` for both would not.
 func TestExample_EnvLookup(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	probe := filepath.Join(t.TempDir(), "probe.lyra")
 	if err := os.WriteFile(probe, []byte(`module main
 import std.collections.{ parse_args }
@@ -36,8 +36,8 @@ let main = () -> u8 => {
 	if _, stderr, code := captureRun(t, "build", "-o", bin, probe); code != 0 {
 		t.Fatalf("building the probe exited %d\nstderr: %s", code, stderr)
 	}
-	cmd := exec.Command(bin, "LYRA_TEST_SET", "LYRA_TEST_EMPTY", "LYRA_TEST_MISSING")
-	cmd.Env = append(os.Environ(), "LYRA_TEST_SET=a value", "LYRA_TEST_EMPTY=")
+	cmd := command(t, bin, "LYRA_TEST_SET", "LYRA_TEST_EMPTY", "LYRA_TEST_MISSING")
+	cmd.Env = append(cmd.Env, "LYRA_TEST_SET=a value", "LYRA_TEST_EMPTY=")
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("probing failed: %v", err)
@@ -55,8 +55,9 @@ let main = () -> u8 => {
 // The fixture here is deliberately a *lie* — one zone's file under another's name — so a
 // pass cannot come from the loader quietly reading the system copy instead.
 func TestExample_TZDIRRedirectsTheZoneDatabase(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	source := "/usr/share/zoneinfo/Asia/Kathmandu"
 	if _, err := os.Stat(source); err != nil {
 		t.Skip("no system zone database to build a fixture from")
@@ -101,8 +102,8 @@ let main = () -> u8 => {
 		{"a TZDIR with no zones finds none", filepath.Join(fixture, "nothing"), "no zone"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			cmd := exec.Command(bin)
-			cmd.Env = append(os.Environ(), "TZDIR="+c.tzdir)
+			cmd := command(t, bin)
+			cmd.Env = append(cmd.Env, "TZDIR="+c.tzdir)
 			out, err := cmd.Output()
 			if err != nil {
 				t.Fatalf("probing failed: %v", err)

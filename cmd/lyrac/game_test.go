@@ -23,8 +23,9 @@ import (
 // curve, two ellipses, touching, mirroring, a map whose solid tile is its right half and, mirrored
 // by its cell, its left; shapes with no area; colliders one-sided by layer.
 func TestRun_GameCollisionShapesOverlap(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	src := filepath.Join(t.TempDir(), "main.lyra")
 	if err := os.WriteFile(src, []byte(`import std.game.collision
 import std.game.collision.{ Shape, Collider }
@@ -91,8 +92,9 @@ let main = () -> u8 => {
 // colliders, banded map colliders, and open edges — plus a stick's lean, which the Genesis
 // pad cannot give.
 func TestRun_GameEntitiesMoveCollideAndMeet(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	src := filepath.Join(t.TempDir(), "main.lyra")
 	if err := os.WriteFile(src, []byte(`import std.game.collision.{ Shape, Collider }
 import std.game.entity.{ Animation, EntityKind, MAX_FALL }
@@ -346,8 +348,9 @@ let main = () -> u8 => {
 // never past the world, at whole pixels; `sees` is the screen's edges; show_map and
 // scroll_map write and scroll the plane.
 func TestRun_GameCameraFollows(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	src := filepath.Join(t.TempDir(), "main.lyra")
 	if err := os.WriteFile(src, []byte(`import std.game.camera.{ Camera }
 import std.game.planes
@@ -389,6 +392,7 @@ let main = () -> u8 => {
 // backdrop shows in the field's border, grass in plane B, and the hero — the screen's
 // middle, x 152 — has walked 60 pixels: 2 an update, one update a frame under --frames.
 func TestRun_GameWalkerPlaysItself(t *testing.T) {
+	t.Parallel()
 	frame := playGame(t, filepath.Join(repoRoot(t), "examples", "game", "walker.lyra"),
 		"--frames", "30", "--hold", "right")
 	if frame.w != 320 || frame.h != 224 {
@@ -419,6 +423,7 @@ func TestRun_GameWalkerPlaysItself(t *testing.T) {
 // row, two rows; tile 2 is black on its left half, white on its right; tile 1 is green in
 // palette 0's art and blue in palette 1's.
 func TestRun_GameScreenComposesInPriorityOrder(t *testing.T) {
+	t.Parallel()
 	src := filepath.Join(t.TempDir(), "main.lyra")
 	if err := os.WriteFile(src, []byte(`import std.game.screen
 import std.game.planes
@@ -497,18 +502,18 @@ func (p ppm) at(x, y int) [3]byte {
 // the last frame — skipping without SDL3, or where SDL cannot open its dummy window.
 func playGame(t *testing.T, src string, args ...string) ppm {
 	t.Helper()
-	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
 		t.Skip("no SDL3")
 	}
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "LYRA_STD", repoRoot(t))
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "game")
 	if _, stderr, code := captureRun(t, "build", "-o", bin, src); code != 0 {
 		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
 	}
 	shot := filepath.Join(dir, "frame.ppm")
-	cmd := exec.Command(bin, append(args, "--ppm", shot)...)
-	cmd.Env = append(os.Environ(), "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+	cmd := command(t, bin, append(args, "--ppm", shot)...)
+	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
 	out, err := cmd.CombinedOutput()
 	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
 		t.Skipf("SDL could not open a dummy window here: %s", out)
@@ -559,6 +564,7 @@ func readPPM(t *testing.T, shot string) ppm {
 // (half size leaves its corner blue), and turned (half red, half green, turned 180° shows green
 // where red was drawn).
 func TestRun_GameSpritesFadeTintTurnGrowAndGlow(t *testing.T) {
+	t.Parallel()
 	src := filepath.Join(t.TempDir(), "main.lyra")
 	if err := os.WriteFile(src, []byte(`import std.game.screen
 import std.game.sprites
@@ -658,7 +664,7 @@ func TestRun_AStoppedRunEndsItsAppInTheSimulator(t *testing.T) {
 		t.Skip(err)
 	}
 	walker := filepath.Join(repoRoot(t), "examples", "game", "walker.lyra")
-	cmd := asLyrac("run", "--progress", "--target", "ios-simulator", walker)
+	cmd := asLyrac(t, "run", "--progress", "--target", "ios-simulator", walker)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -677,7 +683,7 @@ func TestRun_AStoppedRunEndsItsAppInTheSimulator(t *testing.T) {
 	}
 	app := "UIKitApplication:dev.lyra.walker"
 	listed := func() bool {
-		out, _ := exec.Command("xcrun", "simctl", "spawn", device, "launchctl", "list").Output()
+		out, _ := command(t, "xcrun", "simctl", "spawn", device, "launchctl", "list").Output()
 		return strings.Contains(string(out), app)
 	}
 	for i := 0; i < 50 && !listed(); i++ {
@@ -705,14 +711,6 @@ func TestRun_AStoppedRunEndsItsAppInTheSimulator(t *testing.T) {
 	}
 }
 
-// asLyrac is the command running lyrac with args as its own process: this test binary,
-// which TestMain makes lyrac when LYRAC_TEST_AS_LYRAC is set.
-func asLyrac(args ...string) *exec.Cmd {
-	cmd := exec.Command(os.Args[0], args...)
-	cmd.Env = append(os.Environ(), "LYRAC_TEST_AS_LYRAC=1")
-	return cmd
-}
-
 // The screen's pad on a phone (std.game.pad's touch_layout): on a 2556 × 1179 screen held
 // sideways — an iPhone's real pixels — a finger in the d-pad's right arm holds right, one in its
 // top-left corner up and left, its middle nothing; A, B and C sit bottom right and Start top
@@ -720,12 +718,13 @@ func asLyrac(args ...string) *exec.Cmd {
 // are worked out here from the layout's rule (a unit 0.13 of the short side, half a unit of
 // margin), not read from it.
 func TestRun_GameTouchPadLayout(t *testing.T) {
+	t.Parallel()
 	requireCC(t)
 	// The layout is pure, but std.game.pad imports SDL3, which the program links.
-	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
 		t.Skip("no SDL3")
 	}
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "LYRA_STD", repoRoot(t))
 	const w, h = 2556.0, 1179.0
 	unit := h * 0.13
 	margin := unit / 2

@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -68,7 +67,7 @@ let main = () -> u8 => {
   0
 }
 `)
-	out, err := exec.Command(bin).CombinedOutput()
+	out, err := command(t, bin).CombinedOutput()
 	if err != nil {
 		t.Fatalf("the probe exited non-zero: %v\n%s", err, out)
 	}

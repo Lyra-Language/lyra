@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,7 +16,8 @@ import (
 // interpolation are the prelude's, so this is the program as a user writes it, checked by
 // the command a user runs.
 func TestCallArgument_NamedIsRefusedAtTheArgument(t *testing.T) {
-	t.Setenv("LYRA_STD", repoRoot(t))
+	t.Parallel()
+	setenv(t, "LYRA_STD", repoRoot(t))
 
 	src := writeCallArgumentSource(t, `let greet = pure (name: string, greeting: string = "Hello") -> string => "${greeting}, ${name}"
 let main = () -> void => {
@@ -52,7 +52,8 @@ let main = () -> void => {
 // A bare `_` (the partial application the grammar still parses) was dropped the same way,
 // and reported only as a wrong argument count. It is refused at the `_`, alone.
 func TestCallArgument_WildcardIsRefusedAtTheArgument(t *testing.T) {
-	t.Setenv("LYRA_STD", repoRoot(t))
+	t.Parallel()
+	setenv(t, "LYRA_STD", repoRoot(t))
 
 	src := writeCallArgumentSource(t, `let add = pure (a: i64, b: i64) -> i64 => a + b
 let main = () -> void => {
@@ -74,8 +75,9 @@ let main = () -> void => {
 
 // **The advice is taken and has to run**: the value alone, in its parameter's place.
 func TestCallArgument_PositionalAdviceRuns(t *testing.T) {
+	t.Parallel()
 	requireCC(t)
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "LYRA_STD", repoRoot(t))
 
 	src := writeCallArgumentSource(t, `let greet = pure (name: string, greeting: string = "Hello") -> string => "${greeting}, ${name}"
 let main = () -> void => {
@@ -86,7 +88,7 @@ let main = () -> void => {
 	if _, stderr, code := captureRun(t, "build", "-o", bin, src); code != 0 {
 		t.Fatalf("the advice does not compile: exited %d\nstderr: %s", code, stderr)
 	}
-	out, err := exec.Command(bin).CombinedOutput()
+	out, err := command(t, bin).CombinedOutput()
 	if err != nil {
 		t.Fatalf("running failed: %v\n%s", err, out)
 	}

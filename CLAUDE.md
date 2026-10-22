@@ -805,10 +805,19 @@ diagnostic whose fix names a standard-library function — belongs where the pre
 
 **A test must not depend on the shell's `LYRA_STD` or `LYRA_NO_PRELUDE`.** Both change what
 resolution finds, so `cmd/lyra-lsp` and `cmd/lyrac` clear them in `TestMain` and each test that
-needs the standard library sets `t.Setenv("LYRA_STD", …)` (or `LYRA_NO_PRELUDE`) itself. A
-package that resolves modules through `modules.DefaultRoots`/`DefaultOptions` and lacks such a
-`TestMain` passes in CI and fails wherever a developer exported one — which once read as a
-flaky race for a day.
+needs the standard library sets it itself. A package that resolves modules through
+`modules.DefaultRoots`/`DefaultOptions` and lacks such a `TestMain` passes in CI and fails
+wherever a developer exported one — which once read as a flaky race for a day.
+
+**`cmd/lyrac`'s tests run in parallel; lyrac runs as a process of its own.** `captureRun`
+starts this test binary as lyrac (`asLyrac`, `LYRAC_TEST_AS_LYRAC`), never `run` in-process,
+and a test sets the environment for what it starts with `setenv(t, …)` — not `t.Setenv`, which
+changes the process's and forbids `t.Parallel` — and starts programs and tools with
+`command(t, …)`, which carries it. A new test calls `t.Parallel()` unless it calls the compiler
+in-process with the process's environment or globals (`watch`, `linkFlags` with its seams
+swapped, `useColor`) or drives the Simulator; those stay serial, and Go runs them before the
+parallel ones. Under `-cover` the lyrac processes write coverage where the test binary does,
+so it still counts.
 
 **A test file's name can silently exclude it.** A final `_arm`, `_ios`, `_js`, `_plan9`,
 `_android`, `_wasm`, `_mips`, `_s390x`, `_windows` (any GOOS/GOARCH) segment is a build

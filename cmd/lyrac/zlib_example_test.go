@@ -22,6 +22,7 @@ import (
 // It goes through the **CLI**, not the backend harness, for the same reason: the harness
 // hardcodes `-lm`, so a test written there would be testing a link line no user gets.
 func TestExample_ZlibRoundTrips(t *testing.T) {
+	t.Parallel()
 	if !zlibAvailable(t) {
 		t.Skip("zlib is not available in this toolchain (install zlib1g-dev); " +
 			"CI and asan.Dockerfile both provide it, so this must not be skipped there")
@@ -31,13 +32,13 @@ func TestExample_ZlibRoundTrips(t *testing.T) {
 	// for exactly this — "a build can point at a working copy" — and the repo root is the
 	// directory *containing* `std/`, not `std/` itself.
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	example := filepath.Join(root, "examples", "zlib.lyra")
 	bin := filepath.Join(t.TempDir(), "zlib")
 	if _, stderr, code := captureRun(t, "build", "-o", bin, example); code != 0 {
 		t.Fatalf("building the example exited %d\nstderr: %s", code, stderr)
 	}
-	out, err := exec.Command(bin).CombinedOutput()
+	out, err := command(t, bin).CombinedOutput()
 	if err != nil {
 		t.Fatalf("running the example failed: %v\n%s", err, out)
 	}
@@ -67,7 +68,7 @@ func zlibAvailable(t *testing.T) bool {
 	if err := os.WriteFile(src, []byte(probe), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return exec.Command(clang, src, "-lz", "-o", filepath.Join(dir, "probe")).Run() == nil
+	return command(t, clang, src, "-lz", "-o", filepath.Join(dir, "probe")).Run() == nil
 }
 
 // repoRoot is the directory containing `std/`, located from this file rather than from the

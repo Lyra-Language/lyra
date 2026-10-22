@@ -22,6 +22,7 @@ import (
 // telling that callee from a written reference to the same name. A hand-built ImportUse
 // would be testing the shape of a map instead.
 func TestUnusedImport_NameUsedOnlyMethodStyle(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name, lib, other, prog string
 		// extra are further files of the program, by name; warnIn is the file the
@@ -84,7 +85,7 @@ func TestUnusedImport_NameUsedOnlyMethodStyle(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			root := repoRoot(t)
-			t.Setenv("LYRA_STD", root)
+			setenv(t, "LYRA_STD", root)
 			dir := t.TempDir()
 			files := map[string]string{"lib.lyra": c.lib, "prog.lyra": c.prog}
 			if c.other != "" {

@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -27,8 +26,9 @@ import (
 // asking Go where this zone's transitions actually are and sampling a second either side
 // of each: the instant a rule takes effect, and the last instant of the rule before it.
 func TestExample_TimeZoneMatchesGo(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	if _, err := os.Stat("/usr/share/zoneinfo"); err != nil {
 		t.Skip("no /usr/share/zoneinfo on this machine")
 	}
@@ -82,7 +82,7 @@ let main = () -> u8 => {
 			for _, at := range instants {
 				args = append(args, strconv.FormatInt(at, 10))
 			}
-			out, err := exec.Command(bin, args...).Output()
+			out, err := command(t, bin, args...).Output()
 			if err != nil {
 				t.Fatalf("probing %s failed: %v", name, err)
 			}
@@ -169,8 +169,9 @@ func transitionBetween(loc *time.Location, lo, hi time.Time) int64 {
 // was standardized — an offset with seconds in it, which a formatter assuming whole
 // minutes rounds away in silence.
 func TestExample_ZonedDateTimeMatchesGo(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	if _, err := os.Stat("/usr/share/zoneinfo"); err != nil {
 		t.Skip("no /usr/share/zoneinfo on this machine")
 	}
@@ -218,7 +219,7 @@ let main = () -> u8 => {
 			}
 			instants := sampleInstants(loc)
 			args := append([]string{name, "--"}, formatInts(instants)...)
-			out, err := exec.Command(bin, args...).Output()
+			out, err := command(t, bin, args...).Output()
 			if err != nil {
 				t.Fatalf("probing %s failed: %v", name, err)
 			}
@@ -276,8 +277,9 @@ func offsetString(seconds int) string {
 // reading and two different instants, and a round trip that lost the offset would collapse
 // them onto one without ever failing loudly.
 func TestExample_ZonedDateTimeRoundTrips(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	if _, err := os.Stat("/usr/share/zoneinfo"); err != nil {
 		t.Skip("no /usr/share/zoneinfo on this machine")
 	}
@@ -330,7 +332,7 @@ let main = () -> u8 => {
 			}
 			instants := sampleInstants(loc)
 			args := append([]string{name, "--"}, formatInts(instants)...)
-			out, err := exec.Command(bin, args...).Output()
+			out, err := command(t, bin, args...).Output()
 			if err != nil {
 				t.Fatalf("probing %s failed: %v", name, err)
 			}
@@ -367,8 +369,9 @@ let main = () -> u8 => {
 // agrees with the earlier of them — so this keeps holding when a country next changes its
 // rules, which is the event the whole database exists to record.
 func TestExample_ParseZonedDateTimeEdges(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	if _, err := os.Stat("/usr/share/zoneinfo"); err != nil {
 		t.Skip("no /usr/share/zoneinfo on this machine")
 	}

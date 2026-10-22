@@ -15,6 +15,7 @@ import (
 // macOS only — elsewhere the binding is a stub — and skipped without the archive, SDL3,
 // or a window server to make an application object.
 func TestRun_MenubarSubmenusAreInstalled(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" {
 		t.Skip("the native menu bar is macOS's")
 	}
@@ -22,12 +23,12 @@ func TestRun_MenubarSubmenusAreInstalled(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "build", "lib", "liblyra-menubar.a")); err != nil {
 		t.Skip("no build/lib/liblyra-menubar.a — run ./build.sh")
 	}
-	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
 		t.Skip("no SDL3")
 	}
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	// Built in-process, lyrac is not the install's, so it does not search build/lib itself.
-	t.Setenv("LIBRARY_PATH", filepath.Join(root, "build", "lib"))
+	setenv(t, "LIBRARY_PATH", filepath.Join(root, "build", "lib"))
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.lyra")
 	if err := os.WriteFile(src, []byte(`import bindings.sdl3.{ init, quit, INIT_VIDEO }
@@ -56,7 +57,7 @@ let main = () -> u8 => {
 	if _, stderr, code := captureRun(t, "build", "-o", bin, src); code != 0 {
 		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
 	}
-	out, err := exec.Command(bin).Output()
+	out, err := command(t, bin).Output()
 	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
 		t.Skip("no window server: SDL or the menu bar could not start")
 	} else if err != nil {

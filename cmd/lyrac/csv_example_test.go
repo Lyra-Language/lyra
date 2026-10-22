@@ -16,8 +16,9 @@ import (
 // still reports an error, so a test that only checked the exit code would pass on one
 // that had lost count of the newlines — every expectation below names the place.
 func TestExample_CsvReader(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "csv")
 	if _, stderr, code := captureRun(t, "build", "-o", bin, filepath.Join(root, "examples", "csv", "csv.lyra")); code != 0 {
@@ -29,7 +30,7 @@ func TestExample_CsvReader(t *testing.T) {
 		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := exec.Command(bin, append([]string{"-f", path}, args...)...).CombinedOutput()
+		out, err := command(t, bin, append([]string{"-f", path}, args...)...).CombinedOutput()
 		code := 0
 		if err != nil {
 			ee, ok := err.(*exec.ExitError)
@@ -87,7 +88,7 @@ func TestExample_CsvReader(t *testing.T) {
 	// it into plain fields would still look fine on the page.
 	t.Run("the sample file beside the example", func(t *testing.T) {
 		sample := filepath.Join(root, "examples", "csv", "people.csv")
-		out, err := exec.Command(bin, "-f", sample).CombinedOutput()
+		out, err := command(t, bin, "-f", sample).CombinedOutput()
 		if err != nil {
 			t.Fatalf("reading %s failed: %v\n%s", sample, err, out)
 		}

@@ -18,9 +18,10 @@ import (
 // compiler's C compiler, as two arguments for the program. Adding a feature must not
 // change what an existing command line means.
 func TestRun_PassesArgumentsAfterSeparator(t *testing.T) {
+	t.Parallel()
 	requireCC(t)
 	// program_args() is prelude Lyra over two builtins, so this needs the real std root.
-	t.Setenv("LYRA_STD", repoRoot(t))
+	setenv(t, "LYRA_STD", repoRoot(t))
 	src := filepath.Join(t.TempDir(), "args.lyra")
 	if err := os.WriteFile(src, []byte(`
 let main = () -> void => {
@@ -63,6 +64,7 @@ let main = () -> void => {
 // refused rather than accepted and dropped — the same call this parser already makes for
 // `-o` under `run`.
 func TestBuild_RefusesProgramArguments(t *testing.T) {
+	t.Parallel()
 	src := fixture("hello.lyra")
 	_, stderr, code := captureRun(t, "build", src, "--", "foo")
 	if code == 0 {
@@ -77,6 +79,7 @@ func TestBuild_RefusesProgramArguments(t *testing.T) {
 // game.lyra --level x` read as lyrac's own unknown flag, and the usage alone did not say
 // that the program's arguments go after `--`.
 func TestRun_UnknownFlagSuggestsTheSeparator(t *testing.T) {
+	t.Parallel()
 	src := fixture("hello.lyra")
 	_, stderr, code := captureRun(t, "run", src, "--level", "x.txt")
 	if code == 0 {

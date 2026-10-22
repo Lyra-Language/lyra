@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,14 +13,15 @@ import (
 // primes is 24133, eight primes lie below twenty, and 1009 is the first above a
 // thousand — so a lowering that runs and answers wrong fails here too.
 func TestExample_PrimesRuns(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	example := filepath.Join(root, "examples", "primes.lyra")
 	bin := filepath.Join(t.TempDir(), "primes")
 	if _, stderr, code := captureRun(t, "build", "-o", bin, example); code != 0 {
 		t.Fatalf("building the example exited %d\nstderr: %s", code, stderr)
 	}
-	out, err := exec.Command(bin).CombinedOutput()
+	out, err := command(t, bin).CombinedOutput()
 	if err != nil {
 		t.Fatalf("running the example failed: %v\n%s", err, out)
 	}
@@ -37,14 +37,15 @@ func TestExample_PrimesRuns(t *testing.T) {
 // the arithmetic — Fibonacci, its consecutive differences (which are Fibonacci again),
 // and the merged multiples of 3 and 5 — rather than the program's own output.
 func TestExample_SequencesRuns(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	example := filepath.Join(root, "examples", "sequences.lyra")
 	bin := filepath.Join(t.TempDir(), "sequences")
 	if _, stderr, code := captureRun(t, "build", "-o", bin, example); code != 0 {
 		t.Fatalf("building the example exited %d\nstderr: %s", code, stderr)
 	}
-	out, err := exec.Command(bin).CombinedOutput()
+	out, err := command(t, bin).CombinedOutput()
 	if err != nil {
 		t.Fatalf("running the example failed: %v\n%s", err, out)
 	}

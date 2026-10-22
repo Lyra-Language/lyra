@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -19,8 +18,9 @@ import (
 // silenced after its effect's last step. The bytes are worked out here from the register
 // layout, not copied from the program.
 func TestRun_PsgEffectsSendTheChipItsBytes(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	src := filepath.Join(t.TempDir(), "effects.lyra")
 	program := `import std.chips.effects.{ Effect, EffectStep, new_player, MAX_BYTES }
 
@@ -80,11 +80,12 @@ let main = () -> u8 => {
 // period 254 is heard at the PSG's pitch for it (the clock over 32 × 254, 440.4 Hz) for half
 // a second, then is silent — written as a 16-bit mono WAV at 48 kHz.
 func TestRun_GameSoundIsHeardAtThePsgsPitch(t *testing.T) {
-	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+	t.Parallel()
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
 		t.Skip("no SDL3")
 	}
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "beep.lyra")
 	program := `import std.game.sound
@@ -163,11 +164,12 @@ let main = () -> u8 => {
 // zero crossings); and after its last step it is keyed off, its fastest release silent
 // within frames.
 func TestRun_GameSoundPlaysAnFmPatchAtItsNote(t *testing.T) {
-	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+	t.Parallel()
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
 		t.Skip("no SDL3")
 	}
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "sine.lyra")
 	program := `import std.game.sound
@@ -326,11 +328,12 @@ const TUNE: Tune = Tune { first_order: 0, orders: 1, rows: 8, speed: 6 }
 // it and PSG 1's E5 at the PSG's, the PSG let go at its row — and the same program builds
 // for the 68000 through std.genesis.sound, played in Sheliak where it is.
 func TestRun_GameMusicPlaysBothChips(t *testing.T) {
-	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+	t.Parallel()
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
 		t.Skip("no SDL3")
 	}
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "song.lyra")
 	program := "import std.game.sound\n" + songTables + `
@@ -386,8 +389,8 @@ let main = () -> void => {
 		return
 	}
 	gwav := filepath.Join(gdir, "song.wav")
-	cmd := exec.Command(emulator, rom, "--frames", "90", "--wav", gwav)
-	cmd.Env = append(os.Environ(), "SDL_VIDEODRIVER=dummy")
+	cmd := command(t, emulator, rom, "--frames", "90", "--wav", gwav)
+	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("sheliak: %v\n%s", err, out)
 	}
@@ -525,11 +528,12 @@ const TUNE: Tune = Tune { first_order: 0, orders: 1, rows: 8, speed: 6, extended
 // FM 3 extended: two of its operators each sound their own note — A4 and E5 together, on
 // one channel — through std.game.sound, and through std.genesis.sound in Sheliak.
 func TestRun_GameMusicExtendedChannel3(t *testing.T) {
-	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+	t.Parallel()
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
 		t.Skip("no SDL3")
 	}
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	check := func(runtime string, samples []float64, rate int) {
 		t.Helper()
 		frame := rate / 60
@@ -610,8 +614,8 @@ let main = () -> void => {
 		t.Fatalf("build exited %d: %s", code, stderr)
 	}
 	gwav := filepath.Join(gdir, "song.wav")
-	cmd := exec.Command(emulator, rom, "--frames", "60", "--wav", gwav)
-	cmd.Env = append(os.Environ(), "SDL_VIDEODRIVER=dummy")
+	cmd := command(t, emulator, rom, "--frames", "60", "--wav", gwav)
+	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("sheliak: %v\n%s", err, out)
 	}

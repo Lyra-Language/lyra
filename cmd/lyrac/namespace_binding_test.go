@@ -11,8 +11,9 @@ import (
 // resolves the binding from its declaration, so a local of the same name in the reading
 // function must not capture it.
 func TestRun_ANamespaceReachesAModulesBindings(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	t.Setenv("LYRA_STD", root)
+	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 	for name, text := range map[string]string{
 		"util/settings.lyra": "module util.settings\n" +
