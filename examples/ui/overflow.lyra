@@ -1,0 +1,138 @@
+// Overflow: the markup of overflow_view.lui run by `ui.app` — boxes scrolled down, across and
+// both ways, one cut off, one scroller inside another, on a page that scrolls the window.
+//
+//     build/lui examples/ui/overflow_view.lui      # after editing the markup
+//     lyrac run examples/ui/overflow.lyra
+//     lyrac run examples/ui/overflow.lyra -- --script "move:100,200 scroll:3 Tab Enter" --png FILE
+//
+// Scroll with a wheel or trackpad (Shift for across), drag a bar's thumb, click its track to
+// page, or Tab to a button — the boxes scroll it into view — and use the arrows, Page Up and
+// Down, Home and End. **The second form** plays a script (`ui.script`) headless and prints
+// what it pressed; `--png FILE` writes the last frame.
+
+import ui.sdl3
+import ui.sdl3.{ SdlRenderer, capture }
+import ui.gpu
+import ui.app.{ App, sandbox, run, running, follow_resizes, step_running }
+import ui.script.{ timed_platform, parse_steps }
+import ui.draw.{ Point, Size, Color }
+import ui.text.{ Fonts, fonts_new, glyph_atlas }
+import ui.style.{ light_theme }
+import ui.layout.{ Laid, paint }
+import overflow_view.{
+  State,
+  Event,
+  view,
+  update,
+  WINDOW_MIN_SIZE,
+  WINDOW_MAX_SIZE,
+  WINDOW_OVERFLOW
+}
+import std.collections.{ parse_args }
+import std.png.{ write_png }
+import std.io.{ write_bytes }
+
+const WIDTH: f32 = 720.0
+const HEIGHT: f32 = 760.0
+
+let main = () -> u8 => {
+  let args = parse_args(["--script", "--png"])
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let background = light_theme().colors.background
+  let app = App {
+    sandbox(view, update, background) |
+    min_size: WINDOW_MIN_SIZE,
+    max_size: WINDOW_MAX_SIZE,
+    window_overflow: WINDOW_OVERFLOW,
+  }
+  var status: u8 = 0
+  if let Some(script) = args.value("--script") {
+    // Played headless through SDL's 2D renderer, whose frame `--png` reads back.
+    let window = match sdl3.open("Overflow", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    var renderer = window.renderer
+    match parse_steps(script) {
+      Ok(steps) => {
+        let scripted = timed_platform(steps, Size { w: WIDTH, h: HEIGHT })
+        // Stepped here rather than by `run`, so the frame saved is the one the host laid out
+        // last — with the scroll offsets the script left, which are the framework's, not the
+        // state's.
+        let played = running(app, State {}, scripted, renderer, fonts)
+        follow_resizes(played)
+        while step_running(played) {}
+        println("pressed: ${played.host.state.pressed}")
+        if let Some(path) = args.value("--png") {
+          if !save(
+            played.renderer,
+            played.fonts,
+            played.host.shown[0],
+            background,
+            path
+          ) {
+            status = 1
+          }
+        }
+        renderer = played.renderer
+        fonts = played.fonts
+      },
+      Err(why) => {
+        println("the script: ${why}")
+        status = 1
+      },
+    }
+    sdl3.close(window.platform, renderer)
+  } else {
+    // On the GPU where there is one.
+    let window = match gpu.open("Overflow", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    var platform = window.platform
+    var renderer = window.renderer
+    let _ = run(app, State {}, platform, renderer, fonts)
+    gpu.close(platform, renderer)
+  }
+  fonts.close()
+  status
+}
+
+/// `laid` — the window as the host last laid it out — drawn without showing it, and written to
+/// `path` as a PNG.
+let save = (
+  renderer: SdlRenderer,
+  fonts: Fonts,
+  laid: Laid<Event>,
+  background: Color,
+  path: string
+) -> bool => {
+  var r = renderer
+  var f = fonts
+  var atlas = glyph_atlas()
+  let list = paint(laid, Point {}, 1.0, f, atlas, r)
+  let Some(frame) = capture(r, background, list) else { return false }
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(u8((p >> 24) & 0xFF))
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(png) => write_bytes(path, png),
+    Err(_) => false,
+  }
+}

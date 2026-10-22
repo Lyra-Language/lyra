@@ -1,0 +1,114 @@
+<!--
+  Overflow, as markup: boxes whose content does not fit — scrolled down, across, both ways,
+  cut off, one scroller inside another — on a page longer than the window, which scrolls
+  too. `build/lui examples/ui/overflow_view.lui` writes overflow_view.lyra beside it, which
+  overflow.lyra runs. Scroll with a wheel or trackpad (Shift for across), drag a bar's thumb,
+  click its track to page, or Tab to a button and use the arrows, Page Up and Down.
+-->
+
+<window min-width="420" min-height="360" overflow="auto"/>
+
+<script target="ui">
+  import ui.style.{ Theme, light_theme }
+
+  /// What the buttons say.
+  pub data Event = Pressed(i64)
+
+  pub struct State {
+    pressed: i64 = -1,
+  }
+
+  /// `s` after `event`.
+  pub let update = pure (s: State, event: Event) -> State => match event {
+    Pressed(i) => State { s | pressed: i },
+  }
+</script>
+
+<style global theme={Theme} name="overflow_sheet">
+  .page { background: $colors.background; padding: $space.xl; gap: $space.l }
+  Text.title { font-size: 20 }
+  Text.note { color: $colors.muted; font-size: 13 }
+  .box, .wide-box, .both, .cut, .outer {
+    background: $colors.surface;
+    border-color: $colors.border;
+    border-width: 1;
+    radius: 10;
+    padding: $space.m;
+    gap: $space.s
+  }
+  /* Down: a list taller than its box. */
+  .box { height: 160; overflow-y: auto }
+  /* Across: a row of cards wider than its box. */
+  .wide-box { overflow-x: auto }
+  .chip { width: 130; height: 60; radius: 8; background: linear-gradient(135deg, #8ec5fc, #e0c3fc); padding: 10 }
+  /* Both ways, bars always shown. */
+  .both { height: 180; overflow: scroll }
+  .tile { width: 90; height: 90; radius: 8; background: #dfe9f7 }
+  /* Cut off, never scrolled by the user. */
+  .cut { height: 64; overflow: hidden }
+  /* One scroller inside another: the inner one scrolls across, the outer one down. */
+  .outer { height: 220; overflow-y: auto }
+  .inner { overflow-x: auto; gap: 8; padding: 4 }
+</style>
+
+<!-- The page for a state. -->
+<component name="view" props={{ s: State }} event={Event}>
+  <Themed theme={light_theme()} sheet={overflow_sheet(light_theme())}>
+    <Column class="page" cross="stretch">
+      <Text class="title">Overflow</Text>
+      <Text class="note">Pressed: {if s.pressed < 0 { "nothing yet" } else { "button ${s.pressed}" }}</Text>
+
+      <Text class="note">overflow-y: auto — scroll down inside the box</Text>
+      <Column class="box" cross="stretch">
+        <for each={i in 0..<20}>
+          <Row key="line {i}" style="gap: 8">
+            <Button on_click={Pressed(i)}>Button {i}</Button>
+            <Text>Line {i + 1} of a list taller than its box.</Text>
+          </Row>
+        </for>
+      </Column>
+
+      <Text class="note">overflow-x: auto — scroll across (Shift with a wheel)</Text>
+      <Row class="wide-box">
+        <for each={i in 0..<14}>
+          <Column class="chip" key="chip {i}"><Text>Card {i + 1}</Text></Column>
+        </for>
+      </Row>
+
+      <Text class="note">overflow: scroll — both ways, bars always shown</Text>
+      <Column class="both">
+        <for each={r in 0..<6}>
+          <Row key="row {r}" style="gap: 8">
+            <for each={c in 0..<10}>
+              <SizedBox class="tile" key="tile {r} {c}"/>
+            </for>
+          </Row>
+        </for>
+      </Column>
+
+      <Text class="note">overflow: hidden — cut off, no bars</Text>
+      <Column class="cut">
+        <Text>This box is shorter than its text. Overflow hidden cuts off what does not fit, and nothing the user does scrolls it; a program still may. The rest of this sentence is hidden below the box's edge, out of sight and out of reach of the pointer.</Text>
+      </Column>
+
+      <Text class="note">Nested — across inside down</Text>
+      <Column class="outer" cross="stretch">
+        <for each={k in 0..<4}>
+          <Column key="group {k}" style="gap: 6">
+            <Text>Group {k + 1}</Text>
+            <Row class="inner">
+              <for each={i in 0..<10}>
+                <Column class="chip" key="nested {k} {i}"><Text>{k + 1}.{i + 1}</Text></Column>
+              </for>
+            </Row>
+          </Column>
+        </for>
+      </Column>
+
+      <Text class="title">A long page</Text>
+      <for each={p in 0..<12}>
+        <Text key="para {p}">Paragraph {p + 1}. The page is longer than the window, so the window itself scrolls, with a bar at its right while it does not fit — an App's window_overflow, here the markup's window overflow="auto".</Text>
+      </for>
+    </Column>
+  </Themed>
+</component>

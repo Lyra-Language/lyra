@@ -18,7 +18,7 @@ module ui.script
 //!   `Backspace`, `Delete`, `Left`, `Right`, `Up`, `Down`, `Home`, `End`, `PageUp`,
 //!   `PageDown`, or one character (`a`, `/`), which is its key.
 //! - `move:X,Y`, `down:X,Y`, `up:X,Y` and `click:X,Y` (a move, a press and a release) — the
-//!   pointer, in logical units; `scroll:N` scrolls down `N` lines (up for a negative `N`).
+//!   pointer, in logical units; `scroll:N` scrolls down `N` lines (up for a negative `N`), `scroll:X,Y` across and down.
 //! - `resize:W,H` — the window resized; `drag:W,H` — dragged to that size while the platform
 //!   holds the loop (its live-resize hook called, no input); `dark`, `light` — the system's
 //!   look changed.
@@ -219,6 +219,11 @@ pub let parse_steps = pure (script: string) -> Result<[]Step, string> => {
       continue
     }
     if let Some(lines) = token.strip_prefix("scroll:") {
+      // `scroll:N` down, or `scroll:X,Y` across and down.
+      if let Some(at) = point(lines) {
+        inputs.push(Played(Scrolled(at.x, at.y)))
+        continue
+      }
       let Some(n) = lines.parse_i64() else { return Err("not a number of lines: ${token}") }
       inputs.push(Played(Scrolled(0.0, f32(n))))
       continue

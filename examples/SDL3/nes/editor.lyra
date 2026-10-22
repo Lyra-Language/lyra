@@ -540,7 +540,7 @@ let run = (screen: Screen, sheet: Texture, start: Editor) -> u8 => {
               let (x, y) = window_to_render(screen.renderer, wx, wy)
               on_press(ed, button, x, y)
             },
-            MouseWheel(dx, dy) => on_wheel(ed, dx, dy),
+            MouseWheel(dx, dy, _) => on_wheel(ed, dx, dy),
             _ => {},
           }
         },

@@ -78,6 +78,10 @@ import ui.backend.{
 import ui.draw.{ Point, Rect, Size }
 import ui.text.{ Fonts, offset_at_x }
 import ui.layout.{
+  Axis,
+  Constraints,
+  Scroller,
+  user_scrolls,
   Node,
   Laid,
   Interaction,
@@ -88,7 +92,6 @@ import ui.layout.{
   Checkable,
   Ranged,
   Editable,
-  Scrolls,
   Horizontal,
   Vertical,
   Prose,
@@ -101,6 +104,7 @@ import ui.layout.{
   byte_at,
   SLIDER_THUMB,
 }
+import ui.style.{ OverflowClip }
 import ui.style
 import std.collections.{ HashMap, hashmap_new }
 
@@ -146,16 +150,27 @@ impl Ui {
     size: Size,
     fonts: mut Fonts,
     cache: mut LayoutCache<e>
+  ) -> Laid<e> => self.frame_within(view, loose(size), fonts, cache)
+
+  /// [frame_cached] within `c` — a window's own size exactly, for the root of a window that
+  /// fills it (`ui.app`'s host).
+  pub let frame_within<e> = (
+    self: mut,
+    view: Node<e>,
+    c: Constraints,
+    fonts: mut Fonts,
+    cache: mut LayoutCache<e>
   ) -> Laid<e> => {
-    let laid = layout_cached(view, loose(size), fonts, self.state, cache)
+    let laid = layout_cached(view, c, fonts, self.state, cache)
     var present: HashMap<string, bool> = hashmap_new()
     note_ids(laid, present)
     for id in self.state.widgets.keys() {
       if !present.contains_key(id) { let _ = self.state.widgets.remove(id) }
     }
     if !present.contains_key(self.state.focus) { self.state.focus = "" }
-    if !present.contains_key(self.state.hover) { self.state.hover = "" }
-    if !present.contains_key(self.state.pressed) { self.state.pressed = "" }
+    // A scrollbar's thumb is held by its scroller's identity and an axis.
+    if !present.contains_key(element_of(self.state.hover)) { self.state.hover = "" }
+    if !present.contains_key(element_of(self.state.pressed)) { self.state.pressed = "" }
     // A field's text scrolled to keep its caret in view is remembered, so it stays put
     // until the caret leaves the view again.
     keep_field_scrolls(laid, self)
@@ -280,6 +295,20 @@ impl Ui {
     // The deepest element under the pointer; those around it are hovered too (`with_state`).
     let path = hit(laid, at)
     self.state.hover = if path.len() > 0 { path[path.len() - 1].laid.id } else { "" }
+    // A thumb under the pointer is hovered itself.
+    for i in (path.len() - 1)..>=0 {
+      let Some(sc) = path[i].laid.scroller else { continue }
+      for bar in sc.bars(path[i].laid.size) {
+        if moved_by(bar.thumb, path[i].origin).contains(at) {
+          self.state.hover = thumb_id(path[i].laid.id, bar.axis)
+        }
+      }
+      break
+    }
+    if self.state.pressed.contains("#thumb-") {
+      self.drag_thumb(laid, at)
+      return []
+    }
     if self.state.pressed.len() == 0 { return [] }
     let Some(held) = find(laid, self.state.pressed, Point {}) else { return [] }
     match held.laid.kind {
@@ -299,6 +328,7 @@ impl Ui {
   /// pointer, and a field's caret goes where it was clicked.
   let pointer_down<e> = (self: mut, laid: Laid<e>, at: Point) -> []e => {
     self.pointer = at
+    if self.bar_press(laid, at) { return [] }
     let Some(target) = control_at(laid, at) else {
       self.state.focus = ""
       self.state.pressed = ""
@@ -334,23 +364,166 @@ impl Ui {
 
   /// A wheel or trackpad scrolled by `across` and `down` lines: the innermost scroll under the
   /// pointer moves along its axis, never past its content's ends.
+  /// A wheel turned (or a trackpad swiped) `across` and `down` lines with the pointer where it
+  /// is: each axis scrolls the innermost element under the pointer that the user may scroll
+  /// that way and that can still move that way, and passes to the one around it when it
+  /// cannot — as a browser does.
   let scrolled<e> = (self: mut, laid: Laid<e>, across: f32, down: f32) -> void => {
     let path = hit(laid, self.pointer)
+    let moves: [](Axis, f32) = [(Horizontal, across), (Vertical, down)]
+    for (axis, by) in moves {
+      if by.abs() < 0.0001 { continue }
+      for i in (path.len() - 1)..>=0 {
+        let f = path[i]
+        let Some(sc) = f.laid.scroller else { continue }
+        let o = if axis == Horizontal { sc.x } else { sc.y }
+        if !user_scrolls(o) { continue }
+        if self.scroll_by(f.laid.id, sc, axis, by * SCROLL_LINE) { break }
+      }
+    }
+  }
+
+  /// The element identified as `id`, scrolling as `sc` does, moved `by` along `axis` within
+  /// its room; whether it moved.
+  pub let scroll_by = (
+    self: mut,
+    id: string,
+    sc: Scroller,
+    axis: Axis,
+    by: f32
+  ) -> bool => {
+    let spare = sc.room()
+    let now = if axis == Horizontal { sc.offset.x } else { sc.offset.y }
+    let next = (now + by).clamp(0.0, if axis == Horizontal { spare.w } else { spare.h })
+    if (next - now).abs() < 0.001 { return false }
+    let state = self.widget(id)
+    self.state.widgets.insert(id, if axis == Horizontal {
+      WidgetState { state | scroll_x: Some(next) }
+    } else {
+      WidgetState { state | scroll: Some(next) }
+    })
+    true
+  }
+
+  /// A press on a scrollbar of an element under `at`: on its thumb, taken hold of for a drag;
+  /// on its track, the content paged towards the press. Whether a scrollbar took it.
+  let bar_press<e> = (self: mut, laid: Laid<e>, at: Point) -> bool => {
+    let path = hit(laid, at)
     for i in (path.len() - 1)..>=0 {
       let f = path[i]
-      let Scrolls(axis, offset) = f.laid.kind else { continue }
-      if f.laid.children.len() == 0 { return }
-      let content = f.laid.children[0]
-      let pad = f.laid.style.padding
-      let (by, room) = match axis {
-        Horizontal => (across, content.laid.size.w - (f.laid.size.w - pad.horizontal())),
-        Vertical => (down, content.laid.size.h - (f.laid.size.h - pad.vertical())),
+      let Some(sc) = f.laid.scroller else { continue }
+      for bar in sc.bars(f.laid.size) {
+        let track = moved_by(bar.track, f.origin)
+        if !track.contains(at) { continue }
+        let thumb = moved_by(bar.thumb, f.origin)
+        let along = if bar.axis == Horizontal { at.x - thumb.x } else { at.y - thumb.y }
+        if thumb.contains(at) {
+          let state = self.widget(f.laid.id)
+          self.state.widgets.insert(f.laid.id, WidgetState { state | grab: along })
+          self.state.pressed = thumb_id(f.laid.id, bar.axis)
+        } else {
+          let page = if bar.axis == Horizontal { sc.port.w } else { sc.port.h }
+          let step = (page - SCROLL_LINE).max(SCROLL_LINE)
+          let _ = self.scroll_by(
+            f.laid.id,
+            sc,
+            bar.axis,
+            if along < 0.0 { -step } else { step }
+          )
+        }
+        return true
       }
-      let state = self.widget(f.laid.id)
-      let now = state.scroll ?? offset
-      let next = (now + by * SCROLL_LINE).clamp(0.0, room.max(0.0))
-      self.state.widgets.insert(f.laid.id, WidgetState { state | scroll: Some(next) })
-      return
+    }
+    false
+  }
+
+  /// A held thumb dragged to `at`: its scroller's offset where the thumb's grabbed point
+  /// follows the pointer.
+  let drag_thumb<e> = (self: mut, laid: Laid<e>, at: Point) -> void => {
+    let held = self.state.pressed
+    let axis = if held.ends_with("#thumb-x") { Horizontal } else { Vertical }
+    let Some(f) = find(laid, element_of(held), Point {}) else { return }
+    let Some(sc) = f.laid.scroller else { return }
+    for bar in sc.bars(f.laid.size) {
+      if bar.axis != axis { continue }
+      let grab = self.widget(f.laid.id).grab
+      let spare = sc.room()
+      let (pointer, start, travel, space) = if axis == Horizontal {
+        (at.x - f.origin.x, bar.track.x, bar.track.w - bar.thumb.w, spare.w)
+      } else {
+        (at.y - f.origin.y, bar.track.y, bar.track.h - bar.thumb.h, spare.h)
+      }
+      if travel <= 0.0 { return }
+      let wanted = (pointer - grab - start) / travel * space
+      let now = if axis == Horizontal { sc.offset.x } else { sc.offset.y }
+      let _ = self.scroll_by(f.laid.id, sc, axis, wanted - now)
+    }
+  }
+
+  /// A scrolling key — the arrows, Page Up and Down, Home and End — for the element the focus
+  /// is in, or else the one under the pointer: the innermost the user may scroll; whether one
+  /// took it.
+  let scroll_key<e> = (self: mut, laid: Laid<e>, key: Key) -> bool => {
+    let chain = if self.state.focus.len() > 0 { along_path(
+      laid,
+      self.state.focus
+    ) } else { hit(laid, self.pointer) }
+    for i in (chain.len() - 1)..>=0 {
+      let f = chain[i]
+      let Some(sc) = f.laid.scroller else { continue }
+      let spare = sc.room()
+      let page = (sc.port.h - SCROLL_LINE).max(SCROLL_LINE)
+      let (axis, by): (Axis, f32) = match key {
+        ArrowDown => (Vertical, SCROLL_LINE),
+        ArrowUp => (Vertical, -SCROLL_LINE),
+        ArrowRight => (Horizontal, SCROLL_LINE),
+        ArrowLeft => (Horizontal, -SCROLL_LINE),
+        PageDown => (Vertical, page),
+        PageUp => (Vertical, -page),
+        Home => (Vertical, -sc.offset.y),
+        End => (Vertical, spare.h - sc.offset.y),
+        _ => return false,
+      }
+      let o = if axis == Horizontal { sc.x } else { sc.y }
+      if !user_scrolls(o) { continue }
+      if self.scroll_by(f.laid.id, sc, axis, by) { return true }
+    }
+    false
+  }
+
+  /// Every element round the one identified as `id` scrolled so that it is in view.
+  let reveal<e> = (self: mut, laid: Laid<e>, id: string) -> void => {
+    let chain = along_path(laid, id)
+    if chain.len() == 0 { return }
+    let target = chain[chain.len() - 1]
+    let box = Rect {
+      x: target.origin.x,
+      y: target.origin.y,
+      w: target.laid.size.w,
+      h: target.laid.size.h
+    }
+    for i in 0..<(chain.len() - 1) {
+      let f = chain[i]
+      let Some(sc) = f.laid.scroller else { continue }
+      let port = moved_by(sc.port, f.origin)
+      let dy = if box.y < port.y { box.y - port.y } else if box.y + box.h > port.y + port.h {
+        (box.y + box.h - (port.y + port.h)).min(box.y - port.y)
+      } else { 0.0 }
+      let dx = if box.x < port.x { box.x - port.x } else if box.x + box.w > port.x + port.w {
+        (box.x + box.w - (port.x + port.w)).min(box.x - port.x)
+      } else { 0.0 }
+      if dy.abs() > 0.001 && sc.y != OverflowClip { let _ = self.scroll_by(
+        f.laid.id,
+        sc,
+        Vertical,
+        dy
+      ) }
+      if dx.abs() > 0.001 && sc.x != OverflowClip { let _ = self.scroll_by(
+        f.laid.id,
+        sc,
+        Horizontal,
+        dx
+      ) }
     }
   }
 
@@ -364,8 +537,19 @@ impl Ui {
   ) -> []e => {
     if key == Tab {
       self.move_focus(laid, mods.shift)
+      self.reveal(laid, self.state.focus)
       return []
     }
+    // A scrolling key scrolls unless the focused control takes it (a slider, a field).
+    let takes_keys = match find(laid, self.state.focus, Point {}) {
+      Some(f) => match f.laid.kind {
+        Ranged(_) => true,
+        Editable(_) => true,
+        _ => false,
+      },
+      None => false,
+    }
+    if !takes_keys && self.scroll_key(laid, key) { return [] }
     let Some(focused) = find(laid, self.state.focus, Point {}) else { return [] }
     match focused.laid.kind {
       Pressable(_) =>
@@ -679,6 +863,40 @@ pub let find<e> = pure (laid: Laid<e>, id: string, origin: Point) -> Maybe<Found
   }
   None
 }
+
+/// The elements from `laid`'s root to the one identified as `id`, each where it is.
+pub let along_path<e> = pure (laid: Laid<e>, id: string) -> []Found<e> => {
+  var out: []Found<e> = []
+  var at = Found { laid: laid, origin: Point {} }
+  if id.len() == 0 { return out }
+  loop {
+    out.push(at)
+    if at.laid.id == id { return out }
+    var next: Maybe<Found<e>> = None
+    for child in at.laid.children {
+      if id == child.laid.id || id.starts_with("${child.laid.id}/") {
+        next = Some(Found {
+          laid: child.laid,
+          origin: Point { x: at.origin.x + child.at.x, y: at.origin.y + child.at.y }
+        })
+      }
+    }
+    let Some(n) = next else { return [] }
+    at = n
+  }
+  out
+}
+
+/// The identity a scrollbar's thumb is held and hovered by: its scroller's and the axis.
+let thumb_id = pure (id: string, axis: Axis) -> string =>
+  if axis == Horizontal { "${id}#thumb-x" } else { "${id}#thumb-y" }
+
+/// The element an identity names — a thumb's its scroller.
+let element_of = pure (id: string) -> string => id.split("#thumb-")[0]
+
+/// `r` moved by `by`.
+let moved_by = pure (r: Rect, by: Point) -> Rect =>
+  Rect { r | x: r.x + by.x, y: r.y + by.y }
 
 /// The identities of the controls in `laid`, in the order Tab visits them: the tree's.
 pub let focus_order<e> = (laid: Laid<e>, order: mut []string) -> void => {

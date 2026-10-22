@@ -13,6 +13,7 @@ module ui.layout
 
 import ui.style.{
   Computed,
+  OverflowVisible,
   FlexRow,
   FlexRowReverse,
   FlexColumnReverse,
@@ -402,10 +403,11 @@ let content_main<e> = (
   lay(child, limits, ctx.cascade, fonts, ctx.ui, id, scratch).size.h
 }
 
-/// Whether `node` scrolls — which needs no room for what it shows.
+/// Whether `node` scrolls — which needs no room for what it shows: a Scroll element, or any
+/// element whose overflow is not visible (CSS's automatic least size is none for them).
 let is_scroll<e> = pure (node: Node<e>) -> bool => match node.kind {
   Scrolls(_, _) => true,
-  _ => false,
+  _ => node.style.overflow_x.is_some() || node.style.overflow_y.is_some(),
 }
 
 /// The first baseline in `laid`, down from its top: its own text's first line, else its first
@@ -432,7 +434,8 @@ let intrinsic_width<e> = (
   fonts: mut Fonts,
   ui: Interaction,
   id: string,
-  own: bool = true
+  own: bool = true,
+  contents: bool = false
 ) -> f32 => {
   let styled = styled_at(node, cascade, ui, id)
   let style = styled.style
@@ -440,6 +443,14 @@ let intrinsic_width<e> = (
   let ceiling = (style.max_width ?? UNBOUNDED).max(floor)
   if let Some(w) = style.width { if own { return w.clamp(floor, ceiling) } }
   let gaps = f32((node.children.len() - 1).max(0))
+  // A box that scrolls or clips across lends its parent no width of its content's — only its
+  // padding — as CSS's scroll containers do; otherwise a wide row inside one would widen
+  // every box around it.
+  let (across, _) = overflows(node.kind, style)
+  // (`contents` measures a scroller's own content, for the scroller itself.)
+  if across != OverflowVisible && !contents {
+    return styled.space.horizontal().clamp(floor, ceiling)
+  }
   let content = match node.kind {
     Words(text) =>
       fonts.lay_out(text, style.font, if least { 0.0 } else { UNBOUNDED }).width,

@@ -531,6 +531,10 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"gradient kind", ui + "<style global>\n  .a { background-image: conic-gradient(#000, #fff) }\n</style>", "x.lui:3: a gradient is linear-gradient(…) or radial-gradient(…)"},
 		{"filter", ui + "<style global>\n  .a { filter: grayscale(1) }\n</style>", "x.lui:3: filter is blur(N) or none, not grayscale(1)"},
 		{"stop place", ui + "<style global>\n  .a { background: linear-gradient(#000 50, #fff) }\n</style>", "x.lui:3: a colour stop's place is a percentage, not 50"},
+		{"overflow value", ui + "<style global>\n  .a { overflow: sideways }\n</style>", "x.lui:3: overflow is visible, hidden, clip, scroll or auto, not sideways"},
+		{"overflow many", ui + "<style global>\n  .a { overflow: auto auto hidden }\n</style>", "x.lui:3: overflow is one or two of visible, hidden, clip, scroll, auto, not auto auto hidden"},
+		{"overflow-y value", ui + "<component name=\"a\">\n  <Column style=\"overflow-y: scrolls\"/>\n</component>", "x.lui:3: overflow is visible, hidden, clip, scroll or auto, not scrolls"},
+		{"window overflow", ui + "<window overflow=\"wrap\"/>", "x.lui:2: overflow is visible, hidden, clip, scroll or auto, not wrap"},
 	}
 	for _, c := range cases {
 		path := filepath.Join(dir, "x.lui")
@@ -857,6 +861,88 @@ func TestLui_EffectsExampleIsCurrentAndChecks(t *testing.T) {
 		t.Fatalf("examples/ui/effects_view.lyra is stale: %v\n%s", err, b)
 	}
 	stdout, stderr, code := captureRun(t, "check", filepath.Join(root, "examples", "ui", "effects.lyra"))
+	if code != 0 {
+		t.Fatalf("checking the example exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if out := stdout + stderr; strings.Contains(out, "warning") {
+		t.Errorf("the example or its generated view warns:\n%s", out)
+	}
+}
+
+// Overflow in the ui target: `overflow` with one value sets both axes and with two sets x
+// then y, `overflow-x` and `overflow-y` one each, in a sheet and inline; `<window
+// overflow>` makes WINDOW_OVERFLOW, and a window without it makes none.
+func TestLui_UiTargetOverflow(t *testing.T) {
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script target="ui">
+  pub data Ev = Go
+</script>
+<window min-width="200" overflow="hidden"/>
+<style global name="app_sheet">
+  .both { overflow: auto }
+  .two { overflow: hidden scroll }
+  .one { overflow-x: clip; overflow-y: visible }
+</style>
+<component name="view" event={Ev}>
+  <Column class="both">
+    <Column class="two"/>
+    <Column class="one" style="overflow-y: auto"/>
+  </Column>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"overflow_x: Some(OverflowAuto), overflow_y: Some(OverflowAuto)",
+		"overflow_x: Some(OverflowHidden), overflow_y: Some(OverflowScroll)",
+		"overflow_x: Some(OverflowClip), overflow_y: Some(OverflowVisible)",
+		"overflow_y: Some(OverflowAuto)",
+		"pub const WINDOW_OVERFLOW: Overflow = OverflowHidden",
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	t.Setenv("LYRA_STD", repoRoot(t))
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	plain := strings.Replace(source, ` overflow="hidden"`, "", 1)
+	if err := os.WriteFile(path, []byte(plain), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it without the window's overflow: %v\n%s", err, b)
+	}
+	if generated, err = os.ReadFile(filepath.Join(dir, "view.lyra")); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(generated), "WINDOW_OVERFLOW") {
+		t.Errorf("a window without overflow made WINDOW_OVERFLOW:\n%s", generated)
+	}
+}
+
+// The overflow example — scrollers down, across, both ways, hidden and nested, in a window
+// that scrolls — is what lui makes from it, and checks clean.
+func TestLui_OverflowExampleIsCurrentAndChecks(t *testing.T) {
+	skipWithoutText(t)
+	lui := buildLui(t)
+	root := repoRoot(t)
+	if b, err := exec.Command(lui, "--check", filepath.Join(root, "examples", "ui", "overflow_view.lui")).CombinedOutput(); err != nil {
+		t.Fatalf("examples/ui/overflow_view.lyra is stale: %v\n%s", err, b)
+	}
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(root, "examples", "ui", "overflow.lyra"))
 	if code != 0 {
 		t.Fatalf("checking the example exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}

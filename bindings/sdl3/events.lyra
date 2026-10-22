@@ -176,7 +176,8 @@ const EVENT_MOUSE_BUTTON_DOWN: u32 = 0x401
 const EVENT_MOUSE_BUTTON_UP: u32 = 0x402
 const EVENT_MOUSE_WHEEL: u32 = 0x403
 /// `SDL_MOUSEWHEEL_FLIPPED`: the platform's "natural scrolling" is on, and the amounts
-/// arrive negated. [poll_event] undoes it, so a wheel event always means the same thing.
+/// arrive negated. [poll_event] undoes it, so a wheel event always means the same thing, and
+/// says it did — for a scroll view, which moves its content the way the system's do.
 const WHEEL_FLIPPED: u32 = 1
 const EVENT_GAMEPAD_BUTTON_DOWN: u32 = 0x651
 const EVENT_GAMEPAD_ADDED: u32 = 0x653
@@ -200,8 +201,9 @@ pub data Event =
   | MouseDown(u8, f32, f32)
   | MouseUp(u8, f32, f32)
   /// Scrolled by (x, y): x positive to the right, y positive away from the user — the
-  /// same direction whatever the platform's natural-scrolling setting.
-  | MouseWheel(f32, f32)
+  /// same direction whatever the platform's natural-scrolling setting — and whether that
+  /// setting is on (the amounts arrived flipped).
+  | MouseWheel(f32, f32, bool)
   | GamepadAdded(u32)
   | GamepadRemoved(u32)
   /// A gamepad's button pressed: the pad's id, and the button (`BUTTON_*`).
@@ -307,8 +309,9 @@ let classify = pure (raw: RawEvent) -> Event => {
       unsafe { raw.button.y }
     )
   } else if kind == EVENT_MOUSE_WHEEL {
-    let sign: f32 = if unsafe { raw.wheel.direction } == WHEEL_FLIPPED { -1.0 } else { 1.0 }
-    MouseWheel(unsafe { raw.wheel.x } * sign, unsafe { raw.wheel.y } * sign)
+    let flipped = unsafe { raw.wheel.direction } == WHEEL_FLIPPED
+    let sign: f32 = if flipped { -1.0 } else { 1.0 }
+    MouseWheel(unsafe { raw.wheel.x } * sign, unsafe { raw.wheel.y } * sign, flipped)
   } else if kind == EVENT_TEXT_INPUT {
     TextInput(c_name(unsafe { raw.text.text }))
   } else if kind == EVENT_WINDOW_RESIZED {

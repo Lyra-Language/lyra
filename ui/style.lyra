@@ -148,7 +148,17 @@ pub struct Style {
   /// draws them unblurred.
   filter_blur: Maybe<f32> = None,
   backdrop_blur: Maybe<f32> = None,
+  /// What happens to content that does not fit, across and down — CSS's `overflow-x` and
+  /// `overflow-y` (lui's `overflow` sets both).
+  overflow_x: Maybe<Overflow> = None,
+  overflow_y: Maybe<Overflow> = None,
 }
+
+/// CSS's `overflow`: content past the element's edge drawn (`OverflowVisible`), cut off and
+/// scrolled only by the program (`OverflowHidden`) or never (`OverflowClip`), or cut off and
+/// scrolled by the user with a scrollbar always shown (`OverflowScroll`) or shown only when
+/// the content does not fit (`OverflowAuto`).
+pub data Overflow = OverflowVisible | OverflowHidden | OverflowClip | OverflowScroll | OverflowAuto
 
 /// A flex container's main axis, and which way along it its items go (CSS's
 /// `flex-direction`).
@@ -272,6 +282,8 @@ impl Style {
     background_gradient: self.background_gradient.or(base.background_gradient),
     filter_blur: self.filter_blur.or(base.filter_blur),
     backdrop_blur: self.backdrop_blur.or(base.backdrop_blur),
+    overflow_x: self.overflow_x.or(base.overflow_x),
+    overflow_y: self.overflow_y.or(base.overflow_y),
   }
 }
 
@@ -502,6 +514,23 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
   Rule { selector: "TextInput::caret", style: Style { background: Some(c.text) } },
 ]
 
+/// A scroller's bars, drawn over its content's edge: a faint track and a thumb the text's
+/// colour at a third, darker while the pointer is over it or holds it. A layer beneath the
+/// theme's elements, applied only as a scroller styles its bars (`Cascade.compute`'s `under`)
+/// — every rule in the theme is matched against every element.
+pub let scrollbar_rules = pure (c: Palette) -> []Rule => [
+  Rule {
+    selector: "ScrollTrack",
+    style: Style { background: Some(faded(c.text, 0.06)), radius: Some(5.0) },
+  },
+  Rule {
+    selector: "ScrollThumb",
+    style: Style { background: Some(faded(c.text, 0.32)), radius: Some(4.0) },
+  },
+  Rule { selector: "ScrollThumb.hover", style: Style { background: Some(faded(c.text, 0.5)) } },
+  Rule { selector: "ScrollThumb.pressed", style: Style { background: Some(faded(c.text, 0.6)) } },
+]
+
 /// A checkbox's border, the corner radius of its box, and the gap between a ticked box's
 /// border and its fill.
 pub const CHECK_BORDER: f32 = 1.5
@@ -561,6 +590,8 @@ pub struct Computed {
   background_gradient: Maybe<Gradient> = None,
   filter_blur: f32 = 0.0,
   backdrop_blur: f32 = 0.0,
+  overflow_x: Overflow = OverflowVisible,
+  overflow_y: Overflow = OverflowVisible,
 }
 
 /// Where an element stands in the cascade: the theme in force, the global rules (outermost
@@ -586,15 +617,17 @@ pub let cascade_root = pure (theme: Theme) -> Cascade =>
 
 impl Cascade {
   /// The style for an element of `tag`, with `classes` (space-separated), marked as `part`
-  /// (`""` for none) and asking for `inline`: the five layers, lowest first.
+  /// (`""` for none) and asking for `inline`: the five layers, lowest first, over `under`.
   pub let style_of = pure (
     self,
     tag: string,
     classes: string,
     part: string,
-    inline: Style
+    inline: Style,
+    under: []Rule = []
   ) -> Style => {
-    var out = applied(self.theme.elements.rules, tag, classes, Style {})
+    var out = applied(under, tag, classes, Style {})
+    out = applied(self.theme.elements.rules, tag, classes, out)
     out = applied(self.globals, tag, classes, out)
     out = applied(self.scoped, tag, classes, out)
     if part.len() > 0 && self.component.len() > 0 {
@@ -626,9 +659,10 @@ impl Cascade {
     tag: string,
     classes: string,
     part: string,
-    inline: Style
+    inline: Style,
+    under: []Rule = []
   ) -> Computed => {
-    let s = self.style_of(tag, classes, part, inline)
+    let s = self.style_of(tag, classes, part, inline, under)
     let base_font = s.font ?? self.inherited.font
     Computed {
       color: s.color ?? self.inherited.color,
@@ -675,6 +709,8 @@ impl Cascade {
       background_gradient: s.background_gradient,
       filter_blur: (s.filter_blur ?? 0.0).max(0.0),
       backdrop_blur: (s.backdrop_blur ?? 0.0).max(0.0),
+      overflow_x: s.overflow_x ?? OverflowVisible,
+      overflow_y: s.overflow_y ?? OverflowVisible,
     }
   }
 

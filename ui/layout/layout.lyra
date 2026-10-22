@@ -81,6 +81,7 @@ import ui.backend.{ Renderer }
 import ui.text.{ Fonts, TextBlock, GlyphAtlas, caret_x }
 import ui.style.{
   Style,
+  scrollbar_rules,
   Sheet,
   Theme,
   Insets,
@@ -90,6 +91,11 @@ import ui.style.{
   media_matches,
   light_theme,
   faded,
+  Overflow,
+  OverflowVisible,
+  OverflowClip,
+  OverflowScroll,
+  OverflowAuto,
   Viewport,
   MediaAnswer,
 }
@@ -534,7 +540,11 @@ pub struct Interaction {
 /// itself for none), in runes; how far its text is scrolled to keep the caret in view; and
 /// the edits that undo steps back through.
 pub struct WidgetState {
+  /// How far it is scrolled down, and across, once scrolled; and where on a scrollbar's thumb
+  /// the pointer took hold of it, while it drags one.
   scroll: Maybe<f32> = None,
+  scroll_x: Maybe<f32> = None,
+  grab: f32 = 0.0,
   caret: i64 = 0,
   anchor: i64 = 0,
   field_scroll: f32 = 0.0,
@@ -572,6 +582,8 @@ pub struct Laid<e> {
   ring: Maybe<Color> = None,
   field: Maybe<FieldLook> = None,
   children: []Placed<e> = [],
+  /// What it scrolls, if its overflow is not visible on an axis.
+  scroller: Maybe<Scroller> = None,
   /// The media queries this node's sheets, and those below it, asked of the viewport, and
   /// their answers: while they answer the same, so does its layout.
   media: []MediaAnswer = [],
@@ -757,10 +769,49 @@ let state_under = pure (ui: Interaction, id: string) -> string => {
   }
   for (key, w) in ui.widgets.entries() {
     if inside(key) {
-      out = "${out}|${key}:${w.scroll ?? -1.0}:${w.caret}:${w.anchor}:${w.field_scroll}"
+      out = "${out}|${key}:${w.scroll ?? -1.0}:${w.scroll_x ?? -1.0}:${w.caret}:${w.anchor}:${w.field_scroll}"
     }
   }
   out
+}
+
+/// `node`'s min-content width, from last frame's layout of it when the node, its cascade,
+/// the focus, hover and press inside it and its media answers are as they were — what the
+/// width depends on, so a resize or a scroll gives it back — else measured.
+let narrowest_of<e> = (
+  node: Node<e>,
+  cascade: Cascade,
+  fonts: mut Fonts,
+  ui: Interaction,
+  id: string,
+  cache: mut LayoutCache<e>
+) -> f32 => {
+  if let Some(old) = cache.last.get(id) {
+    if let Some(sc) = old.laid.scroller {
+      if sc.narrowest > 0.0 && sc.marks == marks_under(
+        ui,
+        id
+      ) && old.cascade == cascade &&
+        still_answers(
+          old.laid.media,
+          ui.viewport
+        ) && same_node(old.node, node, cascade.theme) {
+        return sc.narrowest
+      }
+    }
+  }
+  intrinsic_width(node, true, cascade, fonts, ui, id, false, true)
+}
+
+/// The focus, hover and press at or inside `id` — the part of [state_under] that can change a
+/// style, and so a width.
+let marks_under = pure (ui: Interaction, id: string) -> string => {
+  let inside = (other: string) -> bool => other == id || other.starts_with("${id}/")
+  [holder in [
+    ui.focus,
+    ui.hover,
+    ui.pressed
+  ] | if inside(holder) { holder } else { "" }].join("|")
 }
 
 /// Whether `a` and `b` lay out alike in `theme`: every field and child the same, events aside
@@ -842,8 +893,29 @@ let lay_fresh<e> = (
   let space = styled.space
   // The sizes the element asks for, within what its parent allows.
   let c = sized_by(given, style)
-  let inner = c.deflate(space)
+  let port_c = c.deflate(space)
   let ctx = Ctx { cascade: within, ui: ui, id: id, gap: style.gap }
+  // An axis whose overflow is not visible lays its content out open — down, as tall as it
+  // wants; across, at the port's width unless its narrowest is wider — and shows it through
+  // the port. A Scroll element is overflow auto on its axis.
+  let (ox, oy) = overflows(node.kind, style)
+  let scrolls = ox != OverflowVisible || oy != OverflowVisible
+  var inner = port_c
+  var narrowest: f32 = 0.0
+  if scrolls {
+    let across = if ox == OverflowVisible { port_c.max_w } else if legacy_across(node.kind) {
+      UNBOUNDED
+    } else {
+      narrowest = narrowest_of(node, cascade, fonts, ui, id, cache)
+      port_c.max_w.max(narrowest - space.horizontal())
+    }
+    inner = Constraints {
+      min_w: port_c.min_w,
+      max_w: across,
+      min_h: port_c.min_h,
+      max_h: if oy == OverflowVisible { port_c.max_h } else { UNBOUNDED },
+    }
+  }
   let body: Body<e> = match node.kind {
     Flow(axis, main, cross) =>
       lay_line(node.children, axis, main, cross, inner, true, ctx, fonts, cache),
@@ -876,29 +948,6 @@ let lay_fresh<e> = (
       let content = lay_wrapped(node.children, fixed, ctx, fonts, cache)
       Body { size: fixed.constrain(content.size), children: content.children }
     },
-    Scrolls(axis, offset) => {
-      let open = match axis {
-        Horizontal => Constraints { min_h: inner.min_h, max_h: inner.max_h },
-        Vertical => Constraints { min_w: inner.min_w, max_w: inner.max_w },
-      }
-      let content = lay_wrapped(node.children, open, ctx, fonts, cache)
-      let size = inner.constrain(Size {
-        w: if axis == Horizontal && inner.bounded_w() { inner.max_w } else { content.size.w },
-        h: if axis == Vertical && inner.bounded_h() { inner.max_h } else { content.size.h },
-      })
-      // Never further than the content's end.
-      let room = match axis {
-        Horizontal => (content.size.w - size.w).max(0.0),
-        Vertical => (content.size.h - size.h).max(0.0),
-      }
-      let wanted = ui.widgets.get(id).flat_map((w) => w.scroll) ?? offset
-      let by = wanted.clamp(0.0, room)
-      let shift = match axis {
-        Horizontal => Point { x: -by },
-        Vertical => Point { y: -by },
-      }
-      Body { size: size, children: moved(content.children, shift), clips: true }
-    },
     Words(content) => {
       let block = fonts.lay_out(content, style.font, inner.max_w)
       Body::<e> {
@@ -922,11 +971,56 @@ let lay_fresh<e> = (
       Body { size: content.size, children: content.children }
     },
   }
+  // What scrolls: the port is the content within the element's constraints (a Scroll element
+  // fills them on its axis), the offset the user's or the program's, clamped to the room.
+  var shown = body.size
+  var offset = Point {}
+  var scroller: Maybe<Scroller> = None
+  if scrolls {
+    let fill = filling(node.kind)
+    let port = Size {
+      w: if ox == OverflowVisible { body.size.w } else if fill == Some(Horizontal) && port_c.bounded_w() {
+        port_c.max_w
+      } else {
+        body.size.w.clamp(port_c.min_w, port_c.max_w.max(port_c.min_w))
+      },
+      h: if oy == OverflowVisible { body.size.h } else if fill == Some(Vertical) && port_c.bounded_h() {
+        port_c.max_h
+      } else {
+        body.size.h.clamp(port_c.min_h, port_c.max_h.max(port_c.min_h))
+      },
+    }
+    let held = ui.widgets.get(id) ?? WidgetState {}
+    let start = initial_offset(node.kind)
+    let spare = Size {
+      w: (body.size.w - port.w).max(0.0),
+      h: (body.size.h - port.h).max(0.0)
+    }
+    offset = Point {
+      x: if ox == OverflowClip { 0.0 } else { (held.scroll_x ?? start.x).clamp(0.0, spare.w) },
+      y: if oy == OverflowClip { 0.0 } else { (held.scroll ?? start.y).clamp(0.0, spare.h) },
+    }
+    shown = port
+    let bar_rules = scrollbar_rules(within.theme.colors)
+    let track = within.compute("ScrollTrack", "", "", Style {}, bar_rules)
+    scroller = Some(Scroller {
+      content: body.size,
+      port: Rect { x: space.left, y: space.top, w: port.w, h: port.h },
+      offset: offset,
+      x: ox,
+      y: oy,
+      track: track,
+      thumb_x: within.compute("ScrollThumb", with_state("", "${id}#thumb-x", ui), "", Style {}, bar_rules),
+      thumb_y: within.compute("ScrollThumb", with_state("", "${id}#thumb-y", ui), "", Style {}, bar_rules),
+      narrowest: narrowest,
+      marks: marks_under(ui, id),
+    })
+  }
   let size = c.constrain(Size {
-    w: body.size.w + space.horizontal(),
-    h: body.size.h + space.vertical(),
+    w: shown.w + space.horizontal(),
+    h: shown.h + space.vertical(),
   })
-  let corner = Point { x: space.left, y: space.top }
+  let corner = Point { x: space.left - offset.x, y: space.top - offset.y }
   let children = moved(body.children, corner)
   let role = role_of(node.kind)
   Laid {
@@ -940,10 +1034,11 @@ let lay_fresh<e> = (
     style: style,
     content: body.content,
     content_at: Point { x: corner.x - body.scrolled, y: corner.y },
-    clips: body.clips,
+    clips: body.clips || scrolls,
     ring: if ui.focus == id && focusable(node.kind) { Some(own.theme.colors.focus) } else { None },
     field: body.field,
     children: children,
+    scroller: scroller,
     media: asked_below(styled.media, children),
   }
 }
@@ -960,6 +1055,37 @@ let asked_below<e> = pure (
     }
   }
   out
+}
+
+/// The overflow across and down an element of `kind` styled `style` has: its style's, and a
+/// Scroll element's axis `OverflowAuto` where its style says nothing else.
+let overflows<e> = pure (kind: Kind<e>, style: Computed) -> (Overflow, Overflow) =>
+  match kind {
+    Scrolls(Horizontal, _) => (if style.overflow_x == OverflowVisible { OverflowAuto } else { style.overflow_x }, style.overflow_y),
+    Scrolls(Vertical, _) => (style.overflow_x, if style.overflow_y == OverflowVisible { OverflowAuto } else { style.overflow_y }),
+    _ => (style.overflow_x, style.overflow_y),
+  }
+
+/// A Scroll element across lays its content out as wide as it wants, as it always has; an
+/// element's `overflow-x` lays it out at its port's width, widened only to its narrowest.
+let legacy_across<e> = pure (kind: Kind<e>) -> bool => match kind {
+  Scrolls(Horizontal, _) => true,
+  _ => false,
+}
+
+/// The axis a Scroll element fills, if `kind` is one: it takes all the room it is given
+/// along it, its content seen through that.
+let filling<e> = pure (kind: Kind<e>) -> Maybe<Axis> => match kind {
+  Scrolls(axis, _) => Some(axis),
+  _ => None,
+}
+
+/// Where an element of `kind` is scrolled before the user scrolls it: a Scroll element's
+/// offset along its axis.
+let initial_offset<e> = pure (kind: Kind<e>) -> Point => match kind {
+  Scrolls(Horizontal, offset) => Point { x: offset },
+  Scrolls(Vertical, offset) => Point { y: offset },
+  _ => Point {},
 }
 
 /// A node's style where it stands: the cascade at the node (`own`, a theme's own), its
@@ -1063,6 +1189,99 @@ struct Ctx {
   id: string,
   gap: f32,
 }
+
+/// What an element that scrolls holds: its content's size, the port it shows the content
+/// through (inside its padding, from its top-left corner), how far the content is scrolled,
+/// its overflow across and down, and its scrollbars' looks — the `ScrollTrack` and
+/// `ScrollThumb` elements' styles, each thumb's with the states the pointer gives it.
+pub struct Scroller {
+  content: Size,
+  port: Rect,
+  offset: Point,
+  x: Overflow,
+  y: Overflow,
+  track: Computed,
+  thumb_x: Computed,
+  thumb_y: Computed,
+  /// The element's min-content width (across only), and the focus, hover and press it was
+  /// measured under — kept so a resize, which cannot change it, need not measure it again.
+  narrowest: f32 = 0.0,
+  marks: string = "",
+}
+
+/// One scrollbar of an element: its axis, its track and its thumb, from the element's
+/// top-left corner.
+pub struct Bar {
+  axis: Axis,
+  track: Rect,
+  thumb: Rect,
+}
+
+/// How thick a scrollbar is, and how far it keeps from the element's edge.
+pub const BAR_THICKNESS: f32 = 8.0
+pub const BAR_MARGIN: f32 = 2.0
+
+impl Scroller {
+  /// How far the content can scroll, across and down.
+  pub let room = pure (self) -> Size => Size {
+    w: (self.content.w - self.port.w).max(0.0),
+    h: (self.content.h - self.port.h).max(0.0),
+  }
+
+  /// The scrollbars an element `size` large shows: always for `OverflowScroll`, while the
+  /// content does not fit for `OverflowAuto`, never otherwise — each along its edge, a thumb
+  /// as long as the port's share of the content (at least 20) at the offset's share of the
+  /// room.
+  pub let bars = pure (self, size: Size) -> []Bar => {
+    let spare = self.room()
+    let show_x = self.x == OverflowScroll || (self.x == OverflowAuto && spare.w > 0.5)
+    let show_y = self.y == OverflowScroll || (self.y == OverflowAuto && spare.h > 0.5)
+    var out: []Bar = []
+    let t = BAR_THICKNESS
+    let m = BAR_MARGIN
+    if show_y {
+      let track = Rect {
+        x: size.w - t - m,
+        y: m,
+        w: t,
+        h: (size.h - 2.0 * m - (if show_x { t + m } else { 0.0 })).max(0.0),
+      }
+      let long = if self.content.h <= 0.0 { track.h } else { (track.h * self.port.h / self.content.h).clamp(
+        track.h.min(20.0),
+        track.h
+      ) }
+      let at = if spare.h <= 0.0 { 0.0 } else { (track.h - long) * self.offset.y / spare.h }
+      out.push(Bar {
+        axis: Vertical,
+        track: track,
+        thumb: Rect { x: track.x, y: track.y + at, w: t, h: long }
+      })
+    }
+    if show_x {
+      let track = Rect {
+        x: m,
+        y: size.h - t - m,
+        w: (size.w - 2.0 * m - (if show_y { t + m } else { 0.0 })).max(0.0),
+        h: t,
+      }
+      let long = if self.content.w <= 0.0 { track.w } else { (track.w * self.port.w / self.content.w).clamp(
+        track.w.min(20.0),
+        track.w
+      ) }
+      let at = if spare.w <= 0.0 { 0.0 } else { (track.w - long) * self.offset.x / spare.w }
+      out.push(Bar {
+        axis: Horizontal,
+        track: track,
+        thumb: Rect { x: track.x + at, y: track.y, w: long, h: t }
+      })
+    }
+    out
+  }
+}
+
+/// Whether the user may scroll an axis of this overflow: `OverflowScroll` and `OverflowAuto`.
+pub let user_scrolls = pure (o: Overflow) -> bool =>
+  o == OverflowScroll || o == OverflowAuto
 
 /// What a node's kind made of the space inside its padding: the size it fills, its children
 /// placed from that space's corner, what it draws itself, whether it clips, and a text field's
@@ -1494,6 +1713,10 @@ let oriented_size = pure (axis: Axis, main: f32, cross: f32) -> Size => match ax
   Vertical => Size { w: cross, h: main },
 }
 
+/// `r` moved by `by`.
+let moved_rect = pure (r: Rect, by: Point) -> Rect =>
+  Rect { r | x: r.x + by.x, y: r.y + by.y }
+
 /// `placed`, each moved by `by`.
 let moved<e> = pure (placed: []Placed<e>, by: Point) -> []Placed<e> =>
   [p in placed | Placed { p | at: Point { x: p.at.x + by.x, y: p.at.y + by.y } }]
@@ -1644,6 +1867,26 @@ let paint_into<e, r> where r: Renderer = (
     paint_into(ops, child.laid, corner, scale, fonts, atlas, renderer)
   }
   if laid.clips && laid.field.is_none() { ops.push(PopClip) }
+  // A scroller's bars, over its content.
+  if let Some(scroller) = laid.scroller {
+    for bar in scroller.bars(laid.size) {
+      let thumb = if bar.axis == Vertical { scroller.thumb_y } else { scroller.thumb_x }
+      if let Some(fill) = scroller.track.background {
+        ops.push(Fill(
+          moved_rect(bar.track, origin),
+          radius(scroller.track.radius),
+          faded(fill, s.opacity)
+        ))
+      }
+      if let Some(fill) = thumb.background {
+        ops.push(Fill(
+          moved_rect(bar.thumb, origin),
+          radius(thumb.radius),
+          faded(fill, s.opacity)
+        ))
+      }
+    }
+  }
   if let Some(ring) = laid.ring {
     ops.push(Border(box.inset(-3.0), radius(s.radius + 3.0), 2.5, ring))
   }

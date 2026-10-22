@@ -716,6 +716,21 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 10/21] The GPU renderer and effects** — `ui.gpu` over SDL_GPU (Metal), shadows,
   gradients, filter and backdrop blur, CSS syntax in lui; demo `examples/ui/effects_view.lui`
   (COMPLETED.md, 10/21).
+- **[DONE 10/21] Overflow and scrolling** — `overflow_x`/`overflow_y`, overlay scrollbars,
+  wheel/drag/keys, a window that scrolls; demo `examples/ui/overflow_view.lui` (COMPLETED.md, 10/21).
+- **[OPEN] Scrolling is immediate.** No smooth scrolling, momentum or rubber-banding; a
+  trackpad's precise deltas are scaled like a wheel's lines. `ui.sdl3` would need SDL's
+  precise wheel values and a per-scroller animation in `Ui`.
+- **[OPEN] Scrollbars only overlay.** No classic gutter (`scrollbar-gutter`), no
+  `scrollbar-width`, no auto-hide after idle; `ScrollTrack`/`ScrollThumb` style colour and radius only.
+- **[OPEN] The window's overflow is inline style**, so it beats any sheet's rule for the root;
+  a sheet cannot set the window's overflow. CSS's root-propagation rule would fix it.
+- **[OPEN] The cascade parses selectors per element.** `applied` splits and trims every rule's
+  selector for every element it styles, so each rule a theme gains slows every layout; parse
+  them once into a sheet (by tag and class) and the whole tree gets faster.
+- **[OPEN] `cmd/lyrac`'s tests take over `go test`'s default 10 minutes** on this Mac (the ui
+  tests run serially, ~15–45 s each, as `t.Setenv` forbids `t.Parallel`); run with `-timeout
+  30m` until they share a built binary or set the variable another way.
 - **[OPEN] An idle `ui` window ignores SIGTERM** until the next event: SDL turns the signal into
   a quit only when it pumps, and the loop is asleep in `SDL_WaitEventTimeout` with no timeout.
   `pkill` left demo windows open; a bounded wait (or SDL's quit-on-signal waking it) would fix it.

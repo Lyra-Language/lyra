@@ -66,6 +66,27 @@ layer — implements the two traits; the display list is the whole contract.
   beside them. **Intrinsic widths** (`intrinsic_width`) are measured outside the layout cache,
   so the cache keeps only real layouts; an unchanged flex container or grid is given back
   whole like any element.
+- **Overflow is CSS's** (`overflow_x`, `overflow_y`: `OverflowVisible`, `OverflowHidden`,
+  `OverflowClip`, `OverflowScroll`, `OverflowAuto`; lui's `overflow` takes one or two). An axis
+  that is not visible clips, and lays its content out unbounded down (`max_h` `UNBOUNDED`) or,
+  across, at least its min-content width; the element's own size stays within its
+  constraints. The content's size and the offset are the `Laid`'s `scroller`. **Offsets live in
+  `Ui` by identity** (`scroll` down, `scroll_x` across) and are clamped to the content at every
+  layout, so a window grown past the end pulls back; `clip` and `hidden` take no input but a
+  program's own offset, `hidden` scrolls by focus. **The wheel goes to the innermost scroller
+  under the pointer that can still move on that axis, then bubbles** — out to the window — and
+  Shift+wheel is across (`ui.sdl3`). A thumb drags, a track click pages, and the arrows, Page
+  Up/Down, Home and End scroll the scroller under the pointer or around the focus (not inside a
+  slider or a field); Tab scrolls what it focuses into view in each scroller around it.
+  **Scrollbars overlay the content**, 8 thick and 2 in from the edge, a thumb at least 20 long,
+  styled as the elements `ScrollTrack` and `ScrollThumb` (`.hover`, `.pressed`), their
+  defaults `scrollbar_rules` — a layer beneath the theme, applied only to a scroller's bars; `scroll` shows them always, `auto` when the content is larger. A
+  hit-test only finds what is inside every clip around it. **A scroller lends its parent no
+  min-content width beyond its padding**, as CSS's, and has no automatic least size in flex.
+  **The window scrolls**: the host lays the root out tight to the window and gives it
+  `App.window_overflow` (`OverflowAuto` unless set; lui's `<window overflow>`), which the
+  root's own style beats. `scroll(child, axis)` is a wrapper with `overflow` on its axis, which
+  fills that axis when bounded (Flutter's).
 - **Media rules** (`Rule.media`, CSS's `@media`): a rule may hold while the viewport —
   the window's logical size and the system's look (`Viewport`, which the host passes in
   `Interaction.viewport`) — meets any of its `Media` conditions (min/max width and height,
@@ -194,6 +215,10 @@ layer — implements the two traits; the display list is the whole contract.
 - `examples/ui/effects_view.lui` — shadows, gradients and blur: a gradient header, cards whose
   shadows lift under the pointer, a frosted panel over a busy background, a blurred line; run by
   `examples/ui/effects.lyra` on the GPU (`--png FILE` reads a GPU frame back).
+- `examples/ui/overflow_view.lui` — overflow: a list scrolled down, a strip across, a canvas
+  both ways with bars always, a hidden box, a scroller inside another, in a page taller than
+  its window, which scrolls; run by `examples/ui/overflow.lyra` (`--script "…" --png FILE`
+  headless).
 - `examples/ui/form.lyra` — phase 3's gate, a form that works from the keyboard: two
   fields, a checkbox, a slider and Submit, run by `ui.app`. `--script "…"` plays input
   instead of waiting for a user and prints the state it left; `--png FILE` the last frame.
@@ -218,5 +243,8 @@ layer — implements the two traits; the display list is the whole contract.
   `TestRun_UiEffectsInTheCascade` the effects' order and a compound selector and hover through a
   child; `TestRun_UiFallbackShadowsAndGradients` the fallback's pixels; `TestRun_UiGpuReadback`
   a GPU frame read back — a shadow's falloff, gradient stops, a blurred edge (macOS with a GPU).
+  `TestRun_UiOverflow` scrollers' sizes, a click through a clip, the wheel on both axes
+  bubbling to the window, a thumb drag, a track page, the keys, Tab revealing, and the clamp on
+  resize; `TestLui_UiTargetOverflow` the markup's `overflow` and `<window overflow>`.
   `TestRun_UiFlex` and `TestRun_UiGrid` hold flex and grid to hand-worked CSS results, child
   rect by child rect; `TestLui_UiTargetFlexAndGrid` the markup's layout properties.

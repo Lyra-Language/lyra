@@ -9,6 +9,53 @@ Newest first.
 
 ## Dated log
 
+### 10/21/26 — `ui/`: CSS's overflow, scrollbars, and a window that scrolls
+
+- **Overflow is a style property per axis**, `overflow_x`/`overflow_y`, with CSS's five values,
+  so the cascade, `@media` and selector lists carry it with no new machinery. lui's `overflow`
+  takes one value for both axes or two (x then y), as CSS's shorthand does.
+- **Content is laid out unbounded only on a scroll axis.** Down, `max_h` is `UNBOUNDED`. Across,
+  `max_w` is the larger of the port's width and the content's min-content width rather than
+  `UNBOUNDED`: an unbounded width makes a column of text lay out on one line and every
+  `CrossStretch` child as wide as `UNBOUNDED`. The legacy `scroll(Across)` wrapper keeps
+  its unbounded width, as Flutter has it.
+- **A scroller lends its parent only its padding as min-content width** (CSS's rule), and has
+  no automatic minimum in flex. Without that, the demo page took the widest scroller's content
+  width and scrolled sideways as a whole. `intrinsic_width` gained a `contents` flag so the
+  scroller can still measure its own content.
+- **Offsets are framework state by identity** (`scroll`, now `scroll_x` beside it), clamped at
+  every layout, so a resize or shrinking content never leaves a scroller past its end. `clip`
+  forces 0 (CSS: no scroll container), `hidden` keeps a programmatic or focus offset but takes
+  no wheel, keys or bars.
+- **The wheel bubbles by axis.** It goes to the innermost scroller under the pointer that can
+  still move on that axis, then outward, as browsers chain scrolling. A horizontal strip
+  inside a vertical list takes the sideways wheel and passes the vertical one out.
+- **Scrollbars overlay the content**, macOS's style, so a scroller's content size never
+  depends on whether a bar shows (no relayout loop where a bar's width makes content
+  overflow). They are cascade elements (`ScrollTrack`, `ScrollThumb` with `.hover` and `.pressed`),
+  with defaults faded from the theme's text colour, so light and dark both read. **The
+  defaults are not in the theme's rules** (`scrollbar_rules`, a layer beneath them, passed only
+  when a scroller styles its bars): every theme rule is matched, its selector split and
+  trimmed, against every element, and four more of them made the Layouts resize stress 19%
+  slower. A window's min-content width is also kept on its `Scroller` and given back while its
+  node, cascade, focus/hover/press and media answers stand, so a resize never measures it
+  again; measuring it every layout had cost another 35%. The stress now runs 13% over its time
+  before overflow (8.5 s against 7.5 s). A thumb's hit id is the scroller's identity plus `#thumb-x|y`, so hover and press
+  style it through the existing state classes.
+- **The window is the root's scroller.** The host lays the root out tight to the window and
+  sets `App.window_overflow` (default `OverflowAuto`) on the root's inline style through
+  `in_window`, unless the root sets an overflow itself. Before this a page taller than its
+  window was cut off.
+- **The wheel follows the system's direction.** `bindings.sdl3` undoes natural scrolling so a
+  game reads one direction; its `MouseWheel` now also says whether it did, and `ui.sdl3` moves
+  content the way the system's scroll views do (with natural scrolling, as the fingers go).
+- **`scroll(child, axis)` is a wrapper with overflow on its axis**: its own layout arm is gone.
+  It fills a bounded axis as before, so existing views lay out the same.
+- **Tested** by a scripted program (`TestRun_UiOverflow`): ports and content sizes, a click
+  through a clip, the wheel on both axes and bubbling, a thumb drag, a track page, Home/End/Page
+  Down, Tab revealing, and the clamp when the window grows. lui's generation and value errors
+  are tested in `TestLui_UiTargetOverflow` and the error table.
+
 ### 10/21/26 — `ui/`: a GPU renderer, shadows, gradients and blur
 
 - **The design doc listed GPU effects as a v1 non-goal**; Avram chose them now. Measured

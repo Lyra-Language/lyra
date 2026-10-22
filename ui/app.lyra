@@ -61,8 +61,8 @@ import ui.backend.{
 }
 import ui.draw.{ Point, Size, Color }
 import ui.text.{ Fonts, GlyphAtlas, glyph_atlas }
-import ui.style.{ Viewport }
-import ui.layout.{ Node, Laid, LayoutCache, layout_cache, paint }
+import ui.style.{ Viewport, Style, Overflow, OverflowAuto }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, paint, tight }
 import ui.interact.{ Ui, ui_new }
 import ui.access.{ access_tree }
 import std.io.{ read_file, write_file }
@@ -80,6 +80,10 @@ pub struct App<s, e> {
   /// nothing (the default) for no limit, and a side of nothing for none that way.
   min_size: Size = Size {},
   max_size: Size = Size {},
+  /// What the window does with a view that does not fit it — CSS's `overflow` on the page:
+  /// scrolled, with bars while it does not fit, by default. Set on the view's root unless its
+  /// own style says otherwise.
+  window_overflow: Overflow = OverflowAuto,
 }
 
 /// Work `update` asks the host to carry out, each naming the event its result comes back as.
@@ -221,6 +225,17 @@ pub struct Host<s, e> {
   drawn_at: Size = Size {},
 }
 
+/// `view` as the window's root: filling it, and overflowing it as `overflow` says on each
+/// axis its own style leaves unset.
+pub let in_window<e> = pure (view: Node<e>, overflow: Overflow) -> Node<e> => Node {
+  view |
+  style: Style {
+    view.style |
+    overflow_x: view.style.overflow_x.or(Some(overflow)),
+    overflow_y: view.style.overflow_y.or(Some(overflow)),
+  },
+}
+
 /// The window as a sheet's media rules ask of it: its size and the system's look.
 let viewport_of<p> where p: Platform = (platform: p) -> Viewport =>
   Viewport { size: platform.window_size(), appearance: platform.appearance() }
@@ -315,9 +330,9 @@ impl Host<s, e> {
       self.deliver_due(at, platform)
       if !self.running { return false }
       self.ui.state.viewport = viewport_of(platform)
-      laid = self.ui.frame_cached(
-        (self.app.view)(self.state),
-        platform.window_size(),
+      laid = self.ui.frame_within(
+        in_window((self.app.view)(self.state), self.app.window_overflow),
+        tight(platform.window_size()),
         fonts,
         self.cache
       )
@@ -338,9 +353,9 @@ impl Host<s, e> {
     fonts: mut Fonts
   ) -> void => {
     self.ui.state.viewport = viewport_of(platform)
-    let fresh = self.ui.frame_cached(
-      (self.app.view)(self.state),
-      platform.window_size(),
+    let fresh = self.ui.frame_within(
+      in_window((self.app.view)(self.state), self.app.window_overflow),
+      tight(platform.window_size()),
       fonts,
       self.cache
     )

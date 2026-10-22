@@ -2480,3 +2480,143 @@ pass 4: 3 frames, last at 520x300, root 520 wide, 3 drags
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
 }
+
+// Overflow: scrollers' ports and content, hit-testing through a clip, the wheel on both
+// axes bubbling from the innermost scroller that can move to the window, a thumb dragged,
+// a track paged, the keyboard, Tab revealing what it focuses, and a clamp on resize.
+func TestRun_UiOverflow(t *testing.T) {
+	got := runUiProgram(t, `import ui.app.{ sandbox, running, step_running }
+import ui.script.{ timed_platform, parse_steps }
+import ui.backend.{ Renderer }
+import ui.draw.{ Size, Color, TextureId }
+import ui.text.{ fonts_new }
+import ui.style.{ Style, Overflow, OverflowAuto, OverflowScroll, OverflowHidden }
+import ui.layout.{ Node, Laid, column, row, sized, button, CrossStretch, MainStart }
+
+/// A renderer that draws nothing.
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => {}
+}
+
+data Ev = Pressed(i64)
+
+/// A page 300 wide in a window 300 × 400: a list scrolled down (10 rows of 30 in 100), a row
+/// scrolled across (600 in 300), a box scrolled both ways (400 × 300 in 100 high, stretched
+/// across the page, bars always), one hidden (100 in 40), and one scrolled down holding one scrolled across.
+let view = pure (_: i64) -> Node<Ev> => column([
+  column([i in 0..<10 | sized(None, Some(30.0), [button("", Pressed(i))])]).aligned(MainStart, CrossStretch).keyed("down").with_style(Style { height: Some(100.0), overflow_y: Some(OverflowAuto) }),
+  row([i in 0..<6 | block(100.0, 40.0)]).keyed("across").with_style(Style { overflow_x: Some(OverflowAuto) }),
+  column([block(400.0, 300.0)]).keyed("both").with_style(Style { width: Some(150.0), height: Some(100.0), overflow_x: Some(OverflowScroll), overflow_y: Some(OverflowScroll) }),
+  column([block(100.0, 100.0)]).keyed("hidden").with_style(Style { height: Some(40.0), overflow_y: Some(OverflowHidden) }),
+  column([
+    row([i in 0..<6 | block(100.0, 50.0)]).keyed("inner").with_style(Style { overflow_x: Some(OverflowAuto) }),
+    block(10.0, 250.0),
+  ]).aligned(MainStart, CrossStretch).keyed("outer").with_style(Style { height: Some(100.0), overflow_y: Some(OverflowAuto) }),
+  block(10.0, 400.0),
+]).aligned(MainStart, CrossStretch)
+
+let block = pure (w: f32, h: f32) -> Node<Ev> => sized(Some(w), Some(h))
+
+let main = () -> u8 => {
+  for (name, script) in [
+    ("start", ""),
+    ("a click on a row presses it", "click:50,15"),
+    ("a click below the list is not a hidden row's", "click:50,120"),
+    ("wheel down", "move:50,50 scroll:0,3"),
+    ("wheel past the end", "move:50,50 scroll:0,10"),
+    ("then bubbles to the window", "move:50,50 scroll:0,10 scroll:0,1"),
+    ("wheel across", "move:50,120 scroll:2,0"),
+    ("both, either axis", "move:40,180 scroll:1,1"),
+    ("hidden passes to the window", "move:50,260 scroll:0,1"),
+    ("nested: across stays in, down goes out", "move:50,300 scroll:1,0 scroll:0,1"),
+    ("drag the list's thumb", "down:294,10 move:294,30 up:294,30"),
+    ("click the list's track pages", "click:294,90"),
+    ("End, Home, Page Down over the list", "move:50,50 End Home PageDown"),
+    ("Tab to the eighth row reveals it", "Tab Tab Tab Tab Tab Tab Tab Tab"),
+    ("a window scrolled to its end, then taller, clamps", "move:200,395 scroll:0,40 resize:300,600"),
+  ] {
+    let steps = match parse_steps(script) {
+      Ok(s) => s,
+      Err(why) => {
+        println("${name}: ${why}")
+        continue
+      },
+    }
+    var platform = timed_platform(steps, Size { w: 300.0, h: 400.0 })
+    var renderer = Blank {}
+    var fonts = fonts_new()
+    let window = running(sandbox(view, pressed, Color { r: 0, g: 0, b: 0 }), -1, platform, renderer, fonts)
+    while step_running(window) {}
+    let state = window.host.state
+    println("${name}: ${offsets(window.host.shown[0])}${if state >= 0 { "; pressed ${state}" } else { "" }}")
+    if name == "start" { println("  sizes: ${sizes(window.host.shown[0])}") }
+  }
+  0
+}
+
+let pressed = pure (_: i64, ev: Ev) -> i64 => match ev {
+  Pressed(i) => i,
+}
+
+/// Each scroller's port and content, by its key.
+let sizes = (laid: Laid<Ev>) -> string => {
+  var out: []string = []
+  each_size(laid, out)
+  out.join(", ")
+}
+
+let each_size = (laid: Laid<Ev>, out: mut []string) -> void => {
+  if let Some(sc) = laid.scroller {
+    let parts = laid.id.split(":")
+    let name = if laid.id == "#" { "window" } else { parts[parts.len() - 1] }
+    out.push("${name} ${sc.port.w}x${sc.port.h} of ${sc.content.w}x${sc.content.h}")
+  }
+  for c in laid.children { each_size(c.laid, out) }
+}
+
+/// Each scroller's offset, by its key — the window's as "window".
+let offsets = (laid: Laid<Ev>) -> string => {
+  var out: []string = []
+  collect(laid, out)
+  out.join(", ")
+}
+
+let collect = (laid: Laid<Ev>, out: mut []string) -> void => {
+  if let Some(sc) = laid.scroller {
+    let parts = laid.id.split(":")
+    let name = if laid.id == "#" { "window" } else { parts[parts.len() - 1] }
+    if sc.offset.x > 0.0 || sc.offset.y > 0.0 { out.push("${name} ${sc.offset.x},${sc.offset.y}") }
+  }
+  for c in laid.children { collect(c.laid, out) }
+}
+`)
+	want := `start: 
+  sizes: window 300x400 of 300x780, down 300x100 of 300x300, across 300x40 of 600x40, both 300x100 of 400x300, hidden 300x40 of 300x100, outer 300x100 of 300x300, inner 300x50 of 600x50
+a click on a row presses it: ; pressed 0
+a click below the list is not a hidden row's: 
+wheel down: down 0,120
+wheel past the end: down 0,200
+then bubbles to the window: window 0,40, down 0,200
+wheel across: across 80,0
+both, either axis: both 40,40
+hidden passes to the window: window 0,40
+nested: across stays in, down goes out: outer 0,40, inner 40,0
+drag the list's thumb: down 0,62.5
+click the list's track pages: down 0,60
+End, Home, Page Down over the list: down 0,60
+Tab to the eighth row reveals it: down 0,140
+a window scrolled to its end, then taller, clamps: window 0,180
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
