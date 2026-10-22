@@ -1,0 +1,107 @@
+<window width="400" height="64" resize={false} />
+
+<script target="ui">
+  import ui.app.{ Command, Subscription }
+
+  pub const BLANK_STATE = State {
+    c_str: "",
+    f_str: "",
+    c: 0.0,
+    f: 0.0,
+    c_error: false,
+    f_error: false
+  }
+
+  pub data Event = CelsiusEdited(string) | FahrenheitEdited(string)
+
+  pub struct State {
+    c_str: string,
+    f_str: string,
+    c: f64,
+    f: f64,
+    c_error: bool,
+    f_error: bool
+  }
+
+  pub let update = pure (s: State, event: Event) -> (State, []Command<Event>) => match event {
+    CelsiusEdited(c_str) => {
+      if c_str.trim().len() == 0 {
+        return (BLANK_STATE, [])
+      }
+      let maybe_c = c_str.parse_f64()
+      match maybe_c {
+        Some(c) => {
+          let f = c * (9/5) + 32
+          (
+            State {
+              s |
+              c_str: c_str,
+              f_str: f.to_fixed(2),
+              c: c,
+              f: f,
+              c_error: false,
+              f_error: false,
+            },
+            []
+          )
+        },
+        None => (State { s | c_str: c_str, c_error: true }, [])
+      }
+    },
+    FahrenheitEdited(f_str) => {
+      if f_str.trim().len() == 0 {
+        return (BLANK_STATE, [])
+      }
+      let maybe_f = f_str.parse_f64()
+      match maybe_f {
+        Some(f) => {
+          let c = (f - 32) * (5/9)
+          (
+            State {
+              s |
+              c_str: c.to_fixed(2),
+              f_str: f_str,
+              c: c,
+              f: f,
+              c_error: false,
+              f_error: false,
+            },
+            []
+          )
+        },
+        None => (State { s | f_str: f_str, f_error: true }, [])
+      }
+    }
+  }
+
+  pub let subscriptions = pure (_: State) -> []Subscription<Event> => []
+</script>
+
+<component name="view" props={{ s: State }} event={Event}>
+  <style>
+    Flex { padding: $space.l; gap: $space.m; }
+    Row { gap: $space.m }
+    TextInput { width: 100; }
+    TextInput.error { background: #FF0000; }
+  </style>
+  <Flex>
+    <Row>
+      <Text>Celsius</Text>
+      <TextInput
+        class={if s.c_error { "error" } else { "" }}
+        value={s.c_str}
+        on_edit={CelsiusEdited}
+        label="Celsius"
+      />
+    </Row>
+    <Row>
+      <Text>Fahrenheit</Text>
+      <TextInput
+        class={if s.f_error { "error" } else { "" }}
+        value={s.f_str}
+        on_edit={FahrenheitEdited}
+        label="Fahrenheit"
+      />
+    </Row>
+  </Flex>
+</component>
