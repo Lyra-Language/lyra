@@ -20,7 +20,8 @@ A root of its own beside `std/` and `bindings/` (`build.sh` links it into `build
 | `ui.text` | `Fonts` (font files by family; `add_system_font` tries `SYSTEM_FONTS`), `FontSpec` (family, size, `line_height`), `lay_out` → `TextBlock` (lines of placed glyphs, cached by text, font and width), and `GlyphAtlas`, which renders glyphs into one texture through `Renderer.update` and answers a `Glyphs` op. | HarfBuzz, FreeType |
 | `ui.style` | `Style` (all `Maybe`), `Insets`, `Rule`/`Sheet`, `Theme` (`Palette`, `Spacing`, radius, font, `elements` sheet; `light_theme`, `dark_theme`), its layout properties (sizes, flex's and grid's — `FlexDirection`, `LineWrap`, `Justify`, `ItemAlign`, `Basis`, tracks built by `px`, `fr`, `auto_track`, `min_content`, `max_content`, `minmax`, `repeat_tracks`, `GridSpan`, `GridFlow`), its effects (`box_shadow`, `background_gradient`, `filter_blur`, `backdrop_blur`), and the cascade: `Cascade` settles an element's tag, classes, part and inline style into `Computed`. | no |
 | `ui.layout` | `Node<e>` (kind, tag, class, part, style, children, key, label; `e` the program's event type, `NoEvent` for none) built by `row`, `column`, `flex`, `grid`, `expanded`, `stack`, `positioned`, `padding`, `align`, `sized`, `scroll`, `text`, `image`, `themed`, `component` and the controls `button`, `checkbox`, `slider`, `text_input`, and `.with_class`/`.with_style`/`.with_part`/`.keyed`/`.labelled`/`.aligned`; `layout`/`layout_with(node, Constraints, fonts, Interaction) -> Laid<e>` (each with its identity, role, label, focus ring and a field's caret) and `paint(laid, origin, scale, fonts, atlas, renderer) -> []DrawOp`. Flex and grid are in `ui/layout/flex.lyra` and `grid.lyra` (one module, a directory). | no (text through `ui.text`) |
-| `ui.interact` | `Ui`: the framework's state by identity (focus, hover, press, scroll offsets, carets, selections, undo), `frame` (lay out and drop what left the tree), `handle(laid, input, platform) -> []e`, `place_text_input`; `hit`, `control_at`, `find`, `focus_order`; `Editing`, a field's editing operations. | no |
+| `ui.motion` | Transitions' values: `progress` (CSS's timing functions), `blended`/`differs` (each property that animates), `mix_color` (premultiplied), and an element's `Motion` — its target and what is `Moving` towards it — moved on by `advance`; `with_layout`/`layout_key` for the sizes a layout lays out while they move. | no |
+| `ui.interact` | `Ui`: the framework's state by identity (focus, hover, press, scroll offsets, carets, selections, undo), transitions (`motions`, shown at `now`; `animating`), `frame` (lay out and drop what left the tree), `handle(laid, input, platform) -> []e`, `place_text_input`; `hit`, `control_at`, `find`, `focus_order`; `Editing`, a field's editing operations. | no |
 | `ui.app` | `App { view, update: (s, e) -> (s, []Command<e>), subscriptions: (s) -> []Subscription<e>, background }` (`sandbox(view, update, bg)` for a plain update); `Command` (`WriteFile`, `ReadFile`, `After`, `CopyText`, `PasteText`, `OpenUrl`, `QuitApp`), `Subscription` (`EveryFrame`, `Every`, `OnResize`, `OnAppearance`); `run`, and `Host` (`host_of`, `step`) for a loop of `main`'s own — which `lyrac run --live` needs. | no |
 | `ui.access` | `access_tree(laid, focus) -> AccessTree`: the laid-out tree as assistive technology hears it, a node for each paragraph, image, scroll and control (and labelled group), ids its identities hashed; `access_id`, `access_node`. | no |
 | `ui.script` | `ScriptPlatform` (a `Platform` with no window and a clock of its own, playing one step a pass), `parse_script` (inputs: `"Tab 'Ada' Shift+Tab Primary+v click:10,20 scroll:1"`) and `parse_steps` (with `wait:N`, `resize:W,H`, `dark`, `light`). | no |
@@ -79,7 +80,7 @@ layer — implements the two traits; the display list is the whole contract.
   Up/Down, Home and End scroll the scroller under the pointer or around the focus (not inside a
   slider or a field); Tab scrolls what it focuses into view in each scroller around it.
   **Scrollbars overlay the content**, 8 thick and 2 in from the edge, a thumb at least 20 long,
-  styled as the elements `ScrollTrack` and `ScrollThumb` (`.hover`, `.pressed`), their
+  styled as the elements `ScrollTrack` and `ScrollThumb` (`:hover`, `:active`), their
   defaults `scrollbar_rules` — a layer beneath the theme, applied only to a scroller's bars; `scroll` shows them always, `auto` when the content is larger. A
   hit-test only finds what is inside every clip around it. **A scroller lends its parent no
   min-content width beyond its padding**, as CSS's, and has no automatic least size in flex.
@@ -87,6 +88,24 @@ layer — implements the two traits; the display list is the whole contract.
   `App.window_overflow` (`OverflowAuto` unless set; lui's `<window overflow>`), which the
   root's own style beats. `scroll(child, axis)` is a wrapper with `overflow` on its axis, which
   fills that axis when bounded (Flutter's).
+- **Transitions are CSS's** (`Style.transition: []Transition` — a property by its CSS name or
+  `all`, a duration and delay in milliseconds, a `Timing`; lui's `transition` and longhands).
+  When a property an element's transition names changes its computed value — a class, a state,
+  the program's state, `@media` on a resize — it moves from **what is shown now** to the new
+  value (so a change back mid-way retargets from where it is); one not named jumps, and the
+  first frame an element is seen moves nothing. Opacity, colours (premultiplied, as CSS),
+  radius, shadows (pair by pair, padded with transparent ones), a gradient of one kind and
+  stop count, and both blurs **only change what is drawn**: `Ui.frame_within` blends them into
+  the laid-out tree after layout — an opacity multiplied into everything inside, a colour
+  passed to text that inherits it — and the layout cache gives the element back untouched.
+  Padding, gaps, sizes and border width **change sizes**: they reach the next layout through
+  `Interaction.shown`, keyed into the cache, so a moving element lays out each frame (and at
+  once on the frame it starts, never showing its target first). An `auto` size, gradients of
+  different shapes and shadows inset on one side only switch at the midpoint. State is by
+  identity in `Ui.motions`, dropped with the element; the clock is `Platform.now_ms`, which the
+  host hands `Ui.now`. **The host draws every frame while anything moves and idles once it has
+  arrived**; `ScriptPlatform`'s `wait:N` steps its clock a frame at a time, so a script plays a
+  transition deterministically.
 - **Media rules** (`Rule.media`, CSS's `@media`): a rule may hold while the viewport —
   the window's logical size and the system's look (`Viewport`, which the host passes in
   `Interaction.viewport`) — meets any of its `Media` conditions (min/max width and height,
@@ -132,11 +151,17 @@ layer — implements the two traits; the display list is the whole contract.
 - **Identity is a node's path from the root**, an index a step or a `.keyed` key in its place;
   `Ui` holds focus, hover, press, scroll offsets and a field's caret, selection and undo by
   it, and drops what belongs to an identity no longer in the tree.
-- **A state is a class** — `hover`, `pressed`, `focus` — added for the cascade
-  (`Button.hover`, `.card.hover`); pseudo-selectors (`:hover`) are deferred (todo.md). **Hover
-  is any element's**: the deepest element under the pointer and every one around it, as
-  CSS's `:hover`. A selector may ask for several classes (`.card.hover`), each adding 10 to its
-  specificity. A focused control gets
+- **A state is a pseudo-class, as CSS's**: `:hover` and `:active` (pressed) on the element and
+  every one around it — the deepest under the pointer and its ancestors, as CSS's — `:focus`,
+  `:focus-visible` (the focus came from Tab or assistive technology, not a click),
+  `:focus-within` (it or something in it has the focus), `:checked` (a ticked checkbox), and
+  `:disabled`/`:enabled` (a control, by `Node.disabled_if`). A selector puts them on a compound
+  (`Button.primary:hover`, `:hover` alone) or a part (`Slider:hover::thumb`, the component's;
+  `Slider::thumb:active`, the part's), each — like a class — adding 10 to its specificity.
+  **A class is only ever the program's**: the framework adds none, and a class named `hover` is
+  just a class (lui refuses one, as a mistake). **A disabled control takes no input** — not
+  pressed, not focused, skipped by Tab, its accessibility actions ignored — but is hovered
+  like any element, and gives up the focus or press it held when it becomes disabled. A focused control gets
   a ring in the theme's `focus` colour. A control's insides are parts (`Checkbox::box`,
   `Slider::thumb`, `TextInput::placeholder`); `control_rules` gives a theme its defaults.
 - **The keyboard**: Tab/Shift-Tab through the controls in the tree's order, wrapping; Space
@@ -212,7 +237,7 @@ layer — implements the two traits; the display list is the whole contract.
   grid of one, two or four columns by `@media`, with a `<window>` least size and a dark look
   by `prefers-color-scheme`; run by `examples/ui/layouts.lyra`, which redraws during a live
   resize (`--width W --script "…" --png FILE` headless).
-- `examples/ui/effects_view.lui` — shadows, gradients and blur: a gradient header, cards whose
+- `examples/ui/effects_view.lui` — shadows, gradients, blur and transitions (a card's shadow, the frost coming and going, a blurred line focusing and dots fading under the pointer): a gradient header, cards whose
   shadows lift under the pointer, a frosted panel over a busy background, a blurred line; run by
   `examples/ui/effects.lyra` on the GPU (`--png FILE` reads a GPU frame back).
 - `examples/ui/overflow_view.lui` — overflow: a list scrolled down, a strip across, a canvas
@@ -246,5 +271,9 @@ layer — implements the two traits; the display list is the whole contract.
   `TestRun_UiOverflow` scrollers' sizes, a click through a clip, the wheel on both axes
   bubbling to the window, a thumb drag, a track page, the keys, Tab revealing, and the clamp on
   resize; `TestLui_UiTargetOverflow` the markup's `overflow` and `<window overflow>`.
+  `TestRun_UiTransitions` the timing curves, premultiplied colour, retargeting, a delay, a
+  named list against `all`, an opacity fading a child, no layout for paint-only properties and
+  idle on arrival; `TestRun_UiTransitionsDrawOnlyWhileMoving` the host's frames;
+  `TestLui_UiTargetTransitions` the markup's.
   `TestRun_UiFlex` and `TestRun_UiGrid` hold flex and grid to hand-worked CSS results, child
   rect by child rect; `TestLui_UiTargetFlexAndGrid` the markup's layout properties.

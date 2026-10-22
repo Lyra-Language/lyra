@@ -539,15 +539,30 @@ The example's interface is `examples/imgui/components_view.lui`.
   value, a nested `@media` and any other at-rule are lui's errors at their line; the
   `bindings.imgui.ui` target has no `@media`. **A selector list** (`Button.primary,
   Checkbox::box, .card { … }`) is a rule for each, each selector checked — `Tag`, `.class`,
-  `Tag.class`, `Comp::part`, `Comp.class::part`; a descendant or pseudo-class selector is an
-  error at its own line. **`<window min-width min-height max-width max-height/>`** at the top
+  `Tag.class`, `Comp::part`, `Comp.class::part`, each with pseudo-classes (below); a
+  descendant selector is an error at its own line. **States are CSS's pseudo-classes**:
+  `:hover`, `:active`, `:focus`, `:focus-visible`, `:focus-within`, `:checked`, `:disabled`
+  and `:enabled`, on a compound (`Button.primary:hover`, `:focus-within`) or a part — the
+  component's before `::` (`Slider:hover::thumb`), the part's after it (`Slider::thumb:active`,
+  which takes no classes). Another pseudo-class, a class after a part, and a class named for a
+  state (`.hover`, `.pressed`, `.focus` — `:hover`, `:active`, `:focus` now) are errors at their
+  line. Any element takes **`disabled`**, bare or `disabled={condition}`. **`<window min-width min-height max-width max-height/>`** at the top
   of a ui file writes `WINDOW_MIN_SIZE` and `WINDOW_MAX_SIZE`, for `App`'s `min_size` and
   `max_size`. **Effects, as CSS writes them**: `box-shadow` (`none`, or shadows a comma apart,
   each `[inset] x y [blur [spread]] #colour`, `px` allowed), `background` or `background-image`
   as `linear-gradient([Ndeg | to side or corner,] stops…)` (a corner taken as 45°) or
   `radial-gradient([circle | ellipse,] stops…)`, each stop `#colour [N%]`, and `filter` and
-  `backdrop-filter` as `blur(N)` or `none` — each checked, an error at its line. A selector
-  may ask for several classes (`.card.hover`). Each rule is marked with its line, so
+  `backdrop-filter` as `blur(N)` or `none` — each checked, an error at its line.
+  **`overflow`** takes one value for both axes or two (x, then y), and `overflow-x`/`overflow-y`
+  one: `visible`, `hidden`, `clip`, `scroll` or `auto`; `<window overflow="…">` writes
+  `WINDOW_OVERFLOW`. **Transitions, as CSS writes them**: `transition` is a comma list, each
+  `[property] duration [timing-function] [delay]` in any order (the property `all` when
+  omitted; `none` for none), and `transition-property`, `-duration`, `-timing-function` and
+  `-delay` are its longhands, their lists paired by place and a shorter one repeated. Times
+  are `Nms` or `Ns`; timing functions `ease`, `linear`, `ease-in`, `ease-out`, `ease-in-out`,
+  `step-start`, `step-end`, `cubic-bezier(x1, y1, x2, y2)` (x 0–1) and `steps(n[, jump-start |
+  jump-end])`; a property is one `ui.motion` animates, `all` or `background`, `radius` read as
+  `border-radius`. A selector may ask for several classes (`.card.big`). Each rule is marked with its line, so
   `lui map` puts a token lyrac refuses back at it. **Parts**: `Comp::part` and
   `Comp.class::part` are checked against the parts the component's markup marks
   (`part="title"`) — or a control's (`Checkbox::box`, `Slider::thumb`,

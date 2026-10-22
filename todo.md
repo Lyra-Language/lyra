@@ -728,6 +728,13 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] The cascade parses selectors per element.** `applied` splits and trims every rule's
   selector for every element it styles, so each rule a theme gains slows every layout; parse
   them once into a sheet (by tag and class) and the whole tree gets faster.
+- **[DONE 10/22] Transitions** — CSS's `transition` in `Style` and lui, `ui.motion`, paint-only
+  properties blended after layout, sizes through the next; the effects demo (COMPLETED.md, 10/22).
+- **[OPEN] Animations beyond transitions**: `@keyframes`/`animation`, `transitionend`-style events
+  to the program, CSS's reversing shortening (a change back mid-way takes the full duration),
+  `font-size` and `line-height`, and transforms (there are none yet) do not transition.
+- **[OPEN] Scrollbars and a field's placeholder, caret and selection do not transition**:
+  they are styled outside the laid-out elements the walk visits (a slider's parts are inside).
 - **[OPEN] An idle `ui` window ignores SIGTERM** until the next event: SDL turns the signal into
   a quit only when it pumps, and the loop is asleep in `SDL_WaitEventTimeout` with no timeout.
   `pkill` left demo windows open; a bounded wait (or SDL's quit-on-signal waking it) would fix it.
@@ -794,8 +801,11 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] Typechecker: an untyped lambda as a data constructor's payload** (`Scope((_) =>
   sheet)` for `Scope((Theme) -> Sheet)`) is not elaborated from the payload's type, as an
   argument's is; its parameters must be annotated.
-- **[OPEN] `ui`: `:hover`-style selectors.** A control's states are classes the framework adds
-  (`Button.hover`); whether the cascade grows pseudo-classes, and their specificity, is open.
+- **[DONE 10/22] `ui`: states as pseudo-classes** — `:hover`, `:active`, `:focus`,
+  `:focus-visible`, `:focus-within`, `:checked`, `:disabled`, `:enabled`, class-level
+  specificity; the class form dropped (COMPLETED.md, 10/22).
+- **[OPEN] `ui`: a disabled control is not told to assistive technology** (AccessKit's
+  `disabled` flag), nor disabled through its ancestors (CSS's disabled `fieldset`).
 - **[OPEN] `ui.interact`: a caret moves by rune, not grapheme cluster.** `é` written as `e`
   and a combining accent, or an emoji sequence, takes several Left presses; needs UAX #29.
 - **[OPEN] `ui.interact`: a field's caret does not blink**, and typing is not coalesced into

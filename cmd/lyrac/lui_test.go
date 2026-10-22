@@ -535,7 +535,11 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"media nested", ui + "<style global>\n  @media (min-width: 1) {\n    @media (max-width: 2) {\n      .a { gap: 1 }\n    }\n  }\n</style>", "x.lui:4: an @media inside an @media"},
 		{"at-rule", ui + "<style global>\n  @supports (x: y) {\n  }\n</style>", "x.lui:3: @supports is not an at-rule of a <style>; @media is"},
 		{"selector in a list", ui + "<style global>\n  .a,\n  Column Text { gap: 1 }\n</style>", "x.lui:4: Column Text is not a selector ui reads"},
-		{"pseudo-class", ui + "<style global>\n  .a:hover { gap: 1 }\n</style>", "x.lui:3: .a:hover is not a selector ui reads"},
+		{"pseudo-class", ui + "<style global>\n  .a:visited { gap: 1 }\n</style>", "x.lui:3: .a:visited: :visited is not a pseudo-class ui has (hover, active, focus, focus-visible, focus-within, checked, disabled, enabled)"},
+		{"state class", ui + "<style global>\n  Button.pressed { gap: 1 }\n</style>", "x.lui:3: Button.pressed: a state is a pseudo-class, as in CSS: write :active, not .pressed"},
+		{"class on a part", ui + "<style global>\n  Slider::thumb.big { gap: 1 }\n</style>", "x.lui:3: Slider::thumb.big: a part takes pseudo-classes after it (Comp::part:hover), not classes"},
+		{"pseudo-element", ui + "<style global>\n  .a::before:hover { gap: 1 }\n</style>", "x.lui:3: .a::before:hover is not a selector ui reads"},
+		{"disabled text", ui + "<component name=\"a\">\n  <Column disabled=\"yes\"/>\n</component>", "x.lui:3: disabled is bare or {condition}, not text"},
 		{"shadow lengths", ui + "<style global>\n  .a { box-shadow: 0 #000 }\n</style>", "x.lui:3: a box-shadow is [inset] x y [blur [spread]] #colour, not 0 #000"},
 		{"shadow many", ui + "<style global>\n  .a { box-shadow: 1 2 3 4 5 #000 }\n</style>", "x.lui:3: a box-shadow is [inset] x y [blur [spread]] #colour, not 1 2 3 4 5 #000"},
 		{"gradient side", ui + "<style global>\n  .a { background: linear-gradient(to middle, #000, #fff) }\n</style>", "x.lui:3: a gradient goes to top, right, bottom, left or a corner, not to middle"},
@@ -543,6 +547,15 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"gradient kind", ui + "<style global>\n  .a { background-image: conic-gradient(#000, #fff) }\n</style>", "x.lui:3: a gradient is linear-gradient(…) or radial-gradient(…)"},
 		{"filter", ui + "<style global>\n  .a { filter: grayscale(1) }\n</style>", "x.lui:3: filter is blur(N) or none, not grayscale(1)"},
 		{"stop place", ui + "<style global>\n  .a { background: linear-gradient(#000 50, #fff) }\n</style>", "x.lui:3: a colour stop's place is a percentage, not 50"},
+		{"transition time", ui + "<style global>\n  .a { transition: opacity 200 }\n</style>", "x.lui:3: a transition's duration and delay are times, Nms or Ns, not 200"},
+		{"transition property", ui + "<style global>\n  .a { transition: sideways 1s }\n</style>", "x.lui:3: transition-property is all or a property that animates"},
+		{"transition times", ui + "<style global>\n  .a { transition: opacity 1s 2s 3s }\n</style>", "x.lui:3: a transition is [property] duration [timing-function] [delay], not opacity 1s 2s 3s"},
+		{"transition timings", ui + "<style global>\n  .a { transition: opacity 1s ease linear }\n</style>", "x.lui:3: a transition has one timing function, not two in opacity 1s ease linear"},
+		{"transition bezier", ui + "<style global>\n  .a { transition-timing-function: cubic-bezier(2, 0, 1, 1) }\n</style>", "x.lui:3: cubic-bezier's x1 and x2 are 0 to 1, not 2 in cubic-bezier(2, 0, 1, 1)"},
+		{"transition steps", ui + "<style global>\n  .a { transition-timing-function: steps(0) }\n</style>", "x.lui:3: steps(n) takes one step or more, not 0"},
+		{"transition timing", ui + "<style global>\n  .a { transition-timing-function: bouncy }\n</style>", "x.lui:3: transition-timing-function is ease, linear, ease-in, ease-out, ease-in-out, cubic-bezier(x1, y1, x2, y2) or steps(n[, jump-start|jump-end]), not bouncy"},
+		{"transition delay", ui + "<style global>\n  .a { transition-delay: soon }\n</style>", "x.lui:3: transition-delay is a time, Nms or Ns, not soon"},
+		{"transition longhand", ui + "<style global>\n  .a { transition-propery: opacity }\n</style>", "x.lui:3: no style property transition-propery in ui"},
 		{"overflow value", ui + "<style global>\n  .a { overflow: sideways }\n</style>", "x.lui:3: overflow is visible, hidden, clip, scroll or auto, not sideways"},
 		{"overflow many", ui + "<style global>\n  .a { overflow: auto auto hidden }\n</style>", "x.lui:3: overflow is one or two of visible, hidden, clip, scroll, auto, not auto auto hidden"},
 		{"overflow-y value", ui + "<component name=\"a\">\n  <Column style=\"overflow-y: scrolls\"/>\n</component>", "x.lui:3: overflow is visible, hidden, clip, scroll or auto, not scrolls"},
@@ -816,7 +829,7 @@ func TestLui_UiTargetMediaAndSelectorLists(t *testing.T) {
 
 // Effects in markup: box-shadow lists (inset, px, spread, none), linear gradients by angle
 // and by side, a stop at a percentage, a radial circle, filter and backdrop-filter blur, and
-// a compound selector (.card.hover); and the module checks clean.
+// a compound selector (.card:hover); and the module checks clean.
 func TestLui_UiTargetEffects(t *testing.T) {
 	t.Parallel()
 	lui := buildLui(t)
@@ -826,7 +839,7 @@ func TestLui_UiTargetEffects(t *testing.T) {
 </script>
 <style global name="fx_sheet">
   .card { box-shadow: 0 4px 12px #00000033, inset 0 0 0 1 #ffffff80; background: #ffffff }
-  .card.hover { box-shadow: 0 10 24 2 #00000040 }
+  .card:hover { box-shadow: 0 10 24 2 #00000040 }
   .header { background: linear-gradient(to right, #ff8a00, #e52e71 60%, #6a11cb) }
   .glow { background-image: radial-gradient(circle, #ffffff, #000000) }
   .tilt { background: linear-gradient(135deg, #ffffff 10%, #000000) }
@@ -850,7 +863,7 @@ func TestLui_UiTargetEffects(t *testing.T) {
 	}
 	for _, want := range []string{
 		"box_shadow: Some([BoxShadow { x: 0.0, y: 4.0, blur: 12.0, spread: 0.0, color: rgba(0x00000033) }, BoxShadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: rgba(0xFFFFFF80), inset: true }])",
-		`Rule { selector: ".card.hover", style: Style { box_shadow: Some([BoxShadow { x: 0.0, y: 10.0, blur: 24.0, spread: 2.0, color: rgba(0x00000040) }]) } }`,
+		`Rule { selector: ".card:hover", style: Style { box_shadow: Some([BoxShadow { x: 0.0, y: 10.0, blur: 24.0, spread: 2.0, color: rgba(0x00000040) }]) } }`,
 		"background_gradient: Some(Gradient { kind: LinearGradient(90.0), stops: [ColorStop { color: rgb(0xFF8A00) }, ColorStop { color: rgb(0xE52E71), at: Some(60.0 / 100.0) }, ColorStop { color: rgb(0x6A11CB) }] })",
 		"kind: RadialGradient(true)",
 		"kind: LinearGradient(135.0), stops: [ColorStop { color: rgb(0xFFFFFF), at: Some(10.0 / 100.0) }",
@@ -968,5 +981,56 @@ func TestLui_OverflowExampleIsCurrentAndChecks(t *testing.T) {
 	}
 	if out := stdout + stderr; strings.Contains(out, "warning") {
 		t.Errorf("the example or its generated view warns:\n%s", out)
+	}
+}
+
+// Transitions in the ui target: CSS's shorthand — a comma list, each [property] duration
+// [timing-function] [delay] in any order, ms or s, all by default — and its longhands, paired
+// by place with the shorter lists repeated; lui's radius for border-radius; none; inline too.
+func TestLui_UiTargetTransitions(t *testing.T) {
+	t.Parallel()
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script target="ui">
+  pub data Ev = Go
+</script>
+<style global name="app_sheet">
+  .a { transition: opacity 200ms, filter 0.3s ease-in-out 50ms, background cubic-bezier(0.1, 0.7, 1.0, 0.1) 1s }
+  .b { transition-property: opacity, radius; transition-duration: 150ms; transition-timing-function: steps(4, jump-start), linear; transition-delay: 0, .5s }
+  .c { transition: 250ms }
+  .d { transition: none }
+</style>
+<component name="view" event={Ev}>
+  <Column class="a" style="transition: color 1s step-end">
+    <Column class="b"/>
+  </Column>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`transition: Some([Transition { property: "opacity", duration: 200.0, timing: TimingEase, delay: 0.0 }, Transition { property: "filter", duration: 300.0, timing: TimingEaseInOut, delay: 50.0 }, Transition { property: "background", duration: 1000.0, timing: TimingBezier(0.1, 0.7, 1.0, 0.1), delay: 0.0 }])`,
+		`transition: Some([Transition { property: "opacity", duration: 150.0, timing: TimingSteps(4, true), delay: 0.0 }, Transition { property: "border-radius", duration: 150.0, timing: TimingLinear, delay: 500.0 }])`,
+		`transition: Some([Transition { property: "all", duration: 250.0, timing: TimingEase, delay: 0.0 }])`,
+		`transition: Some([])`,
+		`transition: Some([Transition { property: "color", duration: 1000.0, timing: TimingSteps(1, false), delay: 0.0 }])`,
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
 }

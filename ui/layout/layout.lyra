@@ -39,8 +39,9 @@ module ui.layout
 //! **Every element can be styled** (`ui.style`): its tag (`Row`, `Text`, a component's own),
 //! classes and inline [Style] go through the cascade, and any element may have a background,
 //! a border, rounded corners and padding. A row's or column's `gap` is a style too, so a
-//! theme can set it. **A control's state is a class** the framework adds while it holds:
-//! `hover`, `pressed`, `focus` — so `Button.hover` is a rule like any other.
+//! theme can set it. **An element's state is a pseudo-class**, as CSS's: `:hover`, `:active`,
+//! `:focus`, `:focus-visible`, `:focus-within`, `:checked`, `:disabled` and `:enabled`, so
+//! `Button:hover` is a rule like any other.
 //!
 //! **Identity** is a node's path from the root ([Laid.id]): each step its index among its
 //! siblings, or its [Node.keyed] key where it has one — so a keyed item keeps its identity,
@@ -99,6 +100,7 @@ import ui.style.{
   Viewport,
   MediaAnswer,
 }
+import ui.motion.{ with_layout, layout_key }
 import std.collections.{ HashMap, hashmap_new }
 
 // ── The tree ─────────────────────────────────────────────────────────────────
@@ -116,6 +118,8 @@ pub struct Node<e> {
   children: []Node<e> = [],
   key: string = "",
   label: string = "",
+  /// A control that takes no input: not pressed, not focused, `:disabled` to the cascade.
+  disabled: bool = false,
 }
 
 /// What an element does with its children, its space and its input. Built by the functions
@@ -409,6 +413,9 @@ impl Node<e> {
   /// The node read to assistive technology as `label`, rather than its visible text.
   pub let labelled = pure (self, label: string) -> Node<e> => Node { self | label: label }
 
+  /// The node disabled while `off` holds: a control that takes no input, `:disabled`.
+  pub let disabled_if = pure (self, off: bool) -> Node<e> => Node { self | disabled: off }
+
   /// The node with every event its controls raise passed through `f` — a component written
   /// for its own event type, placed in a tree of another's (Elm's `Html.map`):
   /// `settings_panel(s).map(SettingsSaid)`.
@@ -421,6 +428,7 @@ impl Node<e> {
     children: [child in self.children | child.map(f)],
     key: self.key,
     label: self.label,
+    disabled: self.disabled,
   }
 
   /// A row or column with its children placed by `main` and `cross`; any other node unchanged.
@@ -531,8 +539,14 @@ pub struct Interaction {
   hover: string = "",
   pressed: string = "",
   widgets: HashMap<string, WidgetState>,
+  /// Whether the focus came from the keyboard (Tab, or assistive technology) rather than the
+  /// pointer: `:focus-visible`.
+  keyboard_focus: bool = false,
   /// The window as media queries see it; a size of nothing for the constraints' own.
   viewport: Viewport = Viewport {},
+  /// What each element moving a property that changes sizes shows now (`ui.motion`), by
+  /// identity: laid out with those properties until they arrive.
+  shown: HashMap<string, Computed>,
 }
 
 /// What the framework keeps for one element: a scroll's offset once the user has scrolled
@@ -558,7 +572,8 @@ pub struct Edit {
 }
 
 /// No focus, nothing under the pointer, no element's state.
-pub let interaction_new = pure () -> Interaction => Interaction { widgets: hashmap_new() }
+pub let interaction_new = pure () -> Interaction =>
+  Interaction { widgets: hashmap_new(), shown: hashmap_new() }
 
 // ── The laid-out tree ────────────────────────────────────────────────────────
 
@@ -584,6 +599,10 @@ pub struct Laid<e> {
   children: []Placed<e> = [],
   /// What it scrolls, if its overflow is not visible on an axis.
   scroller: Maybe<Scroller> = None,
+  /// Whether it or anything in it has a transition (`ui.motion`), which a frame looks in for.
+  moves: bool = false,
+  /// Whether it takes no input ([Node.disabled]).
+  disabled: bool = false,
   /// The media queries this node's sheets, and those below it, asked of the viewport, and
   /// their answers: while they answer the same, so does its layout.
   media: []MediaAnswer = [],
@@ -772,6 +791,10 @@ let state_under = pure (ui: Interaction, id: string) -> string => {
       out = "${out}|${key}:${w.scroll ?? -1.0}:${w.scroll_x ?? -1.0}:${w.caret}:${w.anchor}:${w.field_scroll}"
     }
   }
+  // An element whose sizes are moving lays out afresh each frame they move.
+  for (key, moving) in ui.shown.entries() {
+    if inside(key) { out = "${out}|${key}~${layout_key(moving)}" }
+  }
   out
 }
 
@@ -889,7 +912,6 @@ let lay_fresh<e> = (
   let own = styled.own
   let style = styled.style
   let within = styled.within
-  let classes = styled.classes
   let space = styled.space
   // The sizes the element asks for, within what its parent allows.
   let c = sized_by(given, style)
@@ -1026,12 +1048,14 @@ let lay_fresh<e> = (
   Laid {
     id: id,
     tag: node.tag,
-    class: classes,
+    class: node.class,
     kind: node.kind,
     role: role,
     label: label_of(node, children),
     size: size,
-    style: style,
+    // The style the cascade asks for — what a transition moves towards — not what was laid
+    // out with while one moves; a frame blends what is shown in (`ui.interact`).
+    style: styled.goal,
     content: body.content,
     content_at: Point { x: corner.x - body.scrolled, y: corner.y },
     clips: body.clips || scrolls,
@@ -1039,6 +1063,8 @@ let lay_fresh<e> = (
     field: body.field,
     children: children,
     scroller: scroller,
+    moves: styled.goal.transition.len() > 0 || children.any((p) => p.laid.moves),
+    disabled: node.disabled,
     media: asked_below(styled.media, children),
   }
 }
@@ -1094,7 +1120,10 @@ let initial_offset<e> = pure (kind: Kind<e>) -> Point => match kind {
 struct Styled {
   own: Cascade,
   classes: string,
+  /// What it is laid out with — `goal` but for the sizes a transition is moving — and what
+  /// the cascade asks for.
   style: Computed,
+  goal: Computed,
   within: Cascade,
   space: Insets,
   media: []MediaAnswer,
@@ -1121,16 +1150,20 @@ let styled_at<e> = (
     },
     _ => cascade,
   }
-  let classes = with_state(node.class, id, ui)
-  let style = own.compute(node.tag, classes, node.part, node.style)
+  let classes = with_own_state(with_state(node.class, id, ui), node)
+  let goal = own.compute(node.tag, classes, node.part, node.style)
+  let style = match ui.shown.get(id) {
+    Some(moving) => with_layout(goal, moving),
+    None => goal,
+  }
   let within = match node.kind {
     Scope(sheet_of) => {
       let (scoped, asked) = sheet_of(own.theme).at(ui.viewport)
       media = asked
-      own.in_component(node.tag, node.class, scoped).inside(style)
+      own.in_component(node.tag, classes, scoped).inside(style)
     },
     _ => if focusable(node.kind) {
-      own.in_component(node.tag, node.class, Sheet {}).inside(style)
+      own.in_component(node.tag, classes, Sheet {}).inside(style)
     } else {
       own.inside(style)
     },
@@ -1143,6 +1176,7 @@ let styled_at<e> = (
     own: own,
     classes: classes,
     style: style,
+    goal: goal,
     within: within,
     space: space,
     media: media,
@@ -1295,20 +1329,34 @@ struct Body<e> {
   scrolled: f32 = 0.0,
 }
 
-/// `classes` with the states the element identified as `id` is in: `hover` (it or something
-/// in it under the pointer), `pressed`,
-/// `focus`.
+/// `classes` with the states the element identified as `id` is in, each a pseudo-class
+/// (`:hover`): `:hover` and `:active` when it, or something in it, is under the pointer or
+/// pressed — as CSS's reach every element round the one they name — `:focus` when it has the
+/// focus, `:focus-visible` when that came from the keyboard, and `:focus-within` when it or
+/// something in it has it.
 let with_state = pure (classes: string, id: string, ui: Interaction) -> string => {
+  let inside = (holder: string) -> bool => holder == id || holder.starts_with("${id}/")
   var out = classes
-  for (
-    state,
-    holder
-  ) in [("hover", ui.hover), ("pressed", ui.pressed), ("focus", ui.focus)] {
-    // Hover reaches every element round the one under the pointer, as CSS's `:hover` does.
-    let holds = holder == id || (state == "hover" && holder.starts_with("${id}/"))
+  for (state, holds) in [
+    (":hover", inside(ui.hover)),
+    (":active", inside(ui.pressed)),
+    (":focus", ui.focus == id),
+    (":focus-visible", ui.focus == id && ui.keyboard_focus),
+    (":focus-within", inside(ui.focus)),
+  ] {
     if holds { out = if out.len() == 0 { state } else { "${out} ${state}" } }
   }
   out
+}
+
+/// `classes` with the states `node` itself says it is in: `:checked` for a ticked checkbox,
+/// and a control `:disabled` or `:enabled`.
+let with_own_state<e> = pure (classes: string, node: Node<e>) -> string => {
+  var states: []string = []
+  if let Checkable(true, _) = node.kind { states.push(":checked") }
+  if node.disabled { states.push(":disabled") } else if focusable(node.kind) { states.push(":enabled") }
+  if states.len() == 0 { return classes }
+  if classes.len() == 0 { states.join(" ") } else { "${classes} ${states.join(" ")}" }
 }
 
 /// The role an element of `kind` has.

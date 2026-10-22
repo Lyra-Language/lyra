@@ -75,7 +75,7 @@ import ui.backend.{
   AxIncrement,
   AxDecrement,
 }
-import ui.draw.{ Point, Rect, Size }
+import ui.draw.{ Point, Rect, Size, Color }
 import ui.text.{ Fonts, offset_at_x }
 import ui.layout.{
   Axis,
@@ -84,6 +84,7 @@ import ui.layout.{
   user_scrolls,
   Node,
   Laid,
+  Placed,
   Interaction,
   WidgetState,
   Edit,
@@ -104,7 +105,8 @@ import ui.layout.{
   byte_at,
   SLIDER_THUMB,
 }
-import ui.style.{ OverflowClip }
+import ui.style.{ OverflowClip, Computed }
+import ui.motion.{ Motion, advance, shown_at, in_motion, moves_sizes }
 import ui.style
 import std.collections.{ HashMap, hashmap_new }
 
@@ -115,6 +117,12 @@ pub struct Ui {
   pointer: Point = Point {},
   typing_into: string = "",
   typing_at: Rect = Rect {},
+  /// Each element's transitions (`ui.motion`), by identity; the clock's milliseconds a frame
+  /// shows them at (the host sets it from `Platform.now_ms`); and whether a frame just
+  /// started moving a property that changes sizes.
+  motions: HashMap<string, Motion>,
+  now: i64 = 0,
+  resized: bool = false,
 }
 
 /// An element found in a laid-out tree, and where its top-left corner is in the window.
@@ -124,7 +132,7 @@ pub struct Found<e> {
 }
 
 /// No focus, nothing hovered or held, no element's state.
-pub let ui_new = pure () -> Ui => Ui { state: interaction_new() }
+pub let ui_new = pure () -> Ui => Ui { state: interaction_new(), motions: hashmap_new() }
 
 /// How far a scroll moves for a line of a wheel, in units.
 pub const SCROLL_LINE: f32 = 40.0
@@ -161,20 +169,118 @@ impl Ui {
     fonts: mut Fonts,
     cache: mut LayoutCache<e>
   ) -> Laid<e> => {
-    let laid = layout_cached(view, c, fonts, self.state, cache)
+    self.state.shown = self.sizes_shown()
+    var laid = layout_cached(view, c, fonts, self.state, cache)
     var present: HashMap<string, bool> = hashmap_new()
     note_ids(laid, present)
     for id in self.state.widgets.keys() {
       if !present.contains_key(id) { let _ = self.state.widgets.remove(id) }
     }
+    for id in self.motions.keys() {
+      if !present.contains_key(id) { let _ = self.motions.remove(id) }
+    }
+    // Transitions moved on to `now`, blended into what is drawn; a size that just started
+    // moving is laid out again at once, so the frame never shows it at its target.
+    self.resized = false
+    var shown = self.moved(
+      laid,
+      laid.style.opacity / laid.style.own_opacity.max(0.0001),
+      laid.style.color,
+      laid.style.color,
+      false
+    )
+    if self.resized {
+      self.state.shown = self.sizes_shown()
+      laid = layout_cached(view, c, fonts, self.state, cache)
+      shown = self.moved(
+        laid,
+        laid.style.opacity / laid.style.own_opacity.max(0.0001),
+        laid.style.color,
+        laid.style.color,
+        false
+      )
+    }
     if !present.contains_key(self.state.focus) { self.state.focus = "" }
+    // A control disabled since it took the focus or the press gives them up.
+    if let Some(found) = find(
+      laid,
+      self.state.focus,
+      Point {}
+    ) { if found.laid.disabled { self.state.focus = "" } }
+    if let Some(found) = find(
+      laid,
+      self.state.pressed,
+      Point {}
+    ) { if found.laid.disabled { self.state.pressed = "" } }
     // A scrollbar's thumb is held by its scroller's identity and an axis.
     if !present.contains_key(element_of(self.state.hover)) { self.state.hover = "" }
     if !present.contains_key(element_of(self.state.pressed)) { self.state.pressed = "" }
     // A field's text scrolled to keep its caret in view is remembered, so it stays put
     // until the caret leaves the view again.
     keep_field_scrolls(laid, self)
-    laid
+    shown
+  }
+
+  /// Whether a transition is moving anything at `now` — while one is, the host draws every
+  /// frame.
+  pub let animating = pure (self) -> bool => {
+    for (
+      _,
+      motion
+    ) in self.motions.entries() { if in_motion(motion, self.now) { return true } }
+    false
+  }
+
+  /// What each element moving a size shows at `now`, for the layout.
+  let sizes_shown = pure (self) -> HashMap<string, Computed> => {
+    var out: HashMap<string, Computed> = hashmap_new()
+    for (id, motion) in self.motions.entries() {
+      if moves_sizes(motion) { out.insert(id, shown_at(motion, self.now)) }
+    }
+    out
+  }
+
+  /// `laid` as it shows at `now`: each element with a transition moved on towards the style
+  /// the cascade asks for (`ui.motion`'s [advance]) and drawn as far as it has come, with what
+  /// it shows passed down — an opacity multiplied into everything inside it, a colour to the
+  /// text that inherits it. `product` is the opacity drawn with around it, `ink` the colour
+  /// its parent's style asks for and `inked` the one it shows; `changed` whether either is
+  /// not what was laid out. A subtree with no transition under an unchanged parent is given
+  /// back as it is.
+  let moved<e> = (
+    self: mut,
+    laid: Laid<e>,
+    product: f32,
+    ink: Color,
+    inked: Color,
+    changed: bool
+  ) -> Laid<e> => {
+    if !changed && !laid.moves { return laid }
+    var style = laid.style
+    var own_color = false
+    if laid.style.transition.len() > 0 {
+      let (motion, sized) = advance(self.motions.get(laid.id), laid.style, self.now)
+      if sized { self.resized = true }
+      style = shown_at(motion, self.now)
+      own_color = motion.moving.any((m) => m.property == "color")
+      self.motions.insert(laid.id, motion)
+    } else if self.motions.contains_key(laid.id) { let _ = self.motions.remove(laid.id) }
+    style = Computed { style | opacity: product * style.own_opacity }
+    if changed && !own_color && laid.style.color == ink { style = Computed { style | color: inked } }
+    let below = changed ||
+      (style.opacity - laid.style.opacity).abs() > 0.0001 ||
+      style.color != laid.style.color
+    var children: []Placed<e> = []
+    for p in laid.children {
+      children.push(Placed { p | laid: self.moved(
+        p.laid,
+        style.opacity,
+        laid.style.color,
+        style.color,
+        below
+      ) })
+    }
+    Laid { laid | style: style, children: children }
   }
 
   /// The events `input` raises in `laid` — the frame the user is looking at — and the
@@ -215,9 +321,13 @@ impl Ui {
     request: AccessRequest
   ) -> []e => {
     let Some(found) = find(laid, id, Point {}) else { return [] }
+    if found.laid.disabled { return [] }
     match request {
       AxFocus => {
-        if focusable(found.laid.kind) { self.state.focus = id }
+        if focusable(found.laid.kind) && !found.laid.disabled {
+          self.state.focus = id
+          self.state.keyboard_focus = true
+        }
         []
       },
       AxClick => activated(found.laid),
@@ -336,6 +446,7 @@ impl Ui {
     }
     self.state.pressed = target.laid.id
     self.state.focus = target.laid.id
+    self.state.keyboard_focus = false
     match target.laid.kind {
       Ranged(spec) => slide_to(target, spec, at),
       Editable(_) => {
@@ -580,6 +691,7 @@ impl Ui {
       (at + 1) % order.len()
     }
     self.state.focus = order[next]
+    self.state.keyboard_focus = true
     if let Some(found) = find(laid, order[next], Point {}) {
       if let Editable(spec) = found.laid.kind {
         let state = self.widget(found.laid.id)
@@ -845,7 +957,8 @@ let hit_into<e> = (
 pub let control_at<e> = pure (laid: Laid<e>, at: Point) -> Maybe<Found<e>> => {
   let path = hit(laid, at)
   for i in (path.len() - 1)..>=0 {
-    if focusable(path[i].laid.kind) { return Some(path[i]) }
+    // A disabled control is under the pointer, but takes nothing from it.
+    if focusable(path[i].laid.kind) { return if path[i].laid.disabled { None } else { Some(path[i]) } }
   }
   None
 }
@@ -900,7 +1013,7 @@ let moved_by = pure (r: Rect, by: Point) -> Rect =>
 
 /// The identities of the controls in `laid`, in the order Tab visits them: the tree's.
 pub let focus_order<e> = (laid: Laid<e>, order: mut []string) -> void => {
-  if focusable(laid.kind) { order.push(laid.id) }
+  if focusable(laid.kind) && !laid.disabled { order.push(laid.id) }
   for child in laid.children { focus_order(child.laid, order) }
 }
 

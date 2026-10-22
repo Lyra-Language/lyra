@@ -298,7 +298,8 @@ impl Host<s, e> {
       self.app.min_size,
       self.app.max_size
     ) }
-    if self.dirty || self.live || self.shown.len() == 0 { self.redraw(
+    // A transition moving draws every frame too, until it arrives.
+    if self.dirty || self.live || self.shown.len() == 0 || self.ui.animating() { self.redraw(
       platform,
       renderer,
       fonts
@@ -330,6 +331,7 @@ impl Host<s, e> {
       self.deliver_due(at, platform)
       if !self.running { return false }
       self.ui.state.viewport = viewport_of(platform)
+      self.ui.now = platform.now_ms()
       laid = self.ui.frame_within(
         in_window((self.app.view)(self.state), self.app.window_overflow),
         tight(platform.window_size()),
@@ -353,6 +355,7 @@ impl Host<s, e> {
     fonts: mut Fonts
   ) -> void => {
     self.ui.state.viewport = viewport_of(platform)
+    self.ui.now = platform.now_ms()
     let fresh = self.ui.frame_within(
       in_window((self.app.view)(self.state), self.app.window_overflow),
       tight(platform.window_size()),
@@ -371,11 +374,11 @@ impl Host<s, e> {
   }
 
   /// How long the pass may wait for input from `now`: not at all while events wait, a frame
-  /// while a frame subscription is on, until the next timer or `Every`, else for good — never
+  /// while a frame subscription is on or a transition moves, until the next timer or `Every`, else for good — never
   /// past a tenth of a second under `--live`.
   let wait_ms = (self: mut, now: i64) -> i64 => {
     if self.waiting.len() > 0 { return 0 }
-    var wait: i64 = -1
+    var wait: i64 = if self.ui.animating() { FRAME_MS } else { -1 }
     for timer in self.timers { wait = sooner(wait, timer.at - now) }
     for sub in (self.app.subscriptions)(self.state) {
       match sub {

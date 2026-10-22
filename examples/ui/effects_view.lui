@@ -1,6 +1,7 @@
 <!--
-  Shadows, gradients and blur, as markup: a gradient header, cards whose shadows lift as the
-  pointer comes over them, and a frosted panel over a busy background. `build/lui
+  Shadows, gradients, blur and transitions, as markup: a gradient header, cards whose shadows
+  lift as the pointer comes over them, and a frosted panel over a busy background whose frost
+  comes and goes — each change eased over time by CSS's `transition`. `build/lui
   examples/ui/effects_view.lui` writes effects_view.lyra beside it, which effects.lyra runs —
   on the GPU, where the blur is drawn; SDL's 2D renderer approximates the shadows and leaves
   the blur out.
@@ -46,15 +47,18 @@
     padding: 18;
     gap: 6;
     flex: 1 1 200;
-    box-shadow: 0 2 6 #0000001a, 0 8 24 #00000014
+    box-shadow: 0 2 6 #0000001a, 0 8 24 #00000014;
+    transition: box-shadow 250ms ease-out, background-color 250ms ease-out
   }
-  /* The pointer over a card lifts it. */
-  .card.hover { box-shadow: 0 6 12 #00000026, 0 18 40 #00000026 }
+  /* The pointer over a card lifts it, and warms it a little. */
+  .card:hover { box-shadow: 0 6 12 #00000026, 0 18 40 #00000026; background: #fffaf3 }
   Text.label { color: #8a8580; font-size: 13 }
   Text.figure { font-size: 24; color: #2b2b2b }
   /* A busy background: dots of four colours, each a radial gradient. */
   .busy { gap: 10; flex-wrap: wrap; padding: 18; radius: 18; background: #2b2b40 }
-  .dot { width: 44; height: 44; radius: 22 }
+  .dot { width: 44; height: 44; radius: 22; transition: opacity 300ms, radius 300ms }
+  /* A dot under the pointer fades and squares off. */
+  .dot:hover { opacity: 0.35; radius: 8 }
   .dot0 { background: radial-gradient(circle, #ffd166, #ef476f) }
   .dot1 { background: radial-gradient(circle, #06d6a0, #118ab2) }
   .dot2 { background: radial-gradient(circle, #ffffff, #8338ec) }
@@ -67,12 +71,16 @@
     border-color: #ffffff66;
     border-width: 1;
     box-shadow: 0 10 30 #00000040, inset 0 1 0 #ffffff80;
-    color: #ffffff
+    color: #ffffff;
+    /* Frost and Clear ease the blur behind the glass, and the glass, in or out. */
+    transition: backdrop-filter 600ms ease-in-out, background-color 600ms ease-in-out
   }
   .frosted { backdrop-filter: blur(18); background: #ffffff40 }
   .clear { background: #ffffff10 }
   Text.glass.big { font-size: 22 }
-  .soft { filter: blur(3) }
+  /* A blurred, faded line that comes into focus under the pointer. */
+  .soft { filter: blur(3); opacity: 0.6; transition: filter 400ms, opacity 400ms }
+  .soft:hover { filter: blur(0); opacity: 1 }
 </style>
 
 <!-- The page for a state. -->
@@ -106,7 +114,7 @@
             </Column>
           </Positioned>
         </Stack>
-        <Text class="label soft">This line is blurred — filter: blur(3).</Text>
+        <Text class="label soft">This line is blurred — filter: blur(3) — until the pointer is over it.</Text>
       </Column>
     </Column>
   </Themed>

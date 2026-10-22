@@ -152,7 +152,34 @@ pub struct Style {
   /// `overflow-y` (lui's `overflow` sets both).
   overflow_x: Maybe<Overflow> = None,
   overflow_y: Maybe<Overflow> = None,
+  /// How a change of a property's value is shown — over time rather than at once: CSS's
+  /// `transition`, one entry a property (`"all"` for every one that animates), the last
+  /// entry naming a property its own.
+  transition: Maybe<[]Transition> = None,
 }
+
+/// One property's transition, as CSS's: the property by its CSS name (`"opacity"`,
+/// `"background-color"`, `"filter"`, … or `"all"`), how long the change takes and how long it
+/// waits to start, in milliseconds, and how its progress follows time.
+pub struct Transition {
+  property: string,
+  duration: f32 = 0.0,
+  timing: Timing = TimingEase,
+  delay: f32 = 0.0,
+}
+
+/// How a transition's progress follows time — CSS's timing functions: `ease` (the default),
+/// `linear`, `ease-in`, `ease-out`, `ease-in-out`, `cubic-bezier(x1, y1, x2, y2)`, and
+/// `steps(n)` in `n` jumps, the first at the start when the flag is set (`jump-start`; else
+/// `jump-end`, CSS's default).
+pub data Timing =
+  | TimingEase
+  | TimingLinear
+  | TimingEaseIn
+  | TimingEaseOut
+  | TimingEaseInOut
+  | TimingBezier(f32, f32, f32, f32)
+  | TimingSteps(i64, bool)
 
 /// CSS's `overflow`: content past the element's edge drawn (`OverflowVisible`), cut off and
 /// scrolled only by the program (`OverflowHidden`) or never (`OverflowClip`), or cut off and
@@ -284,6 +311,7 @@ impl Style {
     backdrop_blur: self.backdrop_blur.or(base.backdrop_blur),
     overflow_x: self.overflow_x.or(base.overflow_x),
     overflow_y: self.overflow_y.or(base.overflow_y),
+    transition: self.transition.or(base.transition),
   }
 }
 
@@ -442,8 +470,9 @@ pub let theme_of = pure (colors: Palette) -> Theme => Theme {
 }
 
 /// How the controls look by default, in `c`'s colours: a theme's `elements` rules, which any
-/// sheet above them overrides. A control's state is a class the framework adds — `hover`,
-/// `pressed`, `focus` — and its insides are parts (`Checkbox::box`, `Slider::thumb`).
+/// sheet above them overrides. A control's state is a pseudo-class (`Button:hover`,
+/// `Button:active`, `TextInput:focus`) and its insides are parts (`Checkbox::box`,
+/// `Slider::thumb`).
 pub let control_rules = pure (c: Palette) -> []Rule => [
   Rule {
     selector: "Button",
@@ -454,8 +483,8 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
       padding: Some(insets_xy(14.0, 6.0)),
     },
   },
-  Rule { selector: "Button.hover", style: Style { background: Some(shade(c.accent, 0.88)) } },
-  Rule { selector: "Button.pressed", style: Style { background: Some(shade(c.accent, 0.75)) } },
+  Rule { selector: "Button:hover", style: Style { background: Some(shade(c.accent, 0.88)) } },
+  Rule { selector: "Button:active", style: Style { background: Some(shade(c.accent, 0.75)) } },
   Rule {
     selector: "Checkbox::box",
     style: Style {
@@ -508,7 +537,7 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
       padding: Some(insets_xy(8.0, 6.0)),
     },
   },
-  Rule { selector: "TextInput.focus", style: Style { border_color: Some(c.accent) } },
+  Rule { selector: "TextInput:focus", style: Style { border_color: Some(c.accent) } },
   Rule { selector: "TextInput::placeholder", style: Style { color: Some(c.muted) } },
   Rule { selector: "TextInput::selection", style: Style { background: Some(faded(c.accent, 0.3)) } },
   Rule { selector: "TextInput::caret", style: Style { background: Some(c.text) } },
@@ -527,8 +556,8 @@ pub let scrollbar_rules = pure (c: Palette) -> []Rule => [
     selector: "ScrollThumb",
     style: Style { background: Some(faded(c.text, 0.32)), radius: Some(4.0) },
   },
-  Rule { selector: "ScrollThumb.hover", style: Style { background: Some(faded(c.text, 0.5)) } },
-  Rule { selector: "ScrollThumb.pressed", style: Style { background: Some(faded(c.text, 0.6)) } },
+  Rule { selector: "ScrollThumb:hover", style: Style { background: Some(faded(c.text, 0.5)) } },
+  Rule { selector: "ScrollThumb:active", style: Style { background: Some(faded(c.text, 0.6)) } },
 ]
 
 /// A checkbox's border, the corner radius of its box, and the gap between a ticked box's
@@ -555,7 +584,9 @@ pub struct Computed {
   padding: Insets = Insets {},
   gap: f32 = 0.0,
   font: FontSpec = FontSpec {},
+  /// The opacity drawn with — the element's own times every one around it — and its own.
   opacity: f32 = 1.0,
+  own_opacity: f32 = 1.0,
   /// The sizes asked for; `None` for auto.
   width: Maybe<f32> = None,
   height: Maybe<f32> = None,
@@ -592,6 +623,7 @@ pub struct Computed {
   backdrop_blur: f32 = 0.0,
   overflow_x: Overflow = OverflowVisible,
   overflow_y: Overflow = OverflowVisible,
+  transition: []Transition = [],
 }
 
 /// Where an element stands in the cascade: the theme in force, the global rules (outermost
@@ -641,7 +673,8 @@ impl Cascade {
               one.trim(),
               self.component,
               self.component_classes,
-              part
+              part,
+              classes
             )
             if rank > 0 { ranked.push((rank, parts.len())) }
           }
@@ -678,6 +711,7 @@ impl Cascade {
         line_height: s.line_height ?? base_font.line_height,
       },
       opacity: self.inherited.opacity * (s.opacity ?? 1.0),
+      own_opacity: s.opacity ?? 1.0,
       width: s.width,
       height: s.height,
       min_width: s.min_width,
@@ -711,6 +745,7 @@ impl Cascade {
       backdrop_blur: (s.backdrop_blur ?? 0.0).max(0.0),
       overflow_x: s.overflow_x ?? OverflowVisible,
       overflow_y: s.overflow_y ?? OverflowVisible,
+      transition: s.transition ?? [],
     }
   }
 
@@ -780,38 +815,84 @@ let by_rank = pure (ranked: [](i64, i64)) -> [](i64, i64) => {
 }
 
 /// How specific a part rule's `selector` is for part `part` of a component tagged `component`
-/// with `classes`: 1 for `Component::part`, and 10 more for each class it asks of the component
-/// (`Component.big::part`), every one of which it must have; 0 when it does not match.
+/// with `classes` (its classes and states), the part itself in the states `own`: 1 for
+/// `Component::part`, and 10 more for each class or pseudo-class it asks of the component
+/// (`Component.big:hover::part`) or of the part (`Component::part:focus`), every one of which
+/// must hold; 0 when it does not match.
 pub let part_specificity = pure (
   selector: string,
   component: string,
   classes: string,
-  part: string
+  part: string,
+  own: string = ""
 ) -> i64 => {
   let halves = selector.split("::")
-  if halves.len() != 2 || halves[1] != part { return 0 }
-  let head = halves[0].split(".")
-  if head[0] != component { return 0 }
-  let have = classes.split(" ")
-  for i in 1..<head.len() {
-    if !have.any((c) => c == head[i]) { return 0 }
-  }
-  1 + 10 * (head.len() - 1)
+  if halves.len() != 2 { return 0 }
+  let (name, of_part) = compound(halves[1])
+  if name != part || !of_part.all((a) => a.starts_with(":")) { return 0 }
+  let (tag, of_component) = compound(halves[0])
+  if tag != component || !holds(
+    of_component,
+    classes
+  ) || !holds(of_part, own) { return 0 }
+  1 + 10 * (of_component.len() + of_part.len())
 }
 
-/// How specific `selector` is for an element of `tag` with `classes`: 1 for its tag and 10 for
-/// each class it asks for (`Button.primary.hover` is 21), every one of which the element must
-/// have; 0 when it does not match (a part selector never does).
+/// How specific `selector` is for an element of `tag` with `classes` — its classes, and its
+/// states as pseudo-classes (`:hover`; [PSEUDO_CLASSES]): 1 for its tag and 10 for each class
+/// or pseudo-class it asks for (`Button.primary:hover` is 21), every one of which the element
+/// must have; 0 when it does not match (a part selector never does).
 pub let specificity = pure (selector: string, tag: string, classes: string) -> i64 => {
   if selector.contains("::") || selector.len() == 0 { return 0 }
-  let parts = selector.split(".")
-  let want_tag = parts[0]
-  if want_tag.len() > 0 && want_tag != tag { return 0 }
-  let have = classes.split(" ")
-  for i in 1..<parts.len() {
-    if parts[i].len() == 0 || !have.any((c) => c == parts[i]) { return 0 }
+  let (want, asks) = compound(selector)
+  if want.len() > 0 && want != tag { return 0 }
+  if !holds(asks, classes) { return 0 }
+  (if want.len() > 0 { 1 } else { 0 }) + 10 * asks.len()
+}
+
+/// The states an element can be in, as CSS's pseudo-classes: the pointer over it or inside it,
+/// pressed on it or inside it (`active`), the focus on it, on it from the keyboard
+/// (`focus-visible`) or inside it (`focus-within`), a checkbox ticked, and a control disabled
+/// or not.
+pub const PSEUDO_CLASSES: []string = [
+  "hover",
+  "active",
+  "focus",
+  "focus-visible",
+  "focus-within",
+  "checked",
+  "disabled",
+  "enabled",
+]
+
+/// A compound selector's tag (`""` for any) and what else it asks for: each class as its name,
+/// each pseudo-class as `:name`.
+pub let compound = pure (text: string) -> (string, []string) => {
+  var tag = ""
+  var asks: []string = []
+  var piece = ""
+  var mark = ' '
+  for c in text {
+    if c == '.' || c == ':' {
+      if mark == ' ' { tag = piece } else { asks.push(asked(mark, piece)) }
+      piece = ""
+      mark = c
+    } else {
+      piece = "${piece}${c}"
+    }
   }
-  (if want_tag.len() > 0 { 1 } else { 0 }) + 10 * (parts.len() - 1)
+  if mark == ' ' { tag = piece } else { asks.push(asked(mark, piece)) }
+  (tag, asks)
+}
+
+/// One thing a compound selector asks for, as [compound] lists it.
+let asked = pure (mark: rune, name: string) -> string =>
+  if mark == ':' { ":${name}" } else { name }
+
+/// Whether every one of `asks` — each named, none empty — is among `have` (space-separated).
+let holds = pure (asks: []string, have: string) -> bool => {
+  let mine = have.split(" ")
+  asks.all((a) => a.len() > 0 && a != ":" && mine.any((c) => c == a))
 }
 
 /// `color` at `opacity` times its own alpha.

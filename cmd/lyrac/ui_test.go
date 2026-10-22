@@ -2203,7 +2203,7 @@ let box = pure (style: Style) -> Node<NoEvent> =>
 // Effects in the cascade and the display list: an element with every one paints, in CSS's
 // order, a layer for its filter, its outer shadows (the first on top, so last), its backdrop,
 // its colour, its gradient, its inset shadow, its border, and the layer put down. A compound
-// selector (.card.hover, 20) beats a single class (.card, 10) though written before it,
+// selector (.card:hover, 20) beats a single class (.card, 10) though written before it,
 // replacing the whole shadow list; and hovering the element inside the second card hovers the
 // card, as CSS's :hover reaches ancestors.
 func TestRun_UiEffectsInTheCascade(t *testing.T) {
@@ -2266,7 +2266,7 @@ let main = () -> u8 => {
 }
 
 let sheet = Sheet { rules: [
-  Rule { selector: ".card.hover", style: Style { box_shadow: Some([BoxShadow { y: 9.0, blur: 20.0, color: rgba(0x00000040) }]) } },
+  Rule { selector: ".card:hover", style: Style { box_shadow: Some([BoxShadow { y: 9.0, blur: 20.0, color: rgba(0x00000040) }]) } },
   Rule { selector: ".card", style: Style {
     background: Some(rgb(0xFFFFFF)),
     border_color: Some(rgb(0xCCCCCC)),
@@ -2639,6 +2639,350 @@ click the list's track pages: down 0,60
 End, Home, Page Down over the list: down 0,60
 Tab to the eighth row reveals it: down 0,140
 a window scrolled to its end, then taller, clamps: window 0,180
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// Transitions, frame by frame at clock times set by hand: CSS's timing curves; colours mixed
+// premultiplied; nothing moving on the first frame; an opacity fading its child with it; a
+// background named in the transition moving while a radius not named jumps; padding moving
+// after its delay and laid out again each frame it moves, while paint-only properties lay
+// nothing out; all moving every property; idle once arrived; and a change back mid-flight
+// starting from what is shown.
+func TestRun_UiTransitions(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new }
+import ui.draw.{ Size, Color }
+import ui.text.{ Fonts, fonts_new }
+import ui.style.{
+  Style,
+  Rule,
+  Sheet,
+  Insets,
+  Transition,
+  TimingLinear,
+  TimingEase,
+  TimingEaseIn,
+  TimingEaseOut,
+  TimingEaseInOut,
+  TimingSteps,
+  TimingBezier,
+  light_theme,
+}
+import ui.motion.{ progress, mix_color }
+import ui.layout.{ Node, NoEvent, Laid, LayoutCache, layout_cache, column, sized, themed, tight }
+
+/// Transitions frame by frame, at clock times set by hand.
+let main = () -> u8 => {
+  // Timing functions at a few points, as CSS's curves give them.
+  for (name, t) in [("linear", TimingLinear), ("ease", TimingEase), ("ease-in", TimingEaseIn), ("ease-out", TimingEaseOut), ("ease-in-out", TimingEaseInOut), ("steps(4)", TimingSteps(4, false)), ("steps(4, jump-start)", TimingSteps(4, true)), ("cubic-bezier(0, 1, 0, 1)", TimingBezier(0.0, 1.0, 0.0, 1.0))] {
+    println("${name}: ${[x in [0.0, 0.25, 0.5, 0.75, 1.0] | round3(progress(t, f32(x)))].join(" ")}")
+  }
+  // Premultiplied: opaque red into transparent blue keeps red's hue.
+  let half = mix_color(Color { r: 255, g: 0, b: 0 }, Color { r: 0, g: 0, b: 255, a: 0 }, 0.5)
+  println("red into transparent blue, halfway: ${half.r} ${half.g} ${half.b} ${half.a}")
+
+  var ui = ui_new()
+  var fonts = fonts_new()
+  var cache: LayoutCache<NoEvent> = layout_cache()
+  let _ = at(ui, cache, fonts, 0, false)
+  println("first frame moves nothing: ${ui.animating()}")
+  for now in [0, 50, 100, 150, 250, 400] {
+    let laid = at(ui, cache, fonts, now, true)
+    println("t=${now} ${describe(laid)}; laid out ${cache.laid_out}; moving ${ui.animating()}")
+  }
+  // Back before arriving: from where it is, not from the end.
+  for now in [500, 600] { let _ = at(ui, cache, fonts, now, false) }
+  for now in [600, 700, 1100] {
+    let laid = at(ui, cache, fonts, now, true)
+    println("again t=${now} ${describe(laid)}")
+  }
+  for now in [1150, 1250] {
+    let laid = at(ui, cache, fonts, now, false)
+    println("back t=${now} ${describe(laid)}")
+  }
+  0
+}
+
+/// The frame at now, each box on or off.
+let at = (ui: mut Ui, cache: mut LayoutCache<NoEvent>, fonts: mut Fonts, now: i64, on: bool) -> Laid<NoEvent> => {
+  ui.now = now
+  ui.frame_within(view(on), tight(Size { w: 300.0, h: 300.0 }), fonts, cache)
+}
+
+let round3 = pure (x: f32) -> f32 => f32((x * 1000.0).round()) / 1000.0
+
+/// A box fading (and its child with it), a box whose background is named in its transition
+/// and whose radius is not, a box whose padding moves after a delay, and one with all.
+let view = pure (on: bool) -> Node<NoEvent> => themed::<NoEvent>(light_theme(), sheet, [column([
+  sized::<NoEvent>(Some(100.0), Some(20.0), [sized::<NoEvent>(Some(10.0), Some(10.0)).keyed("child")]).with_class(if on { "fade on" } else { "fade" }).keyed("fade"),
+  sized::<NoEvent>(Some(100.0), Some(20.0)).with_class(if on { "named on" } else { "named" }).keyed("named"),
+  column([sized::<NoEvent>(Some(10.0), Some(10.0))]).with_class(if on { "pad on" } else { "pad" }).keyed("pad"),
+  sized::<NoEvent>(Some(100.0), Some(20.0)).with_class(if on { "every on" } else { "every" }).keyed("every"),
+])])
+
+let sheet = Sheet { rules: [
+  Rule { selector: ".fade", style: Style { opacity: Some(1.0), transition: Some([Transition { property: "opacity", duration: 200.0, timing: TimingLinear }]) } },
+  Rule { selector: ".fade.on", style: Style { opacity: Some(0.0) } },
+  Rule { selector: ".named", style: Style { background: Some(Color { r: 0, g: 0, b: 0 }), radius: Some(0.0), transition: Some([Transition { property: "background-color", duration: 200.0, timing: TimingLinear }]) } },
+  Rule { selector: ".named.on", style: Style { background: Some(Color { r: 200, g: 100, b: 0 }), radius: Some(10.0) } },
+  Rule { selector: ".pad", style: Style { padding: Some(Insets {}), transition: Some([Transition { property: "padding", duration: 100.0, timing: TimingLinear, delay: 100.0 }]) } },
+  Rule { selector: ".pad.on", style: Style { padding: Some(Insets { top: 20.0, right: 20.0, bottom: 20.0, left: 20.0 }) } },
+  Rule { selector: ".every", style: Style { opacity: Some(1.0), filter_blur: Some(0.0), transition: Some([Transition { property: "all", duration: 200.0, timing: TimingLinear }]) } },
+  Rule { selector: ".every.on", style: Style { opacity: Some(0.5), filter_blur: Some(8.0) } },
+] }
+
+/// What each box draws with.
+let describe = pure (laid: Laid<NoEvent>) -> string => {
+  let fade = find(laid, "fade")
+  let child = find(laid, "child")
+  let named = find(laid, "named")
+  let pad = find(laid, "pad")
+  let every = find(laid, "every")
+  let bg = named.style.background ?? Color { r: 0, g: 0, b: 0, a: 0 }
+  "fade ${round3(fade.style.opacity)} (child ${round3(child.style.opacity)}), named ${bg.r},${bg.g},${bg.b} radius ${named.style.radius}, pad ${pad.size.h} tall, every ${round3(every.style.opacity)} blur ${round3(every.style.filter_blur)}"
+}
+
+let find = pure (laid: Laid<NoEvent>, key: string) -> Laid<NoEvent> => {
+  if laid.id.ends_with(key) { return laid }
+  for c in laid.children {
+    let f = find(c.laid, key)
+    if f.id.ends_with(key) { return f }
+  }
+  laid
+}
+`)
+	want := `linear: 0 0.25 0.5 0.75 1
+ease: 0 0.409 0.802 0.96 1
+ease-in: 0 0.093 0.315 0.622 1
+ease-out: 0 0.378 0.685 0.907 1
+ease-in-out: 0 0.129 0.5 0.871 1
+steps(4): 0 0.25 0.5 0.75 1
+steps(4, jump-start): 0.25 0.5 0.75 1 1
+cubic-bezier(0, 1, 0, 1): 0 0.949 0.991 0.999 1
+red into transparent blue, halfway: 255 0 0 128
+first frame moves nothing: false
+t=0 fade 1 (child 1), named 0,0,0 radius 10, pad 10 tall, every 1 blur 0; laid out 4; moving true
+t=50 fade 0.75 (child 0.75), named 50,25,0 radius 10, pad 10 tall, every 0.875 blur 2; laid out 0; moving true
+t=100 fade 0.5 (child 0.5), named 100,50,0 radius 10, pad 10 tall, every 0.75 blur 4; laid out 0; moving true
+t=150 fade 0.25 (child 0.25), named 150,75,0 radius 10, pad 30 tall, every 0.625 blur 6; laid out 4; moving true
+t=250 fade 0 (child 0), named 200,100,0 radius 10, pad 50 tall, every 0.5 blur 8; laid out 4; moving false
+t=400 fade 0 (child 0), named 200,100,0 radius 10, pad 50 tall, every 0.5 blur 8; laid out 3; moving false
+again t=600 fade 0.5 (child 0.5), named 100,50,0 radius 10, pad 50 tall, every 0.75 blur 4
+again t=700 fade 0.25 (child 0.25), named 150,75,0 radius 10, pad 50 tall, every 0.625 blur 6
+again t=1100 fade 0 (child 0), named 200,100,0 radius 10, pad 50 tall, every 0.5 blur 8
+back t=1150 fade 0 (child 0), named 200,100,0 radius 0, pad 50 tall, every 0.5 blur 8
+back t=1250 fade 0.5 (child 0.5), named 100,50,0 radius 0, pad 50 tall, every 0.75 blur 4
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A host draws a frame a pass while a transition moves and none once it has arrived, however
+// long the wait: 15 frames across a second holding a 200 ms fade. Leaving mid-way eases back.
+func TestRun_UiTransitionsDrawOnlyWhileMoving(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ sandbox, running, step_running }
+import ui.script.{ timed_platform, parse_steps }
+import ui.backend.{ Renderer }
+import ui.draw.{ Size, Color, TextureId }
+import ui.text.{ fonts_new }
+import ui.style.{ Style, Rule, Sheet, Transition, TimingLinear, light_theme }
+import ui.layout.{ Node, NoEvent, Laid, column, sized, themed }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => {}
+}
+
+/// A box fading on hover over 200 ms: the host draws a frame a pass while it moves and none
+/// once it has arrived, however long the wait; leaving mid-way eases back from where it is.
+let main = () -> u8 => {
+  let Ok(steps) = parse_steps("move:50,50 wait:1000 move:50,300 wait:100 move:50,50 wait:2000") else { return 1 }
+  var platform = timed_platform(steps, Size { w: 200.0, h: 400.0 })
+  var renderer = Blank {}
+  var fonts = fonts_new()
+  let window = running(sandbox(view, (n: i64, _: NoEvent) => n, Color { r: 0, g: 0, b: 0 }), 0, platform, renderer, fonts)
+  var said = -1
+  while step_running(window) {
+    let c = window.platform.clock
+    if c != said && (c == 1000 || c == 1100 || c == 3100) {
+      said = c
+      println("t=${c}: ${window.host.frames} frames, opacity ${find(window.host.shown[0], "box").style.opacity}")
+    }
+  }
+  println("end: ${window.host.frames} frames")
+  0
+}
+
+let sheet = Sheet { rules: [
+  Rule { selector: ".box", style: Style { opacity: Some(1.0), transition: Some([Transition { property: "opacity", duration: 200.0, timing: TimingLinear }]) } },
+  Rule { selector: ".box:hover", style: Style { opacity: Some(0.2) } },
+] }
+
+let view = pure (_: i64) -> Node<NoEvent> => themed::<NoEvent>(light_theme(), sheet, [column([sized::<NoEvent>(Some(100.0), Some(100.0)).with_class("box").keyed("box")])])
+
+let find = pure (laid: Laid<NoEvent>, key: string) -> Laid<NoEvent> => {
+  if laid.id.ends_with(key) { return laid }
+  for c in laid.children {
+    let f = find(c.laid, key)
+    if f.id.ends_with(key) { return f }
+  }
+  laid
+}
+`)
+	want := `t=1000: 15 frames, opacity 0.2
+t=1100: 22 frames, opacity 0.584
+t=3100: 37 frames, opacity 0.2
+end: 37 frames
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// States as CSS's pseudo-classes: a compound's and a part rule's specificity, a class of a
+// state's name no longer matching it; :hover and :active reaching every element round the one
+// they name; :focus from the pointer without :focus-visible, and from Tab with it; :focus-within
+// on the card around the focus; :checked; and a disabled button :disabled, skipped by Tab and
+// neither pressed nor focused by a click.
+func TestRun_UiPseudoClasses(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new }
+import ui.script.{ script_platform }
+import ui.backend.{ PointerMoved, PointerDown, PointerUp, KeyPressed, Tab, Primary, Modifiers }
+import ui.draw.{ Point, Size, Color }
+import ui.text.{ Fonts, fonts_new }
+import ui.style.{ Style, Rule, Sheet, light_theme, specificity, part_specificity }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, sized, button, checkbox, themed, tight }
+
+data Ev = Go | Off | Tick
+
+/// Each state sets a property of its own — none that moves anything — so one line shows every
+/// state an element is in.
+let main = () -> u8 => {
+  println("Button.primary:hover on a hovered primary button: ${specificity("Button.primary:hover", "Button", "primary :hover")}")
+  println(":hover alone on hovered text: ${specificity(":hover", "Text", ":hover")}")
+  println("Button:hover on a button not hovered: ${specificity("Button:hover", "Button", "primary")}")
+  println("Button.hover (a class) on a hovered button: ${specificity("Button.hover", "Button", ":hover")}")
+  println("Slider:hover::thumb:active on a held thumb of a hovered slider: ${part_specificity("Slider:hover::thumb:active", "Slider", ":hover", "thumb", ":active")}")
+  println("Slider::thumb:active on a thumb not held: ${part_specificity("Slider::thumb:active", "Slider", ":hover", "thumb", ":hover")}")
+  var ui = ui_new()
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var cache: LayoutCache<Ev> = layout_cache()
+  var platform = script_platform([], Size { w: 300.0, h: 300.0 })
+  let none = Modifiers {}
+  for (name, input) in [
+    ("at rest", PointerMoved(Point { x: 290.0, y: 290.0 })),
+    ("pointer over go", PointerMoved(Point { x: 20.0, y: 10.0 })),
+    ("go held", PointerDown(Primary, Point { x: 20.0, y: 10.0 })),
+    ("go let go", PointerUp(Primary, Point { x: 20.0, y: 10.0 })),
+    ("Tab", KeyPressed(Tab, none)),
+    ("off held", PointerDown(Primary, Point { x: 20.0, y: 50.0 })),
+  ] {
+    let laid = frame(ui, cache, fonts)
+    let events = ui.handle(laid, input, platform)
+    let after = frame(ui, cache, fonts)
+    println("${name}: ${events.len()} events")
+    for key in ["card", "go", "off", "tick"] { println("  ${key}: ${states(find(after, key))}") }
+  }
+  0
+}
+
+let frame = (ui: mut Ui, cache: mut LayoutCache<Ev>, fonts: mut Fonts) -> Laid<Ev> =>
+  ui.frame_within(view(), tight(Size { w: 300.0, h: 300.0 }), fonts, cache)
+
+let view = pure () -> Node<Ev> => themed::<Ev>(light_theme(), sheet, [column([
+  column([
+    sized::<Ev>(Some(100.0), Some(30.0), [button("Go", Go).keyed("go")]),
+    sized::<Ev>(Some(100.0), Some(30.0), [button("Off", Off).disabled_if(true).keyed("off")]),
+    checkbox("Tick", true, Tick).keyed("tick"),
+  ]).keyed("card").with_class("card"),
+])])
+
+let sheet = Sheet { rules: [
+  Rule { selector: ":hover", style: Style { opacity: Some(0.5) } },
+  Rule { selector: ":active", style: Style { radius: Some(7.0) } },
+  Rule { selector: ":focus", style: Style { filter_blur: Some(2.0) } },
+  Rule { selector: ":focus-visible", style: Style { backdrop_blur: Some(9.0) } },
+  Rule { selector: ".card:focus-within", style: Style { border_color: Some(Color { r: 1, g: 2, b: 3 }) } },
+  Rule { selector: ":checked", style: Style { background: Some(Color { r: 11, g: 22, b: 33 }) } },
+  Rule { selector: ":disabled", style: Style { background: Some(Color { r: 44, g: 55, b: 66 }) } },
+  Rule { selector: ":enabled", style: Style { color: Some(Color { r: 0, g: 99, b: 0 }) } },
+] }
+
+/// The states laid shows, by the property each sets.
+let states = pure (laid: Laid<Ev>) -> string => {
+  let s = laid.style
+  var out: []string = []
+  if s.own_opacity < 1.0 { out.push("hover") }
+  if s.radius > 6.0 { out.push("active") }
+  if s.filter_blur > 1.0 { out.push("focus") }
+  if s.backdrop_blur > 8.0 { out.push("focus-visible") }
+  if s.border_color == Some(Color { r: 1, g: 2, b: 3 }) { out.push("focus-within") }
+  if s.background == Some(Color { r: 11, g: 22, b: 33 }) { out.push("checked") }
+  if s.background == Some(Color { r: 44, g: 55, b: 66 }) { out.push("disabled") }
+  if s.color.g == 99 { out.push("enabled") }
+  if out.len() == 0 { "-" } else { out.join(" ") }
+}
+
+let find = pure (laid: Laid<Ev>, key: string) -> Laid<Ev> => {
+  if laid.id.ends_with(":${key}") { return laid }
+  for c in laid.children {
+    let f = find(c.laid, key)
+    if f.id.ends_with(":${key}") { return f }
+  }
+  laid
+}
+`)
+	want := `Button.primary:hover on a hovered primary button: 21
+:hover alone on hovered text: 10
+Button:hover on a button not hovered: 0
+Button.hover (a class) on a hovered button: 0
+Slider:hover::thumb:active on a held thumb of a hovered slider: 21
+Slider::thumb:active on a thumb not held: 0
+at rest: 0 events
+  card: -
+  go: enabled
+  off: disabled
+  tick: checked enabled
+pointer over go: 0 events
+  card: hover
+  go: hover enabled
+  off: disabled
+  tick: checked enabled
+go held: 0 events
+  card: hover active focus-within
+  go: hover active focus enabled
+  off: disabled
+  tick: checked enabled
+go let go: 1 events
+  card: hover focus-within
+  go: hover focus enabled
+  off: disabled
+  tick: checked enabled
+Tab: 0 events
+  card: hover focus-within
+  go: hover enabled
+  off: disabled
+  tick: focus focus-visible checked enabled
+off held: 0 events
+  card: hover
+  go: hover enabled
+  off: disabled
+  tick: checked enabled
 `
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)

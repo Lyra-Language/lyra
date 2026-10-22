@@ -651,8 +651,8 @@ impl Writer {
     let halves = r.selector.split("::")
     if halves.len() == 1 { return Ok() }
     if halves.len() > 2 { return Err("${r.line}: ${r.selector} has more than one ::") }
-    let owner = halves[0].split(".")[0]
-    let part = halves[1].trim()
+    let owner = pieces(halves[0])[0]
+    let part = pieces(halves[1].trim())[0]
     let known = match self.parts_of(owner) {
       Some(parts) => parts,
       None => return Ok(),
@@ -1146,6 +1146,14 @@ const UI_MODULES = [
 /// The names of `ui.style` that its layout properties are written with, which a module
 /// imports as it uses them.
 const LAYOUT_NAMES = [
+  "Transition",
+  "TimingEase",
+  "TimingLinear",
+  "TimingEaseIn",
+  "TimingEaseOut",
+  "TimingEaseInOut",
+  "TimingBezier",
+  "TimingSteps",
   "Overflow",
   "OverflowVisible",
   "OverflowHidden",
@@ -1219,8 +1227,9 @@ data UiShape =
   | ShapeLayout(string)
 
 /// The attributes every ui element takes: its classes, the part of its component it is, its
-/// key, its label for assistive technology, and its inline style.
-const UI_COMMON = ["class", "part", "key", "label", "style"]
+/// key, its label for assistive technology, its inline style, and whether it is disabled
+/// (bare, or `disabled={condition}`).
+const UI_COMMON = ["class", "part", "key", "label", "style", "disabled"]
 
 impl Writer {
   /// A capitalized tag as the `ui.layout` call it stands for, its common attributes chained
@@ -1409,6 +1418,13 @@ impl Writer {
         "part" => { out = "${out}.with_part(${attr_lyra(a.value)})" },
         "key" => { out = "${out}.keyed(${attr_lyra(a.value)})" },
         "label" => { out = "${out}.labelled(${attr_lyra(a.value)})" },
+        "disabled" => {
+          let off = match a.value {
+            Quoted(_) => return Err("${a.line}: disabled is bare or {condition}, not text: disabled or disabled={!s.ready}"),
+            other => attr_lyra(other),
+          }
+          out = "${out}.disabled_if(${off})"
+        },
         "style" => {
           self.use("Style")
           let fields = match a.value {
@@ -1933,6 +1949,9 @@ let ui_declarations = pure (
   tokens: bool
 ) -> Result<[]string, string> => {
   var fields: []string = []
+  // `transition` and its longhands, put together once every declaration is read: the lists
+  // pair up by place, a shorter one repeated, as CSS does.
+  var moves = Moves {}
   for d in text.split(";") {
     if d.trim().len() == 0 { continue }
     let Some(colon) = d.index(":") else { return Err("${line}: \"${d.trim()}\" has no `:`") }
@@ -1940,6 +1959,10 @@ let ui_declarations = pure (
     let given = d.slice(colon + 1, d.len()).trim()
     if given.contains("$") && !tokens {
       return Err("${line}: ${given} reads the theme, which an inline style cannot; give the element a class and the rule to a <style>")
+    }
+    if name.starts_with("transition") {
+      moves = moves.taking(name, given).map_err((why) => "${line}: ${why}")?
+      continue
     }
     let field = match name {
       "rounding" => "radius",
@@ -1964,14 +1987,256 @@ let ui_declarations = pure (
       "font_size" => ui_number(given),
       "line_height" => ui_number(given),
       "padding" => ui_padding(given),
-      _ => Err("no style property ${name} in ui (color, background, border-color, border-width, radius, gap, opacity, font-size, line-height, padding; overflow (one or two of visible, hidden, clip, scroll, auto), overflow-x, overflow-y; box-shadow, a gradient background or background-image, filter: blur(), backdrop-filter: blur(); width, height and their min- and max-; row-gap, column-gap; flex, flex-direction, flex-wrap, flex-grow, flex-shrink, flex-basis, order, justify-content, align-content, align-items, align-self; grid-template-columns, grid-template-rows, grid-auto-columns, grid-auto-rows, grid-auto-flow, grid-column, grid-row, justify-items, justify-self)"),
+      _ => Err("no style property ${name} in ui (color, background, border-color, border-width, radius, gap, opacity, font-size, line-height, padding; transition and transition-property, -duration, -timing-function, -delay; overflow (one or two of visible, hidden, clip, scroll, auto), overflow-x, overflow-y; box-shadow, a gradient background or background-image, filter: blur(), backdrop-filter: blur(); width, height and their min- and max-; row-gap, column-gap; flex, flex-direction, flex-wrap, flex-grow, flex-shrink, flex-basis, order, justify-content, align-content, align-items, align-self; grid-template-columns, grid-template-rows, grid-auto-columns, grid-auto-rows, grid-auto-flow, grid-column, grid-row, justify-items, justify-self)"),
     }
     match lyra {
       Ok(v) => { fields = with_field(fields, "${field}: Some(${v})") },
       Err(what) => return Err("${line}: ${what}"),
     }
   }
+  if moves.given { fields = with_field(fields, "transition: Some(${moves.as_lyra()})") }
   Ok(fields)
+}
+
+/// A rule's `transition` declarations so far: the properties, durations, timing functions
+/// and delays, each a list in Lyra, and whether any was given.
+struct Moves {
+  properties: []string = [],
+  durations: []string = [],
+  timings: []string = [],
+  delays: []string = [],
+  given: bool = false,
+}
+
+impl Moves {
+  /// These with declaration `name` (`transition` or a longhand, its `-` made `_`) read.
+  let taking = pure (self, name: string, value: string) -> Result<Moves, string> => {
+    let items = top_level(value, ',')?
+    match name {
+      "transition" => {
+        var out = Moves { given: true }
+        if value == "none" { return Ok(out) }
+        for item in items {
+          let one = transition_of(item)?
+          out.properties.push(one.0)
+          out.durations.push(one.1)
+          out.timings.push(one.2)
+          out.delays.push(one.3)
+        }
+        Ok(out)
+      },
+      "transition_property" => {
+        var names: []string = []
+        if value != "none" { for item in items { names.push(transition_property(item)?) } }
+        Ok(Moves { self | properties: names, given: true })
+      },
+      "transition_duration" =>
+        Ok(Moves { self | durations: [item in items | time_of("transition-duration", item)?], given: true }),
+      "transition_timing_function" =>
+        Ok(Moves { self | timings: [item in items | timing_of(item)?], given: true }),
+      "transition_delay" =>
+        Ok(Moves { self | delays: [item in items | time_of("transition-delay", item)?], given: true }),
+      _ => Err("no style property ${name.replace("_", "-")} in ui; a transition is transition, transition-property, transition-duration, transition-timing-function or transition-delay"),
+    }
+  }
+
+  /// The transitions as a Lyra `[]Transition`: one a property, the other lists repeated.
+  let as_lyra = pure (self) -> string => {
+    var each: []string = []
+    for i, property in self.properties {
+      let duration = pick(self.durations, i, "0.0")
+      let timing = pick(self.timings, i, "TimingEase")
+      let delay = pick(self.delays, i, "0.0")
+      each.push("Transition { property: \"${property}\", duration: ${duration}, timing: ${timing}, delay: ${delay} }")
+    }
+    "[${each.join(", ")}]"
+  }
+}
+
+/// The `i`th of `list`, repeated from its start when it is shorter — `default` when empty.
+let pick = pure (list: []string, i: i64, default: string) -> string =>
+  if list.len() == 0 { default } else { list[i % list.len()] }
+
+/// One transition of a `transition` list — `[property] duration [timing-function] [delay]`
+/// in any order, the first time its duration and the second its delay — as its property and
+/// the Lyra for the others.
+let transition_of = pure (item: string) -> Result<(
+  string,
+  string,
+  string,
+  string
+), string> => {
+  var property = "all"
+  var named = false
+  var times: []string = []
+  var timing = "TimingEase"
+  var timed = false
+  for word in top_level(item, ' ')? {
+    if is_time(word) {
+      if times.len() == 2 { return Err("a transition is [property] duration [timing-function] [delay], not ${item}") }
+      times.push(time_of("transition", word)?)
+    } else if is_timing(word) {
+      if timed { return Err("a transition has one timing function, not two in ${item}") }
+      timing = timing_of(word)?
+      timed = true
+    } else if decimal(word).is_some() {
+      return Err("a transition's duration and delay are times, Nms or Ns, not ${word}")
+    } else {
+      if named { return Err("a transition is [property] duration [timing-function] [delay], not ${item}") }
+      property = transition_property(word)?
+      named = true
+    }
+  }
+  let duration = if times.len() > 0 { times[0] } else { "0.0" }
+  let delay = if times.len() > 1 { times[1] } else { "0.0" }
+  Ok((property, duration, timing, delay))
+}
+
+/// The properties a transition may name, by their CSS names (`ui.motion`'s, and lui's own
+/// `radius` for `border-radius`), as `ui.motion` names them.
+let transition_property = pure (word: string) -> Result<string, string> => {
+  let name = match word {
+    "radius" => "border-radius",
+    "rounding" => "border-radius",
+    other => other,
+  }
+  if TRANSITIONED.any((p) => p == name) { return Ok(name) }
+  Err("transition-property is all or a property that animates (${TRANSITIONED.join(", ")}), not ${word}")
+}
+
+/// What a transition may name: every property, `background` for its colour and image, and
+/// each property that animates.
+const TRANSITIONED = [
+  "all",
+  "background",
+  "opacity",
+  "color",
+  "background-color",
+  "border-color",
+  "border-radius",
+  "box-shadow",
+  "background-image",
+  "filter",
+  "backdrop-filter",
+  "padding",
+  "gap",
+  "row-gap",
+  "column-gap",
+  "width",
+  "height",
+  "min-width",
+  "max-width",
+  "min-height",
+  "max-height",
+  "border-width",
+]
+
+/// Whether `word` is a time: a number and `ms` or `s`.
+let is_time = pure (word: string) -> bool =>
+  (word.ends_with("ms") || word.ends_with("s")) && word.len() > 1 &&
+  (word[0] >= '0' && word[0] <= '9' || word[0] == '.' || word[0] == '-')
+
+/// A time — `200ms`, `0.3s`, `.3s`, or `0` — in milliseconds, an `f32` literal.
+let time_of = pure (name: string, word: string) -> Result<string, string> => {
+  let bad = "${name} is a time, Nms or Ns, not ${word}"
+  if word == "0" { return Ok("0.0") }
+  var digits = ""
+  var scale = 1.0
+  if let Some(ms) = word.strip_suffix("ms") {
+    digits = ms
+  } else if let Some(sec) = word.strip_suffix("s") {
+    digits = sec
+    scale = 1000.0
+  } else {
+    return Err(bad)
+  }
+  let Some(n) = decimal(digits) else { return Err(bad) }
+  if n < 0.0 { return Err(bad) }
+  // Thousandths of a millisecond, so `0.3s` is `300.0` rather than its nearest double.
+  let fine = (n * scale * 1000.0).round()
+  Ok(if fine % 1000 == 0 { "${fine / 1000}.0" } else { "${f64(fine) / 1000.0}" })
+}
+
+/// `text` as a number — digits with at most one point, a leading `-` allowed — or `None`.
+let decimal = pure (text: string) -> Maybe<f64> => {
+  var whole = 0.0
+  var scale = 1.0
+  var pointed = false
+  var digits = 0
+  var sign = 1.0
+  for i, c in text {
+    if c == '-' && i == 0 {
+      sign = -1.0
+    } else if c == '.' && !pointed {
+      pointed = true
+    } else if c >= '0' && c <= '9' {
+      let d = f64(i64(c) - i64('0'))
+      if !pointed { whole = whole * 10.0 + d } else {
+        scale = scale / 10.0
+        whole += d * scale
+      }
+      digits += 1
+    } else {
+      return None
+    }
+  }
+  if digits == 0 { None } else { Some(sign * whole) }
+}
+
+/// Whether `word` is a timing function's name or call.
+let is_timing = pure (word: string) -> bool =>
+  [
+    "ease",
+    "linear",
+    "ease-in",
+    "ease-out",
+    "ease-in-out",
+    "step-start",
+    "step-end"
+  ].any((n) => n == word) ||
+  word.starts_with("cubic-bezier(") || word.starts_with("steps(")
+
+/// A timing function as `ui.style`'s `Timing`.
+let timing_of = pure (word: string) -> Result<string, string> => {
+  let bad = "transition-timing-function is ease, linear, ease-in, ease-out, ease-in-out, cubic-bezier(x1, y1, x2, y2) or steps(n[, jump-start|jump-end]), not ${word}"
+  match word {
+    "ease" => return Ok("TimingEase"),
+    "linear" => return Ok("TimingLinear"),
+    "ease-in" => return Ok("TimingEaseIn"),
+    "ease-out" => return Ok("TimingEaseOut"),
+    "ease-in-out" => return Ok("TimingEaseInOut"),
+    "step-start" => return Ok("TimingSteps(1, true)"),
+    "step-end" => return Ok("TimingSteps(1, false)"),
+    _ => {},
+  }
+  if let Some(inside) = call_args(word, "cubic-bezier") {
+    let parts = top_level(inside, ',')?
+    if parts.len() != 4 { return Err(bad) }
+    var n: []string = []
+    for part in parts { n.push(number(part).map_err((_) => bad)?) }
+    for i in [0, 2] {
+      let x = decimal(parts[i]) ?? -1.0
+      if x < 0.0 || x > 1.0 { return Err("cubic-bezier's x1 and x2 are 0 to 1, not ${parts[i]} in ${word}") }
+    }
+    return Ok("TimingBezier(${n.join(", ")})")
+  }
+  if let Some(inside) = call_args(word, "steps") {
+    let parts = top_level(inside, ',')?
+    let Some(count) = parts[0].parse_i64() else { return Err(bad) }
+    if count < 1 { return Err("steps(n) takes one step or more, not ${parts[0]}") }
+    let start = if parts.len() == 1 { false } else {
+      match parts[1] {
+        "jump-start" => true,
+        "start" => true,
+        "jump-end" => false,
+        "end" => false,
+        _ => return Err(bad),
+      }
+    }
+    if parts.len() > 2 { return Err(bad) }
+    return Ok("TimingSteps(${count}, ${start})")
+  }
+  Err(bad)
 }
 
 /// `fields` with `field` (`name: value`) set: an earlier value of the same field dropped, as a
@@ -2552,28 +2817,89 @@ let matching_brace = pure (text: string, open: i64) -> Maybe<i64> => {
   None
 }
 
-/// Why `selector` is not one a sheet reads — `Tag`, `.class`, `Tag.class`, `Comp::part` or
-/// `Comp.class::part` — if it is not.
+/// Why `selector` is not one a sheet reads, if it is not: a compound — `Tag`, `.class`,
+/// `Tag.class`, more classes, and pseudo-classes among them (`Button.primary:hover`) — or a
+/// part, `Comp::part` with classes and pseudo-classes on the component (`Comp.big:hover::part`)
+/// and pseudo-classes on the part (`Comp::part:focus`).
 let selector_problem = pure (selector: string) -> Maybe<string> => {
-  let parts = selector.split("::")
-  let fine = match parts.len() {
-    1 => simple_selector(parts[0]),
-    2 => simple_selector(parts[0]) && !parts[0].starts_with(".") && name_only(parts[1]),
-    _ => false,
+  let usage = "${selector} is not a selector ui reads: Tag, .class, Tag.class (more classes allowed), each with pseudo-classes (Button:hover), Comp::part, Comp.class::part or Comp::part:hover"
+  let halves = selector.split("::")
+  if halves.len() > 2 { return Some(usage) }
+  let head = pieces(halves[0])
+  if head.len() == 0 { return Some(usage) }
+  for i, piece in head {
+    if i == 0 && !piece.starts_with(".") && !piece.starts_with(":") {
+      if !name_only(piece) { return Some(usage) }
+      continue
+    }
+    if let Some(why) = piece_problem(piece) { return Some(why.replace(
+      "{}",
+      selector
+    ).replace("{usage}", usage)) }
   }
-  if fine { None } else {
-    Some("${selector} is not a selector ui reads: Tag, .class, Tag.class (more classes allowed), Comp::part or Comp.class::part")
+  if halves.len() == 1 { return None }
+  if head[0].starts_with(".") || head[0].starts_with(":") { return Some(usage) }
+  let part = pieces(halves[1])
+  if part.len() == 0 || part[0].starts_with(".") || part[0].starts_with(":") || !name_only(part[0]) {
+    return Some(usage)
   }
+  for piece in part.slice(1, part.len()) {
+    if !piece.starts_with(":") {
+      return Some("${selector}: a part takes pseudo-classes after it (Comp::part:hover), not classes")
+    }
+    if let Some(why) = piece_problem(piece) { return Some(why.replace(
+      "{}",
+      selector
+    ).replace("{usage}", usage)) }
+  }
+  None
 }
 
-/// `Tag`, `.class`, `Tag.class`, or more classes (`Button.primary.hover`).
-let simple_selector = pure (text: string) -> bool => {
-  let parts = text.split(".")
-  if parts.len() == 1 { return name_only(parts[0]) }
-  (parts[0].len() == 0 || name_only(parts[0])) && parts.slice(
-    1,
-    parts.len()
-  ).all((c) => name_only(c))
+/// What is wrong with one `.class` or `:pseudo-class` of a selector (`{}` for the selector,
+/// `{usage}` for what a selector may be), if anything: a class named for a state, which a
+/// pseudo-class is now, or a pseudo-class ui does not have.
+let piece_problem = pure (piece: string) -> Maybe<string> => {
+  let name = piece.slice(1, piece.len())
+  if !name_only(name) { return Some("{usage}") }
+  if piece.starts_with(".") {
+    let state = match name {
+      "hover" => ":hover",
+      "pressed" => ":active",
+      "focus" => ":focus",
+      _ => return None,
+    }
+    return Some("{}: a state is a pseudo-class, as in CSS: write ${state}, not .${name}")
+  }
+  if PSEUDO_CLASSES.any((p) => p == name) { return None }
+  Some("{}: :${name} is not a pseudo-class ui has (${PSEUDO_CLASSES.join(", ")})")
+}
+
+/// The states ui styles, as CSS's pseudo-classes (ui.style's PSEUDO_CLASSES).
+const PSEUDO_CLASSES = [
+  "hover",
+  "active",
+  "focus",
+  "focus-visible",
+  "focus-within",
+  "checked",
+  "disabled",
+  "enabled",
+]
+
+/// A compound selector in its pieces: its tag (if any), then each `.class` and `:pseudo-class`
+/// as written.
+let pieces = pure (text: string) -> []string => {
+  var out: []string = []
+  var piece = ""
+  for c in text {
+    if (c == '.' || c == ':') && piece.len() > 0 {
+      out.push(piece)
+      piece = ""
+    }
+    piece = "${piece}${c}"
+  }
+  if piece.len() > 0 { out.push(piece) }
+  out
 }
 
 /// A name: letters, digits, `_` and `-`, at least one.

@@ -9,6 +9,63 @@ Newest first.
 
 ## Dated log
 
+### 10/22/26 — `ui/`: states are CSS's pseudo-classes
+
+- **`Button:hover`, not `Button.hover`.** The framework used to add `hover`, `pressed` and
+  `focus` to an element's classes, so a state was matched, and could be collided with, as a
+  class. It now adds `:hover`, `:active` (CSS's name for pressed), `:focus`, `:focus-visible`,
+  `:focus-within`, `:checked`, `:disabled` and `:enabled` as their own tokens, which only a
+  pseudo-class in a selector matches. `specificity` and `part_specificity` read a compound —
+  tag, then `.class` and `:pseudo` in any order — each adding 10, as CSS's. A pseudo-class
+  before `::` asks the component's state, one after it the part's (`Slider:hover::thumb`,
+  `Slider::thumb:active`).
+- **The class form is gone, not kept beside.** Nothing outside `ui` styled states: the theme's
+  defaults, the scrollbars, the effects demo and the tests were the only uses. A class named
+  `hover` would now silently never match, so lui refuses `.hover`, `.pressed` and `.focus`,
+  naming the pseudo-class to write. `.active` stays a class, which a tab bar may use.
+- **`:active` and `:hover` reach ancestors, as CSS's**: a card is `:active` while a button in it
+  is held. `:focus-within` is the same rule for the focus. `Laid.class` holds only the
+  program's classes now; the states stay inside the cascade.
+- **`:disabled` needed a disabled control**, which `ui` did not have: `Node.disabled_if` (lui's
+  `disabled` attribute). A disabled control is skipped by Tab, ignores clicks and accessibility
+  actions, gives up the focus or press it held, and is still hovered (CSS's `:hover` matches a
+  disabled button). **`:focus-visible`** reads `Interaction.keyboard_focus`, set by Tab and
+  AccessKit's focus and cleared by a click. The focus ring still shows for any focus.
+- Transitions fire on a pseudo-class change as on any other, since the computed value changes
+  (the transition tests now hover through `:hover`).
+- Tested by `TestRun_UiPseudoClasses`, with each state setting a paint-only property of its
+  own. A layout property moved the button out from under the pointer it was pressed with.
+
+### 10/22/26 — `ui/`: CSS's transitions
+
+- **Copied from CSS, semantics included**: a transition starts when a named property's
+  *computed* value changes, from the value *shown now* — so a change back mid-flight retargets
+  from where it is — and an element's first frame moves nothing. The transition list is the
+  new style's, as CSS takes the after-change style's. A property no entry names jumps.
+- **Paint and layout are split so the layout cache keeps working.** `Laid.style` stays the
+  cascade's target (what change detection compares), and `Ui.frame_within` blends what is
+  shown into a copy of the tree after layout. An unchanged element is given back by the cache
+  while its opacity or blur moves (`TestRun_UiTransitions`: nothing laid out on those frames).
+  Size properties go through `Interaction.shown` into `styled_at`, with the shown values in the
+  cache's key. A size that starts moving is laid out again in the same frame, which otherwise
+  showed the target for one frame first.
+- **Opacity is a product, so `Computed` gained `own_opacity`.** Paint reads the multiplied
+  opacity. Fading an element to 0 by scaling its stored product would have nothing to scale its
+  children back from, so the walk rebuilds products downward from each element's own,
+  displayed value — no division. Text that inherits a moving colour takes it the same way.
+- **Colours blend premultiplied**, as CSS does: an opaque red into transparent blue stays red
+  as it fades. Shadow lists pad the shorter with transparent ones, CSS's rule. Gradients blend
+  stop by stop when kind and count match. What cannot blend switches at the midpoint.
+- **The frame loop**: the host redraws and waits at most a frame while `Ui.animating()`, and
+  waits for input again once everything has arrived. A second's wait around a 200 ms fade draws
+  15 frames (`TestRun_UiTransitionsDrawOnlyWhileMoving`). `ScriptPlatform`'s `wait:N` already
+  stepped its clock no further than the host asked to wait, so scripted transitions play a
+  frame at a time.
+- **lui**: CSS's `transition` shorthand (any order, `all` by default) and its four longhands,
+  paired by place, with times in `ms`/`s` and every timing function; lui's own `radius` is read
+  as `border-radius`. The effects demo eases a card's shadow, the frosted panel's blur, a
+  blurred line coming into focus and dots fading.
+
 ### 10/22/26 — `cmd/lyrac`'s tests run in parallel: 711 s to 179 s
 
 - **The package had become serial and slow.** About eighty tests set `LYRA_STD` with
