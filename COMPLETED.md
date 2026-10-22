@@ -9,6 +9,49 @@ Newest first.
 
 ## Dated log
 
+### 10/21/26 — `ui/`: a GPU renderer, shadows, gradients and blur
+
+- **The design doc listed GPU effects as a v1 non-goal**; Avram chose them now. Measured
+  first, a GPU renderer was not needed for speed. Effects are the reason: SDL's 2D renderer
+  draws triangles in vertex colours, with no blur and no per-pixel shading.
+- **MSL source compiled by SDL at start-up** rather than HLSL or SPIR-V through a toolchain:
+  nothing to install or pin, and macOS is the first target. It costs Linux and Windows,
+  which fall back for now.
+- **A C shim owns SDL_GPU** (`bindings/gpu`), as `bindings/imgui`'s host owns ImGui's:
+  SDL_GPU's create-info structs are nested and many, and Lyra hands over flat arrays of floats
+  and words, one copy a frame.
+- **Everything is a quad shaded by distance.** Coverage is the rounded box's signed distance
+  with a one-pixel edge. That makes borders a band of two distances and rounded clips a
+  per-instance mask, never a change of state, so clips no longer split draws. Shadows are
+  Evan Wallace's analytic Gaussian of a rounded box. Untextured instances join any run, so a
+  frame of 400 labelled boxes is one draw.
+- **SDL_GPU will not claim a window that has an SDL_Renderer**, so `ui.gpu` opens its own,
+  and `AnyRenderer` puts the GPU's and SDL's behind one `Renderer`. It is a struct of two
+  `Maybe`s, because a trait method cannot rebind `self`, which a `data` would have needed.
+- **Hover had to reach any element, and selectors any number of classes**, or a card's shadow
+  could not lift under the pointer (`.card.hover`). Hover is now the deepest element under the
+  pointer and its ancestors, as CSS's `:hover`.
+- **Parity**: the Layouts demo drawn by both renderers differs by a mean of 0.0015 of 255 a
+  channel. **Cost**: preparing a 400-box frame is 2.1 ms (2.3 with a shadow on every box), and
+  with a backdrop and a layer blur the frame still holds the display's 120 Hz.
+- **Every program follows a live resize now**, not only the Layouts demo. The hook a
+  platform calls during a drag can't be a generic function, since it's a C callback, so it is
+  a closure over a `shared` box holding the host, platform, renderer and fonts (`Running`).
+  The loop and the hook step the same host, which removed the stale-copy writes the demo's
+  module-level window had. `ui.sdl3` keeps the one event watch and its re-entrancy guard, and
+  the size-change rule from the freeze fix lives in `follow_resizes`. A GPU window set to one
+  size after another read back frames of each new size in pixels, laid out at it.
+- **A dragged window's contents zoomed in and out**: CAMetalLayer's `contentsGravity` defaults
+  to resize, so between frames AppKit stretched the last one to the window's new bounds. The
+  window's Metal layer is now pinned top-left (`bindings.gpu`'s `pin_contents`, called by
+  `ui.sdl3.platform_for` for both renderers, which both draw through SDL's Metal view), so a
+  frame not yet redrawn sits unscaled at the corner until the next one lands.
+- **Found and fixed**: AccessKit panicked when a second window opened. Its focus forwarder was
+  added to SDL's window class each time, so the shim now does it once a class. And `for x in
+  [w, 0.0]` with `w` an `f32` stored an `f64` into the array: the for-in rule now always
+  pushes the joined type down (`TestExec_ForOverMixedLiteralArrayNarrowsItsLiterals`). Open in
+  todo.md: a trait method's signature resolved in the caller's scope.
+
 ### 10/21/26 — `ui/`: media queries, selector lists, window size limits, live resize
 
 - **A media rule stays where it is written.** It keeps its layer, its specificity and its

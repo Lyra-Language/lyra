@@ -524,6 +524,13 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"at-rule", ui + "<style global>\n  @supports (x: y) {\n  }\n</style>", "x.lui:3: @supports is not an at-rule of a <style>; @media is"},
 		{"selector in a list", ui + "<style global>\n  .a,\n  Column Text { gap: 1 }\n</style>", "x.lui:4: Column Text is not a selector ui reads"},
 		{"pseudo-class", ui + "<style global>\n  .a:hover { gap: 1 }\n</style>", "x.lui:3: .a:hover is not a selector ui reads"},
+		{"shadow lengths", ui + "<style global>\n  .a { box-shadow: 0 #000 }\n</style>", "x.lui:3: a box-shadow is [inset] x y [blur [spread]] #colour, not 0 #000"},
+		{"shadow many", ui + "<style global>\n  .a { box-shadow: 1 2 3 4 5 #000 }\n</style>", "x.lui:3: a box-shadow is [inset] x y [blur [spread]] #colour, not 1 2 3 4 5 #000"},
+		{"gradient side", ui + "<style global>\n  .a { background: linear-gradient(to middle, #000, #fff) }\n</style>", "x.lui:3: a gradient goes to top, right, bottom, left or a corner, not to middle"},
+		{"gradient stops", ui + "<style global>\n  .a { background: linear-gradient(#000) }\n</style>", "x.lui:3: a gradient needs two colour stops or more"},
+		{"gradient kind", ui + "<style global>\n  .a { background-image: conic-gradient(#000, #fff) }\n</style>", "x.lui:3: a gradient is linear-gradient(…) or radial-gradient(…)"},
+		{"filter", ui + "<style global>\n  .a { filter: grayscale(1) }\n</style>", "x.lui:3: filter is blur(N) or none, not grayscale(1)"},
+		{"stop place", ui + "<style global>\n  .a { background: linear-gradient(#000 50, #fff) }\n</style>", "x.lui:3: a colour stop's place is a percentage, not 50"},
 	}
 	for _, c := range cases {
 		path := filepath.Join(dir, "x.lui")
@@ -784,5 +791,76 @@ func TestLui_UiTargetMediaAndSelectorLists(t *testing.T) {
 	}
 	if out, err := exec.Command(lui, imgui).CombinedOutput(); err == nil || !strings.Contains(string(out), "imgui.lui:4: @media is the ui target's") {
 		t.Errorf("an @media in the imgui target: %v %s", err, out)
+	}
+}
+
+// Effects in markup: box-shadow lists (inset, px, spread, none), linear gradients by angle
+// and by side, a stop at a percentage, a radial circle, filter and backdrop-filter blur, and
+// a compound selector (.card.hover); and the module checks clean.
+func TestLui_UiTargetEffects(t *testing.T) {
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script target="ui">
+  pub data Ev = Go
+</script>
+<style global name="fx_sheet">
+  .card { box-shadow: 0 4px 12px #00000033, inset 0 0 0 1 #ffffff80; background: #ffffff }
+  .card.hover { box-shadow: 0 10 24 2 #00000040 }
+  .header { background: linear-gradient(to right, #ff8a00, #e52e71 60%, #6a11cb) }
+  .glow { background-image: radial-gradient(circle, #ffffff, #000000) }
+  .tilt { background: linear-gradient(135deg, #ffffff 10%, #000000) }
+  .frost { backdrop-filter: blur(12px); filter: blur(2) }
+  .plain { filter: none; box-shadow: none }
+</style>
+<component name="view" event={Ev}>
+  <Column class="card"><Text class="header">hi</Text></Column>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"box_shadow: Some([BoxShadow { x: 0.0, y: 4.0, blur: 12.0, spread: 0.0, color: rgba(0x00000033) }, BoxShadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: rgba(0xFFFFFF80), inset: true }])",
+		`Rule { selector: ".card.hover", style: Style { box_shadow: Some([BoxShadow { x: 0.0, y: 10.0, blur: 24.0, spread: 2.0, color: rgba(0x00000040) }]) } }`,
+		"background_gradient: Some(Gradient { kind: LinearGradient(90.0), stops: [ColorStop { color: rgb(0xFF8A00) }, ColorStop { color: rgb(0xE52E71), at: Some(60.0 / 100.0) }, ColorStop { color: rgb(0x6A11CB) }] })",
+		"kind: RadialGradient(true)",
+		"kind: LinearGradient(135.0), stops: [ColorStop { color: rgb(0xFFFFFF), at: Some(10.0 / 100.0) }",
+		"backdrop_blur: Some(12.0), filter_blur: Some(2.0)",
+		"filter_blur: Some(0.0), box_shadow: Some([])",
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	t.Setenv("LYRA_STD", repoRoot(t))
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+}
+
+// The effects example — shadows, gradients, a frosted backdrop and a blurred line in markup —
+// is what lui makes from it, and checks clean.
+func TestLui_EffectsExampleIsCurrentAndChecks(t *testing.T) {
+	skipWithoutText(t)
+	lui := buildLui(t)
+	root := repoRoot(t)
+	if b, err := exec.Command(lui, "--check", filepath.Join(root, "examples", "ui", "effects_view.lui")).CombinedOutput(); err != nil {
+		t.Fatalf("examples/ui/effects_view.lyra is stale: %v\n%s", err, b)
+	}
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(root, "examples", "ui", "effects.lyra"))
+	if code != 0 {
+		t.Fatalf("checking the example exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if out := stdout + stderr; strings.Contains(out, "warning") {
+		t.Errorf("the example or its generated view warns:\n%s", out)
 	}
 }

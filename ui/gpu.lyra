@@ -1,0 +1,537 @@
+module ui.gpu
+//! `ui.backend`'s `Renderer` on the GPU (SDL3's GPU API, Metal on macOS, `bindings.gpu`), and
+//! [open], which a program opens its window with: the GPU renderer where there is one, SDL's
+//! 2D renderer (`ui.sdl3`) where there is not — or where `LYRA_UI_RENDERER=sdl` asks for it —
+//! behind one type, [AnyRenderer], so the program does not care which.
+//!
+//! ```
+//! import ui.gpu
+//!
+//! let Ok(window) = gpu.open("Hello", 640.0, 480.0) else { return 1 }
+//! var platform = window.platform
+//! var renderer = window.renderer
+//! // … run(app, state, platform, renderer, fonts) …
+//! gpu.close(platform, renderer)
+//! ```
+//!
+//! **Every op is an instance** — a quad and what the fragment shader needs to shade it — in one
+//! buffer a frame, drawn in runs that share a texture. A shape's coverage is its rounded box's
+//! signed distance, so corners, borders, clips (rounded ones too) and shadows are exact at any
+//! scale; a clip is a per-instance shape, not a change of state, so it never splits a run.
+//! **What SDL's 2D renderer cannot draw, this one can**: a shadow's Gaussian falloff (the
+//! fallback draws a straight ramp), a gradient's every stop (up to eight; more are resampled),
+//! `filter: blur()` and `backdrop-filter: blur()` — each a layer or the scene so far, blurred
+//! at half size in two passes (σ half the blur radius, as CSS has it).
+
+import ui.backend.{ Renderer }
+import ui.draw.{
+  Rect,
+  Radii,
+  Color,
+  Image,
+  TextureId,
+  DrawOp,
+  Fill,
+  Border,
+  Glyphs,
+  Picture,
+  PushClip,
+  PopClip,
+  Shadow,
+  GradientFill,
+  Backdrop,
+  PushLayer,
+  PopLayer,
+  Gradient,
+  LinearGradient,
+  RadialGradient,
+}
+import ui.sdl3.{
+  SdlPlatform,
+  SdlRenderer,
+  open_window,
+  renderer_for,
+  platform_for,
+  release_renderer,
+  close_window
+}
+import bindings.gpu
+import bindings.gpu.{ Gpu, DRAW, PUSH_LAYER, POP_LAYER, BACKDROP }
+import bindings.sdl3.{
+  Window,
+  window_size,
+  window_pixel_density,
+  window_display_scale,
+  last_error,
+  destroy_window,
+  quit
+}
+
+/// A window open for an interface: its platform, and whichever renderer this machine has.
+pub struct GpuWindow {
+  platform: SdlPlatform,
+  renderer: AnyRenderer,
+}
+
+/// The GPU renderer, or SDL's 2D one: a `Renderer` either way — exactly one is there.
+pub struct AnyRenderer {
+  gpu: Maybe<GpuRenderer> = None,
+  sdl: Maybe<SdlRenderer> = None,
+}
+
+/// Open a window `width` × `height` logical units, drawn on the GPU where there is one — or
+/// why it could not open at all.
+pub let open = (title: string, width: f32, height: f32) -> Result<GpuWindow, string> => {
+  let window = open_window(title, width, height)?
+  if let Some(g) = gpu.create(window) {
+    return Ok(GpuWindow {
+      platform: platform_for(window),
+      renderer: AnyRenderer { gpu: Some(GpuRenderer { gpu: g, window: window }) },
+    })
+  }
+  let Some(canvas) = renderer_for(window) else {
+    let why = last_error()
+    destroy_window(window)
+    quit()
+    return Err("SDL could not make a renderer: ${why}")
+  }
+  Ok(GpuWindow {
+    platform: platform_for(window),
+    renderer: AnyRenderer { sdl: Some(canvas) }
+  })
+}
+
+/// Close the window: the renderer, the window, and SDL.
+pub let close = (platform: SdlPlatform, renderer: AnyRenderer) -> void => {
+  if let Some(r) = renderer.gpu { gpu.destroy(r.gpu) }
+  if let Some(r) = renderer.sdl { release_renderer(r) }
+  close_window(platform)
+}
+
+/// Whether `renderer` draws on the GPU.
+pub let on_gpu = pure (renderer: AnyRenderer) -> bool => renderer.gpu.is_some()
+
+impl Renderer for AnyRenderer {
+  upload = (self, image) => {
+    if let Some(r) = self.gpu {
+      var g = r
+      let made = g.upload(image)
+      self.gpu = Some(g)
+      return made
+    }
+    let Some(r) = self.sdl else { return None }
+    var c = r
+    let made = c.upload(image)
+    self.sdl = Some(c)
+    made
+  }
+  update = (self, id, at, image) => {
+    if let Some(r) = self.gpu {
+      var g = r
+      return g.update(id, at, image)
+    }
+    let Some(r) = self.sdl else { return false }
+    var c = r
+    c.update(id, at, image)
+  }
+  draw = (self, background, ops) => {
+    if let Some(r) = self.gpu {
+      var g = r
+      g.draw(background, ops)
+      return
+    }
+    if let Some(r) = self.sdl {
+      var c = r
+      c.draw(background, ops)
+    }
+  }
+}
+
+// ── The GPU renderer ─────────────────────────────────────────────────────────
+
+/// The GPU's renderer for one window, and the size of each texture it holds, for the texels
+/// a quad samples.
+pub struct GpuRenderer {
+  gpu: Gpu,
+  window: Window,
+  sizes: [](f32, f32) = [],
+}
+
+impl Renderer for GpuRenderer {
+  upload = (self, image) => {
+    let Some(id) = gpu.upload(
+      self.gpu,
+      image.width,
+      image.height,
+      image.argb,
+      image.pixelated
+    ) else {
+      return None
+    }
+    self.sizes.push((f32(image.width), f32(image.height)))
+    Some(TextureId(id))
+  }
+  update = (self, id, at, image) =>
+    gpu.update(
+      self.gpu,
+      i64(id),
+      i64(at.x.round()),
+      i64(at.y.round()),
+      image.width,
+      image.height,
+      image.argb
+    )
+  draw = (self, background, ops) => {
+    let frame = frame_of(self, ops)
+    let _ = gpu.frame(
+      self.gpu,
+      unit(background.r),
+      unit(background.g),
+      unit(background.b),
+      unit(background.a),
+      frame.instances,
+      frame.commands
+    )
+  }
+}
+
+/// Keep the frames `renderer` draws from now on, for [read_frame]: a test of what the GPU drew.
+pub let keep_frames = (renderer: GpuRenderer) -> void =>
+  gpu.keep_frames(renderer.gpu, true)
+
+/// The last frame `renderer` kept, as an `Image`, if any.
+pub let read_frame = (renderer: GpuRenderer) -> Maybe<Image> => {
+  let (w, h) = pixels_of(renderer.window)
+  let Some((width, height, argb)) = gpu.read(
+    renderer.gpu,
+    i64(w.round()) * i64(h.round()) + 16
+  ) else { return None }
+  Some(Image { width: width, height: height, argb: argb })
+}
+
+/// How many instances and commands `ops` make for `renderer` — what preparing a frame costs,
+/// for a measurement, without drawing it.
+pub let prepare = (renderer: GpuRenderer, ops: []DrawOp) -> (i64, i64) => {
+  let frame = frame_of(renderer, ops)
+  (frame.instances.len() / 80, frame.commands.len() / 6)
+}
+
+/// A frame for the GPU: its instances, 80 floats each, and its commands, six words each.
+struct Frame {
+  instances: []f32 = [],
+  commands: []i64 = [],
+}
+
+/// What draws one op: a quad, the shape it shades, the shape's radii, its colours, its kind
+/// (0 a fill, 1 a texture, 2 a border, 3 a shadow, 4 an inset shadow, 5 a gradient, 6 a layer
+/// put down, 7 a backdrop), a border's width or a shadow's deviation, texels or a second
+/// shape, a gradient's or the second shape's numbers, and the clip.
+struct Instance {
+  quad: Rect,
+  shape: Rect = Rect {},
+  radii: Radii = Radii {},
+  color: Color = Color { r: 255, g: 255, b: 255 },
+  color2: Color = Color { r: 0, g: 0, b: 0, a: 0 },
+  kind: i64 = 0,
+  width: f32 = 0.0,
+  sigma: f32 = 0.0,
+  uv: (f32, f32, f32, f32) = (0.0, 0.0, 0.0, 0.0),
+  extra: (f32, f32, f32, f32) = (0.0, 0.0, 0.0, 0.0),
+  clip: Rect = Rect {},
+  clip_radii: Radii = Radii {},
+  stops: []Color = [],
+  places: []f32 = [],
+}
+
+/// `ops` as a frame for `renderer`'s window: each op in pixels, as instances in runs of one
+/// texture, the clips carried on each instance, and the layers and backdrops as commands.
+let frame_of = (renderer: GpuRenderer, ops: []DrawOp) -> Frame => {
+  let scale = window_display_scale(renderer.window)
+  let (vw, vh) = pixels_of(renderer.window)
+  var out = Frame {}
+  var run_texture: i64 = -1
+  var run_first: i64 = 0
+  var count: i64 = 0
+  var clips: [](Rect, Radii) = []
+  var layers: []Rect = []
+  var blurs: []f32 = []
+  for op in ops {
+    let clip = if clips.len() == 0 { (Rect {}, Radii {}) } else { clips[clips.len() - 1] }
+    var made: []Instance = []
+    var texture: i64 = -1
+    match op {
+      Fill(at, radii, color) => {
+        made.push(Instance {
+          quad: at.scaled(scale).inset(-1.0),
+          shape: at.scaled(scale),
+          radii: radii.scaled(scale),
+          color: color
+        })
+      },
+      Border(at, radii, width, color) => {
+        made.push(Instance {
+          quad: at.scaled(scale).inset(-1.0),
+          shape: at.scaled(scale),
+          radii: radii.scaled(scale),
+          color: color,
+          kind: 2,
+          width: width * scale,
+        })
+      },
+      GradientFill(at, radii, gradient) => {
+        made.push(gradient_instance(at.scaled(scale), radii.scaled(scale), gradient))
+      },
+      Shadow(at, radii, shadow) => {
+        let box = at.scaled(scale)
+        let corners = radii.scaled(scale)
+        let spread = shadow.spread * scale
+        let sigma = shadow.blur * scale / 2.0
+        let moved = Rect {
+          x: box.x + shadow.x * scale,
+          y: box.y + shadow.y * scale,
+          w: box.w,
+          h: box.h
+        }
+        let element = (
+          corners.top_left,
+          corners.top_right,
+          corners.bottom_right,
+          corners.bottom_left
+        )
+        if shadow.inset {
+          made.push(Instance {
+            quad: box,
+            shape: moved.inset(spread),
+            radii: grown(corners, -spread),
+            color: shadow.color,
+            kind: 4,
+            sigma: sigma,
+            uv: (box.x, box.y, box.w, box.h),
+            extra: element,
+          })
+        } else {
+          let shape = moved.inset(-spread)
+          made.push(Instance {
+            quad: shape.inset(-(3.0 * sigma + 1.0)),
+            shape: shape,
+            radii: grown(corners, spread),
+            color: shadow.color,
+            kind: 3,
+            sigma: sigma,
+            uv: (box.x, box.y, box.w, box.h),
+            extra: element,
+          })
+        }
+      },
+      Glyphs(id, glyphs, color) => {
+        let Some((tw, th)) = texture_size(renderer, i64(id)) else { continue }
+        texture = i64(id)
+        for g in glyphs {
+          made.push(Instance {
+            quad: g.at.scaled(scale),
+            color: color,
+            kind: 1,
+            uv: (g.texels.x / tw, g.texels.y / th, (g.texels.x + g.texels.w) / tw, (g.texels.y + g.texels.h) / th),
+          })
+        }
+      },
+      Picture(id, texels, at) => {
+        let Some((tw, th)) = texture_size(renderer, i64(id)) else { continue }
+        texture = i64(id)
+        made.push(Instance {
+          quad: at.scaled(scale),
+          kind: 1,
+          uv: (texels.x / tw, texels.y / th, (texels.x + texels.w) / tw, (texels.y + texels.h) / th),
+        })
+      },
+      PushClip(at, radii) => {
+        let inside = at.scaled(scale)
+        let narrowed = if clips.len() == 0 { inside } else { clips[clips.len() - 1].0.intersect(inside) }
+        clips.push((narrowed, radii.scaled(scale)))
+        continue
+      },
+      PopClip => {
+        if clips.len() > 0 { clips = clips.slice(0, clips.len() - 1) }
+        continue
+      },
+      Backdrop(at, radii, blur) => {
+        end_run(out, run_texture, run_first, count)
+        let index = count
+        push_instance(out, Instance {
+          quad: at.scaled(scale),
+          shape: at.scaled(scale),
+          radii: radii.scaled(scale),
+          kind: 7,
+          extra: (0.0, 0.0, vw, vh),
+          clip: clip.0,
+          clip_radii: clip.1,
+        })
+        count += 1
+        command(out, BACKDROP, index, i64((blur * scale * 100.0).round()), 0, 0, 0)
+        run_first = count
+        run_texture = -1
+        continue
+      },
+      PushLayer(at, effect) => {
+        end_run(out, run_texture, run_first, count)
+        layers.push(at.scaled(scale))
+        blurs.push(effect.blur)
+        command(out, PUSH_LAYER, 0, 0, 0, 0, 0)
+        run_first = count
+        run_texture = -1
+        continue
+      },
+      PopLayer => {
+        if layers.len() == 0 { continue }
+        end_run(out, run_texture, run_first, count)
+        let at = layers[layers.len() - 1]
+        let blur = blurs[blurs.len() - 1]
+        layers = layers.slice(0, layers.len() - 1)
+        blurs = blurs.slice(0, blurs.len() - 1)
+        let index = count
+        push_instance(out, Instance {
+          quad: at,
+          kind: 6,
+          uv: (at.x / vw, at.y / vh, (at.x + at.w) / vw, (at.y + at.h) / vh),
+          clip: clip.0,
+          clip_radii: clip.1,
+        })
+        count += 1
+        command(out, POP_LAYER, index, i64((blur * scale * 100.0).round()), 0, 0, 0)
+        run_first = count
+        run_texture = -1
+        continue
+      },
+    }
+    // A run samples one texture; an instance that samples none joins any run, so fills and
+    // the glyphs over them are one draw until a second texture is needed.
+    if texture >= 0 && texture != run_texture {
+      if run_texture >= 0 && count > run_first {
+        end_run(out, run_texture, run_first, count)
+        run_first = count
+      }
+      run_texture = texture
+    }
+    for one in made {
+      push_instance(out, Instance { one | clip: clip.0, clip_radii: clip.1 })
+      count += 1
+    }
+  }
+  end_run(out, run_texture, run_first, count)
+  out
+}
+
+/// A gradient's instance: up to eight stops, more resampled to eight.
+let gradient_instance = pure (
+  box: Rect,
+  radii: Radii,
+  gradient: Gradient
+) -> Instance => {
+  var colors: []Color = [s in gradient.stops | s.color]
+  var places = gradient.places()
+  if colors.len() > 8 {
+    places = [k in 0..<8 | f32(k) / 7.0]
+    colors = [t in places | gradient.at(t)]
+  }
+  let (kind, value): (f32, f32) = match gradient.kind {
+    LinearGradient(degrees) => (0.0, degrees * 0.017453292),
+    RadialGradient(circle) => (1.0, if circle { 1.0 } else { 0.0 }),
+  }
+  Instance {
+    quad: box.inset(-1.0),
+    shape: box,
+    radii: radii,
+    kind: 5,
+    extra: (kind, value, f32(colors.len()), 0.0),
+    stops: colors,
+    places: places,
+  }
+}
+
+/// The draw command for the run of instances `first`…`end` from `texture`, if it holds any.
+let end_run = (out: mut Frame, texture: i64, first: i64, end: i64) -> void => {
+  if end > first { command(out, DRAW, texture, first, end - first, 0, 0) }
+}
+
+let command = (
+  out: mut Frame,
+  op: i64,
+  a: i64,
+  b: i64,
+  c: i64,
+  d: i64,
+  e: i64
+) -> void => {
+  out.commands.push(op)
+  out.commands.push(a)
+  out.commands.push(b)
+  out.commands.push(c)
+  out.commands.push(d)
+  out.commands.push(e)
+}
+
+/// `n`'s 80 floats, in `gpu.c`'s order.
+let push_instance = (out: mut Frame, n: Instance) -> void => {
+  let f = out.instances
+  var fs = f
+  rect_into(fs, n.quad)
+  rect_into(fs, n.shape)
+  radii_into(fs, n.radii)
+  color_into(fs, n.color)
+  color_into(fs, n.color2)
+  for x in [f32(n.kind), n.width, n.sigma, 0.0] { fs.push(x) }
+  for x in [n.uv.0, n.uv.1, n.uv.2, n.uv.3] { fs.push(x) }
+  for x in [n.extra.0, n.extra.1, n.extra.2, n.extra.3] { fs.push(x) }
+  rect_into(fs, n.clip)
+  radii_into(fs, n.clip_radii)
+  for k in 0..<8 { fs.push(if k < n.places.len() { n.places[k] } else { 1.0 }) }
+  for k in 0..<8 {
+    if k < n.stops.len() { color_into(
+      fs,
+      n.stops[k]
+    ) } else { for _ in 0..<4 { fs.push(0.0) } }
+  }
+  out.instances = fs
+}
+
+let rect_into = (out: mut []f32, r: Rect) -> void => {
+  out.push(r.x)
+  out.push(r.y)
+  out.push(r.w)
+  out.push(r.h)
+}
+
+let radii_into = (out: mut []f32, r: Radii) -> void => {
+  out.push(r.top_left)
+  out.push(r.top_right)
+  out.push(r.bottom_right)
+  out.push(r.bottom_left)
+}
+
+let color_into = (out: mut []f32, c: Color) -> void => {
+  out.push(unit(c.r))
+  out.push(unit(c.g))
+  out.push(unit(c.b))
+  out.push(unit(c.a))
+}
+
+let unit = pure (v: u8) -> f32 => f32(v) / 255.0
+
+/// `r`, each corner `by` larger (none below zero).
+let grown = pure (r: Radii, by: f32) -> Radii => Radii {
+  top_left: (r.top_left + by).max(0.0),
+  top_right: (r.top_right + by).max(0.0),
+  bottom_right: (r.bottom_right + by).max(0.0),
+  bottom_left: (r.bottom_left + by).max(0.0),
+}
+
+/// Texture `id`'s size in texels, if the renderer holds it.
+let texture_size = pure (renderer: GpuRenderer, id: i64) -> Maybe<(f32, f32)> =>
+  if id >= 0 && id < renderer.sizes.len() { Some(renderer.sizes[id]) } else { None }
+
+/// The window's size in pixels: its points times its pixel density.
+let pixels_of = (window: Window) -> (f32, f32) => {
+  let (w, h) = window_size(window)
+  let density = window_pixel_density(window)
+  (f32(w) * density, f32(h) * density)
+}

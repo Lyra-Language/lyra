@@ -36,24 +36,31 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// findAccessKit puts a `liblyra-accesskit.a` on `LIBRARY_PATH`, which every program over
-// `ui.sdl3` links: build.sh's in build/lib when it has run, else `accesskit_stub.c` compiled
-// into `tmp` — CI tests before it builds, and a test never needs the real adapter. A machine
-// with no C compiler gets neither, and those programs say so when they link.
+// findAccessKit puts the shim archives every program over `ui.sdl3` and `ui.gpu` links —
+// liblyra-accesskit.a and liblyra-gpu.a — on `LIBRARY_PATH`: build.sh's in build/lib when it
+// has run, else each one's stub compiled into `tmp` (CI tests before it builds, and a test
+// needs neither AccessKit nor a GPU). A machine with no C compiler gets neither, and those
+// programs say so when they link.
 func findAccessKit(tmp string) {
 	_, thisFile, _, _ := runtime.Caller(0)
 	root := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
-	dir := filepath.Join(root, "build", "lib")
-	if _, err := os.Stat(filepath.Join(dir, "liblyra-accesskit.a")); err != nil {
-		dir = tmp
-		obj := filepath.Join(tmp, "accesskit_stub.o")
-		stub := filepath.Join(root, "bindings", "accesskit", "accesskit_stub.c")
-		if exec.Command("cc", "-c", "-o", obj, stub).Run() != nil ||
-			exec.Command("ar", "rcs", filepath.Join(tmp, "liblyra-accesskit.a"), obj).Run() != nil {
-			return
+	built := filepath.Join(root, "build", "lib")
+	path := []string{}
+	for _, shim := range []struct{ archive, stub string }{
+		{"liblyra-accesskit.a", filepath.Join(root, "bindings", "accesskit", "accesskit_stub.c")},
+		{"liblyra-gpu.a", filepath.Join(root, "bindings", "gpu", "gpu_stub.c")},
+	} {
+		if _, err := os.Stat(filepath.Join(built, shim.archive)); err == nil {
+			continue
+		}
+		obj := filepath.Join(tmp, shim.archive+".o")
+		if exec.Command("cc", "-c", "-o", obj, shim.stub).Run() == nil &&
+			exec.Command("ar", "rcs", filepath.Join(tmp, shim.archive), obj).Run() == nil &&
+			len(path) == 0 {
+			path = append(path, tmp)
 		}
 	}
-	path := []string{dir}
+	path = append(path, built)
 	if old := os.Getenv("LIBRARY_PATH"); old != "" {
 		path = append(path, old)
 	}

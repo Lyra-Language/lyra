@@ -12,6 +12,7 @@
 
 import ui.sdl3
 import ui.sdl3.{ SdlRenderer, capture }
+import ui.gpu
 import ui.app.{ sandbox, run }
 import ui.script.{ script_platform, parse_script }
 import ui.draw.{ Point, Size, Color }
@@ -62,22 +63,21 @@ let main = () -> u8 => {
     println("no font: none of ui.text's SYSTEM_FONTS is here")
     return 1
   }
-  let opened = sdl3.open("Sign up", WIDTH, HEIGHT)
-  let window = match opened {
-    Ok(w) => w,
-    Err(why) => {
-      println(why)
-      fonts.close()
-      return 2
-    },
-  }
-  var platform = window.platform
-  var renderer = window.renderer
   let theme = light_theme()
   let shown = (form: Form) -> Node<FormEvent> => view(theme, form)
   let app = sandbox(shown, update, theme.colors.background)
   var status: u8 = 0
   if let Some(script) = args.value("--script") {
+    // Played headless through SDL's 2D renderer, whose frame `--png` reads back.
+    let window = match sdl3.open("Sign up", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    var renderer = window.renderer
     match parse_script(script) {
       Ok(inputs) => {
         var scripted = script_platform(inputs, Size { w: WIDTH, h: HEIGHT })
@@ -98,10 +98,22 @@ let main = () -> u8 => {
         status = 1
       },
     }
+    sdl3.close(window.platform, renderer)
   } else {
+    // On the GPU where there is one.
+    let window = match gpu.open("Sign up", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    var platform = window.platform
+    var renderer = window.renderer
     let _ = run(app, Form {}, platform, renderer, fonts)
+    gpu.close(platform, renderer)
   }
-  sdl3.close(platform, renderer)
   fonts.close()
   status
 }

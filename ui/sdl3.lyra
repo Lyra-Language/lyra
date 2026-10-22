@@ -47,6 +47,8 @@ import bindings.sdl3.{
   set_window_size,
   set_window_minimum_size,
   set_window_maximum_size,
+  add_event_watch,
+  live_resize,
   window_size,
   window_display_scale,
   window_pixel_density,
@@ -183,6 +185,7 @@ import ui.backend.{
   AxDecrement,
 }
 import bindings.accesskit
+import bindings.gpu.{ pin_contents }
 import bindings.accesskit.{ AccessRequestRaw }
 import std.collections.{ HashMap, hashmap_new }
 import ui.draw.{
@@ -199,8 +202,15 @@ import ui.draw.{
   Picture,
   PushClip,
   PopClip,
+  Shadow,
+  GradientFill,
+  Backdrop,
+  PushLayer,
+  PopLayer,
+  Radii,
 }
-import ui.tess.{ Mesh, fill, border, quad }
+import ui.tess.{ Mesh, fill, border, quad, fill_gradient, fill_soft }
+import std.io.{ write_stderr }
 
 /// A window open for an interface: its [SdlPlatform] and [SdlRenderer], which [close] puts
 /// away together.
@@ -212,6 +222,23 @@ pub struct SdlWindow {
 /// Open a window `width` × `height` logical units, resizable and at the display's full
 /// density — or why not.
 pub let open = (title: string, width: f32, height: f32) -> Result<SdlWindow, string> => {
+  let window = open_window(title, width, height)?
+  let Some(renderer) = renderer_for(window) else {
+    let why = last_error()
+    destroy_window(window)
+    quit()
+    return Err("SDL could not make a renderer: ${why}")
+  }
+  Ok(SdlWindow { platform: platform_for(window), renderer: renderer })
+}
+
+/// SDL started and a window `width` × `height` logical units opened, with nothing drawing
+/// into it yet — what [open] and `ui.gpu`'s `open` begin with.
+pub let open_window = (
+  title: string,
+  width: f32,
+  height: f32
+) -> Result<Window, string> => {
   if !init(INIT_VIDEO) {
     return Err("SDL could not start: ${last_error()}")
   }
@@ -235,28 +262,43 @@ pub let open = (title: string, width: f32, height: f32) -> Result<SdlWindow, str
       i32((height / per_point).round())
     )
   }
-  let Some(canvas) = window.create_renderer() else {
-    let why = last_error()
-    destroy_window(window)
-    quit()
-    return Err("SDL could not make a renderer: ${why}")
-  }
+  Ok(window)
+}
+
+/// SDL's 2D renderer for `window`, with vsync — or `None`, and [last_error] says why.
+pub let renderer_for = (window: Window) -> Maybe<SdlRenderer> => {
+  let Some(canvas) = window.create_renderer() else { return None }
   canvas.set_vsync(true)
-  Ok(SdlWindow {
-    platform: SdlPlatform {
-      window: window,
-      look: system_look(),
-      listening: accesskit.start(window),
-      access_keys: hashmap_new(),
-    },
-    renderer: SdlRenderer { canvas: canvas, window: window },
-  })
+  Some(SdlRenderer { canvas: canvas, window: window })
+}
+
+/// The platform of `window` — its input, its cursor, and assistive technology told about it —
+/// once a renderer draws into it: its Metal layer is pinned (`bindings.gpu`'s
+/// `pin_contents`), so a resize never shows the last frame stretched.
+pub let platform_for = (window: Window) -> SdlPlatform => {
+  pin_contents(window)
+  SdlPlatform {
+    window: window,
+    look: system_look(),
+    listening: accesskit.start(window),
+    access_keys: hashmap_new(),
+  }
 }
 
 /// Close the window: its textures, its renderer, the window, and SDL.
 pub let close = (platform: SdlPlatform, renderer: SdlRenderer) -> void => {
+  release_renderer(renderer)
+  close_window(platform)
+}
+
+/// The renderer's textures and the renderer itself put away.
+pub let release_renderer = (renderer: SdlRenderer) -> void => {
   for texture in renderer.textures { destroy_texture(texture) }
   destroy_renderer(renderer.canvas)
+}
+
+/// The platform's cursor and window put away, and SDL.
+pub let close_window = (platform: SdlPlatform) -> void => {
   if let Some(shown) = platform.cursor { destroy_cursor(shown) }
   if platform.listening { accesskit.stop() }
   destroy_window(platform.window)
@@ -344,6 +386,12 @@ impl Platform for SdlPlatform {
     let _ = set_window_minimum_size(self.window, points(least.w), points(least.h))
     let _ = set_window_maximum_size(self.window, points(most.w), points(most.h))
   }
+  on_live_resize = (self, hook) => {
+    live_hook = Some(hook)
+    if !watching {
+      watching = unsafe { add_event_watch(on_event, nullptr) }
+    }
+  }
   update_access = (self, tree) => {
     if !self.listening { return }
     let pixels = self.scale()
@@ -406,6 +454,25 @@ let access_request = pure (raw: AccessRequestRaw) -> Maybe<AccessRequest> =>
     6 => Some(AxSetNumber(raw.number)),
     _ => None,
   }
+
+/// The live-resize hook a program handed its platform, whether SDL's event watch is installed,
+/// and whether the hook is drawing now — presenting a frame during a live resize can make
+/// AppKit ask for another, which must not reach the hook from inside its own frame.
+var live_hook: Maybe<() -> void> = None
+var watching: bool = false
+var hook_running: bool = false
+
+/// SDL's event watch: each frame a live resize asks for, handed to the hook — never from
+/// inside the hook. (A C callback, so a top-level function; the hook is the program's.)
+let on_event = (_: ^u8, event: ^u32) -> u8 => {
+  if !live_resize(event) || hook_running { return 1 }
+  if let Some(hook) = live_hook {
+    hook_running = true
+    hook()
+    hook_running = false
+  }
+  1
+}
 
 /// The system's look, light unless it says dark.
 let system_look = () -> Appearance =>
@@ -628,6 +695,42 @@ let paint = (renderer: SdlRenderer, background: Color, ops: []DrawOp) -> i64 => 
           Color { r: 255, g: 255, b: 255 }
         )
       },
+      GradientFill(at, radii, gradient) => {
+        let k = batch_for(batches, -1, [at.scaled(scale).inset(-1.0)])
+        fill_gradient(batches[k].mesh, at.scaled(scale), radii.scaled(scale), gradient)
+      },
+      Shadow(at, radii, shadow) => {
+        // Approximated: a Gaussian's falloff as a straight ramp, and an inset shadow as a
+        // soft band inside the edge.
+        let grown = Rect {
+          x: at.x + shadow.x - shadow.spread,
+          y: at.y + shadow.y - shadow.spread,
+          w: at.w + 2.0 * shadow.spread,
+          h: at.h + 2.0 * shadow.spread,
+        }.scaled(scale)
+        let corners = Radii {
+          top_left: radii.top_left + shadow.spread,
+          top_right: radii.top_right + shadow.spread,
+          bottom_right: radii.bottom_right + shadow.spread,
+          bottom_left: radii.bottom_left + shadow.spread,
+        }.scaled(scale)
+        let reach = (shadow.blur * scale).max(1.0)
+        let k = batch_for(batches, -1, [grown.inset(-reach)])
+        if shadow.inset {
+          border(
+            batches[k].mesh,
+            at.scaled(scale),
+            radii.scaled(scale),
+            (shadow.spread + shadow.blur / 2.0).max(1.0) * scale,
+            Color { shadow.color | a: u8((f32(shadow.color.a) * 0.6).round()) }
+          )
+        } else {
+          fill_soft(batches[k].mesh, grown, corners, shadow.color, reach * 1.6)
+        }
+      },
+      Backdrop(_, _, _) => { unblurred("backdrop-filter") },
+      PushLayer(_, effect) => { if effect.blur > 0.0 { unblurred("filter: blur()") } },
+      PopLayer => {},
       PushClip(at, _) => {
         calls += flush(renderer, batches)
         let inside = at.scaled(scale)
@@ -649,6 +752,17 @@ let paint = (renderer: SdlRenderer, background: Color, ops: []DrawOp) -> i64 => 
     }
   }
   calls + flush(renderer, batches)
+}
+
+/// Whether a blur this renderer cannot draw has been said: once a run.
+var blur_said: bool = false
+
+/// Say, once a run, that `what` is drawn without its blur here — SDL's 2D renderer has no
+/// offscreen pass to blur in; `ui.gpu` does.
+let unblurred = (what: string) -> void => {
+  if blur_said { return }
+  blur_said = true
+  let _ = write_stderr("ui.sdl3: ${what} is drawn without blur by SDL's 2D renderer (ui.gpu draws it)\n")
 }
 
 /// The geometry calls `ops` take drawn over `background` — drawn, not shown: what a test of

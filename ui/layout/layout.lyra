@@ -66,6 +66,15 @@ import ui.draw.{
   Picture,
   PushClip,
   PopClip,
+  Shadow,
+  GradientFill,
+  Backdrop,
+  PushLayer,
+  PopLayer,
+  BoxShadow,
+  Gradient,
+  ColorStop,
+  LayerEffect,
   radius,
 }
 import ui.backend.{ Renderer }
@@ -1067,7 +1076,8 @@ struct Body<e> {
   scrolled: f32 = 0.0,
 }
 
-/// `classes` with the states the element identified as `id` is in: `hover`, `pressed`,
+/// `classes` with the states the element identified as `id` is in: `hover` (it or something
+/// in it under the pointer), `pressed`,
 /// `focus`.
 let with_state = pure (classes: string, id: string, ui: Interaction) -> string => {
   var out = classes
@@ -1075,7 +1085,9 @@ let with_state = pure (classes: string, id: string, ui: Interaction) -> string =
     state,
     holder
   ) in [("hover", ui.hover), ("pressed", ui.pressed), ("focus", ui.focus)] {
-    if holder == id { out = if out.len() == 0 { state } else { "${out} ${state}" } }
+    // Hover reaches every element round the one under the pointer, as CSS's `:hover` does.
+    let holds = holder == id || (state == "hover" && holder.starts_with("${id}/"))
+    if holds { out = if out.len() == 0 { state } else { "${out} ${state}" } }
   }
   out
 }
@@ -1517,11 +1529,47 @@ let paint_into<e, r> where r: Renderer = (
   let s = laid.style
   let box = Rect { x: origin.x, y: origin.y, w: laid.size.w, h: laid.size.h }
   let corners = radius(s.radius)
+  // A blurred element is drawn into a layer, wide enough for the blur to spread into.
+  if s.filter_blur > 0.0 {
+    ops.push(PushLayer(
+      box.inset(-3.0 * s.filter_blur),
+      LayerEffect { blur: s.filter_blur }
+    ))
+  }
+  // Shadows under the element, the first on top as CSS has it.
+  for i in (s.box_shadow.len() - 1)..>=0 {
+    let shadow = s.box_shadow[i]
+    if !shadow.inset {
+      ops.push(Shadow(
+        box,
+        corners,
+        BoxShadow { shadow | color: faded(shadow.color, s.opacity) }
+      ))
+    }
+  }
+  if s.backdrop_blur > 0.0 { ops.push(Backdrop(box, corners, s.backdrop_blur)) }
   if let Some(fill) = s.background { ops.push(Fill(
     box,
     corners,
     faded(fill, s.opacity)
   )) }
+  if let Some(gradient) = s.background_gradient {
+    let stops = [stop in gradient.stops | ColorStop { stop | color: faded(
+      stop.color,
+      s.opacity
+    ) }]
+    ops.push(GradientFill(box, corners, Gradient { gradient | stops: stops }))
+  }
+  for i in (s.box_shadow.len() - 1)..>=0 {
+    let shadow = s.box_shadow[i]
+    if shadow.inset {
+      ops.push(Shadow(
+        box,
+        corners,
+        BoxShadow { shadow | color: faded(shadow.color, s.opacity) }
+      ))
+    }
+  }
   if let Some(line) = s.border_color {
     if s.border_width > 0.0 {
       ops.push(Border(box, corners, s.border_width, faded(line, s.opacity)))
@@ -1599,4 +1647,5 @@ let paint_into<e, r> where r: Renderer = (
   if let Some(ring) = laid.ring {
     ops.push(Border(box.inset(-3.0), radius(s.radius + 3.0), 2.5, ring))
   }
+  if s.filter_blur > 0.0 { ops.push(PopLayer) }
 }

@@ -21,8 +21,9 @@
 
 import ui.sdl3
 import ui.sdl3.{ SdlRenderer, capture }
+import ui.gpu
 import bindings.sdl3.{ pref_path }
-import ui.app.{ App, host_of }
+import ui.app.{ App, host_of, running, follow_resizes, step_running }
 import ui.script.{ timed_platform, parse_steps }
 import ui.backend.{ Platform, DarkMode }
 import ui.draw.{ Point, Size, Color }
@@ -43,17 +44,6 @@ let main = () -> u8 => {
     println("no font: none of ui.text's SYSTEM_FONTS is here")
     return 1
   }
-  let opened = sdl3.open("Components", WIDTH, HEIGHT)
-  let window = match opened {
-    Ok(w) => w,
-    Err(why) => {
-      println(why)
-      fonts.close()
-      return 2
-    },
-  }
-  var platform = window.platform
-  var renderer = window.renderer
   let app = App {
     view: view,
     update: update,
@@ -62,9 +52,19 @@ let main = () -> u8 => {
   }
   let folder = pref_path("Lyra", "components") ?? ""
   let save_to = args.value("--save-to") ?? "${folder}name.txt"
-  let start = State { dark: platform.appearance() == DarkMode, save_to: save_to }
   var status: u8 = 0
   if let Some(script) = args.value("--script") {
+    // Played headless through SDL's 2D renderer, whose frame `--png` reads back.
+    let window = match sdl3.open("Components", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    var renderer = window.renderer
+    let start = State { dark: window.platform.appearance() == DarkMode, save_to: save_to }
     match parse_steps(script) {
       Ok(steps) => {
         var scripted = timed_platform(steps, Size { w: WIDTH, h: HEIGHT })
@@ -80,11 +80,26 @@ let main = () -> u8 => {
         status = 1
       },
     }
+    sdl3.close(window.platform, renderer)
   } else {
-    var host = host_of(app, start, platform)
-    while host.step(platform, renderer, fonts) {}
+    // On the GPU where there is one.
+    let window = match gpu.open("Components", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    var platform = window.platform
+    var renderer = window.renderer
+    let start = State { dark: platform.appearance() == DarkMode, save_to: save_to }
+    // The loop is `main`'s own, for `lyrac run --live`; a live resize redraws it too.
+    let running_window = running(app, start, platform, renderer, fonts)
+    follow_resizes(running_window)
+    while step_running(running_window) {}
+    gpu.close(running_window.platform, running_window.renderer)
   }
-  sdl3.close(platform, renderer)
   fonts.close()
   status
 }

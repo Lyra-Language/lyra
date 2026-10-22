@@ -60,6 +60,11 @@ pub trait Platform {
   /// The least and greatest size the user may make the window, in logical units — a size of
   /// nothing for no limit; the window resized into them if it is outside.
   set_size_limits: (mut Self, Size, Size) -> void
+  /// Call `hook` each time the system asks for a frame while the window is resized by
+  /// dragging and the program's own loop is held (macOS) — never from inside the hook's own
+  /// frame. `ui.app`'s `follow_resizes` hands it a redraw; a platform whose loop is never held
+  /// may ignore it.
+  on_live_resize: (mut Self, () -> void) -> void
 }
 
 /// The interface for assistive technology: its nodes, the root's id and the focused node's.

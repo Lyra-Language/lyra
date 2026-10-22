@@ -18,3 +18,4 @@ bindings/imgui/generated.lyra
 examples/imgui/components_view.lyra
 examples/ui/components_view.lyra
 examples/ui/layouts_view.lyra
+examples/ui/effects_view.lyra

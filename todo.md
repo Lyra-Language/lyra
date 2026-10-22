@@ -713,9 +713,29 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 10/21] Media queries, selector lists, window limits** — `Rule.media`, `@media` in
   lui, the cache keyed on media answers, `App.min_size`/`max_size`, live resize in the Layouts
   demo (COMPLETED.md, 10/21).
-- **[OPEN] Live resize is each program's to wire.** `Host.redraw` from an event watch needs
-  the window at module level (a C callback cannot be generic), so `ui.run` does not redraw
-  during a drag; `ui.sdl3` could own the watch if a host were type-erased.
+- **[DONE 10/21] The GPU renderer and effects** — `ui.gpu` over SDL_GPU (Metal), shadows,
+  gradients, filter and backdrop blur, CSS syntax in lui; demo `examples/ui/effects_view.lui`
+  (COMPLETED.md, 10/21).
+- **[OPEN] An idle `ui` window ignores SIGTERM** until the next event: SDL turns the signal into
+  a quit only when it pumps, and the loop is asleep in `SDL_WaitEventTimeout` with no timeout.
+  `pkill` left demo windows open; a bounded wait (or SDL's quit-on-signal waking it) would fix it.
+- **[OPEN] `ui.gpu` on Linux and Windows.** The shaders are MSL compiled by SDL at run time;
+  Vulkan needs SPIR-V and D3D12 DXIL, which want a shader toolchain (SDL_shadercross, or glslc)
+  pinned and checked at build time. Until then both fall back to SDL's 2D renderer.
+- **[OPEN] Effects not built**: `text-shadow`, `opacity` as a group (an offscreen layer — today
+  it multiplies into each colour), other `filter` functions, conic gradients, a gradient's
+  `to corner` by the box's diagonal (taken as 45°), more than eight stops on the GPU
+  (resampled).
+- **[OPEN] Typechecker: a trait method's signature names types in the caller's scope.**
+  Calling `renderer.draw(color, ops)` where `Renderer.draw` takes `ui.draw.Color` failed in a
+  module that had not imported `Color` ("cannot assign ui.draw.Color to Color"); importing it
+  works around it.
+- **[OPEN] `ui.gpu` prepares a frame in ~2 ms for 8,760 instances** (400 labelled boxes): 80
+  floats an instance, pushed one at a time. A packed instance or a typed buffer would cut it;
+  only worth it when a screen's frame misses its refresh.
+- **[DONE 10/21] Live resize is the framework's** — `Platform.on_live_resize`, `ui.app`'s
+  `follow_resizes` over a `shared` running window, for `run` and for a program's own loop
+  (COMPLETED.md, 10/21).
 - **[OPEN] `@media` lacks range syntax and more features**: `(width >= 600)`, `aspect-ratio`,
   `resolution`, `prefers-reduced-motion`, and a `not` on one condition alone.
 - **[OPEN] Grid: no named areas, no negative lines, no `justify-content`/`align-content`.**

@@ -1,0 +1,121 @@
+<!--
+  Shadows, gradients and blur, as markup: a gradient header, cards whose shadows lift as the
+  pointer comes over them, and a frosted panel over a busy background. `build/lui
+  examples/ui/effects_view.lui` writes effects_view.lyra beside it, which effects.lyra runs —
+  on the GPU, where the blur is drawn; SDL's 2D renderer approximates the shadows and leaves
+  the blur out.
+-->
+
+<window min-width="420" min-height="480"/>
+
+<script target="ui">
+  import ui.style.{ Theme, light_theme }
+
+  /// What the buttons ask for.
+  pub data Event = Frost | Clear
+
+  pub struct State {
+    frosted: bool = true,
+  }
+
+  /// `s` after `event`.
+  pub let update = pure (s: State, event: Event) -> State => match event {
+    Frost => State { s | frosted: true },
+    Clear => State { s | frosted: false },
+  }
+
+  /// A colour of the busy background, by its place.
+  let dot_class = pure (i: i64) -> string => "dot dot${i % 4}"
+</script>
+
+<style global theme={Theme} name="effects_sheet">
+  .page { background: #f4f1ee; padding: 0; gap: 0 }
+  .header {
+    background: linear-gradient(120deg, #ff8a00, #e52e71 55%, #6a11cb);
+    padding: 28 32;
+    gap: 6;
+    color: #ffffff
+  }
+  Text.title { font-size: 26 }
+  Text.subtitle { color: #ffffffcc }
+  .body { padding: 28; gap: 20 }
+  .cards { gap: 18; flex-wrap: wrap }
+  .card {
+    background: #ffffff;
+    radius: 14;
+    padding: 18;
+    gap: 6;
+    flex: 1 1 200;
+    box-shadow: 0 2 6 #0000001a, 0 8 24 #00000014
+  }
+  /* The pointer over a card lifts it. */
+  .card.hover { box-shadow: 0 6 12 #00000026, 0 18 40 #00000026 }
+  Text.label { color: #8a8580; font-size: 13 }
+  Text.figure { font-size: 24; color: #2b2b2b }
+  /* A busy background: dots of four colours, each a radial gradient. */
+  .busy { gap: 10; flex-wrap: wrap; padding: 18; radius: 18; background: #2b2b40 }
+  .dot { width: 44; height: 44; radius: 22 }
+  .dot0 { background: radial-gradient(circle, #ffd166, #ef476f) }
+  .dot1 { background: radial-gradient(circle, #06d6a0, #118ab2) }
+  .dot2 { background: radial-gradient(circle, #ffffff, #8338ec) }
+  .dot3 { background: linear-gradient(to bottom right, #fb5607, #ffbe0b) }
+  /* The frosted panel: what is behind it blurred, under a pale glass. */
+  .panel {
+    radius: 18;
+    padding: 22;
+    gap: 8;
+    border-color: #ffffff66;
+    border-width: 1;
+    box-shadow: 0 10 30 #00000040, inset 0 1 0 #ffffff80;
+    color: #ffffff
+  }
+  .frosted { backdrop-filter: blur(18); background: #ffffff40 }
+  .clear { background: #ffffff10 }
+  Text.glass.big { font-size: 22 }
+  .soft { filter: blur(3) }
+</style>
+
+<!-- The page for a state. -->
+<component name="view" props={{ s: State }} event={Event}>
+  <Themed theme={light_theme()} sheet={effects_sheet(light_theme())}>
+    <Column class="page" cross="stretch">
+      <Column class="header">
+        <Text class="title">Effects</Text>
+        <Text class="subtitle">Shadows, gradients and blur, drawn on the GPU</Text>
+      </Column>
+      <Column class="body" cross="stretch">
+        <Flex class="cards">
+          <stat label="Visitors" figure="1,284"/>
+          <stat label="Sign-ups" figure="312"/>
+          <stat label="Uptime" figure="99.9%"/>
+        </Flex>
+        <Stack>
+          <Flex class="busy">
+            <for each={i in 0..<40}>
+              <SizedBox class={dot_class(i)} key="dot {i}"/>
+            </for>
+          </Flex>
+          <Positioned left="40" top="34" right="40">
+            <Column class={if s.frosted { "panel frosted" } else { "panel clear" }}>
+              <Text class="glass big">Frosted glass</Text>
+              <Text class="glass">The panel blurs what is behind it — backdrop-filter: blur(18).</Text>
+              <Row style="gap: 8">
+                <Button on_click={Frost}>Frost</Button>
+                <Button on_click={Clear}>Clear</Button>
+              </Row>
+            </Column>
+          </Positioned>
+        </Stack>
+        <Text class="label soft">This line is blurred — filter: blur(3).</Text>
+      </Column>
+    </Column>
+  </Themed>
+</component>
+
+<!-- A card: what it counts, and the count; its shadow lifts under the pointer. -->
+<component name="stat" props={{ label: string, figure: string }}>
+  <Column class="card">
+    <Text class="label">{label}</Text>
+    <Text class="figure">{figure}</Text>
+  </Column>
+</component>

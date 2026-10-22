@@ -124,6 +124,145 @@ pub data DrawOp =
   | PushClip(Rect, Radii)
   /// Undo the last [PushClip].
   | PopClip
+  /// The shadow a rounded rectangle casts — CSS's `box-shadow`: the shape moved by the
+  /// shadow's offset, grown by its spread and blurred; drawn outside the shape, or inside it
+  /// for an `inset` one.
+  | Shadow(Rect, Radii, BoxShadow)
+  /// A rounded rectangle filled with a gradient.
+  | GradientFill(Rect, Radii, Gradient)
+  /// What is already drawn behind the rounded rectangle, blurred by this radius — CSS's
+  /// `backdrop-filter: blur()`, for a frosted panel; the panel's own background goes over it.
+  | Backdrop(Rect, Radii, f32)
+  /// Draw what follows, until the matching [PopLayer], into a layer of its own covering the
+  /// rectangle, then put the layer down with the effect: blurred (CSS's `filter: blur()`).
+  | PushLayer(Rect, LayerEffect)
+  /// Put the last [PushLayer]'s layer down.
+  | PopLayer
+
+/// A shadow, as CSS's `box-shadow` has one: moved `x` and `y`, blurred by `blur` (the
+/// Gaussian's standard deviation is half of it, as a browser's), grown by `spread`, in
+/// `color` — inside the shape for `inset`.
+pub struct BoxShadow {
+  x: f32 = 0.0,
+  y: f32 = 0.0,
+  blur: f32 = 0.0,
+  spread: f32 = 0.0,
+  color: Color,
+  inset: bool = false,
+}
+
+/// A gradient: its kind and its colour stops, in order.
+pub struct Gradient {
+  kind: GradientKind,
+  stops: []ColorStop,
+}
+
+/// Along a line at an angle — CSS's degrees, `0.0` up, `90.0` to the right, `180.0` (its
+/// default) down — or out from the middle: to the farthest corner, as a circle or an ellipse
+/// of the rectangle's proportions.
+pub data GradientKind = LinearGradient(f32) | RadialGradient(bool)
+
+/// A colour at a place along a gradient, `0.0` its start and `1.0` its end; `None` spaced
+/// evenly between its neighbours, as CSS does.
+pub struct ColorStop {
+  color: Color,
+  at: Maybe<f32> = None,
+}
+
+/// What a layer does as it is put down: its content blurred by `blur` (`0.0` for none).
+pub struct LayerEffect {
+  blur: f32 = 0.0,
+}
+
+impl Gradient {
+  /// The stops' places, settled as CSS settles them: the first at 0 and the last at 1 when
+  /// not given, each no earlier than the one before, and the unplaced ones spaced evenly.
+  pub let places = pure (self) -> []f32 => {
+    let n = self.stops.len()
+    var spots: []f32 = [s in self.stops | s.at ?? -1.0]
+    if n == 0 { return spots }
+    if spots[0] < 0.0 { spots[0] = 0.0 }
+    if spots[n - 1] < 0.0 { spots[n - 1] = 1.0 }
+    for i in 1..<n { if spots[i] >= 0.0 && spots[i] < spots[i - 1] { spots[i] = spots[i - 1] } }
+    var i = 1
+    while i < n {
+      if spots[i] >= 0.0 {
+        i += 1
+        continue
+      }
+      var j = i
+      while spots[j] < 0.0 { j += 1 }
+      let from = spots[i - 1]
+      let step = (spots[j] - from) / f32(j - i + 1)
+      for k in i..<j { spots[k] = from + step * f32(k - i + 1) }
+      i = j
+    }
+    spots
+  }
+
+  /// How far along the gradient `p` is in `box`, 0 at its start and 1 at its end.
+  pub let along = pure (self, box: Rect, p: Point) -> f32 => {
+    let cx = box.x + box.w / 2.0
+    let cy = box.y + box.h / 2.0
+    match self.kind {
+      LinearGradient(degrees) => {
+        let a = degrees * 0.017453292
+        let dx = a.sin()
+        let dy = -a.cos()
+        // CSS's gradient line: long enough that the corners reach its ends.
+        let length = (box.w * dx).abs() + (box.h * dy).abs()
+        if length <= 0.0 { 0.0 } else { ((p.x - cx) * dx + (p.y - cy) * dy) / length + 0.5 }
+      },
+      RadialGradient(circle) => {
+        let hw = (box.w / 2.0).max(0.0001)
+        let hh = (box.h / 2.0).max(0.0001)
+        let ux = p.x - cx
+        let uy = p.y - cy
+        if circle {
+          (ux * ux + uy * uy).sqrt() / (hw * hw + hh * hh).sqrt()
+        } else {
+          // An ellipse of the box's proportions through its corners: radii √2 its halves.
+          let ex = ux / (hw * 1.4142135)
+          let ey = uy / (hh * 1.4142135)
+          (ex * ex + ey * ey).sqrt()
+        }
+      },
+    }
+  }
+
+  /// The colour at `t` along the gradient: between the stops either side, mixed with their
+  /// alpha premultiplied, as CSS mixes them.
+  pub let at = pure (self, t: f32) -> Color => {
+    let n = self.stops.len()
+    if n == 0 { return Color { r: 0, g: 0, b: 0, a: 0 } }
+    let marks = self.places()
+    if t <= marks[0] { return self.stops[0].color }
+    if t >= marks[n - 1] { return self.stops[n - 1].color }
+    var k = 1
+    while k < n - 1 && t > marks[k] { k += 1 }
+    let span = marks[k] - marks[k - 1]
+    let f = if span <= 0.0 { 1.0 } else { (t - marks[k - 1]) / span }
+    mixed(self.stops[k - 1].color, self.stops[k].color, f)
+  }
+}
+
+/// `a` and `b` mixed `f` of the way to `b`, alpha premultiplied.
+pub let mixed = pure (a: Color, b: Color, f: f32) -> Color => {
+  let aa = f32(a.a) / 255.0
+  let ba = f32(b.a) / 255.0
+  let alpha = aa + (ba - aa) * f
+  let channel = (x: u8, y: u8) -> u8 => {
+    if alpha <= 0.0 { return 0 }
+    let v = (f32(x) * aa + (f32(y) * ba - f32(x) * aa) * f) / alpha
+    u8(v.max(0.0).min(255.0).round())
+  }
+  Color {
+    r: channel(a.r, b.r),
+    g: channel(a.g, b.g),
+    b: channel(a.b, b.b),
+    a: u8((alpha * 255.0).max(0.0).min(255.0).round())
+  }
+}
 
 // ── Rectangles ───────────────────────────────────────────────────────────────
 

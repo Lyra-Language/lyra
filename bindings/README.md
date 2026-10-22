@@ -542,7 +542,12 @@ The example's interface is `examples/imgui/components_view.lui`.
   `Tag.class`, `Comp::part`, `Comp.class::part`; a descendant or pseudo-class selector is an
   error at its own line. **`<window min-width min-height max-width max-height/>`** at the top
   of a ui file writes `WINDOW_MIN_SIZE` and `WINDOW_MAX_SIZE`, for `App`'s `min_size` and
-  `max_size`. Each rule is marked with its line, so
+  `max_size`. **Effects, as CSS writes them**: `box-shadow` (`none`, or shadows a comma apart,
+  each `[inset] x y [blur [spread]] #colour`, `px` allowed), `background` or `background-image`
+  as `linear-gradient([Ndeg | to side or corner,] stops…)` (a corner taken as 45°) or
+  `radial-gradient([circle | ellipse,] stops…)`, each stop `#colour [N%]`, and `filter` and
+  `backdrop-filter` as `blur(N)` or `none` — each checked, an error at its line. A selector
+  may ask for several classes (`.card.hover`). Each rule is marked with its line, so
   `lui map` puts a token lyrac refuses back at it. **Parts**: `Comp::part` and
   `Comp.class::part` are checked against the parts the component's markup marks
   (`part="title"`) — or a control's (`Checkbox::box`, `Slider::thumb`,
@@ -587,6 +592,24 @@ for back. `ui.sdl3` is its one caller; `ui.access` builds the tree it is handed.
   offline or without SDL3 it builds `accesskit_stub.c` instead (every call a no-op, `start`
   false) and says why. MIT or Apache-2.0 (`NOTICE.md`); the licences are copied beside the
   archive.
+
+## `bindings/gpu/`
+
+`ui.gpu`'s renderer over SDL3's GPU API, in C (`gpu.c`) with its Metal shaders as source that
+SDL compiles at start-up — no shader toolchain at build time. Lyra hands it a frame as
+instances (`FLOATS_PER_INSTANCE`, 80 floats: quad, shape, radii, colours, kind, uv, the clip,
+gradient stops) in one storage buffer, and commands (`DRAW` a run from a texture, `PUSH_LAYER`,
+`POP_LAYER`, `BACKDROP`); `frame` draws them into a scene texture and blits it to the window.
+
+- **Built by `bindings/gpu/build.sh`**, which `./build.sh` runs, into `build/lib/liblyra-gpu.a`
+  on macOS with SDL3; elsewhere `gpu_stub.c`, whose `create` answers `None`, so `ui.gpu`
+  falls back to SDL's 2D renderer. Linux (Vulkan, SPIR-V) and Windows wait for a shader
+  toolchain (todo.md).
+- **The window must not have an SDL_Renderer**: SDL_GPU claims it, which is why `ui.gpu`
+  opens its own.
+- `keep_frames` and `read` give the last frame back (a fence waited on), for tests.
+- `LYRA_UI_RENDERER=sdl` refuses the GPU; `LYRA_UI_NOVSYNC` presents without vsync where the
+  window allows it (for measuring).
 
 ## `bindings/pty/`
 

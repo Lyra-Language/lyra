@@ -139,8 +139,18 @@ bool lyra_access_start(SDL_Window *window) {
   void *ns = SDL_GetPointerProperty(SDL_GetWindowProperties(window),
                                     SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, NULL);
   if (!ns) return false;
-  // The window's own class, whatever SDL names it, forwards focus to AccessKit's view.
-  accesskit_macos_add_focus_forwarder_to_window_class(object_getClassName((__bridge id)ns));
+  // The window's own class, whatever SDL names it, forwards focus to AccessKit's view — once
+  // a class: AccessKit panics adding the method to a class that has it, which a program's
+  // second window (or a window opened again) would.
+  const char *cls = object_getClassName((__bridge id)ns);
+  static char patched[8][128];
+  static int patched_count = 0;
+  bool done = false;
+  for (int i = 0; i < patched_count; i++) done = done || strcmp(patched[i], cls) == 0;
+  if (!done) {
+    accesskit_macos_add_focus_forwarder_to_window_class(cls);
+    if (patched_count < 8) strncpy(patched[patched_count++], cls, 127);
+  }
   adapter = accesskit_macos_subclassing_adapter_for_window(ns, snapshot, NULL, on_action, NULL);
   if (!adapter) return false;
   accesskit_macos_queued_events *events =

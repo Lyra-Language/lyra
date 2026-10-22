@@ -19,7 +19,9 @@ module ui.script
 //!   `PageDown`, or one character (`a`, `/`), which is its key.
 //! - `move:X,Y`, `down:X,Y`, `up:X,Y` and `click:X,Y` (a move, a press and a release) — the
 //!   pointer, in logical units; `scroll:N` scrolls down `N` lines (up for a negative `N`).
-//! - `resize:W,H` — the window resized; `dark`, `light` — the system's look changed.
+//! - `resize:W,H` — the window resized; `drag:W,H` — dragged to that size while the platform
+//!   holds the loop (its live-resize hook called, no input); `dark`, `light` — the system's
+//!   look changed.
 //! - `wait:N` — `N` milliseconds pass on the platform's clock, as far as the program waits
 //!   (a timer due sooner fires first). Only [parse_steps] reads it; a script of inputs alone
 //!   is [parse_script]'s.
@@ -85,13 +87,17 @@ pub struct ScriptPlatform {
   /// resize is held to, as a window's would be.
   least: Size = Size {},
   most: Size = Size {},
+  /// The live-resize hook, and how many times a drag step called it.
+  hook: Maybe<() -> void> = None,
+  dragged: i64 = 0,
   /// The clock, in milliseconds, and how much of the current wait has passed.
   clock: i64 = 0,
   waited: i64 = 0,
 }
 
-/// One step of a script: an input, or time passing.
-pub data Step = Played(InputEvent) | Waited(i64)
+/// One step of a script: an input, time passing, or the window dragged to a size — the
+/// platform's live-resize hook called from inside its wait, as macOS does, with no input.
+pub data Step = Played(InputEvent) | Waited(i64) | Dragged(Size)
 
 /// A platform playing `inputs`, its window `size` large, with no time passing.
 pub let script_platform = pure (inputs: []InputEvent, size: Size) -> ScriptPlatform =>
@@ -114,6 +120,15 @@ impl Platform for ScriptPlatform {
         if self.waited >= ms {
           self.next += 1
           self.waited = 0
+        }
+        []
+      },
+      Dragged(size) => {
+        self.next += 1
+        self.size = held(size, self.least, self.most)
+        if let Some(redraw) = self.hook {
+          self.dragged += 1
+          redraw()
         }
         []
       },
@@ -144,6 +159,7 @@ impl Platform for ScriptPlatform {
     true
   }
   update_access = (self, tree) => { self.access = tree }
+  on_live_resize = (self, hook) => { self.hook = Some(hook) }
   set_size_limits = (self, least, most) => {
     self.least = least
     self.most = most
@@ -163,7 +179,8 @@ let within = pure (value: f32, least: f32, most: f32) -> f32 => {
 }
 
 /// The inputs `script` writes down, or what is wrong with it — a script of inputs alone,
-/// which [parse_steps] reads too; time passing (`wait:N`) is refused here.
+/// which [parse_steps] reads too; time passing (`wait:N`) and a drag (`drag:W,H`) are refused
+/// here.
 pub let parse_script = pure (script: string) -> Result<[]InputEvent, string> => {
   var inputs: []InputEvent = []
   for step in parse_steps(script)? {
@@ -171,6 +188,8 @@ pub let parse_script = pure (script: string) -> Result<[]InputEvent, string> => 
       Played(input) => inputs.push(input),
       Waited(_) =>
         return Err("wait: is a step, not an input; read the script with parse_steps"),
+      Dragged(_) =>
+        return Err("drag: is a step, not an input; read the script with parse_steps"),
     }
   }
   Ok(inputs)
@@ -207,6 +226,11 @@ pub let parse_steps = pure (script: string) -> Result<[]Step, string> => {
     if let Some(ms) = token.strip_prefix("wait:") {
       let Some(n) = ms.parse_i64() else { return Err("not a number of milliseconds: ${token}") }
       inputs.push(Waited(n))
+      continue
+    }
+    if let Some(place) = token.strip_prefix("drag:") {
+      let Some(at) = point(place) else { return Err("not a size: ${token}") }
+      inputs.push(Dragged(Size { w: at.x, h: at.y }))
       continue
     }
     if let Some(place) = token.strip_prefix("resize:") {

@@ -12,12 +12,13 @@ A root of its own beside `std/` and `bindings/` (`build.sh` links it into `build
 
 | module | what | calls a library? |
 |---|---|---|
-| `ui.draw` | The display list: `DrawOp` (`Fill`, `Border`, `Glyphs`, `Picture`, `PushClip`, `PopClip`) and its geometry — `Point`, `Size`, `Rect`, `Radii` (CSS's fitting), `Color` (`rgb`/`rgba`), `Image` (`pixelated` keeps its texels crisp when drawn larger), `TextureId`, `GlyphQuad`. Logical units throughout. | no |
+| `ui.draw` | The display list: `DrawOp` (`Fill`, `Border`, `Glyphs`, `Picture`, `PushClip`, `PopClip`, and the effects `Shadow`, `GradientFill`, `Backdrop`, `PushLayer`/`PopLayer` with `BoxShadow`, `Gradient` and its `ColorStop`s, `LayerEffect`) and its geometry — `Point`, `Size`, `Rect`, `Radii` (CSS's fitting), `Color` (`rgb`/`rgba`), `Image` (`pixelated` keeps its texels crisp when drawn larger), `TextureId`, `GlyphQuad`. Logical units throughout. | no |
 | `ui.tess` | Rounded rectangles and borders as triangles (`Mesh` of `Vertex`), edges softened over one pixel. In **pixels**: a renderer scales first. | no |
 | `ui.backend` | The two seams: `Platform` (window, events, scale, text input, clipboard, cursor) and `Renderer` (`upload`, `update`, `draw(background, ops)`), and `InputEvent`, `Key`, `Modifiers`, `PointerButton`, `Cursor`; `AccessTree`/`AccessNode`/`AccessRole`/`AccessRequest` and `ACCESS_*`, for `Platform.update_access` and the `AccessAction` input; and `NativeFields` (a phone's own text fields placed by identity, edits back as `FieldEdited`), declared and not yet implemented. | no |
-| `ui.sdl3` | Both traits over `bindings.sdl3`: `open` → `SdlWindow { platform, renderer }`, `close`, and `capture` (a frame read back, for tests). Draws through `SDL_RenderGeometry`, a call a run of ops on one texture (`geometry_calls` counts them); on macOS tells VoiceOver through `bindings.accesskit`. | SDL3, AccessKit |
+| `ui.gpu` | The `Renderer` on the GPU (`bindings.gpu`: SDL3's GPU API, Metal shaders), and `open` → `GpuWindow { platform, renderer: AnyRenderer }`, the GPU's renderer where there is one and `ui.sdl3`'s where not (or with `LYRA_UI_RENDERER=sdl`); `close`, `on_gpu`, `keep_frames`/`read_frame` (a frame read back), `prepare` (a frame's cost). | SDL3 (GPU) |
+| `ui.sdl3` | Both traits over `bindings.sdl3`: `open` → `SdlWindow { platform, renderer }` (and its pieces, `open_window`, `renderer_for`, `platform_for`, which `ui.gpu` opens with), `close`, and `capture` (a frame read back, for tests). Draws through `SDL_RenderGeometry`, a call a run of ops on one texture (`geometry_calls` counts them); on macOS tells VoiceOver through `bindings.accesskit`. | SDL3, AccessKit |
 | `ui.text` | `Fonts` (font files by family; `add_system_font` tries `SYSTEM_FONTS`), `FontSpec` (family, size, `line_height`), `lay_out` → `TextBlock` (lines of placed glyphs, cached by text, font and width), and `GlyphAtlas`, which renders glyphs into one texture through `Renderer.update` and answers a `Glyphs` op. | HarfBuzz, FreeType |
-| `ui.style` | `Style` (all `Maybe`), `Insets`, `Rule`/`Sheet`, `Theme` (`Palette`, `Spacing`, radius, font, `elements` sheet; `light_theme`, `dark_theme`), its layout properties (sizes, flex's and grid's — `FlexDirection`, `LineWrap`, `Justify`, `ItemAlign`, `Basis`, tracks built by `px`, `fr`, `auto_track`, `min_content`, `max_content`, `minmax`, `repeat_tracks`, `GridSpan`, `GridFlow`), and the cascade: `Cascade` settles an element's tag, classes, part and inline style into `Computed`. | no |
+| `ui.style` | `Style` (all `Maybe`), `Insets`, `Rule`/`Sheet`, `Theme` (`Palette`, `Spacing`, radius, font, `elements` sheet; `light_theme`, `dark_theme`), its layout properties (sizes, flex's and grid's — `FlexDirection`, `LineWrap`, `Justify`, `ItemAlign`, `Basis`, tracks built by `px`, `fr`, `auto_track`, `min_content`, `max_content`, `minmax`, `repeat_tracks`, `GridSpan`, `GridFlow`), its effects (`box_shadow`, `background_gradient`, `filter_blur`, `backdrop_blur`), and the cascade: `Cascade` settles an element's tag, classes, part and inline style into `Computed`. | no |
 | `ui.layout` | `Node<e>` (kind, tag, class, part, style, children, key, label; `e` the program's event type, `NoEvent` for none) built by `row`, `column`, `flex`, `grid`, `expanded`, `stack`, `positioned`, `padding`, `align`, `sized`, `scroll`, `text`, `image`, `themed`, `component` and the controls `button`, `checkbox`, `slider`, `text_input`, and `.with_class`/`.with_style`/`.with_part`/`.keyed`/`.labelled`/`.aligned`; `layout`/`layout_with(node, Constraints, fonts, Interaction) -> Laid<e>` (each with its identity, role, label, focus ring and a field's caret) and `paint(laid, origin, scale, fonts, atlas, renderer) -> []DrawOp`. Flex and grid are in `ui/layout/flex.lyra` and `grid.lyra` (one module, a directory). | no (text through `ui.text`) |
 | `ui.interact` | `Ui`: the framework's state by identity (focus, hover, press, scroll offsets, carets, selections, undo), `frame` (lay out and drop what left the tree), `handle(laid, input, platform) -> []e`, `place_text_input`; `hit`, `control_at`, `find`, `focus_order`; `Editing`, a field's editing operations. | no |
 | `ui.app` | `App { view, update: (s, e) -> (s, []Command<e>), subscriptions: (s) -> []Subscription<e>, background }` (`sandbox(view, update, bg)` for a plain update); `Command` (`WriteFile`, `ReadFile`, `After`, `CopyText`, `PasteText`, `OpenUrl`, `QuitApp`), `Subscription` (`EveryFrame`, `Every`, `OnResize`, `OnAppearance`); `run`, and `Host` (`host_of`, `step`) for a loop of `main`'s own — which `lyrac run --live` needs. | no |
@@ -80,13 +81,18 @@ layer — implements the two traits; the display list is the whole contract.
 - **The window's least and greatest size** are `App.min_size` and `App.max_size`, which the
   host hands `Platform.set_size_limits` on its first pass (`ui.sdl3`: SDL's minimum and maximum
   window size; `ScriptPlatform` holds its resize steps to them).
-- **Live resizing on macOS**: AppKit holds the main thread while a window's edge is dragged,
-  so `main`'s loop gets nothing; a program draws each frame the resize asks for from an event
-  watch (`bindings.sdl3`'s `add_event_watch`, `live_resize`) calling `Host.redraw` on a window
-  kept at module level — `examples/ui/layouts.lyra` shows how. **Draw only at a new size, and
-  never from inside the watch's own frame**: SDL asks sixty times a second for as long as
-  AppKit says the resize lasts, moved or not, and answering each with a whole frame froze the
-  window.
+- **Live resizing, every program's**: AppKit holds the main thread while a window's edge is
+  dragged, so a program's loop gets nothing until the drag ends. `ui.app`'s `run` — and a
+  program with its own loop, through `running`, `follow_resizes` and `step_running` — hands the
+  platform a hook (`Platform.on_live_resize`) that redraws the running window, held in one
+  `shared` box so the hook and the loop step the same host. `ui.sdl3` owns the one SDL event
+  watch that calls it, on both renderers. **The hook draws only at a size not yet shown, and
+  never from inside its own frame**: SDL asks sixty times a second for as long as AppKit says
+  the resize lasts, and answering each with a whole frame froze the window. `ui.gpu` rebuilds
+  its scene, layer and blur textures at the new size, and the window's Metal layer is pinned
+  top-left (`bindings.gpu`'s `pin_contents`, both renderers) so AppKit never shows the last
+  frame stretched while the next is drawn. `ScriptPlatform` plays a drag
+  (`drag:W,H`) the same way, the hook called from inside its wait.
 - **The cascade is five layers**, each beating the ones below whatever their specificity:
   the theme's `elements`, the global sheets (`themed`'s, outermost first, one layer), the
   enclosing component's scoped sheet (never reaching a component inside it; made from the
@@ -105,8 +111,11 @@ layer — implements the two traits; the display list is the whole contract.
 - **Identity is a node's path from the root**, an index a step or a `.keyed` key in its place;
   `Ui` holds focus, hover, press, scroll offsets and a field's caret, selection and undo by
   it, and drops what belongs to an identity no longer in the tree.
-- **A control's state is a class** — `hover`, `pressed`, `focus` — added for the cascade
-  (`Button.hover`); pseudo-selectors (`:hover`) are deferred (todo.md). A focused control gets
+- **A state is a class** — `hover`, `pressed`, `focus` — added for the cascade
+  (`Button.hover`, `.card.hover`); pseudo-selectors (`:hover`) are deferred (todo.md). **Hover
+  is any element's**: the deepest element under the pointer and every one around it, as
+  CSS's `:hover`. A selector may ask for several classes (`.card.hover`), each adding 10 to its
+  specificity. A focused control gets
   a ring in the theme's `focus` colour. A control's insides are parts (`Checkbox::box`,
   `Slider::thumb`, `TextInput::placeholder`); `control_rules` gives a theme its defaults.
 - **The keyboard**: Tab/Shift-Tab through the controls in the tree's order, wrapping; Space
@@ -149,9 +158,22 @@ layer — implements the two traits; the display list is the whole contract.
   element whose node, constraints, cascade and state are as last frame gives back its last
   `Laid`, the theme in the key. Shaped text is cached too, at most `LAID_LIMIT` paragraphs
   a generation, two generations kept.
-- **What SDL's 2D renderer cannot do**: a clip is a whole-pixel rectangle, so `PushClip`'s
-  radii are ignored there; and its software renderer (headless, or no GPU) truncates each
-  vertex to a whole pixel, so edges come out half a pixel soft.
+- **Effects, CSS's**: `box_shadow` (offset, blur, spread, colour, `inset`, several, the first on
+  top), `background_gradient` (linear by angle, radial as circle or ellipse, colour stops at
+  places or spread evenly, mixed premultiplied), `filter_blur` (the element and its insides
+  drawn into a layer and blurred) and `backdrop_blur` (what is behind it blurred). Painted in
+  CSS's order: a filter's layer, outer shadows, backdrop, colour, gradient, inset shadows,
+  border, content. A blur radius is CSS's: the Gaussian's deviation is half of it.
+- **Two renderers**: `ui.gpu` draws every op exactly on the GPU — a shape's coverage its rounded
+  box's signed distance (corners, borders, rounded clips), a shadow the analytic Gaussian of
+  its box, a gradient per pixel with up to eight stops (more resampled), and blur as two
+  passes at half size; one instanced draw a frame unless a second texture is sampled.
+  **`ui.sdl3` approximates**: a shadow's falloff is a straight ramp and an inset one a soft
+  band; a gradient is vertex colours on the outline and its middle (a two-stop linear one
+  exact); a clip is a whole-pixel rectangle, so `PushClip`'s radii are ignored; blur is left
+  out, said once a run on stderr; and its software renderer (headless, or no GPU) truncates
+  each vertex to a whole pixel, so edges come out half a pixel soft. Both draw the existing
+  screens alike (the Layouts demo: a mean difference of 0.0015 of 255 a channel).
 
 ## Examples and tests
 
@@ -169,6 +191,9 @@ layer — implements the two traits; the display list is the whole contract.
   grid of one, two or four columns by `@media`, with a `<window>` least size and a dark look
   by `prefers-color-scheme`; run by `examples/ui/layouts.lyra`, which redraws during a live
   resize (`--width W --script "…" --png FILE` headless).
+- `examples/ui/effects_view.lui` — shadows, gradients and blur: a gradient header, cards whose
+  shadows lift under the pointer, a frosted panel over a busy background, a blurred line; run by
+  `examples/ui/effects.lyra` on the GPU (`--png FILE` reads a GPU frame back).
 - `examples/ui/form.lyra` — phase 3's gate, a form that works from the keyboard: two
   fields, a checkbox, a slider and Submit, run by `ui.app`. `--script "…"` plays input
   instead of waiting for a user and prints the state it left; `--png FILE` the last frame.
@@ -188,6 +213,10 @@ layer — implements the two traits; the display list is the whole contract.
   `TestRun_UiAccessibilityTree` (a form's tree, and VoiceOver's actions driving it).
   `TestRun_UiMediaQueries` breakpoints, a media rule against specificity, `not` and a comma,
   and a host resized within a breakpoint (given back) and across one (relaid out);
-  `TestRun_UiWindowSizeLimits` the window held to its least and greatest size.
+  `TestRun_UiWindowSizeLimits` the window held to its least and greatest size;
+  `TestRun_UiLiveResize` a drag redrawing at each new size from inside the wait.
+  `TestRun_UiEffectsInTheCascade` the effects' order and a compound selector and hover through a
+  child; `TestRun_UiFallbackShadowsAndGradients` the fallback's pixels; `TestRun_UiGpuReadback`
+  a GPU frame read back — a shadow's falloff, gradient stops, a blurred edge (macOS with a GPU).
   `TestRun_UiFlex` and `TestRun_UiGrid` hold flex and grid to hand-worked CSS results, child
   rect by child rect; `TestLui_UiTargetFlexAndGrid` the markup's layout properties.

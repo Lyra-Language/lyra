@@ -277,7 +277,9 @@ impl Ui {
   /// held field's selection reaches it.
   let pointer_moved<e> = (self: mut, laid: Laid<e>, at: Point) -> []e => {
     self.pointer = at
-    self.state.hover = control_at(laid, at).map((f) => f.laid.id) ?? ""
+    // The deepest element under the pointer; those around it are hovered too (`with_state`).
+    let path = hit(laid, at)
+    self.state.hover = if path.len() > 0 { path[path.len() - 1].laid.id } else { "" }
     if self.state.pressed.len() == 0 { return [] }
     let Some(held) = find(laid, self.state.pressed, Point {}) else { return [] }
     match held.laid.kind {

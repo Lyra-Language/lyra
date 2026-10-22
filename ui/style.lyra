@@ -34,7 +34,7 @@ module ui.style
 //! set them takes its parent's, and an opacity multiplies into its parent's, so a half-
 //! transparent card's text is half-transparent too. Everything else starts unset.
 
-import ui.draw.{ Color, Size, rgb, rgba }
+import ui.draw.{ Color, Size, BoxShadow, Gradient, rgb, rgba }
 import ui.backend.{ Appearance }
 import ui.text.{ FontSpec }
 
@@ -139,6 +139,15 @@ pub struct Style {
   /// An item's place in a grid: its first column or row line and how many tracks it spans.
   grid_column: Maybe<GridSpan> = None,
   grid_row: Maybe<GridSpan> = None,
+  /// Shadows the element casts, the first on top — CSS's `box-shadow`.
+  box_shadow: Maybe<[]BoxShadow> = None,
+  /// A gradient over the background colour — CSS's `background-image: linear-gradient(…)`.
+  background_gradient: Maybe<Gradient> = None,
+  /// The element and everything in it blurred by this radius (`filter: blur()`), and what is
+  /// behind it blurred (`backdrop-filter: blur()`) — drawn by `ui.gpu`; SDL's 2D renderer
+  /// draws them unblurred.
+  filter_blur: Maybe<f32> = None,
+  backdrop_blur: Maybe<f32> = None,
 }
 
 /// A flex container's main axis, and which way along it its items go (CSS's
@@ -259,6 +268,10 @@ impl Style {
     justify_self: self.justify_self.or(base.justify_self),
     grid_column: self.grid_column.or(base.grid_column),
     grid_row: self.grid_row.or(base.grid_row),
+    box_shadow: self.box_shadow.or(base.box_shadow),
+    background_gradient: self.background_gradient.or(base.background_gradient),
+    filter_blur: self.filter_blur.or(base.filter_blur),
+    backdrop_blur: self.backdrop_blur.or(base.backdrop_blur),
   }
 }
 
@@ -544,6 +557,10 @@ pub struct Computed {
   justify_self: Maybe<ItemAlign> = None,
   grid_column: GridSpan = GridSpan {},
   grid_row: GridSpan = GridSpan {},
+  box_shadow: []BoxShadow = [],
+  background_gradient: Maybe<Gradient> = None,
+  filter_blur: f32 = 0.0,
+  backdrop_blur: f32 = 0.0,
 }
 
 /// Where an element stands in the cascade: the theme in force, the global rules (outermost
@@ -582,19 +599,23 @@ impl Cascade {
     out = applied(self.scoped, tag, classes, out)
     if part.len() > 0 && self.component.len() > 0 {
       // `Component::part`, then the more specific `Component.class::part`, each in order.
-      for rank in #[1, 11] {
-        for rules in [self.theme.elements.rules, self.globals, self.outer_scoped] {
-          for rule in rules {
-            let fits = rule.selector.split(",").any((one) => part_specificity(
+      var parts: []Rule = []
+      var ranked: [](i64, i64) = []
+      for rules in [self.theme.elements.rules, self.globals, self.outer_scoped] {
+        for rule in rules {
+          for one in rule.selector.split(",") {
+            let rank = part_specificity(
               one.trim(),
               self.component,
               self.component_classes,
               part
-            ) == rank)
-            if fits { out = rule.style.over(out) }
+            )
+            if rank > 0 { ranked.push((rank, parts.len())) }
           }
+          parts.push(rule)
         }
       }
+      for (_, k) in by_rank(ranked) { out = parts[k].style.over(out) }
     }
     inline.over(out)
   }
@@ -650,6 +671,10 @@ impl Cascade {
       justify_self: s.justify_self,
       grid_column: s.grid_column ?? GridSpan {},
       grid_row: s.grid_row ?? GridSpan {},
+      box_shadow: s.box_shadow ?? [],
+      background_gradient: s.background_gradient,
+      filter_blur: (s.filter_blur ?? 0.0).max(0.0),
+      backdrop_blur: (s.backdrop_blur ?? 0.0).max(0.0),
     }
   }
 
@@ -683,32 +708,44 @@ impl Cascade {
 }
 
 /// `base` with the rules of one layer matching an element of `tag` and `classes` laid over it,
-/// least specific first and, among equals, in order. A part selector is no rule of a layer's.
+/// least specific first and, among equals, in order — a selector list a rule for each of its
+/// selectors. A part selector is no rule of a layer's.
 let applied = pure (
   rules: []Rule,
   tag: string,
   classes: string,
   base: Style
 ) -> Style => {
+  var ranked: [](i64, i64) = []
+  for k, rule in rules {
+    for one in rule.selector.split(",") {
+      let rank = specificity(one.trim(), tag, classes)
+      if rank > 0 { ranked.push((rank, k)) }
+    }
+  }
   var out = base
-  for rank in #[1, 10, 11] {
-    for rule in rules {
-      // A selector list is a rule for each selector, in the same place.
-      if rule.selector.split(",").any((one) => specificity(
-        one.trim(),
-        tag,
-        classes
-      ) == rank) {
-        out = rule.style.over(out)
-      }
+  for (_, k) in by_rank(ranked) { out = rules[k].style.over(out) }
+  out
+}
+
+/// `ranked` (a specificity and a rule's index) in order of specificity, ties in order.
+let by_rank = pure (ranked: [](i64, i64)) -> [](i64, i64) => {
+  var out = [...ranked]
+  for i in 1..<out.len() {
+    var j = i
+    while j > 0 && out[j - 1].0 > out[j].0 {
+      let held = out[j]
+      out[j] = out[j - 1]
+      out[j - 1] = held
+      j -= 1
     }
   }
   out
 }
 
 /// How specific a part rule's `selector` is for part `part` of a component tagged `component`
-/// with `classes`: 1 for `Component::part`, 11 for `Component.class::part` with one of its
-/// classes, 0 when it does not match.
+/// with `classes`: 1 for `Component::part`, and 10 more for each class it asks of the component
+/// (`Component.big::part`), every one of which it must have; 0 when it does not match.
 pub let part_specificity = pure (
   selector: string,
   component: string,
@@ -718,22 +755,27 @@ pub let part_specificity = pure (
   let halves = selector.split("::")
   if halves.len() != 2 || halves[1] != part { return 0 }
   let head = halves[0].split(".")
-  if head.len() > 2 || head[0] != component { return 0 }
-  if head.len() == 1 { return 1 }
-  if classes.split(" ").any((c) => c == head[1]) { 11 } else { 0 }
+  if head[0] != component { return 0 }
+  let have = classes.split(" ")
+  for i in 1..<head.len() {
+    if !have.any((c) => c == head[i]) { return 0 }
+  }
+  1 + 10 * (head.len() - 1)
 }
 
-/// How specific `selector` is for an element of `tag` with `classes`: 1 for its tag, 10 for
-/// one of its classes, 11 for both, 0 when it does not match (a part selector never does).
+/// How specific `selector` is for an element of `tag` with `classes`: 1 for its tag and 10 for
+/// each class it asks for (`Button.primary.hover` is 21), every one of which the element must
+/// have; 0 when it does not match (a part selector never does).
 pub let specificity = pure (selector: string, tag: string, classes: string) -> i64 => {
-  if selector.contains("::") { return 0 }
+  if selector.contains("::") || selector.len() == 0 { return 0 }
   let parts = selector.split(".")
-  if parts.len() > 2 { return 0 }
   let want_tag = parts[0]
-  let want_class = if parts.len() == 2 { parts[1] } else { "" }
   if want_tag.len() > 0 && want_tag != tag { return 0 }
-  if want_class.len() > 0 && !classes.split(" ").any((c) => c == want_class) { return 0 }
-  (if want_tag.len() > 0 { 1 } else { 0 }) + (if want_class.len() > 0 { 10 } else { 0 })
+  let have = classes.split(" ")
+  for i in 1..<parts.len() {
+    if parts[i].len() == 0 || !have.any((c) => c == parts[i]) { return 0 }
+  }
+  (if want_tag.len() > 0 { 1 } else { 0 }) + 10 * (parts.len() - 1)
 }
 
 /// `color` at `opacity` times its own alpha.

@@ -1,0 +1,141 @@
+@link("lyra-gpu")
+module bindings.gpu
+//! `ui.gpu`'s C half (`gpu.c`): a renderer over SDL3's GPU API that draws a frame of
+//! instances — 80 floats each, [FLOATS_PER_INSTANCE] — and the commands that draw runs of
+//! them, blur layers and backdrops. Built by `bindings/gpu/build.sh` (which `./build.sh`
+//! runs) on macOS, its Metal shaders compiled by SDL at start-up; elsewhere a stub whose
+//! [create] answers `None`.
+
+import std.ffi
+import bindings.sdl3.{ Window }
+
+/// A device, its pipelines and textures, drawing into one window.
+pub type Gpu = ^u8
+
+/// How many floats one instance takes, and how many words one command.
+pub const FLOATS_PER_INSTANCE: i64 = 80
+pub const COMMAND_WORDS: i64 = 6
+
+/// The commands: draw a run of instances from a texture (`-1` for none), start a layer, put
+/// the last one down blurred, and draw an instance over what is behind it blurred.
+pub const DRAW: i64 = 1
+pub const PUSH_LAYER: i64 = 2
+pub const POP_LAYER: i64 = 3
+pub const BACKDROP: i64 = 4
+
+/// A renderer drawing into `window`, if this machine has a GPU SDL can drive with Metal
+/// shaders (and `LYRA_UI_RENDERER` is not `sdl`).
+pub let create = (window: Window) -> Maybe<Gpu> => {
+  let g = unsafe { lyra_gpu_create(window) }
+  if base(g) == nullptr { None } else { Some(g) }
+}
+
+/// `window`'s Metal layer told to keep a frame at its top-left, unscaled, until the next —
+/// rather than stretched to the window's new size while a resize waits for one. Either
+/// renderer's window; nothing off macOS.
+pub let pin_contents = (window: Window) -> void =>
+  unsafe { lyra_gpu_pin_contents(window) }
+
+/// The renderer put away, its textures and the window's claim with it.
+pub let destroy = (g: Gpu) -> void => unsafe { lyra_gpu_destroy(g) }
+
+/// `argb` (`width` × `height`, `0xAARRGGBB`) kept as a texture; its number, or `None`.
+pub let upload = (
+  g: Gpu,
+  width: i64,
+  height: i64,
+  argb: []u32,
+  pixelated: bool
+) -> Maybe<i64> => {
+  if argb.len() < width * height || width <= 0 || height <= 0 { return None }
+  let id = unsafe { lyra_gpu_upload(g, width, height, argb.data(), pixelated) }
+  if id < 0 { None } else { Some(id) }
+}
+
+/// `argb` written into texture `id` at texel (`x`, `y`).
+pub let update = (
+  g: Gpu,
+  id: i64,
+  x: i64,
+  y: i64,
+  width: i64,
+  height: i64,
+  argb: []u32
+) -> bool => {
+  if argb.len() < width * height || width <= 0 || height <= 0 { return false }
+  unsafe { lyra_gpu_update(g, id, x, y, width, height, argb.data()) }
+}
+
+/// A frame: cleared to (`r`, `g`, `b`, `a`, each 0–1), `commands` run over `instances`, shown.
+/// False when no frame could be drawn (the window hidden).
+pub let frame = (
+  g: Gpu,
+  r: f32,
+  green: f32,
+  b: f32,
+  a: f32,
+  instances: []f32,
+  commands: []i64
+) -> bool => {
+  let count = instances.len() / FLOATS_PER_INSTANCE
+  let words = commands.len() / COMMAND_WORDS
+  let ins: ^f32 = if instances.len() == 0 { nullptr } else { unsafe { instances.data() } }
+  let cmds: ^i64 = if commands.len() == 0 { nullptr } else { unsafe { commands.data() } }
+  unsafe { lyra_gpu_frame(g, r, green, b, a, ins, count, cmds, words) }
+}
+
+/// Keep the frames drawn from now on for [read] — a test reading what the GPU drew.
+pub let keep_frames = (g: Gpu, keep: bool) -> void =>
+  unsafe { lyra_gpu_keep_frames(g, keep) }
+
+/// The last frame kept: its width, height and pixels (`0xAARRGGBB`), or `None`.
+pub let read = (g: Gpu, cap: i64) -> Maybe<(i64, i64, []u32)> => {
+  var out: []u32 = [0; cap]
+  var w: i64 = 0
+  var h: i64 = 0
+  if !unsafe { lyra_gpu_read(g, out.data_mut(), cap, &mut w, &mut h) } { return None }
+  Some((w, h, out.slice(0, w * h)))
+}
+
+// ---------------------------------------------------------------------------------------
+// Foreign declarations
+// ---------------------------------------------------------------------------------------
+
+unsafe extern lyra_gpu_create: (window: Window) -> Gpu
+unsafe extern lyra_gpu_pin_contents: (window: Window) -> void
+unsafe extern lyra_gpu_destroy: (g: Gpu) -> void
+unsafe extern lyra_gpu_upload: (
+  g: Gpu,
+  w: i64,
+  h: i64,
+  argb: ^u32,
+  pixelated: bool
+) -> i64
+unsafe extern lyra_gpu_update: (
+  g: Gpu,
+  id: i64,
+  x: i64,
+  y: i64,
+  w: i64,
+  h: i64,
+  argb: ^u32
+) -> bool
+unsafe extern lyra_gpu_frame: (
+  g: Gpu,
+  r: f32,
+  green: f32,
+  b: f32,
+  a: f32,
+  instances: ^f32,
+  instance_count: i64,
+  commands: ^i64,
+  command_count: i64
+) -> bool
+unsafe extern lyra_gpu_keep_frames: (g: Gpu, keep: bool) -> void
+unsafe extern lyra_gpu_read: (
+  g: Gpu,
+  out: ^mut u32,
+  cap: i64,
+  w: ^mut i64,
+  h: ^mut i64
+) -> bool

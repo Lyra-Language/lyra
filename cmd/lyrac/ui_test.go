@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -2079,5 +2080,403 @@ let main = () -> u8 => {
 	out, err = exec.Command(filepath.Join(dir, "controls")).CombinedOutput()
 	if want := "300: 0+160 160+160 320+0\n1000: 0+160 160+160 320+100\n"; err != nil || string(out) != want {
 		t.Errorf("controls in a flex row: %v\ngot\n%s\nwant\n%s", err, out, want)
+	}
+}
+
+// Shadows and gradients through SDL's 2D renderer, which approximates them: a card's shadow
+// darkens the white below it and is gone a little further down; a left-to-right gradient
+// is red at its left, blue at its right and purple between; a radial one is white in its
+// middle. (The exact falloff is ui.gpu's, tested against the Gaussian in gpu_test.go.)
+func TestRun_UiFallbackShadowsAndGradients(t *testing.T) {
+	skipWithoutText(t)
+	if err := exec.Command("pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	t.Setenv("SDL_VIDEODRIVER", "dummy")
+	t.Setenv("SDL_RENDER_DRIVER", "software")
+	t.Setenv("LYRA_STD", repoRoot(t))
+	src := filepath.Join(t.TempDir(), "main.lyra")
+	if err := os.WriteFile(src, []byte(`import ui.sdl3
+import ui.sdl3.{ capture }
+import ui.draw.{ Point, Size, Color, Image, rgb, rgba, BoxShadow, Gradient, ColorStop, LinearGradient, RadialGradient }
+import ui.text.{ fonts_new, glyph_atlas }
+import ui.style.{ Style }
+import ui.layout.{ Node, NoEvent, sized, stack, positioned, Edges, layout, loose, paint }
+
+/// A card with a shadow under it, a left-to-right gradient, and a radial one, drawn by SDL's
+/// 2D renderer: the pixels where a shadow falls, either side of a stop, and well clear.
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  let Ok(window) = sdl3.open("fx", 300.0, 220.0) else { return 2 }
+  var platform = window.platform
+  var renderer = window.renderer
+  var atlas = glyph_atlas()
+  let view: Node<NoEvent> = stack([
+    sized::<NoEvent>(Some(300.0), Some(220.0)).with_style(Style { background: Some(rgb(0xFFFFFF)) }),
+    positioned(Edges { left: Some(20.0), top: Some(20.0) }, box(Style {
+      background: Some(rgb(0xFFFFFF)),
+      box_shadow: Some([BoxShadow { y: 10.0, blur: 12.0, color: rgba(0x00000080) }]),
+    })),
+    positioned(Edges { left: Some(160.0), top: Some(20.0) }, box(Style {
+      background_gradient: Some(Gradient { kind: LinearGradient(90.0), stops: [ColorStop { color: rgb(0xFF0000) }, ColorStop { color: rgb(0x0000FF) }] }),
+    })),
+    positioned(Edges { left: Some(160.0), top: Some(120.0) }, box(Style {
+      background_gradient: Some(Gradient { kind: RadialGradient(true), stops: [ColorStop { color: rgb(0xFFFFFF) }, ColorStop { color: rgb(0x000000) }] }),
+    })),
+  ])
+  let laid = layout(view, loose(Size { w: 300.0, h: 220.0 }), fonts)
+  let ops = paint(laid, Point {}, 1.0, fonts, atlas, renderer)
+  let Some(frame) = capture(renderer, rgb(0xFFFFFF), ops) else { return 3 }
+  let at = (x: i64, y: i64) -> string => {
+    let p = frame.argb[y * frame.width + x]
+    "${(p >> 16) & 0xFF},${(p >> 8) & 0xFF},${p & 0xFF}"
+  }
+  println("card middle ${at(70, 50)}, shadow under ${at(70, 92)}, shadow fading ${at(70, 100)}, clear ${at(70, 130)}")
+  println("linear left ${at(162, 50)}, linear middle ${at(210, 50)}, linear right ${at(258, 50)}")
+  println("radial centre ${at(210, 150)}, corner ${at(162, 122)}")
+  sdl3.close(platform, renderer)
+  0
+}
+
+/// A box 100 × 60, rounded.
+let box = pure (style: Style) -> Node<NoEvent> =>
+  sized::<NoEvent>(Some(100.0), Some(60.0)).with_style(Style { style | radius: Some(10.0) })
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := captureRun(t, "run", src)
+	if code == 2 {
+		t.Skipf("SDL could not open a dummy window here: %s", stdout)
+	}
+	if code != 0 {
+		t.Fatalf("exited %d\nstderr: %s", code, stderr)
+	}
+	pixel := func(name string) [3]int {
+		m := regexp.MustCompile(regexp.QuoteMeta(name) + ` (\d+),(\d+),(\d+)`).FindStringSubmatch(stdout)
+		if m == nil {
+			t.Fatalf("no %q in:\n%s", name, stdout)
+		}
+		var p [3]int
+		for i := range p {
+			p[i], _ = strconv.Atoi(m[i+1])
+		}
+		return p
+	}
+	near := func(name string, want [3]int, by int) {
+		got := pixel(name)
+		for i := range got {
+			if d := got[i] - want[i]; d > by || d < -by {
+				t.Errorf("%s: got %v, want %v within %d", name, got, want, by)
+				return
+			}
+		}
+	}
+	near("card middle", [3]int{255, 255, 255}, 0)
+	near("shadow under", [3]int{200, 200, 200}, 40)
+	near("clear", [3]int{255, 255, 255}, 0)
+	near("linear left", [3]int{255, 0, 0}, 25)
+	near("linear middle", [3]int{128, 0, 128}, 25)
+	near("linear right", [3]int{0, 0, 255}, 25)
+	near("radial centre", [3]int{255, 255, 255}, 15)
+}
+
+// Effects in the cascade and the display list: an element with every one paints, in CSS's
+// order, a layer for its filter, its outer shadows (the first on top, so last), its backdrop,
+// its colour, its gradient, its inset shadow, its border, and the layer put down. A compound
+// selector (.card.hover, 20) beats a single class (.card, 10) though written before it,
+// replacing the whole shadow list; and hovering the element inside the second card hovers the
+// card, as CSS's :hover reaches ancestors.
+func TestRun_UiEffectsInTheCascade(t *testing.T) {
+	got := runUiProgram(t, `import ui.draw.{
+  Point,
+  Size,
+  Rect,
+  rgb,
+  rgba,
+  DrawOp,
+  Fill,
+  Border,
+  Shadow,
+  GradientFill,
+  Backdrop,
+  PushLayer,
+  PopLayer,
+  BoxShadow,
+  Gradient,
+  ColorStop,
+  LinearGradient,
+}
+import ui.text.{ fonts_new, glyph_atlas }
+import ui.backend.{ Renderer }
+import ui.draw.{ TextureId }
+import ui.style.{ Style, Sheet, Rule, light_theme }
+import ui.layout.{ Node, NoEvent, Laid, column, sized, themed, layout_with, loose, interaction_new, paint }
+
+/// A renderer that draws nothing.
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => {}
+}
+
+/// The ops an element with every effect paints, in order; a compound selector against a
+/// single class, either order; and a card hovered through the element under the pointer.
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  let card = sized::<NoEvent>(Some(100.0), Some(50.0)).with_class("card")
+  let view: Node<NoEvent> = themed(light_theme(), sheet, [column([card, sized::<NoEvent>(Some(10.0), Some(10.0), [sized::<NoEvent>(Some(4.0), Some(4.0))]).with_class("card")])])
+  var ui = interaction_new()
+  for hovered in ["", "#/0/1/0"] {
+    ui.hover = hovered
+    let laid = layout_with(view, loose(Size { w: 200.0, h: 200.0 }), fonts, ui)
+    println("hover ${if hovered.len() == 0 { "none" } else { hovered }}:")
+    var renderer = Blank {}
+    var atlas = glyph_atlas()
+    for op in paint(laid, Point {}, 1.0, fonts, atlas, renderer) { println("  ${name_of(op)}") }
+  }
+  0
+}
+
+let sheet = Sheet { rules: [
+  Rule { selector: ".card.hover", style: Style { box_shadow: Some([BoxShadow { y: 9.0, blur: 20.0, color: rgba(0x00000040) }]) } },
+  Rule { selector: ".card", style: Style {
+    background: Some(rgb(0xFFFFFF)),
+    border_color: Some(rgb(0xCCCCCC)),
+    border_width: Some(1.0),
+    box_shadow: Some([
+      BoxShadow { y: 2.0, blur: 4.0, color: rgba(0x00000033) },
+      BoxShadow { blur: 3.0, color: rgba(0xFFFFFF80), inset: true },
+      BoxShadow { y: 6.0, blur: 12.0, color: rgba(0x0000001A) },
+    ]),
+    background_gradient: Some(Gradient { kind: LinearGradient(90.0), stops: [ColorStop { color: rgb(0xFF0000) }, ColorStop { color: rgb(0x0000FF) }] }),
+    backdrop_blur: Some(8.0),
+    filter_blur: Some(1.5),
+  } },
+] }
+
+let name_of = pure (op: DrawOp) -> string => match op {
+  Fill(at, _, _) => "fill ${at.w}x${at.h}",
+  Border(_, _, w, _) => "border ${w}",
+  Shadow(_, _, s) => "shadow y ${s.y} blur ${s.blur}${if s.inset { " inset" } else { "" }}",
+  GradientFill(_, _, g) => "gradient of ${g.stops.len()} stops",
+  Backdrop(_, _, r) => "backdrop blur ${r}",
+  PushLayer(at, e) => "layer blur ${e.blur} over ${at.w}x${at.h}",
+  PopLayer => "layer done",
+  _ => "other",
+}
+`)
+	want := `hover none:
+  layer blur 1.5 over 109x59
+  shadow y 6 blur 12
+  shadow y 2 blur 4
+  backdrop blur 8
+  fill 100x50
+  gradient of 2 stops
+  shadow y 0 blur 3 inset
+  border 1
+  layer done
+  layer blur 1.5 over 19x19
+  shadow y 6 blur 12
+  shadow y 2 blur 4
+  backdrop blur 8
+  fill 10x10
+  gradient of 2 stops
+  shadow y 0 blur 3 inset
+  border 1
+  layer done
+hover #/0/1/0:
+  layer blur 1.5 over 109x59
+  shadow y 6 blur 12
+  shadow y 2 blur 4
+  backdrop blur 8
+  fill 100x50
+  gradient of 2 stops
+  shadow y 0 blur 3 inset
+  border 1
+  layer done
+  layer blur 1.5 over 19x19
+  shadow y 9 blur 20
+  backdrop blur 8
+  fill 10x10
+  gradient of 2 stops
+  border 1
+  layer done
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// ui.gpu's frame read back from the GPU (macOS with a GPU; skipped elsewhere): a card's shadow
+// fades smoothly below it — darker nearer, half its strength at the shadow's edge, gone three
+// deviations out; a three-stop gradient is each stop's colour at its place; and a black box
+// in a layer blurred by 8 is grey at its edge, symmetric either side, black within, white
+// clear of it.
+func TestRun_UiGpuReadback(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("ui.gpu's shaders are Metal's")
+	}
+	t.Setenv("LYRA_STD", repoRoot(t))
+	src := filepath.Join(t.TempDir(), "main.lyra")
+	if err := os.WriteFile(src, []byte(`import ui.gpu
+import ui.gpu.{ keep_frames, read_frame }
+import ui.backend.{ Renderer }
+import ui.draw.{ Color, Point, Rect, rgb, rgba, radius, Fill, Shadow, GradientFill, PushLayer, PopLayer, BoxShadow, Gradient, ColorStop, LinearGradient, LayerEffect, DrawOp }
+
+let main = () -> u8 => {
+  let Ok(window) = gpu.open("gpu", 300.0, 220.0) else { return 2 }
+  var platform = window.platform
+  var renderer = window.renderer
+  let Some(g) = renderer.gpu else {
+    println("no gpu")
+    return 3
+  }
+  keep_frames(g)
+  let ops: []DrawOp = [
+    Shadow(Rect { x: 20.0, y: 20.0, w: 100.0, h: 60.0 }, radius(10.0), BoxShadow { y: 10.0, blur: 12.0, color: rgba(0x00000080) }),
+    Fill(Rect { x: 20.0, y: 20.0, w: 100.0, h: 60.0 }, radius(10.0), rgb(0xFFFFFF)),
+    GradientFill(Rect { x: 160.0, y: 20.0, w: 100.0, h: 60.0 }, radius(0.0), Gradient { kind: LinearGradient(90.0), stops: [ColorStop { color: rgb(0xFF0000) }, ColorStop { color: rgb(0x00FF00), at: Some(0.5) }, ColorStop { color: rgb(0x0000FF) }] }),
+    PushLayer(Rect { x: 0.0, y: 110.0, w: 300.0, h: 110.0 }, LayerEffect { blur: 8.0 }),
+    Fill(Rect { x: 100.0, y: 140.0, w: 100.0, h: 50.0 }, radius(0.0), rgb(0x000000)),
+    PopLayer,
+  ]
+  // A couple of frames, so the swapchain is up.
+  for _ in 0..<3 { renderer.draw(rgb(0xFFFFFF), ops) }
+  let Some(frame) = read_frame(g) else {
+    println("no frame")
+    return 4
+  }
+  let s = f32(frame.width) / 300.0
+  let at = (x: f32, y: f32) -> string => {
+    let p = frame.argb[i64((y * s).round()) * frame.width + i64((x * s).round())]
+    "${(p >> 16) & 0xFF},${(p >> 8) & 0xFF},${p & 0xFF}"
+  }
+  println("size ${frame.width}x${frame.height}")
+  println("card ${at(70.0, 50.0)}")
+  let ys: []f32 = [82.0, 86.0, 90.0, 94.0, 98.0, 102.0, 110.0]
+  for y in ys { println("shadow at ${y}: ${at(70.0, y)}") }
+  println("gradient ${at(162.0, 50.0)} | ${at(210.0, 50.0)} | ${at(258.0, 50.0)}")
+  let xs: []f32 = [90.0, 96.0, 100.0, 104.0, 110.0, 150.0]
+  for x in xs { println("blurred edge at ${x}: ${at(x, 165.0)}") }
+  gpu.close(platform, renderer)
+  0
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := captureRun(t, "run", src)
+	switch code {
+	case 2, 3, 4:
+		t.Skipf("no GPU frame here (%d): %s", code, stdout)
+	case 0:
+	default:
+		t.Fatalf("exited %d\nstderr: %s", code, stderr)
+	}
+	grey := func(name string) int {
+		m := regexp.MustCompile(regexp.QuoteMeta(name) + `: (\d+),\d+,\d+`).FindStringSubmatch(stdout)
+		if m == nil {
+			t.Fatalf("no %q in:\n%s", name, stdout)
+		}
+		v, _ := strconv.Atoi(m[1])
+		return v
+	}
+	last := 0
+	for _, y := range []string{"82", "86", "90", "94", "98", "102", "110"} {
+		v := grey("shadow at " + y)
+		if v < last {
+			t.Errorf("the shadow darkens again at %s: %d after %d", y, v, last)
+		}
+		last = v
+	}
+	if v := grey("shadow at 90"); v < 170 || v > 215 {
+		t.Errorf("the shadow at its edge: %d, want about half its strength (170–215)", v)
+	}
+	if v := grey("shadow at 110"); v != 255 {
+		t.Errorf("the shadow three deviations out: %d, want 255", v)
+	}
+	if !regexp.MustCompile(`gradient (2[2-5]\d),\d{1,2},\d{1,2} \| \d{1,2},(2[3-5]\d),\d{1,2} \| \d{1,2},\d{1,2},(2[2-5]\d)`).MatchString(stdout) {
+		t.Errorf("the gradient's stops are not red, green and blue:\n%s", stdout)
+	}
+	if v := grey("blurred edge at 100"); v < 100 || v > 150 {
+		t.Errorf("the blurred edge: %d, want about half (100–150)", v)
+	}
+	if a, b := 255-grey("blurred edge at 96"), grey("blurred edge at 104"); a-b > 15 || b-a > 15 {
+		t.Errorf("the blur is not symmetric about the edge: %d in, %d out", a, b)
+	}
+	if v := grey("blurred edge at 110"); v > 15 {
+		t.Errorf("inside the blurred box: %d, want near black", v)
+	}
+	if v := grey("blurred edge at 90"); v < 240 {
+		t.Errorf("clear of the blurred box: %d, want near white", v)
+	}
+}
+
+// A live resize, as ScriptPlatform plays one (drag:W,H): the platform calls the hook
+// ui.app's follow_resizes gave it from inside its wait, as macOS does while a window's edge is
+// dragged, and the running window draws a frame laid out at the new size there and then — the
+// same size twice draws once — with no input reaching the loop.
+func TestRun_UiLiveResize(t *testing.T) {
+	got := runUiProgram(t, `import ui.app.{ sandbox, running, follow_resizes, step_running }
+import ui.script.{ timed_platform, Dragged, Waited, Step }
+import ui.backend.{ Renderer }
+import ui.draw.{ Size, Color, TextureId }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, NoEvent, row, sized }
+
+/// A renderer that draws nothing, counting the frames and the sizes they were laid out at.
+struct Blank {
+  textures: i64 = 0,
+  drawn: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => { self.drawn += 1 }
+}
+
+/// A window dragged while its loop is held: each step at a new size draws a frame laid out at
+/// it from inside the wait — the same size twice draws once — and no input reaches the loop.
+let main = () -> u8 => {
+  let steps: []Step = [
+    Dragged(Size { w: 600.0, h: 400.0 }),
+    Dragged(Size { w: 600.0, h: 400.0 }),
+    Dragged(Size { w: 520.0, h: 300.0 }),
+    Waited(10),
+  ]
+  var platform = timed_platform(steps, Size { w: 800.0, h: 400.0 })
+  var renderer = Blank {}
+  var fonts = fonts_new()
+  let app = sandbox(view, (n: i64, _: NoEvent) => n, Color { r: 0, g: 0, b: 0 })
+  let window = running(app, 0, platform, renderer, fonts)
+  follow_resizes(window)
+  var passes = 0
+  while step_running(window) {
+    passes += 1
+    let at = window.host.drawn_at
+    println("pass ${passes}: ${window.renderer.drawn} frames, last at ${at.w}x${at.h}, root ${window.host.shown[0].size.w} wide, ${window.platform.dragged} drags")
+  }
+  0
+}
+
+let view = pure (_: i64) -> Node<NoEvent> => row([sized::<NoEvent>(None, Some(20.0))])
+`)
+	want := `pass 1: 2 frames, last at 600x400, root 600 wide, 1 drags
+pass 2: 2 frames, last at 600x400, root 600 wide, 2 drags
+pass 3: 3 frames, last at 520x300, root 520 wide, 3 drags
+pass 4: 3 frames, last at 520x300, root 520 wide, 3 drags
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
 }

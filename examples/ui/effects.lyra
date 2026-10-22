@@ -1,0 +1,91 @@
+// Shadows, gradients and blur: the markup of effects_view.lui run by `ui.app` on the GPU —
+// cards whose shadows lift under the pointer, a gradient header, and a frosted panel over a
+// busy background (Frost and Clear switch its blur).
+//
+//     build/lui examples/ui/effects_view.lui      # after editing the markup
+//     lyrac run examples/ui/effects.lyra
+//     lyrac run examples/ui/effects.lyra -- --png FILE
+//
+// **The second form** draws one frame on the GPU, reads it back and writes it to FILE as a
+// PNG (no GPU: it says so and exits 3). With `LYRA_UI_RENDERER=sdl` the window is SDL's 2D
+// renderer's, which approximates the shadows and draws the blur unblurred.
+
+import ui.gpu
+import ui.gpu.{ keep_frames, read_frame }
+import ui.app.{ App, sandbox, run }
+import ui.backend.{ Renderer }
+import ui.draw.{ Color, Point, Image }
+import ui.text.{ fonts_new }
+import ui.text.{ glyph_atlas }
+import ui.layout.{ layout, loose, paint }
+import effects_view.{ State, view, update, WINDOW_MIN_SIZE, WINDOW_MAX_SIZE }
+import std.collections.{ parse_args }
+import std.png.{ write_png }
+import std.io.{ write_bytes }
+
+const WIDTH: f32 = 760.0
+const HEIGHT: f32 = 640.0
+
+let main = () -> u8 => {
+  let args = parse_args(["--png"])
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let window = match gpu.open("Effects", WIDTH, HEIGHT) {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      fonts.close()
+      return 2
+    },
+  }
+  var platform = window.platform
+  var renderer = window.renderer
+  let background = Color { r: 244, g: 241, b: 238 }
+  var status: u8 = 0
+  if let Some(path) = args.value("--png") {
+    match renderer.gpu {
+      Some(g) => {
+        keep_frames(g)
+        var atlas = glyph_atlas()
+        let laid = layout(view(State {}), loose(platform.window_size()), fonts)
+        let ops = paint(laid, Point {}, platform.scale(), fonts, atlas, renderer)
+        // A few frames, so the window's swapchain is up before the one read.
+        for _ in 0..<3 { renderer.draw(background, ops) }
+        let Some(frame) = read_frame(g) else { return 4 }
+        if !save(frame, path) { status = 1 }
+      },
+      None => {
+        println("no GPU here")
+        status = 3
+      },
+    }
+  } else {
+    let app = App {
+      sandbox(view, update, background) |
+      min_size: WINDOW_MIN_SIZE,
+      max_size: WINDOW_MAX_SIZE,
+    }
+    let _ = run(app, State {}, platform, renderer, fonts)
+  }
+  gpu.close(platform, renderer)
+  fonts.close()
+  status
+}
+
+/// `frame` written to `path` as a PNG.
+let save = (frame: Image, path: string) -> bool => {
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(255)
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(png) => write_bytes(path, png),
+    Err(_) => false,
+  }
+}

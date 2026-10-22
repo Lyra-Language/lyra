@@ -114,4 +114,14 @@ else
   accesskit_note="a stub liblyra-accesskit.a (${accesskit_err##*: })"
 fi
 
-printf 'built %s/{lyrac,lyra-lsp} %s, %s, lib/liblyra-{menubar,pty}.a, %s and %s, with std -> ../std, bindings -> ../bindings, ui -> ../ui\n' "$OUT" "$fmt_note" "$lui_note" "$imgui_note" "$accesskit_note"
+# **The C half of `bindings.gpu`**, into `build/lib/liblyra-gpu.a`: `ui.gpu`'s renderer over
+# SDL3's GPU API, Metal shaders compiled at run time (`bindings/gpu/build.sh`). Every `ui`
+# program links it; elsewhere it is a stub, and `ui.gpu` draws with SDL's 2D renderer.
+gpu_note='lib/liblyra-gpu.a'
+if gpu_err=$("$ROOT/bindings/gpu/build.sh" "$OUT" 2>&1); then
+  :
+else
+  gpu_note="a stub liblyra-gpu.a (${gpu_err##*: })"
+fi
+
+printf 'built %s/{lyrac,lyra-lsp} %s, %s, lib/liblyra-{menubar,pty}.a, %s, %s and %s, with std -> ../std, bindings -> ../bindings, ui -> ../ui\n' "$OUT" "$fmt_note" "$lui_note" "$imgui_note" "$accesskit_note" "$gpu_note"

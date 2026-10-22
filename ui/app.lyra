@@ -134,9 +134,60 @@ pub let run<s, e, p, r> where p: Platform, r: Renderer = (
   renderer: mut r,
   fonts: mut Fonts
 ) -> s => {
-  var host = host_of(app, state, platform)
-  while host.step(platform, renderer, fonts) {}
-  host.state
+  var window = running(app, state, platform, renderer, fonts)
+  follow_resizes(window)
+  while step_running(window) {}
+  // The caller's platform, renderer and fonts as the loop left them.
+  platform = window.platform
+  renderer = window.renderer
+  fonts = window.fonts
+  window.host.state
+}
+
+/// A program running in a window: its host and what it draws with, in one `shared` box —
+/// the loop steps it, and the platform's live-resize hook ([follow_resizes]) redraws the same
+/// one while the system holds the loop in a resize.
+pub struct Running<s, e, p, r> {
+  host: Host<s, e>,
+  platform: p,
+  renderer: r,
+  fonts: Fonts,
+}
+
+/// `app` at `state`, ready to run in `platform`'s window, drawn by `renderer` in `fonts`.
+pub let running<s, e, p, r> where p: Platform, r: Renderer = (
+  app: App<s, e>,
+  state: s,
+  platform: p,
+  renderer: r,
+  fonts: Fonts
+) -> shared Running<s, e, p, r> => Running {
+  host: host_of(app, state, platform),
+  platform: platform,
+  renderer: renderer,
+  fonts: fonts,
+}
+
+/// One pass of `window`'s loop (`Host.step`); whether the program goes on. A program whose
+/// loop is `main`'s own — as `lyrac run --live` needs — calls this.
+pub let step_running<s, e, p, r> where p: Platform, r: Renderer = (
+  window: shared Running<s, e, p, r>
+) -> bool =>
+  window.host.step(window.platform, window.renderer, window.fonts)
+
+/// Have `window`'s platform redraw it, at its new size, each time the system asks for a
+/// frame while the window is resized by dragging — on macOS AppKit holds the main thread, and
+/// so the loop, until the drag ends. Drawn only at a size not yet shown: the system asks
+/// sixty times a second however long the resize lasts, moved or not.
+pub let follow_resizes<s, e, p, r> where p: Platform, r: Renderer = (
+  window: shared Running<s, e, p, r>
+) -> void => {
+  let hook = () -> void => {
+    let size = window.platform.window_size()
+    if size == window.host.drawn_at { return }
+    window.host.redraw(window.platform, window.renderer, window.fonts)
+  }
+  window.platform.on_live_resize(hook)
 }
 
 /// What a running program's loop holds between passes: the program, its state, the
@@ -166,6 +217,8 @@ pub struct Host<s, e> {
   /// first. (An array of at most one: a generic struct's `None` default is not settled yet,
   /// todo.md.)
   shown: []Laid<e> = [],
+  /// The window's size at the last frame drawn.
+  drawn_at: Size = Size {},
 }
 
 /// The window as a sheet's media rules ask of it: its size and the system's look.
@@ -298,6 +351,7 @@ impl Host<s, e> {
     platform.update_access(access_tree(fresh, self.ui.state.focus))
     self.frames += 1
     self.shown = [fresh]
+    self.drawn_at = platform.window_size()
     self.dirty = false
   }
 

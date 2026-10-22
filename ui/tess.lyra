@@ -23,7 +23,7 @@ module ui.tess
 //! edge), so the points of neighbouring contours pair off and a band between two is a
 //! strip of quads.
 
-import ui.draw.{ Rect, Radii, Color, Point }
+import ui.draw.{ Rect, Radii, Color, Point, Gradient }
 import std.math.{ PI, HALF_PI }
 
 /// A triangle's corner, as the renderer hands it on: where it is, its colour (`0.0`–`1.0` a
@@ -127,6 +127,93 @@ pub let quad = (mesh: mut Mesh, at: Rect, texture: Rect, color: Color) -> void =
   }
   triangle(mesh, first, first + 1, first + 2)
   triangle(mesh, first, first + 2, first + 3)
+}
+
+/// A rounded rectangle filled with `gradient` in pixels — a renderer that shades by vertex
+/// colour approximates it: the outline's points, a point every 12 pixels along its straight
+/// sides, and the middle each take the gradient's colour there, and the triangles between
+/// blend them. A two-stop linear gradient comes out exact; stops between vertices are
+/// softened.
+pub let fill_gradient = (
+  mesh: mut Mesh,
+  rect: Rect,
+  radii: Radii,
+  gradient: Gradient
+) -> void => {
+  if rect.is_empty() || gradient.stops.len() == 0 { return }
+  let fit = radii.fitted(rect.w, rect.h)
+  let segments = corner_segments(fit)
+  let inside = subdivided(contour(rect, fit, -0.5, segments), 12.0)
+  let outside = subdivided(contour(rect, fit, 0.5, segments), 12.0)
+  let middle = Point { x: rect.x + rect.w / 2.0, y: rect.y + rect.h / 2.0 }
+  let first = i32(mesh.vertices.len())
+  let n = i32(inside.len())
+  for p in inside { mesh.vertices.push(vertex(
+    p,
+    gradient.at(gradient.along(rect, p)),
+    1.0
+  )) }
+  for p in outside { mesh.vertices.push(vertex(
+    p,
+    gradient.at(gradient.along(rect, p)),
+    0.0
+  )) }
+  mesh.vertices.push(vertex(middle, gradient.at(gradient.along(rect, middle)), 1.0))
+  let centre = first + 2 * n
+  for i in 0..<n { triangle(mesh, centre, first + i, first + (i + 1) % n) }
+  band(mesh, first, first + n, n)
+}
+
+/// A rounded rectangle in `color` whose edge fades out over `feather` pixels, half inside and
+/// half outside it — how a renderer without blur draws a shadow: the Gaussian's falloff as a
+/// straight ramp.
+pub let fill_soft = (
+  mesh: mut Mesh,
+  rect: Rect,
+  radii: Radii,
+  color: Color,
+  feather: f32
+) -> void => {
+  if rect.is_empty() || color.a == 0 { return }
+  let half = (feather / 2.0).max(0.5)
+  let fit = radii.fitted(rect.w, rect.h)
+  let segments = corner_segments(Radii {
+    top_left: fit.top_left + half,
+    top_right: fit.top_right + half,
+    bottom_right: fit.bottom_right + half,
+    bottom_left: fit.bottom_left + half,
+  })
+  // The fading band can be no wider inward than the shape is deep.
+  let inward = half.min(rect.w / 2.0).min(rect.h / 2.0)
+  let inside = contour(rect, fit, -inward, segments)
+  let outside = contour(rect, fit, half, segments)
+  let first = i32(mesh.vertices.len())
+  let n = i32(inside.len())
+  // A band as wide as the shape is fully faded: its middle as strong as the blur allows.
+  let peak = if half > inward { inward / half } else { 1.0 }
+  for p in inside { mesh.vertices.push(vertex(p, color, peak)) }
+  for p in outside { mesh.vertices.push(vertex(p, color, 0.0)) }
+  for i in 1..<n - 1 { triangle(mesh, first, first + i, first + i + 1) }
+  band(mesh, first, first + n, n)
+}
+
+/// `points`, a closed outline, with points added along any edge longer than `most` pixels.
+let subdivided = pure (points: []Point, most: f32) -> []Point => {
+  var out: []Point = []
+  let n = points.len()
+  for i in 0..<n {
+    let a = points[i]
+    let b = points[(i + 1) % n]
+    out.push(a)
+    let dx = b.x - a.x
+    let dy = b.y - a.y
+    let pieces = i64(((dx * dx + dy * dy).sqrt() / most).ceil())
+    for k in 1..<pieces {
+      let f = f32(k) / f32(pieces)
+      out.push(Point { x: a.x + dx * f, y: a.y + dy * f })
+    }
+  }
+  out
 }
 
 /// The outline of `rect`, its corners rounded by `radii`, moved `out` pixels outward (inward

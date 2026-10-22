@@ -1111,7 +1111,18 @@ const UI_MODULES = [
     "insets",
     "insets_xy",
   ]),
-  ("ui.draw", ["Size", "Rect", "Color", "rgb", "rgba"]),
+  ("ui.draw", [
+    "Size",
+    "Rect",
+    "Color",
+    "rgb",
+    "rgba",
+    "BoxShadow",
+    "Gradient",
+    "ColorStop",
+    "LinearGradient",
+    "RadialGradient",
+  ]),
   ("ui.backend", ["LightMode", "DarkMode"]),
 ]
 
@@ -1453,7 +1464,12 @@ impl Writer {
           "insets_xy",
           "Insets",
           "LightMode",
-          "DarkMode"
+          "DarkMode",
+          "BoxShadow",
+          "Gradient",
+          "ColorStop",
+          "LinearGradient",
+          "RadialGradient"
         ].any((n) => n == word) ||
           LAYOUT_NAMES.any((n) => n == word)
         if known { self.use(word) }
@@ -1880,7 +1896,8 @@ let ui_declarations = pure (
       "rounding" => "radius",
       other => other,
     }
-    if let Some(set) = layout_declaration(name, given) {
+    let set_by = effect_declaration(name, given).or(layout_declaration(name, given))
+    if let Some(set) = set_by {
       match set {
         Ok(more) => { for f in more { fields = with_field(fields, f) } },
         Err(what) => return Err("${line}: ${what}"),
@@ -1898,7 +1915,7 @@ let ui_declarations = pure (
       "font_size" => ui_number(given),
       "line_height" => ui_number(given),
       "padding" => ui_padding(given),
-      _ => Err("no style property ${name} in ui (color, background, border-color, border-width, radius, gap, opacity, font-size, line-height, padding; width, height and their min- and max-; row-gap, column-gap; flex, flex-direction, flex-wrap, flex-grow, flex-shrink, flex-basis, order, justify-content, align-content, align-items, align-self; grid-template-columns, grid-template-rows, grid-auto-columns, grid-auto-rows, grid-auto-flow, grid-column, grid-row, justify-items, justify-self)"),
+      _ => Err("no style property ${name} in ui (color, background, border-color, border-width, radius, gap, opacity, font-size, line-height, padding; box-shadow, a gradient background or background-image, filter: blur(), backdrop-filter: blur(); width, height and their min- and max-; row-gap, column-gap; flex, flex-direction, flex-wrap, flex-grow, flex-shrink, flex-basis, order, justify-content, align-content, align-items, align-self; grid-template-columns, grid-template-rows, grid-auto-columns, grid-auto-rows, grid-auto-flow, grid-column, grid-row, justify-items, justify-self)"),
     }
     match lyra {
       Ok(v) => { fields = with_field(fields, "${field}: Some(${v})") },
@@ -1913,6 +1930,150 @@ let ui_declarations = pure (
 let with_field = pure (fields: []string, field: string) -> []string => {
   let name = field.slice(0, field.index(":") ?? field.len())
   [...[f in fields | !f.starts_with("${name}:") | f], field]
+}
+
+/// The `ui.style` fields an effect declaration sets — `box-shadow`, a gradient `background`
+/// or `background-image`, `filter` and `backdrop-filter` — or `None` for a name that is not one
+/// (or a `background` that is a plain colour).
+let effect_declaration = pure (
+  name: string,
+  value: string
+) -> Maybe<Result<[]string, string>> => {
+  let v = value.trim()
+  let one = (
+    field: string,
+    made: Result<string, string>
+  ) -> Maybe<Result<[]string, string>> =>
+    Some(made.map((x) => ["${field}: Some(${x})"]))
+  match name {
+    "box_shadow" => one("box_shadow", shadow_list(v)),
+    "background" =>
+      if is_gradient(v) { one("background_gradient", gradient_of(v)) } else { None },
+    "background_image" => one("background_gradient", gradient_of(v)),
+    "filter" => one("filter_blur", blur_of("filter", v)),
+    "backdrop_filter" => one("backdrop_blur", blur_of("backdrop-filter", v)),
+    _ => None,
+  }
+}
+
+let is_gradient = pure (value: string) -> bool =>
+  value.starts_with("linear-gradient(") || value.starts_with("radial-gradient(")
+
+/// `box-shadow`: `none`, or shadows a comma apart, each `[inset] x y [blur [spread]] colour`.
+let shadow_list = pure (value: string) -> Result<string, string> => {
+  if value == "none" { return Ok("[]") }
+  var each: []string = []
+  for one in top_level(value, ',')? {
+    var lengths: []string = []
+    var color = ""
+    var inset = false
+    for word in one.split_when((c) => c == ' ') {
+      if word == "inset" {
+        inset = true
+      } else if word.starts_with("#") || word.starts_with("$") {
+        if color.len() > 0 { return Err("a box-shadow has one colour, not ${one}") }
+        color = ui_color(word)?
+      } else {
+        let n = word.strip_suffix("px") ?? word
+        match number(n) {
+          Ok(x) => lengths.push(x),
+          Err(_) =>
+            return Err("a box-shadow is [inset] x y [blur [spread]] #colour, not ${one}"),
+        }
+      }
+    }
+    if lengths.len() < 2 || lengths.len() > 4 || color.len() == 0 {
+      return Err("a box-shadow is [inset] x y [blur [spread]] #colour, not ${one}")
+    }
+    let blur = if lengths.len() > 2 { lengths[2] } else { "0.0" }
+    if blur.starts_with("-") { return Err("a box-shadow's blur is not negative: ${one}") }
+    let spread = if lengths.len() > 3 { lengths[3] } else { "0.0" }
+    each.push("BoxShadow { x: ${lengths[0]}, y: ${lengths[1]}, blur: ${blur}, spread: ${spread}, color: ${color}${if inset { ", inset: true" } else { "" }} }")
+  }
+  Ok("[${each.join(", ")}]")
+}
+
+/// `linear-gradient([angle | to side], stops…)` or `radial-gradient([circle | ellipse],
+/// stops…)`, each stop `#colour [N%]`.
+let gradient_of = pure (value: string) -> Result<string, string> => {
+  var kind = "linear"
+  var inner = ""
+  if let Some(args) = call_args(value, "linear-gradient") {
+    inner = args
+  } else if let Some(args) = call_args(value, "radial-gradient") {
+    kind = "radial"
+    inner = args
+  } else {
+    return Err("a gradient is linear-gradient(…) or radial-gradient(…), not ${value}")
+  }
+  var parts = top_level(inner, ',')?
+  var made = if kind == "linear" { "LinearGradient(180.0)" } else { "RadialGradient(false)" }
+  if parts.len() > 0 {
+    let first = parts[0].trim()
+    let direction = if kind == "linear" { linear_direction(first) } else { radial_shape(first) }
+    if let Some(d) = direction {
+      made = d?
+      parts = parts.slice(1, parts.len())
+    }
+  }
+  if parts.len() < 2 { return Err("a gradient needs two colour stops or more: ${value}") }
+  var stops: []string = []
+  for part in parts {
+    let words = part.trim().split_when((c) => c == ' ')
+    if words.len() == 0 || words.len() > 2 { return Err("a colour stop is #colour [N%], not ${part.trim()}") }
+    let color = ui_color(words[0])?
+    if words.len() == 1 {
+      stops.push("ColorStop { color: ${color} }")
+    } else {
+      let Some(pct) = words[1].strip_suffix("%") else {
+        return Err("a colour stop's place is a percentage, not ${words[1]}")
+      }
+      stops.push("ColorStop { color: ${color}, at: Some(${number(pct)?} / 100.0) }")
+    }
+  }
+  Ok("Gradient { kind: ${made}, stops: [${stops.join(", ")}] }")
+}
+
+/// A linear gradient's first argument, if it is a direction: an angle (`90deg`) or `to` a side
+/// or corner — a corner taken as 45° between its sides.
+let linear_direction = pure (word: string) -> Maybe<Result<string, string>> => {
+  if let Some(deg) = word.strip_suffix("deg") {
+    return Some(number(deg.trim()).map((n) => "LinearGradient(${n})"))
+  }
+  let Some(side) = word.strip_prefix("to ") else { return None }
+  let degrees = match side.trim() {
+    "top" => "0.0",
+    "top right" => "45.0",
+    "right top" => "45.0",
+    "right" => "90.0",
+    "bottom right" => "135.0",
+    "right bottom" => "135.0",
+    "bottom" => "180.0",
+    "bottom left" => "225.0",
+    "left bottom" => "225.0",
+    "left" => "270.0",
+    "top left" => "315.0",
+    "left top" => "315.0",
+    other => return Some(Err("a gradient goes to top, right, bottom, left or a corner, not to ${other}")),
+  }
+  Some(Ok("LinearGradient(${degrees})"))
+}
+
+/// A radial gradient's first argument, if it is its shape.
+let radial_shape = pure (word: string) -> Maybe<Result<string, string>> => match word {
+  "circle" => Some(Ok("RadialGradient(true)")),
+  "ellipse" => Some(Ok("RadialGradient(false)")),
+  _ => None,
+}
+
+/// `filter` and `backdrop-filter`: `none` or `blur(N)`.
+let blur_of = pure (name: string, value: string) -> Result<string, string> => {
+  if value == "none" { return Ok("0.0") }
+  let Some(inside) = call_args(value, "blur") else {
+    return Err("${name} is blur(N) or none, not ${value}")
+  }
+  let n = inside.trim().strip_suffix("px") ?? inside.trim()
+  number(n).map_err((_) => "${name} is blur(N) or none, not ${value}")
 }
 
 /// A token `$a.b` as the theme's `t.a.b`, if `value` is one.
@@ -2352,18 +2513,18 @@ let selector_problem = pure (selector: string) -> Maybe<string> => {
     _ => false,
   }
   if fine { None } else {
-    Some("${selector} is not a selector ui reads: Tag, .class, Tag.class, Comp::part or Comp.class::part")
+    Some("${selector} is not a selector ui reads: Tag, .class, Tag.class (more classes allowed), Comp::part or Comp.class::part")
   }
 }
 
-/// `Tag`, `.class` or `Tag.class`.
+/// `Tag`, `.class`, `Tag.class`, or more classes (`Button.primary.hover`).
 let simple_selector = pure (text: string) -> bool => {
-  let halves = text.split(".")
-  match halves.len() {
-    1 => name_only(halves[0]),
-    2 => (halves[0].len() == 0 || name_only(halves[0])) && name_only(halves[1]),
-    _ => false,
-  }
+  let parts = text.split(".")
+  if parts.len() == 1 { return name_only(parts[0]) }
+  (parts[0].len() == 0 || name_only(parts[0])) && parts.slice(
+    1,
+    parts.len()
+  ).all((c) => name_only(c))
 }
 
 /// A name: letters, digits, `_` and `-`, at least one.
