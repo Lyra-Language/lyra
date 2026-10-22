@@ -34,7 +34,8 @@ module ui.style
 //! set them takes its parent's, and an opacity multiplies into its parent's, so a half-
 //! transparent card's text is half-transparent too. Everything else starts unset.
 
-import ui.draw.{ Color, rgb, rgba }
+import ui.draw.{ Color, Size, rgb, rgba }
+import ui.backend.{ Appearance }
 import ui.text.{ FontSpec }
 
 /// Space inside an element's edge, on each side, in logical units.
@@ -262,15 +263,97 @@ impl Style {
 }
 
 /// `style` for every element `selector` matches: `Text`, `.title`, `Text.title` or
-/// `Toggle::knob`.
+/// `Toggle::knob` — or several of them, comma-separated (`Button.primary, .card`), each
+/// keeping its own specificity, as if each were a rule of its own in the same place — while
+/// the viewport matches `media` (any of them; none for always), CSS's `@media`.
 pub struct Rule {
   selector: string,
   style: Style,
+  media: []Media = [],
+}
+
+/// A condition on the viewport, CSS's media query without its media type: every bound it
+/// gives must hold (`and`), at least and at most so wide and so tall in logical units, in
+/// that orientation and colour scheme — the whole of it reversed by `not`. A rule's `media` is
+/// a list of these, any of which may hold (CSS's comma).
+pub struct Media {
+  min_width: Maybe<f32> = None,
+  max_width: Maybe<f32> = None,
+  min_height: Maybe<f32> = None,
+  max_height: Maybe<f32> = None,
+  orientation: Maybe<Orientation> = None,
+  scheme: Maybe<Appearance> = None,
+  not: bool = false,
+}
+
+/// Taller than wide (`Portrait`, a square too, as CSS has it) or wider.
+pub data Orientation = Portrait | Landscape
+
+/// What a media query is asked of: the window's size in logical units, and the system's
+/// look.
+pub struct Viewport {
+  size: Size = Size {},
+  appearance: Appearance = LightMode,
+}
+
+impl Media {
+  /// Whether `viewport` meets this condition.
+  pub let matches = pure (self, viewport: Viewport) -> bool => {
+    let w = viewport.size.w
+    let h = viewport.size.h
+    let held = within(w, self.min_width, self.max_width) &&
+      within(h, self.min_height, self.max_height) &&
+      (match self.orientation {
+        Some(Portrait) => h >= w,
+        Some(Landscape) => w > h,
+        None => true,
+      }) && (match self.scheme {
+        Some(look) => look == viewport.appearance,
+        None => true,
+      })
+    held != self.not
+  }
+}
+
+/// Whether `viewport` meets any of `media`; an empty list always.
+pub let media_matches = pure (media: []Media, viewport: Viewport) -> bool =>
+  media.len() == 0 || media.any((m) => m.matches(viewport))
+
+/// Whether `value` is at least `least` and at most `most`, each when given.
+let within = pure (value: f32, least: Maybe<f32>, most: Maybe<f32>) -> bool =>
+  value >= (least ?? -1.0) && value <= (most ?? 1.0e30)
+
+/// A media query asked of the viewport, and what it answered — what a layout depended on.
+pub struct MediaAnswer {
+  media: []Media,
+  matched: bool,
 }
 
 /// Rules, in order.
 pub struct Sheet {
   rules: []Rule = [],
+}
+
+impl Sheet {
+  /// The rules in force at `viewport`, in order — a media rule kept where it is written, with
+  /// its specificity, as CSS keeps it — and what each media query answered.
+  pub let at = pure (self, viewport: Viewport) -> (Sheet, []MediaAnswer) => {
+    var kept: []Rule = []
+    var answers: []MediaAnswer = []
+    for rule in self.rules {
+      if rule.media.len() == 0 {
+        kept.push(rule)
+        continue
+      }
+      let matched = media_matches(rule.media, viewport)
+      if !answers.any((a) => a.media == rule.media) {
+        answers.push(MediaAnswer { media: rule.media, matched: matched })
+      }
+      if matched { kept.push(rule) }
+    }
+    let filtered = Sheet { rules: kept }
+    return (filtered, answers)
+  }
 }
 
 /// The colours a theme's styles are written in. `focus` is the ring drawn round the element
@@ -502,13 +585,13 @@ impl Cascade {
       for rank in #[1, 11] {
         for rules in [self.theme.elements.rules, self.globals, self.outer_scoped] {
           for rule in rules {
-            let fit = part_specificity(
-              rule.selector,
+            let fits = rule.selector.split(",").any((one) => part_specificity(
+              one.trim(),
               self.component,
               self.component_classes,
               part
-            )
-            if fit == rank { out = rule.style.over(out) }
+            ) == rank)
+            if fits { out = rule.style.over(out) }
           }
         }
       }
@@ -610,7 +693,14 @@ let applied = pure (
   var out = base
   for rank in #[1, 10, 11] {
     for rule in rules {
-      if specificity(rule.selector, tag, classes) == rank { out = rule.style.over(out) }
+      // A selector list is a rule for each selector, in the same place.
+      if rule.selector.split(",").any((one) => specificity(
+        one.trim(),
+        tag,
+        classes
+      ) == rank) {
+        out = rule.style.over(out)
+      }
     }
   }
   out

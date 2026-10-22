@@ -49,6 +49,12 @@ unsafe extern sdl_set_window_fullscreen: (window: Window, fullscreen: bool) -> b
 @symbol("SDL_SetWindowSize")
 unsafe extern sdl_set_window_size: (window: Window, w: i32, h: i32) -> bool
 
+@symbol("SDL_SetWindowMinimumSize")
+unsafe extern sdl_set_window_minimum_size: (window: Window, w: i32, h: i32) -> bool
+
+@symbol("SDL_SetWindowMaximumSize")
+unsafe extern sdl_set_window_maximum_size: (window: Window, w: i32, h: i32) -> bool
+
 @symbol("SDL_SetWindowTitle")
 unsafe extern sdl_set_window_title: (window: Window, title: ^u8) -> bool
 
@@ -85,6 +91,14 @@ pub let set_fullscreen = (window: Window, on: bool) -> bool =>
 /// fullscreen, where the size is the display's; SDL applies it on leaving.
 pub let set_window_size = (window: Window, width: i32, height: i32) -> bool =>
   unsafe { sdl_set_window_size(window, width, height) }
+
+/// The least size the user may make the window, in screen coordinates (`0, 0` for none) —
+/// and [set_window_maximum_size] the greatest.
+pub let set_window_minimum_size = (window: Window, width: i32, height: i32) -> bool =>
+  unsafe { sdl_set_window_minimum_size(window, width, height) }
+
+pub let set_window_maximum_size = (window: Window, width: i32, height: i32) -> bool =>
+  unsafe { sdl_set_window_maximum_size(window, width, height) }
 
 /// The window's title bar.
 pub let set_window_title = (window: Window, title: string) -> bool =>

@@ -516,6 +516,14 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"grid line", ui + "<component name=\"a\">\n  <Text style=\"grid-column: 3 / 2\">x</Text>\n</component>", "x.lui:3: grid lines are N, span N, N / M or N / span M, not 3 / 2"},
 		{"justify stretch", ui + "<component name=\"a\">\n  <Text style=\"justify-content: stretch\">x</Text>\n</component>", "x.lui:3: justify-content is start, flex-start, end, flex-end, center, space-between, space-around, space-evenly, not stretch"},
 		{"braced word", ui + "<component name=\"a\">\n  <Flex direction={d}/>\n</component>", "x.lui:3: direction of <Flex> is written as text, not {…}"},
+		{"media feature", ui + "<style global>\n  @media (min-wdth: 600) {\n    .a { gap: 1 }\n  }\n</style>", "x.lui:3: no media feature min-wdth in ui"},
+		{"media orientation", ui + "<style global>\n  @media (orientation: sideways) {\n    .a { gap: 1 }\n  }\n</style>", "x.lui:3: orientation is portrait or landscape, not sideways"},
+		{"media length", ui + "<style global>\n  @media (min-width: wide) {\n    .a { gap: 1 }\n  }\n</style>", "x.lui:3: min-width is a length in logical units (600 or 600px), not wide"},
+		{"media parentheses", ui + "<style global>\n  @media min-width: 600 {\n    .a { gap: 1 }\n  }\n</style>", "x.lui:3: min-width: 600 is not a media feature in (…)"},
+		{"media nested", ui + "<style global>\n  @media (min-width: 1) {\n    @media (max-width: 2) {\n      .a { gap: 1 }\n    }\n  }\n</style>", "x.lui:4: an @media inside an @media"},
+		{"at-rule", ui + "<style global>\n  @supports (x: y) {\n  }\n</style>", "x.lui:3: @supports is not an at-rule of a <style>; @media is"},
+		{"selector in a list", ui + "<style global>\n  .a,\n  Column Text { gap: 1 }\n</style>", "x.lui:4: Column Text is not a selector ui reads"},
+		{"pseudo-class", ui + "<style global>\n  .a:hover { gap: 1 }\n</style>", "x.lui:3: .a:hover is not a selector ui reads"},
 	}
 	for _, c := range cases {
 		path := filepath.Join(dir, "x.lui")
@@ -711,5 +719,70 @@ func TestLui_LayoutsExampleIsCurrentAndChecks(t *testing.T) {
 	}
 	if out := stdout + stderr; strings.Contains(out, "warning") {
 		t.Errorf("the example or its generated view warns:\n%s", out)
+	}
+}
+
+// @media in the ui target: a query's features (lengths with or without px, orientation,
+// prefers-color-scheme), `and`, a comma and a leading `not` become a rule's []Media, on every
+// rule inside the block; a selector list is a rule for each selector, each at its own line,
+// part selectors among them; and the module checks clean. In the bindings.imgui.ui target
+// @media is refused.
+func TestLui_UiTargetMediaAndSelectorLists(t *testing.T) {
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script target="ui">
+  pub data Ev = Go
+</script>
+<style global name="app_sheet">
+  Button.primary, Checkbox::box,
+    .card { radius: 8 }
+  @media (min-width: 600px) and (orientation: landscape), not (max-height: 400) {
+    .grid { grid-template-columns: repeat(4, 1fr) }
+    Text, .note { font-size: 15 }
+  }
+  @media (prefers-color-scheme: dark) {
+    .card { background: #222 }
+  }
+</style>
+<component name="view" event={Ev}>
+  <Column class="card"><Text class="note">hi</Text></Column>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := exec.Command(lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	media := "media: [Media { min_width: Some(600.0), orientation: Some(Landscape) }, Media { max_height: Some(400.0), not: true }]"
+	for _, want := range []string{
+		`Rule { selector: "Button.primary", style: Style { radius: Some(8.0) } }, // view.lui:5`,
+		`Rule { selector: "Checkbox::box", style: Style { radius: Some(8.0) } }, // view.lui:5`,
+		`Rule { selector: ".card", style: Style { radius: Some(8.0) } }, // view.lui:6`,
+		`Rule { selector: ".grid", style: Style { grid_columns: Some([...repeat_tracks(4, [fr(1.0)])]) }, ` + media + ` }, // view.lui:8`,
+		`Rule { selector: ".note", style: Style { font_size: Some(15.0) }, ` + media + ` }, // view.lui:9`,
+		`Rule { selector: ".card", style: Style { background: Some(rgb(0x222222)) }, media: [Media { scheme: Some(DarkMode) }] }, // view.lui:12`,
+		"import ui.backend.{ DarkMode }",
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	t.Setenv("LYRA_STD", repoRoot(t))
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	imgui := filepath.Join(dir, "imgui.lui")
+	if err := os.WriteFile(imgui, []byte("<component name=\"a\">\n  <style>\n    @media (min-width: 1) {\n      Button { color: #fff }\n    }\n  </style>\n  <Text>x</Text>\n</component>\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(lui, imgui).CombinedOutput(); err == nil || !strings.Contains(string(out), "imgui.lui:4: @media is the ui target's") {
+		t.Errorf("an @media in the imgui target: %v %s", err, out)
 	}
 }

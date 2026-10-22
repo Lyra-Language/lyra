@@ -65,6 +65,28 @@ layer — implements the two traits; the display list is the whole contract.
   beside them. **Intrinsic widths** (`intrinsic_width`) are measured outside the layout cache,
   so the cache keeps only real layouts; an unchanged flex container or grid is given back
   whole like any element.
+- **Media rules** (`Rule.media`, CSS's `@media`): a rule may hold while the viewport —
+  the window's logical size and the system's look (`Viewport`, which the host passes in
+  `Interaction.viewport`) — meets any of its `Media` conditions (min/max width and height,
+  orientation, colour scheme, each reversible by `not`). **A media rule stays where it is
+  written**, in its layer, with its specificity and its place in its sheet's order — CSS's
+  rule, chosen so a breakpoint never reorders the cascade. Sheets are filtered as a subtree's
+  cascade is built (`Sheet.at`). **The layout cache keys on what the media answered**, not on
+  the window's size: each `Laid` carries the queries its subtree's sheets asked
+  (`Laid.media`), and an element is given back only while they answer the same — so a resize
+  that crosses no breakpoint relays out only what its new constraints change.
+- **A selector list** (`Button.primary, Checkbox::box, .card`) is a rule for each selector,
+  in the same place, each with its own specificity.
+- **The window's least and greatest size** are `App.min_size` and `App.max_size`, which the
+  host hands `Platform.set_size_limits` on its first pass (`ui.sdl3`: SDL's minimum and maximum
+  window size; `ScriptPlatform` holds its resize steps to them).
+- **Live resizing on macOS**: AppKit holds the main thread while a window's edge is dragged,
+  so `main`'s loop gets nothing; a program draws each frame the resize asks for from an event
+  watch (`bindings.sdl3`'s `add_event_watch`, `live_resize`) calling `Host.redraw` on a window
+  kept at module level — `examples/ui/layouts.lyra` shows how. **Draw only at a new size, and
+  never from inside the watch's own frame**: SDL asks sixty times a second for as long as
+  AppKit says the resize lasts, moved or not, and answering each with a whole frame froze the
+  window.
 - **The cascade is five layers**, each beating the ones below whatever their specificity:
   the theme's `elements`, the global sheets (`themed`'s, outermost first, one layer), the
   enclosing component's scoped sheet (never reaching a component inside it; made from the
@@ -142,9 +164,11 @@ layer — implements the two traits; the display list is the whole contract.
   interface as markup for the `ui` target (a global sheet of `$tokens`, components with parts,
   a command, a timer, the system's look followed), run by `examples/ui/components.lyra`, whose
   loop is `main`'s (`lyrac run --live`); `--script` plays steps headless.
-- `examples/ui/layouts_view.lui` — flex and grid in markup: a card list wrapping to the
-  window's width and a dashboard grid of spanning tiles, run by `examples/ui/layouts.lyra`
-  (`--width W --script "…" --png FILE` headless).
+- `examples/ui/layouts_view.lui` — flex and grid in markup, responsive: a card list wrapping
+  to the window's width, a toolbar standing its buttons in a column below 560, and a dashboard
+  grid of one, two or four columns by `@media`, with a `<window>` least size and a dark look
+  by `prefers-color-scheme`; run by `examples/ui/layouts.lyra`, which redraws during a live
+  resize (`--width W --script "…" --png FILE` headless).
 - `examples/ui/form.lyra` — phase 3's gate, a form that works from the keyboard: two
   fields, a checkbox, a slider and Submit, run by `ui.app`. `--script "…"` plays input
   instead of waiting for a user and prints the state it left; `--png FILE` the last frame.
@@ -162,5 +186,8 @@ layer — implements the two traits; the display list is the whole contract.
   Phase 5's: `TestRun_UiCacheAndIdle` (what the layout cache lays out and gives back; an idle
   host draws nothing), `TestRun_UiBatchesGeometryCalls` (the draws a frame takes),
   `TestRun_UiAccessibilityTree` (a form's tree, and VoiceOver's actions driving it).
+  `TestRun_UiMediaQueries` breakpoints, a media rule against specificity, `not` and a comma,
+  and a host resized within a breakpoint (given back) and across one (relaid out);
+  `TestRun_UiWindowSizeLimits` the window held to its least and greatest size.
   `TestRun_UiFlex` and `TestRun_UiGrid` hold flex and grid to hand-worked CSS results, child
   rect by child rect; `TestLui_UiTargetFlexAndGrid` the markup's layout properties.

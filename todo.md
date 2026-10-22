@@ -710,6 +710,14 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   (COMPLETED.md, 10/21).
 - **[DONE 10/21] Flex and grid** — `flex`, `grid`, layout style properties, `<Flex>`/`<Grid>`
   and CSS's properties in lui; demo `examples/ui/layouts_view.lui` (COMPLETED.md, 10/21).
+- **[DONE 10/21] Media queries, selector lists, window limits** — `Rule.media`, `@media` in
+  lui, the cache keyed on media answers, `App.min_size`/`max_size`, live resize in the Layouts
+  demo (COMPLETED.md, 10/21).
+- **[OPEN] Live resize is each program's to wire.** `Host.redraw` from an event watch needs
+  the window at module level (a C callback cannot be generic), so `ui.run` does not redraw
+  during a drag; `ui.sdl3` could own the watch if a host were type-erased.
+- **[OPEN] `@media` lacks range syntax and more features**: `(width >= 600)`, `aspect-ratio`,
+  `resolution`, `prefers-reduced-motion`, and a `not` on one condition alone.
 - **[OPEN] Grid: no named areas, no negative lines, no `justify-content`/`align-content`.**
   `grid-template-areas`, `grid-area: name`, lines counted from the end (`-1`) and packing
   the tracks themselves are not built; tracks always stretch (CSS's `normal`).

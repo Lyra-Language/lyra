@@ -81,6 +81,10 @@ pub struct ScriptPlatform {
   look: Appearance = LightMode,
   opened: []string = [],
   access: AccessTree = AccessTree {},
+  /// The least and greatest size the window may be (nothing for no limit), which a step's
+  /// resize is held to, as a window's would be.
+  least: Size = Size {},
+  most: Size = Size {},
   /// The clock, in milliseconds, and how much of the current wait has passed.
   clock: i64 = 0,
   waited: i64 = 0,
@@ -116,7 +120,10 @@ impl Platform for ScriptPlatform {
       Played(input) => {
         self.next += 1
         match input {
-          Resized(size) => { self.size = size },
+          Resized(size) => {
+            self.size = held(size, self.least, self.most)
+            return [Resized(self.size)]
+          },
           AppearanceChanged(look) => { self.look = look },
           _ => {},
         }
@@ -137,6 +144,22 @@ impl Platform for ScriptPlatform {
     true
   }
   update_access = (self, tree) => { self.access = tree }
+  set_size_limits = (self, least, most) => {
+    self.least = least
+    self.most = most
+    self.size = held(self.size, least, most)
+  }
+}
+
+/// `size` within `least` and `most`, each side a limit only where it is more than nothing.
+let held = pure (size: Size, least: Size, most: Size) -> Size => Size {
+  w: within(size.w, least.w, most.w),
+  h: within(size.h, least.h, most.h),
+}
+
+let within = pure (value: f32, least: f32, most: f32) -> f32 => {
+  let floor = value.max(least)
+  if most > 0.0 { floor.min(most.max(least)) } else { floor }
 }
 
 /// The inputs `script` writes down, or what is wrong with it — a script of inputs alone,

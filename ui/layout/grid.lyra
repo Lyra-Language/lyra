@@ -254,7 +254,10 @@ let grid_plan<e> = (
     } else {
       var major = at.0
       var minor = at.1
+      // An item fits a free row at the latest: one with no item in it.
+      let last_row = major + styles.len() * (minor_count + 1) + 1
       loop {
+        if major > last_row { break }
         if minor + minor_span > minor_count {
           major += 1
           minor = 0
@@ -429,7 +432,10 @@ let track_sizes = pure (
     var free = width - gaps
     for b in base { free -= b }
     var growing: []i64 = [k in 0..<n | !is_fr(tracks[k].max) && limit[k] > base[k] | k]
-    while free > 0.001 && growing.len() > 0 {
+    // Each round either uses the free space or fills a track to its limit and drops it.
+    var rounds = 0
+    while free > 0.001 && growing.len() > 0 && rounds <= n {
+      rounds += 1
       let each = free / f32(growing.len())
       var next: []i64 = []
       for k in growing {
@@ -451,7 +457,8 @@ let track_sizes = pure (
         var fixed = gaps
         for k in 0..<n { if !is_fr(tracks[k].max) { fixed += base[k] } }
         var left = flexible
-        loop {
+        // Each round settles at least one track or ends.
+        for _ in 0..<(flexible.len() + 1) {
           var factors: f32 = 0.0
           var leftover = width - fixed
           for k in 0..<n {

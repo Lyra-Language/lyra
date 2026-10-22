@@ -45,6 +45,8 @@ import bindings.sdl3.{
   create_window,
   destroy_window,
   set_window_size,
+  set_window_minimum_size,
+  set_window_maximum_size,
   window_size,
   window_display_scale,
   window_pixel_density,
@@ -336,6 +338,12 @@ impl Platform for SdlPlatform {
   now_ms = (self) => i64(ticks())
   appearance = pure (self) => self.look
   open_url = (self, url) => open_url(url)
+  set_size_limits = (self, least, most) => {
+    let per_point = units_per_point(self.window)
+    let points = (units: f32) -> i32 => i32((units / per_point).round())
+    let _ = set_window_minimum_size(self.window, points(least.w), points(least.h))
+    let _ = set_window_maximum_size(self.window, points(most.w), points(most.h))
+  }
   update_access = (self, tree) => {
     if !self.listening { return }
     let pixels = self.scale()

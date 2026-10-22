@@ -301,7 +301,9 @@ let resolved = pure (line: []Flexing, room: f32) -> []Flexing => {
     if factor <= 0.0 || past { items[k] = Flexing { item | frozen: true } }
   }
   let initial = room - sized_total(items)
-  loop {
+  // Each round freezes at least one item, so as many rounds as items settle the line; the
+  // bound holds even where arithmetic goes wrong (an infinite size, a NaN freezes nothing).
+  for _ in 0..<(items.len() + 1) {
     if items.all((i) => i.frozen) { break }
     var free = room - sized_total(items)
     var factors: f32 = 0.0
@@ -344,7 +346,8 @@ let resolved = pure (line: []Flexing, room: f32) -> []Flexing => {
       items[k] = Flexing { item | target: clamped, frozen: freeze }
     }
   }
-  items
+  // Whatever the rounds left unsettled stays at its clamped size.
+  [i in items | Flexing { i | target: i.target.clamp(i.least, i.most), frozen: true }]
 }
 
 /// The main sizes a line's items take now: a frozen item's size, an unfrozen one's base.
@@ -484,7 +487,10 @@ let children_width<e> = (
   out
 }
 
-/// `node`'s width laid out with all the room it wants, outside the cache.
+/// `node`'s width laid out with all the room it wants, outside the cache — a control that
+/// fills whatever width it is given (a slider, a text field) has no width of its own, and is
+/// [CONTROL_WIDTH] wide, as a browser's input is about 150 pixels; an unbounded width would
+/// make an item's size infinite.
 let measured_width<e> = (
   node: Node<e>,
   cascade: Cascade,
@@ -493,5 +499,9 @@ let measured_width<e> = (
   id: string
 ) -> f32 => {
   var scratch = layout_cache::<e>()
-  lay(node, Constraints {}, cascade, fonts, ui, id, scratch).size.w
+  let limits = Constraints { max_w: CONTROL_WIDTH }
+  lay(node, limits, cascade, fonts, ui, id, scratch).size.w
 }
+
+/// The width a control filling its width takes when measured for its content.
+pub const CONTROL_WIDTH: f32 = 160.0

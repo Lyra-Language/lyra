@@ -265,6 +265,24 @@ pub let wait_event = (timeout_ms: i64) -> Maybe<Event> => {
   ) } { Some(classify(raw)) } else { None }
 }
 
+/// Have SDL call `filter` with each event as it is queued — including those it sends while
+/// the system holds the main thread, as macOS does for as long as a window is resized by
+/// dragging, when a program's own loop gets nothing. `filter` is a C callback, so a top-level
+/// function (`lyra-E066`), given `userdata` and the event's first word (`^u32`, read with
+/// [live_resize]); it answers 1. An extern, so the call is `unsafe { add_event_watch(f, nullptr) }`.
+@symbol("SDL_AddEventWatch")
+pub extern add_event_watch: (filter: (^u8, ^u32) -> u8, userdata: ^u8) -> bool
+
+/// Whether `event`, as an event watch is handed it, is the frame a live resize asks for:
+/// a window exposed while it is being resized (`SDL_EVENT_WINDOW_EXPOSED` with `data1` 1),
+/// to be drawn there and then.
+pub let live_resize = pure (event: ^u32) -> bool => unsafe {
+  event.offset(0)^ == EVENT_WINDOW_EXPOSED && event.offset(5)^ == 1
+}
+
+/// `SDL_EVENT_WINDOW_EXPOSED`; a window event's `data1` is its sixth 32-bit word.
+const EVENT_WINDOW_EXPOSED: u32 = 0x204
+
 /// Read the tag, then the one member it selects.
 let classify = pure (raw: RawEvent) -> Event => {
   let kind = unsafe { raw.kind }

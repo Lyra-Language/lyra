@@ -57,6 +57,9 @@ pub trait Platform {
   /// The interface as assistive technology should hear it, each time it changes (`ui.access`
   /// builds it); a platform with none ignores it.
   update_access: (mut Self, AccessTree) -> void
+  /// The least and greatest size the user may make the window, in logical units — a size of
+  /// nothing for no limit; the window resized into them if it is outside.
+  set_size_limits: (mut Self, Size, Size) -> void
 }
 
 /// The interface for assistive technology: its nodes, the root's id and the focused node's.

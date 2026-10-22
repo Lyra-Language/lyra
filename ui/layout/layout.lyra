@@ -78,8 +78,11 @@ import ui.style.{
   Computed,
   Cascade,
   cascade_root,
+  media_matches,
   light_theme,
   faded,
+  Viewport,
+  MediaAnswer,
 }
 import std.collections.{ HashMap, hashmap_new }
 
@@ -506,13 +509,15 @@ impl Constraints {
 // ── What the framework holds ─────────────────────────────────────────────────
 
 /// The state of the interface that is not the program's: which element has the focus, which
-/// is under the pointer and which is held down (each by its identity, `""` for none), and each
-/// element's own state. `ui.interact` keeps it; [layout_with] reads it.
+/// is under the pointer and which is held down (each by its identity, `""` for none), each
+/// element's own state, and the viewport a sheet's media rules are asked of. `ui.interact` keeps it; [layout_with] reads it.
 pub struct Interaction {
   focus: string = "",
   hover: string = "",
   pressed: string = "",
   widgets: HashMap<string, WidgetState>,
+  /// The window as media queries see it; a size of nothing for the constraints' own.
+  viewport: Viewport = Viewport {},
 }
 
 /// What the framework keeps for one element: a scroll's offset once the user has scrolled
@@ -558,6 +563,9 @@ pub struct Laid<e> {
   ring: Maybe<Color> = None,
   field: Maybe<FieldLook> = None,
   children: []Placed<e> = [],
+  /// The media queries this node's sheets, and those below it, asked of the viewport, and
+  /// their answers: while they answer the same, so does its layout.
+  media: []MediaAnswer = [],
 }
 
 /// A laid-out child and its offset from its parent's top-left corner.
@@ -613,7 +621,17 @@ pub let layout_cached<e> = (
 ) -> Laid<e> => {
   cache.laid_out = 0
   cache.reused = 0
-  let laid = lay(root, c, cascade_root(light_theme()), fonts, ui, "#", cache)
+  // With no viewport given, the window is as large as the constraints allow.
+  let seen = if ui.viewport.size.w > 0.0 || ui.viewport.size.h > 0.0 { ui } else {
+    Interaction {
+      ui |
+      viewport: Viewport {
+        ui.viewport |
+        size: Size { w: if c.bounded_w() { c.max_w } else { 0.0 }, h: if c.bounded_h() { c.max_h } else { 0.0 } },
+      },
+    }
+  }
+  let laid = lay(root, c, cascade_root(light_theme()), fonts, seen, "#", cache)
   // The root given back is the whole of last frame given back: its entries stand as they were.
   if cache.laid_out > 0 { cache.last = cache.now }
   cache.now = hashmap_new::<string, Cached<e>>()
@@ -662,7 +680,7 @@ let lay<e> = (
   let state = state_under(ui, id)
   if let Some(old) = cache.last.get(id) {
     if old.state == state && old.c == c && same_node(old.node, node, cascade.theme) &&
-      old.cascade == cascade {
+      old.cascade == cascade && still_answers(old.laid.media, ui.viewport) {
       cache.reused += 1
       // The layout is last frame's; what its elements raise is this frame's.
       let laid = refreshed(old.laid, node)
@@ -682,6 +700,11 @@ let lay<e> = (
   )
   laid
 }
+
+/// Whether every media query a layout asked would answer `viewport` as it did then — a
+/// resize that crosses no breakpoint changes nothing a sheet decides.
+let still_answers = pure (asked: []MediaAnswer, viewport: Viewport) -> bool =>
+  asked.all((a) => media_matches(a.media, viewport) == a.matched)
 
 /// Every element below `laid` kept from last frame for the next, as `laid` is — so a change
 /// inside it next frame finds its unchanged siblings.
@@ -912,7 +935,22 @@ let lay_fresh<e> = (
     ring: if ui.focus == id && focusable(node.kind) { Some(own.theme.colors.focus) } else { None },
     field: body.field,
     children: children,
+    media: asked_below(styled.media, children),
   }
+}
+
+/// `own` media answers and those of everything in `children`, each once.
+let asked_below<e> = pure (
+  own: []MediaAnswer,
+  children: []Placed<e>
+) -> []MediaAnswer => {
+  var out = [...own]
+  for child in children {
+    for a in child.laid.media {
+      if !out.any((b) => b.media == a.media) { out.push(a) }
+    }
+  }
+  out
 }
 
 /// A node's style where it stands: the cascade at the node (`own`, a theme's own), its
@@ -924,6 +962,7 @@ struct Styled {
   style: Computed,
   within: Cascade,
   space: Insets,
+  media: []MediaAnswer,
 }
 
 /// `node`'s [Styled], at `cascade`, identified as `id` — what laying it out starts from, and
@@ -936,15 +975,25 @@ let styled_at<e> = (
 ) -> Styled => {
   // A theme reaches its own node; a component's sheet — and a control's insides — only what
   // it holds.
+  // Each sheet as the viewport has it: its media rules in force or not.
+  var media: []MediaAnswer = []
   let own = match node.kind {
-    Theming(theme, sheet) => cascade.themed(theme, sheet),
+    Theming(theme, sheet) => {
+      let (elements, asked) = theme.elements.at(ui.viewport)
+      let (global, also) = sheet.at(ui.viewport)
+      media = [...asked, ...also]
+      cascade.themed(Theme { theme | elements: elements }, global)
+    },
     _ => cascade,
   }
   let classes = with_state(node.class, id, ui)
   let style = own.compute(node.tag, classes, node.part, node.style)
   let within = match node.kind {
-    Scope(sheet_of) =>
-      own.in_component(node.tag, node.class, sheet_of(own.theme)).inside(style),
+    Scope(sheet_of) => {
+      let (scoped, asked) = sheet_of(own.theme).at(ui.viewport)
+      media = asked
+      own.in_component(node.tag, node.class, scoped).inside(style)
+    },
     _ => if focusable(node.kind) {
       own.in_component(node.tag, node.class, Sheet {}).inside(style)
     } else {
@@ -955,7 +1004,14 @@ let styled_at<e> = (
     Inset(extra) => style.padding.plus(extra),
     _ => style.padding,
   }
-  Styled { own: own, classes: classes, style: style, within: within, space: space }
+  Styled {
+    own: own,
+    classes: classes,
+    style: style,
+    within: within,
+    space: space,
+    media: media,
+  }
 }
 
 /// `c` narrowed to the `width`, `height` and their least and greatest that `style` asks for —

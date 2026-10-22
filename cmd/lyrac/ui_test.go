@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"image/png"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // `ui.sdl3` draws every op of a `ui.draw` display list, checked a pixel at a time in the
@@ -1807,5 +1809,275 @@ fr rows (300x100): a@0,0 300x25 b@0,25 300x75
 `
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// Media rules and selector lists in the cascade. A sheet's grid has 1, 2 or 4 columns by
+// min-width breakpoints. A class rule under a landscape condition beats a later tag rule by
+// its specificity, applied or not by the orientation. A not and a comma (any of) combine.
+// Then a host resized: a height change crossing no breakpoint gives the grid back from the
+// cache (only the root and column are laid out), and crossing min-width 500 or 800 relays the
+// whole grid out at its new columns.
+func TestRun_UiMediaQueries(t *testing.T) {
+	got := runUiProgram(t, `import ui.app.{ host_of, sandbox }
+import ui.script.{ timed_platform, Played }
+import ui.backend.{ Renderer, Resized, DarkMode }
+import ui.draw.{ Size, Color, TextureId }
+import ui.text.{ fonts_new }
+import ui.style.{ Style, Sheet, Rule, Media, Viewport, Landscape, light_theme, fr, repeat_tracks }
+import ui.layout.{ Node, NoEvent, Laid, column, grid, sized, themed, layout_with, loose, interaction_new }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => {}
+}
+
+let main = () -> u8 => {
+  cascade()
+  resizing()
+  0
+}
+
+/// The sheet: four columns from 800, two from 500, one below; a class's colour by a media
+/// rule against a tag rule, and a selector list.
+let sheet = Sheet { rules: [
+  Rule { selector: "Grid", style: Style { grid_columns: Some([fr(1.0)]) } },
+  Rule { selector: "Grid", style: Style { grid_columns: Some(repeat_tracks(2, [fr(1.0)])) }, media: [Media { min_width: Some(500.0) }] },
+  Rule { selector: "Grid", style: Style { grid_columns: Some(repeat_tracks(4, [fr(1.0)])) }, media: [Media { min_width: Some(800.0) }] },
+  // .wide beats the later tag rule by specificity, whether or not its media rule applies.
+  Rule { selector: ".wide, Grid.big", style: Style { height: Some(30.0) }, media: [Media { orientation: Some(Landscape) }] },
+  Rule { selector: "SizedBox", style: Style { height: Some(10.0) } },
+  Rule { selector: "SizedBox", style: Style { height: Some(20.0) }, media: [Media { max_width: Some(499.0), not: true }, Media { min_height: Some(900.0) }] },
+] }
+
+let view = pure (_: i64) -> Node<NoEvent> => themed(light_theme(), sheet, [
+  column([grid([cell(), cell().with_class("wide"), cell(), cell()])]),
+])
+
+let cell = pure () -> Node<NoEvent> => sized::<NoEvent>(None, None)
+
+/// What the sheet makes at each viewport: the grid's columns and each cell's height.
+let cascade = () -> void => {
+  var fonts = fonts_new()
+  let sizes: [](f32, f32) = [(900.0, 400.0), (600.0, 400.0), (400.0, 1000.0), (400.0, 300.0)]
+  for (w, h) in sizes {
+    var ui = interaction_new()
+    ui.viewport = Viewport { size: Size { w: w, h: h } }
+    let laid = layout_with(view(0), loose(Size { w: w, h: h }), fonts, ui)
+    println("${w}x${h}: ${describe(the_grid(laid))}")
+  }
+}
+
+/// A host resized: within a breakpoint (the grid given back), across one, and back.
+let resizing = () -> void => {
+  var platform = timed_platform([
+    Played(Resized(Size { w: 900.0, h: 500.0 })),
+    Played(Resized(Size { w: 600.0, h: 500.0 })),
+    Played(Resized(Size { w: 650.0, h: 500.0 })),
+    Played(Resized(Size { w: 300.0, h: 500.0 })),
+  ], Size { w: 900.0, h: 400.0 })
+  var renderer = Blank {}
+  var fonts = fonts_new()
+  var host = host_of(sandbox(view, (n: i64, _: NoEvent) => n, Color { r: 0, g: 0, b: 0 }), 0, platform)
+  while host.step(platform, renderer, fonts) {
+    let size = platform.window_size()
+    println("resized to ${size.w}x${size.h}: ${describe(the_grid(host.shown[0]))}, laid out ${host.cache.laid_out}, given back ${host.cache.reused}")
+  }
+}
+
+let the_grid = pure (laid: Laid<NoEvent>) -> Laid<NoEvent> => laid.children[0].laid.children[0].laid
+
+/// How many columns a grid's cells make, and their heights.
+let describe = pure (g: Laid<NoEvent>) -> string => {
+  var xs: []f32 = []
+  for p in g.children { if !xs.any((x) => x == p.at.x) { xs.push(p.at.x) } }
+  "${xs.len()} columns, heights ${[p in g.children | "${p.laid.size.h}"].join(" ")}"
+}
+`)
+	want := `900x400: 4 columns, heights 20 30 20 20
+600x400: 2 columns, heights 20 30 20 20
+400x1000: 1 columns, heights 20 20 20 20
+400x300: 1 columns, heights 10 30 10 10
+resized to 900x500: 4 columns, heights 20 30 20 20, laid out 2, given back 1
+resized to 600x500: 2 columns, heights 20 30 20 20, laid out 7, given back 0
+resized to 650x500: 2 columns, heights 20 30 20 20, laid out 7, given back 0
+resized to 300x500: 1 columns, heights 10 10 10 10, laid out 7, given back 0
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// App's min_size and max_size reach the platform (Platform.set_size_limits) on the first
+// pass, and ScriptPlatform holds its resize steps to them as a window would be held, each
+// side on its own: below the least width and above the greatest, then within both.
+func TestRun_UiWindowSizeLimits(t *testing.T) {
+	got := runUiProgram(t, `import ui.app.{ App, host_of, sandbox }
+import ui.script.{ timed_platform, Played }
+import ui.backend.{ Renderer, Resized }
+import ui.draw.{ Size, Color, TextureId }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, NoEvent, sized }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => {}
+}
+
+/// A window opened below its least size grows to it; resized below or above its limits, it
+/// stops at them, a side at a time; within them, it is as asked.
+let main = () -> u8 => {
+  var platform = timed_platform([
+    Played(Resized(Size { w: 200.0, h: 900.0 })),
+    Played(Resized(Size { w: 1200.0, h: 100.0 })),
+    Played(Resized(Size { w: 500.0, h: 600.0 })),
+  ], Size { w: 300.0, h: 300.0 })
+  var renderer = Blank {}
+  var fonts = fonts_new()
+  let app = App {
+    sandbox(view, (n: i64, _: NoEvent) => n, Color { r: 0, g: 0, b: 0 }) |
+    min_size: Size { w: 360.0, h: 480.0 },
+    max_size: Size { w: 1000.0 },
+  }
+  var host = host_of(app, 0, platform)
+  while host.step(platform, renderer, fonts) {
+    let size = platform.window_size()
+    println("${size.w}x${size.h}")
+  }
+  0
+}
+
+let view = pure (_: i64) -> Node<NoEvent> => sized::<NoEvent>(None, None)
+`)
+	want := "360x900\n1000x480\n500x600\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// The Layouts demo's view resized 1,700 times — every 0.75 of a unit from 1300 wide to 300,
+// then back and forth across its 560 and 860 breakpoints by fractions — must settle every
+// pass, and within a minute: a layout loop that does not end fails here rather than hanging
+// a window (the demo froze while its edge was dragged, 10/21). And controls that fill their
+// width are measured at CONTROL_WIDTH in a flex row, never an unbounded width.
+func TestRun_UiResizeSettles(t *testing.T) {
+	skipWithoutText(t)
+	root := repoRoot(t)
+	t.Setenv("LYRA_STD", root)
+	dir := t.TempDir()
+	view, err := os.ReadFile(filepath.Join(root, "examples", "ui", "layouts_view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "layouts_view.lyra"), view, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, src := range map[string]string{"stress": `import ui.app.{ host_of, sandbox }
+import ui.script.{ timed_platform, Played, Step }
+import ui.backend.{ Renderer, Resized }
+import ui.draw.{ Size, Color, TextureId }
+import ui.text.{ fonts_new }
+import layouts_view.{ State, view, update }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => {}
+}
+
+let main = () -> u8 => {
+  var steps: []Step = []
+  var w: f32 = 1300.0
+  while w > 300.0 {
+    steps.push(Played(Resized(Size { w: w, h: 700.0 - (w % 37.0) })))
+    w -= 0.75
+  }
+  for k in 0..<400 {
+    let x = if k % 2 == 0 { 559.5 + f32(k % 7) * 0.25 } else { 860.25 - f32(k % 5) * 0.5 }
+    steps.push(Played(Resized(Size { w: x, h: 420.0 + f32(k) })))
+  }
+  var platform = timed_platform(steps, Size { w: 900.0, h: 700.0 })
+  var renderer = Blank {}
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var host = host_of(sandbox(view, update, Color { r: 0, g: 0, b: 0 }), State { cards: 9 }, platform)
+  var passes = 0
+  while host.step(platform, renderer, fonts) {
+    passes += 1
+    if passes % 500 == 0 {
+      let s = platform.window_size()
+      println("${passes} passes, at ${s.w}x${s.h}")
+    }
+  }
+  println("done: ${passes} passes")
+  0
+}
+`, "controls": `import ui.draw.{ Size }
+import ui.text.{ fonts_new }
+import ui.style.{ Style }
+import ui.layout.{ Node, NoEvent, SliderSpec, FieldSpec, flex, sized, slider, text_input, layout, loose }
+
+data Ev = Moved(f32) | Typed(string)
+
+/// Controls that fill their width, in a flex row too narrow for them: measured at
+/// CONTROL_WIDTH, not an unbounded width, so the line's arithmetic stays finite and settles.
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  let row: Node<Ev> = flex([
+    slider(SliderSpec { value: 0.5, on_change: Moved }),
+    text_input(FieldSpec { value: "", on_edit: Typed }),
+    sized::<Ev>(None, None).with_style(Style { width: Some(100.0), height: Some(20.0) }),
+  ])
+  for width in [300.0, 1000.0] {
+    let laid = layout(row, loose(Size { w: f32(width), h: 200.0 }), fonts)
+    println("${width}: ${[p in laid.children | "${p.at.x}+${p.laid.size.w}"].join(" ")}")
+  }
+  0
+}
+`} {
+		path := filepath.Join(dir, name+".lyra")
+		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		bin := filepath.Join(dir, name)
+		if _, stderr, code := captureRun(t, "build", path, "-o", bin); code != 0 {
+			t.Fatalf("building %s exited %d: %s", name, code, stderr)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, filepath.Join(dir, "stress")).CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("resizing the demo did not settle within a minute:\n%s", out)
+	}
+	if err != nil || !strings.Contains(string(out), "done: 1734 passes") {
+		t.Errorf("resizing the demo: %v\n%s", err, out)
+	}
+	out, err = exec.Command(filepath.Join(dir, "controls")).CombinedOutput()
+	if want := "300: 0+160 160+160 320+0\n1000: 0+160 160+160 320+100\n"; err != nil || string(out) != want {
+		t.Errorf("controls in a flex row: %v\ngot\n%s\nwant\n%s", err, out, want)
 	}
 }

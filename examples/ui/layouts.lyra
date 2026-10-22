@@ -1,24 +1,30 @@
-// Flex and grid: the markup of layouts_view.lui run by `ui.app` — a list of cards that wraps
-// to the window's width and a dashboard grid of spanning tiles.
+// Flex and grid, responsive: the markup of layouts_view.lui run by `ui.app` — a list of cards
+// that wraps to the window's width, and a dashboard grid whose columns @media rules choose —
+// in a window no smaller than the markup's <window> allows.
 //
 //     build/lui examples/ui/layouts_view.lui      # after editing the markup
 //     lyrac run examples/ui/layouts.lyra
 //     lyrac run examples/ui/layouts.lyra -- --width 520 --script "Tab Enter" --png FILE
 //
-// Resize the window and the cards reflow; Add a card and they wrap. **The second form**
+// Drag the window's edge and the cards reflow and the dashboard goes from four columns to two
+// to one; Add a card and they wrap. **While the edge is dragged**, macOS holds the main thread
+// in its resize loop and `main`'s loop gets nothing: an event watch (`on_event`) draws each
+// frame the resize asks for instead, from the window kept at module level for it — so the
+// contents follow the edge rather than stretch. **The second form**
 // plays a script (`ui.script`) at a window `--width` wide, prints how many cards it left, and
 // with `--png FILE` writes the last frame — headless with `SDL_VIDEODRIVER=dummy
 // SDL_RENDER_DRIVER=software`.
 
 import ui.sdl3
-import ui.sdl3.{ SdlRenderer, capture }
-import ui.app.{ sandbox, run }
+import ui.sdl3.{ SdlPlatform, SdlRenderer, capture }
+import bindings.sdl3.{ add_event_watch, live_resize }
+import ui.app.{ App, Host, sandbox, run, host_of }
 import ui.script.{ script_platform, parse_script }
 import ui.draw.{ Point, Size, Color }
 import ui.text.{ Fonts, fonts_new, glyph_atlas }
 import ui.style.{ light_theme }
 import ui.layout.{ layout, loose, paint }
-import layouts_view.{ State, view, update }
+import layouts_view.{ State, Event, view, update, WINDOW_MIN_SIZE, WINDOW_MAX_SIZE }
 import std.collections.{ parse_args }
 import std.png.{ write_png }
 import std.io.{ write_bytes }
@@ -45,7 +51,11 @@ let main = () -> u8 => {
   var platform = window.platform
   var renderer = window.renderer
   let background = light_theme().colors.background
-  let app = sandbox(view, update, background)
+  let app = App {
+    sandbox(view, update, background) |
+    min_size: WINDOW_MIN_SIZE,
+    max_size: WINDOW_MAX_SIZE,
+  }
   var status: u8 = 0
   if let Some(script) = args.value("--script") {
     match parse_script(script) {
@@ -72,11 +82,65 @@ let main = () -> u8 => {
       },
     }
   } else {
-    let _ = run(app, State {}, platform, renderer, fonts)
+    live = Some(Live {
+      host: host_of(app, State {}, platform),
+      platform: platform,
+      renderer: renderer,
+      fonts: fonts,
+    })
+    let _ = unsafe { add_event_watch(on_event, nullptr) }
+    while pass() {}
   }
   sdl3.close(platform, renderer)
   fonts.close()
   status
+}
+
+/// The running window — kept at module level, where the event watch reaches it.
+struct Live {
+  host: Host<State, Event>,
+  platform: SdlPlatform,
+  renderer: SdlRenderer,
+  fonts: Fonts,
+}
+
+var live: Maybe<Live> = None
+
+/// One pass of the window's loop; whether it goes on.
+let pass = () -> bool => {
+  let Some(now) = live else { return false }
+  var w = now
+  let going = w.host.step(w.platform, w.renderer, w.fonts)
+  shown_at = w.platform.window_size()
+  live = Some(w)
+  going
+}
+
+/// Whether the watch is drawing a frame now: presenting one during a live resize can make
+/// AppKit ask for another, which would reach the watch from inside the first.
+var redrawing: bool = false
+
+/// The window's size at the last frame drawn — by a pass or by the watch. SDL asks for a
+/// frame sixty times a second for as long as AppKit says a resize lasts, whether or not the
+/// size moved; a frame at the size already shown is skipped, so a held or ended drag costs
+/// nothing, rather than a whole layout, paint and present each sixtieth of a second on the
+/// thread that must answer the user.
+var shown_at: Size = Size {}
+
+/// SDL's event watch: each frame a live resize asks for at a new size, drawn there and then —
+/// never from inside its own drawing.
+let on_event = (_: ^u8, event: ^u32) -> u8 => {
+  if !live_resize(event) || redrawing { return 1 }
+  let Some(now) = live else { return 1 }
+  var w = now
+  let size = w.platform.window_size()
+  if size == shown_at { return 1 }
+  redrawing = true
+  w.host.redraw(w.platform, w.renderer, w.fonts)
+  shown_at = size
+  live = Some(w)
+  redrawing = false
+  1
 }
 
 /// The view of `state` drawn `size` large without showing it, and written to `path` as a PNG.

@@ -9,6 +9,45 @@ Newest first.
 
 ## Dated log
 
+### 10/21/26 — `ui/`: media queries, selector lists, window size limits, live resize
+
+- **A media rule stays where it is written.** It keeps its layer, its specificity and its
+  place in its sheet, as CSS has it. The alternative, a layer of its own above the others,
+  would have let a breakpoint reorder rules a reader had ordered.
+- **The viewport flows in as framework state** (`Interaction.viewport`), not in the
+  `Cascade`. The cascade is part of the layout cache's key, so a raw window size in it
+  would have made every resize relay out everything. Sheets are filtered as each subtree's
+  cascade is built, and each `Laid` carries the media queries its subtree asked and their
+  answers. An element is reused only while they answer the same. A height change that
+  crosses no breakpoint gave a grid back whole; crossing min-width 500 relaid it at its new
+  columns (`TestRun_UiMediaQueries`).
+- **The wrong key was an option.** Keying a node on its parent's cascade alone would have
+  reused a `Themed` node whose own sheet's media had flipped. Its cascade is the one before
+  its sheet applies, so the answers must ride on the subtree.
+- **Window limits are one platform method**, `set_size_limits(min, max)`, rather than
+  `set_min_size` alone, since the maximum follows the same path. A side of nothing is no
+  limit.
+- **Live resize goes through an event watch**, as `bindings.imgui`'s host has it, but in
+  Lyra: `add_event_watch` binds `SDL_AddEventWatch` with a top-level callback. Its `bool`
+  return has no C spelling from Lyra, so the callback answers `u8`. A C callback cannot be
+  generic, so the window lives at module level in the program (`examples/ui/layouts.lyra`),
+  the pattern Termina uses.
+- **The demo froze twice while its window was handled; the cause was the live-resize
+  watch.** SDL's Cocoa backend does not wait for a size change to ask for a frame. From
+  `windowWillStartLiveResize` to `windowDidEndLiveResize` a 60 Hz timer sends an expose
+  (`data1` 1) whether or not the size moved. The watch answered every one with a whole
+  layout, paint and vsync present on the main thread, which saturated it as AppKit's resize
+  loop and the pointer's way to the traffic lights needed it. The watch now draws only at a
+  size not yet shown, and never from inside its own drawing (as `bindings.imgui`'s host
+  guards). A traced run of the fixed demo, dragged and then closed from the traffic lights,
+  drew 177 frames and skipped 82 at an unchanged size. Headless, the layout itself never
+  hung: 1,734 resizes across the breakpoints settle (`TestRun_UiResizeSettles`). Every
+  iterative layout loop is bounded anyway (flex's freeze loop, grid's maximize, `fr` and
+  placement loops), and a control that fills its width is measured at `CONTROL_WIDTH` rather
+  than unbounded, so no arithmetic reaches an infinity.
+- **lui**: `@media` blocks, checked selector lists (each selector at its own line), and
+  `<window min-width min-height/>` writing `WINDOW_MIN_SIZE`/`WINDOW_MAX_SIZE`.
+
 ### 10/21/26 — `ui/`: CSS's flexbox and grid in `ui.layout`
 
 - **One protocol**: flex and grid lay out inside the constraints protocol, constraints down

@@ -1,8 +1,13 @@
 <!--
-  Flex and grid, as markup: a list of cards that wraps to the window's width, and a dashboard
-  grid. `build/lui examples/ui/layouts_view.lui` writes layouts_view.lyra beside it, which
-  layouts.lyra runs; resize the window and the cards reflow, add some and they wrap.
+  Flex and grid, as markup, responsive to the window: a list of cards that wraps to its width,
+  a toolbar that stands its buttons in a column when the window is narrow, and a dashboard
+  grid of four columns, two, or one by @media breakpoints, its tiles' spans with them; a dark
+  look when the system's is. `build/lui examples/ui/layouts_view.lui` writes layouts_view.lyra
+  beside it, which layouts.lyra runs; drag the window's edge and it follows.
 -->
+
+<!-- Narrower than this, nothing has room. -->
+<window min-width="360" min-height="420"/>
 
 <script target="ui">
   import ui.style.{ Theme, light_theme }
@@ -31,28 +36,37 @@
 <style global theme={Theme} name="layouts_sheet">
   .page { background: $colors.background; padding: $space.xl; gap: $space.l }
   Text.title { font-size: 20 }
-  .toolbar { gap: $space.s }
-  .card {
+  .toolbar { gap: $space.s; flex-wrap: wrap }
+  /* Cards and tiles alike: one block for both. */
+  .card, .tile {
     background: $colors.surface;
     border-color: $colors.border;
     border-width: 1;
     radius: 10;
-    padding: $space.l;
-    gap: $space.s;
-    flex: 1 1 180;
-    min-width: 150
+    gap: $space.s
   }
-  .tile {
-    background: $colors.surface;
-    border-color: $colors.border;
-    border-width: 1;
-    radius: 10;
-    padding: $space.m;
-    gap: $space.xs
+  .card { padding: $space.l; flex: 1 1 180; min-width: 150 }
+  .tile { padding: $space.m }
+  /* One column of tiles, two from 560 wide, four from 860 — spans only where they fit. */
+  .dashboard { grid-template-columns: 1fr }
+  @media (min-width: 560) {
+    .dashboard { grid-template-columns: repeat(2, 1fr) }
+    .wide, .everything { grid-column: span 2 }
+    .tall { grid-row: span 2 }
   }
-  .wide { grid-column: span 2 }
-  .tall { grid-row: span 2 }
-  .everything { grid-column: 1 / span 4 }
+  @media (min-width: 860) {
+    .dashboard { grid-template-columns: repeat(4, 1fr) }
+    .everything { grid-column: 1 / span 4 }
+  }
+  /* Too narrow for the toolbar's row: its buttons one under another, as wide as it. */
+  @media (max-width: 559) {
+    .toolbar { flex-direction: column; align-items: stretch }
+  }
+  @media (prefers-color-scheme: dark) {
+    .page { background: #1c1c1e }
+    .card, .tile { background: #2c2c2e; border-color: #48484a }
+    Text { color: #f2f2f7 }
+  }
   Text.figure { font-size: 28; color: $colors.accent }
   Text.label { color: $colors.muted; font-size: 13 }
 </style>
@@ -63,10 +77,10 @@
     <Scroll axis="vertical">
       <Column class="page" cross="stretch">
         <Text class="title">Cards</Text>
-        <Row class="toolbar">
+        <Flex class="toolbar">
           <Button on_click={MoreCards}>Add a card</Button>
           <Button on_click={FewerCards}>Remove one</Button>
-        </Row>
+        </Flex>
         <Flex wrap="wrap" gap="12" align="start">
           <for each={i in 0..<s.cards}>
             <Column class="card" key="card {i}">
@@ -76,7 +90,7 @@
           </for>
         </Flex>
         <Text class="title">Dashboard</Text>
-        <Grid columns="repeat(4, 1fr)" auto-rows="minmax(90, auto)" gap="12">
+        <Grid class="dashboard" auto-rows="minmax(90, auto)" gap="12">
           <tile class="everything" label="This week" figure="1,284 visits"/>
           <tile class="wide tall" label="Sign-ups" figure="312"/>
           <tile label="Errors" figure="3"/>

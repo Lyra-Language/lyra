@@ -61,6 +61,7 @@ import ui.backend.{
 }
 import ui.draw.{ Point, Size, Color }
 import ui.text.{ Fonts, GlyphAtlas, glyph_atlas }
+import ui.style.{ Viewport }
 import ui.layout.{ Node, Laid, LayoutCache, layout_cache, paint }
 import ui.interact.{ Ui, ui_new }
 import ui.access.{ access_tree }
@@ -75,6 +76,10 @@ pub struct App<s, e> {
   update: (s, e) -> (s, []Command<e>),
   subscriptions: (s) -> []Subscription<e>,
   background: Color,
+  /// The least and greatest size the user may make the window, in logical units; a size of
+  /// nothing (the default) for no limit, and a side of nothing for none that way.
+  min_size: Size = Size {},
+  max_size: Size = Size {},
 }
 
 /// Work `update` asks the host to carry out, each naming the event its result comes back as.
@@ -163,6 +168,10 @@ pub struct Host<s, e> {
   shown: []Laid<e> = [],
 }
 
+/// The window as a sheet's media rules ask of it: its size and the system's look.
+let viewport_of<p> where p: Platform = (platform: p) -> Viewport =>
+  Viewport { size: platform.window_size(), appearance: platform.appearance() }
+
 /// The sooner of a wait (`-1` for none) and `delay` milliseconds, never below none at all.
 let sooner = pure (wait: i64, delay: i64) -> i64 => {
   let d = delay.max(0)
@@ -217,22 +226,15 @@ impl Host<s, e> {
     if !self.running { return false }
     // Drawn only when something may have changed — an input, an event, the first pass — or
     // every pass under `--live`, where the code itself may have.
-    if self.dirty || self.live || self.shown.len() == 0 {
-      let fresh = self.ui.frame_cached(
-        (self.app.view)(self.state),
-        platform.window_size(),
-        fonts,
-        self.cache
-      )
-      self.layouts += 1
-      self.ui.place_text_input(fresh, platform)
-      let ops = paint(fresh, Point {}, platform.scale(), fonts, self.atlas, renderer)
-      renderer.draw(self.app.background, ops)
-      platform.update_access(access_tree(fresh, self.ui.state.focus))
-      self.frames += 1
-      self.shown = [fresh]
-      self.dirty = false
-    }
+    if self.shown.len() == 0 { platform.set_size_limits(
+      self.app.min_size,
+      self.app.max_size
+    ) }
+    if self.dirty || self.live || self.shown.len() == 0 { self.redraw(
+      platform,
+      renderer,
+      fonts
+    ) }
     var laid = self.shown[0]
     for input in platform.next_events(self.wait_ms(now)) {
       self.dirty = true
@@ -259,6 +261,7 @@ impl Host<s, e> {
       ) { self.dispatch(event, at, platform) }
       self.deliver_due(at, platform)
       if !self.running { return false }
+      self.ui.state.viewport = viewport_of(platform)
       laid = self.ui.frame_cached(
         (self.app.view)(self.state),
         platform.window_size(),
@@ -269,6 +272,33 @@ impl Host<s, e> {
       self.shown = [laid]
     }
     self.running
+  }
+
+  /// The view laid out at the window's size now and drawn — what a pass does when something
+  /// may have changed, and what a program's live-resize watch calls while the system holds
+  /// its loop (`bindings.sdl3`'s `add_event_watch`, `examples/ui/layouts.lyra`), so the
+  /// contents follow the window's edge as it is dragged.
+  pub let redraw<p, r> where p: Platform, r: Renderer = (
+    self: mut,
+    platform: mut p,
+    renderer: mut r,
+    fonts: mut Fonts
+  ) -> void => {
+    self.ui.state.viewport = viewport_of(platform)
+    let fresh = self.ui.frame_cached(
+      (self.app.view)(self.state),
+      platform.window_size(),
+      fonts,
+      self.cache
+    )
+    self.layouts += 1
+    self.ui.place_text_input(fresh, platform)
+    let ops = paint(fresh, Point {}, platform.scale(), fonts, self.atlas, renderer)
+    renderer.draw(self.app.background, ops)
+    platform.update_access(access_tree(fresh, self.ui.state.focus))
+    self.frames += 1
+    self.shown = [fresh]
+    self.dirty = false
   }
 
   /// How long the pass may wait for input from `now`: not at all while events wait, a frame
