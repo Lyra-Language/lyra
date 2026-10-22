@@ -730,7 +730,7 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   them once into a sheet (by tag and class) and the whole tree gets faster.
 - **[OPEN] `cmd/lyrac`'s tests take over `go test`'s default 10 minutes** on this Mac (the ui
   tests run serially, ~15–45 s each, as `t.Setenv` forbids `t.Parallel`); run with `-timeout
-  30m` until they share a built binary or set the variable another way.
+  30m` (CI does) until they share a built binary or set the variable another way.
 - **[OPEN] An idle `ui` window ignores SIGTERM** until the next event: SDL turns the signal into
   a quit only when it pumps, and the loop is asleep in `SDL_WaitEventTimeout` with no timeout.
   `pkill` left demo windows open; a bounded wait (or SDL's quit-on-signal waking it) would fix it.

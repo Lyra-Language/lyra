@@ -140,9 +140,12 @@ jobs:
       # (TestExec_SplitIsNotQuadratic) print the ratio they measured, and the
       # runner's own numbers are the ones worth watching drift in — without -v
       # they are visible only on the run that already failed.
+      #
+      # -timeout 30m: cmd/lyrac's ui tests each compile and link a whole program and run
+      # one at a time (t.Setenv forbids t.Parallel), past go test's default 10 minutes.
       - name: Test with coverage
         working-directory: lyra
-        run: go test -v -coverpkg=./... -coverprofile=cover.out ./...
+        run: go test -v -timeout 30m -coverpkg=./... -coverprofile=cover.out ./...
 
       # `lyrafmt --check .` over the repo, which is a step at all only because the walk now
       # reads `.lyrafmtignore` (the compiler's fixtures include a file meant not to parse).
