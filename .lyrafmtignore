@@ -21,3 +21,4 @@ examples/ui/layouts_view.lyra
 examples/ui/effects_view.lyra
 examples/ui/overflow_view.lyra
 examples/ui/7GUIs/counter/counter_view.lyra
+examples/ui/7GUIs/temp_convert/temp_convert_view.lyra
