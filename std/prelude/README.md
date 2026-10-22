@@ -71,7 +71,7 @@ an error that names the shadow.
 | `show.lyra` | `Show` |
 | `convert.lyra` | `From`, the conversion `?` applies to an error |
 | `format.lyra` | `to_fixed` and number formatting |
-| `parse.lyra` | `parse_i64` |
+| `parse.lyra` | `parse_i64`, `parse_f64`, `parse_f32` (correctly rounded) |
 | `strings.lyra` | ASCII rune classifiers, trimming, prefix/suffix, `index`, `split`, `Needle` |
 | `rand.lyra` | `Rng` and the draws over `random_seed()` |
 | `args.lyra` | `program_args()` |

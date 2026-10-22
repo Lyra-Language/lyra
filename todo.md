@@ -780,8 +780,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] `ui.access`'s actions are unchecked against VoiceOver.** VoiceOver reads the form
   and its highlight fits each control (10/21, once bounds went over in pixels); pressing,
   setting and stepping from VoiceOver are tested headless only.
-- **[OPEN] `ui.access`: a slider's value set as text is ignored** — the prelude parses no
-  `f64` (`parse_i64` only). AccessKit sends a slider a number, so nothing needs it yet.
+- **[DONE 10/22] `ui.access`: a slider's value set as text** — read with the prelude's new
+  `parse_f64` (COMPLETED.md, 10/22).
 - **[OPEN] Backend: a private generic struct as another module's type argument cannot be laid
   out.** `HashMap<string, Cached<e>>` in `ui.layout` failed with "cannot lay out data type
   Maybe" while `Cached` was private; it is `pub` meanwhile (its doc says why).

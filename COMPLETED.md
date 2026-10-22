@@ -9,6 +9,28 @@ Newest first.
 
 ## Dated log
 
+### 10/22/26 — `parse_f64` and `parse_f32` in the prelude
+
+- **Correctly rounded, not nearly.** `std.json`'s number reader scales a mantissa by powers
+  of ten and can be an ulp or two off past 18 digits; a prelude function is what every
+  program's input goes through, so these are Go's `strconv`, written again: Clinger's fast
+  path (a mantissa of at most 15 digits times or over an exact power of ten — one IEEE
+  operation, so one rounding) and otherwise the decimal itself, held as at most 800 digits
+  and shifted by powers of two until its binary exponent is known, its mantissa read off and
+  rounded half to even, a dropped nonzero digit counting past a tie. Eisel–Lemire, Go's
+  middle path, needs a table of 128-bit powers of five; the slow path is correct alone.
+- **`parse_f32` rounds once**, from the decimal: `f32(parse_f64(s))` rounds twice and is
+  sometimes an ulp off (the halfway cases in the test find it).
+- **Strict as `parse_i64`**, and `None` where Go answers an infinity with an error. `inf`,
+  `nan`, hexadecimal floats and underscores, which Go accepts, are refused: a program
+  asking whether text is a number is rarely asking about those.
+- **Tested against `strconv.ParseFloat` bit for bit** (`TestExec_ParseFloat`, 2,695 lines):
+  edges, seeded random decimals at every exponent, floats' shortest and 17-digit forms, and
+  exact halfway points between neighbours, with and without a digit past the 800 kept.
+  Always rounding a tie up fails 207 of them.
+- **`ui.access` reads a slider's value set as text** with it (`TestRun_UiAccessibilityTree`):
+  stepped like a number, ignored when it is not one.
+
 ### 10/22/26 — 7GUIs' counter: a read-only field, and two compiler fixes it found
 
 - **Any closure that could panic failed to compile.** The capture analysis lists the

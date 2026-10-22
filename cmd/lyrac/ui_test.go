@@ -1416,8 +1416,9 @@ overlapping: 3 ops, 3 calls
 // a field labelled by its `label`, a checkbox ticked or not, a slider's number and range, and
 // the actions each offers (1 focus, 2 click, 4 set value, 8/16 step). Then what VoiceOver
 // does, as `AccessAction` inputs found by label: the name set, the box ticked, the slider
-// stepped twice and set outright, Send pressed — the events the keyboard would raise — and
-// an action for an element no longer there ignored.
+// stepped twice and set outright (as a number, and as text, which is stepped too and ignored
+// when it is no number), Send pressed — the events the keyboard would raise — and an action
+// for an element no longer there ignored.
 func TestRun_UiAccessibilityTree(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ sandbox, host_of }
@@ -1477,6 +1478,9 @@ let main = () -> u8 => {
   println("focus on Name: ${access_node(tree, name).map((n) => n.id) == Some(tree.focus)}")
   let (_, set) = play([AccessAction(volume, AxSetNumber(9.4)), AccessAction("nothing", AxClick)], fonts)
   println("set number: volume ${set.volume}")
+  let (_, as_text) = play([AccessAction(volume, AxSetValue(" 6.6 "))], fonts)
+  let (_, not_a_number) = play([AccessAction(volume, AxSetValue("loud"))], fonts)
+  println("set as text: volume ${as_text.volume}, and as text that is no number ${not_a_number.volume}")
   fonts.close()
   0
 }
@@ -1548,6 +1552,7 @@ let role_name = pure (node: AccessNode) -> string => match node.role {
 after: name Ada, ticked true, volume 7, sent yes
 focus on Name: true
 set number: volume 9
+set as text: volume 7, and as text that is no number 5
 `
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)

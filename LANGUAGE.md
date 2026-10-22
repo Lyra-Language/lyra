@@ -886,6 +886,7 @@ lyrac doc std/prelude/prelude.lyra -o ../lyra-website/src/content/docs/reference
 | `print`/`println` | builtin | polymorphic over printable scalars |
 | `read_line() -> Maybe<string>` | builtin | strips `\n` (and `\r`); `None` at EOF (distinct from `""`) |
 | `line.parse_i64() -> Maybe<i64>` | prelude (`parse.lyra`) | strict: `None` on blank, lone sign, trailing garbage, whitespace, out of range |
+| `line.parse_f64() -> Maybe<f64>`, `parse_f32` | prelude (`parse.lyra`) | decimal (`1.`, `.5`, `+1`, `1e-3`), **correctly rounded** (ties to even, any length — Go's `strconv`, bit for bit); strict as `parse_i64`, and `None` for `inf`/`nan`/hex and a value that would round to infinity; underflow is `0.0`, signed |
 | `program_args() -> []string` | prelude over `program_arg_count()`/`program_arg(i)` | index 0 is program name; `program_arg` traps out of range; EffectInput. `main` is emitted as `main(argc, argv)` |
 | `read_file(path) -> Maybe<string>` | `std.io`, over `extern` `open`/`read`/`close` | `None` if unopenable; no UTF-8 validation; `open` declared variadic |
 | `read_stdin()` | `std.io` | shares the chunked reader |

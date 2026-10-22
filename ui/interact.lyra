@@ -312,8 +312,8 @@ impl Ui {
 
   /// What assistive technology asked of the element identified as `id`, done as the keyboard
   /// would do it — the focus moved, a button pressed, a slider stepped — or a value set
-  /// outright: a field's text, a slider's number. (A slider's value as text is not read:
-  /// AccessKit sends a slider a number.)
+  /// outright: a field's text, a slider's number — sent as a number, or as text that is one
+  /// (`parse_f64`, spaces around it allowed; other text is ignored).
   let access_action<e> = (
     self: mut,
     laid: Laid<e>,
@@ -350,6 +350,10 @@ impl Ui {
           let end = text.len()
           self.state.widgets.insert(id, WidgetState { state | caret: end, anchor: end })
           if text == spec.value || spec.read_only { [] } else { [(spec.on_edit)(text)] }
+        },
+        Ranged(spec) => match text.trim().parse_f64() {
+          Some(n) => changed(spec, f32(n)),
+          None => [],
         },
         _ => [],
       },
