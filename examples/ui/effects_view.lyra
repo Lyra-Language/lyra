@@ -3,6 +3,7 @@
 import ui.layout.{ Node, Edges, MainStart, CrossStretch, row, column, stack, positioned, sized, text, themed, component, button, flex }
 import ui.style.{ Style, Sheet, Rule, Theme, insets, insets_xy, Transition, TimingEase, TimingEaseOut, TimingEaseInOut, Wrap, BasisLength }
 import ui.draw.{ Size, rgb, rgba, BoxShadow, Gradient, ColorStop, LinearGradient, RadialGradient }
+import ui.app.{ WindowSpec }
 
 // effects_view.lui:13
 import ui.style.{ Theme, light_theme }
@@ -95,7 +96,8 @@ pub let effects_sheet = pure (_: Theme) -> Sheet => Sheet {
   ],
 }
 
-/// From effects_view.lui, line 10: the least and greatest size of the window, for `App`'s
-/// `min_size` and `max_size` (nothing for no limit).
-pub const WINDOW_MIN_SIZE: Size = Size { w: 420.0, h: 480.0 }
-pub const WINDOW_MAX_SIZE: Size = Size { w: 0.0, h: 0.0 }
+/// From effects_view.lui, line 10: the window, for `ui.gpu.open_app` — or an `App`'s
+/// `min_size`, `max_size`, `resize_x`, `resize_y` and `window_overflow`.
+pub const WINDOW: WindowSpec = WindowSpec {
+  min_size: Size { w: 420.0, h: 480.0 },
+}

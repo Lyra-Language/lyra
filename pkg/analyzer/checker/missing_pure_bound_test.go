@@ -94,6 +94,28 @@ let quiet = (n: i64) -> i64 => n + 1
 `), "quiet")
 }
 
+// A generic function calling through a bound that nothing in the program implements is not
+// advised `pure`: what the call does is unknown, not nothing (`ui.app`'s host and `Platform`,
+// checked without a platform). Once an impl is there its effects decide, and an effect-free
+// one is advice again.
+func TestMissingPureBound_UnimplementedBound_Silent(t *testing.T) {
+	const trait = `
+trait Device {
+  poke: (mut Self, i64) -> void
+}
+let drive<d> where d: Device = (device: mut d, n: i64) -> void => device.poke(n)
+`
+	assertWarned(t, missingPureBounds(t, trait))
+	assertWarned(t, missingPureBounds(t, trait+`
+struct Quiet {
+  n: i64 = 0,
+}
+impl Device for Quiet {
+  poke = (self, n) => {}
+}
+`), "drive")
+}
+
 // `main` is called by nothing, so there is no caller for a later effect's blame
 // to land on — the one thing the bound would buy. Never reported.
 func TestMissingPureBound_MainExempt(t *testing.T) {

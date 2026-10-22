@@ -18,7 +18,7 @@ import ui.draw.{ Color, Point, Image }
 import ui.text.{ fonts_new }
 import ui.text.{ glyph_atlas }
 import ui.layout.{ layout, loose, paint }
-import effects_view.{ State, view, update, WINDOW_MIN_SIZE, WINDOW_MAX_SIZE }
+import effects_view.{ State, view, update, WINDOW }
 import std.collections.{ parse_args }
 import std.png.{ write_png }
 import std.io.{ write_bytes }
@@ -65,8 +65,8 @@ let main = () -> u8 => {
   } else {
     let app = App {
       sandbox(view, update, background) |
-      min_size: WINDOW_MIN_SIZE,
-      max_size: WINDOW_MAX_SIZE,
+      min_size: WINDOW.min_size,
+      max_size: WINDOW.max_size,
     }
     let _ = run(app, State {}, platform, renderer, fonts)
   }

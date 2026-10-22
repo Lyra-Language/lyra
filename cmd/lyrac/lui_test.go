@@ -564,6 +564,7 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"window overflow", ui + "<window overflow=\"wrap\"/>", "x.lui:2: overflow is visible, hidden, clip, scroll or auto, not wrap"},
 		{"window width alone", ui + "<window width=\"300\"/>", "x.lui:2: <window> takes width and height together"},
 		{"window size", ui + "<window size=\"300\"/>", "x.lui:2: <window> has no attribute size"},
+		{"window title bare", ui + "<window title/>", "x.lui:2: title of <window> needs a value"},
 		{"window resize text", ui + "<window resize_x=\"false\"/>", "x.lui:2: resize_x is bare or {condition}, not text"},
 	}
 	for _, c := range cases {
@@ -907,7 +908,7 @@ func TestLui_EffectsExampleIsCurrentAndChecks(t *testing.T) {
 
 // Overflow in the ui target: `overflow` with one value sets both axes and with two sets x
 // then y, `overflow-x` and `overflow-y` one each, in a sheet and inline; `<window
-// overflow>` makes WINDOW_OVERFLOW, and a window without it makes none.
+// overflow>` sets WINDOW's overflow, and a window without it leaves the default.
 func TestLui_UiTargetOverflow(t *testing.T) {
 	t.Parallel()
 	lui := buildLui(t)
@@ -944,7 +945,7 @@ func TestLui_UiTargetOverflow(t *testing.T) {
 		"overflow_x: Some(OverflowHidden), overflow_y: Some(OverflowScroll)",
 		"overflow_x: Some(OverflowClip), overflow_y: Some(OverflowVisible)",
 		"overflow_y: Some(OverflowAuto)",
-		"pub const WINDOW_OVERFLOW: Overflow = OverflowHidden",
+		"  overflow: OverflowHidden,",
 	} {
 		if !strings.Contains(string(generated), want) {
 			t.Errorf("the generated module lacks %q:\n%s", want, generated)
@@ -965,14 +966,14 @@ func TestLui_UiTargetOverflow(t *testing.T) {
 	if generated, err = os.ReadFile(filepath.Join(dir, "view.lyra")); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(generated), "WINDOW_OVERFLOW") {
-		t.Errorf("a window without overflow made WINDOW_OVERFLOW:\n%s", generated)
+	if strings.Contains(string(generated), "overflow: Overflow") {
+		t.Errorf("a window without overflow set WINDOW's:\n%s", generated)
 	}
 }
 
-// `<window width height>` makes WINDOW_SIZE, the size `main` opens the window at, and
-// `resize`, `resize_x` and `resize_y` WINDOW_RESIZE_X and _Y, a side's own before `resize`; a
-// window without them makes none.
+// `<window>` makes WINDOW, a ui.app.WindowSpec for ui.gpu.open_app: `title`, `width` and
+// `height` (the size it opens at), the limits, and `resize`, `resize_x` and `resize_y`, a
+// side's own before `resize`; a window without them leaves WindowSpec's defaults.
 func TestLui_UiTargetWindowSize(t *testing.T) {
 	t.Parallel()
 	lui := buildLui(t)
@@ -980,7 +981,7 @@ func TestLui_UiTargetWindowSize(t *testing.T) {
 	source := `<script target="ui">
   pub data Ev = Go
 </script>
-<window width="320" height={240.0 / 2.0} min-width="200" resize={false} resize_x/>
+<window title="Sized" width="320" height={240.0 / 2.0} min-width="200" resize={false} resize_x/>
 <component name="view" event={Ev}>
   <Column/>
 </component>
@@ -997,10 +998,13 @@ func TestLui_UiTargetWindowSize(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"pub const WINDOW_SIZE: Size = Size { w: 320.0, h: 240.0 / 2.0 }",
-		"pub const WINDOW_MIN_SIZE: Size = Size { w: 200.0, h: 0.0 }",
-		"pub const WINDOW_RESIZE_X: bool = true",
-		"pub const WINDOW_RESIZE_Y: bool = false",
+		"pub const WINDOW: WindowSpec = WindowSpec {",
+		"  title: \"Sized\",",
+		"  size: Size { w: 320.0, h: 240.0 / 2.0 },",
+		"  min_size: Size { w: 200.0, h: 0.0 },",
+		"  resize_x: true,",
+		"  resize_y: false,",
+		"import ui.app.{ WindowSpec }",
 	} {
 		if !strings.Contains(string(generated), want) {
 			t.Errorf("the generated module lacks %q:\n%s", want, generated)
@@ -1011,7 +1015,7 @@ func TestLui_UiTargetWindowSize(t *testing.T) {
 	if code != 0 || strings.Contains(stdout+stderr, "warning") {
 		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
-	plain := strings.Replace(source, ` width="320" height={240.0 / 2.0}`, "", 1)
+	plain := strings.Replace(source, ` title="Sized" width="320" height={240.0 / 2.0}`, "", 1)
 	plain = strings.Replace(plain, ` resize={false} resize_x`, "", 1)
 	if err := os.WriteFile(path, []byte(plain), 0o644); err != nil {
 		t.Fatal(err)
@@ -1022,9 +1026,8 @@ func TestLui_UiTargetWindowSize(t *testing.T) {
 	if generated, err = os.ReadFile(filepath.Join(dir, "view.lyra")); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(generated), "WINDOW_SIZE") ||
-		strings.Contains(string(generated), "WINDOW_RESIZE") {
-		t.Errorf("a window without its size or resizing made constants for them:\n%s", generated)
+	if !strings.Contains(string(generated), "pub const WINDOW: WindowSpec = WindowSpec {\n  min_size: Size { w: 200.0, h: 0.0 },\n}") {
+		t.Errorf("a window with only a least width should set only that:\n%s", generated)
 	}
 }
 

@@ -24,9 +24,7 @@ import overflow_view.{
   Event,
   view,
   update,
-  WINDOW_MIN_SIZE,
-  WINDOW_MAX_SIZE,
-  WINDOW_OVERFLOW
+  WINDOW
 }
 import std.collections.{ parse_args }
 import std.png.{ write_png }
@@ -45,9 +43,9 @@ let main = () -> u8 => {
   let background = light_theme().colors.background
   let app = App {
     sandbox(view, update, background) |
-    min_size: WINDOW_MIN_SIZE,
-    max_size: WINDOW_MAX_SIZE,
-    window_overflow: WINDOW_OVERFLOW,
+    min_size: WINDOW.min_size,
+    max_size: WINDOW.max_size,
+    window_overflow: WINDOW.overflow,
   }
   var status: u8 = 0
   if let Some(script) = args.value("--script") {

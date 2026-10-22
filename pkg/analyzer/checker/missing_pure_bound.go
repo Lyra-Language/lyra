@@ -64,7 +64,7 @@ func (c *purityChecker) missingPureBounds(program *ast.Program) []diag.Diagnosti
 			if !ok || decl.Name == "main" || lam.IsPure {
 				continue
 			}
-			if c.impureLambdas[lam]&PurityEffects != 0 {
+			if c.impureLambdas[lam]&PurityEffects != 0 || c.callsAnUnimplementedBound(lam) {
 				continue
 			}
 			diags = append(diags, missingPureBound(decl.NameLocation, decl.Name, c.impureLambdas[lam]))
@@ -97,6 +97,33 @@ func (c *purityChecker) missingPureBounds(program *ast.Program) []diag.Diagnosti
 		}
 	}
 	return diags
+}
+
+// callsAnUnimplementedBound reports whether lam's own body (not a lambda inside it) calls a
+// trait method through a `where` bound that nothing in the program implements. What that
+// call does is then unknown — the join over no impls (boundCallEffect) is empty, which is
+// not the same as pure — so `pure` is not advised, as it is not for an impl method whose
+// trait takes `mut`. `ui.app`'s generic host calls `Platform` methods that change the
+// platform, and a module checked with neither `ui.sdl3` nor `ui.script` in it — a lui view,
+// once it named `ui.app.WindowSpec` — drew the advice on each of them (10/22).
+func (c *purityChecker) callsAnUnimplementedBound(lam *ast.LambdaExpr) bool {
+	found := false
+	ast.WalkExpr(lam, nil, func(e ast.Expression) bool {
+		if found {
+			return false
+		}
+		if inner, ok := e.(*ast.LambdaExpr); ok && inner != lam {
+			return false
+		}
+		if call, ok := e.(*ast.FunctionCallExpr); ok {
+			if ref, ok := c.methodTable.GetBound(call); ok && len(c.boundGroups[boundKeyOf(ref)]) == 0 {
+				found = true
+				return false
+			}
+		}
+		return true
+	})
+	return found
 }
 
 // missingTraitMethodBound is W018 for a trait-impl method, where the advice is not the

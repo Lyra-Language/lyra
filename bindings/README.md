@@ -548,20 +548,20 @@ The example's interface is `examples/imgui/components_view.lui`.
   state (`.hover`, `.pressed`, `.focus` — `:hover`, `:active`, `:focus` now) are errors at their
   line. Any element takes **`disabled`**, bare or `disabled={condition}`. **`<TextInput
   readonly>`** is a read-only field, needing no `on_edit`; `readonly={condition}` keeps its
-  `on_edit` for while the condition does not hold. **`<window min-width min-height max-width max-height/>`** at the top
-  of a ui file writes `WINDOW_MIN_SIZE` and `WINDOW_MAX_SIZE`, for `App`'s `min_size` and
-  `max_size`; `width` and `height`, given together, write `WINDOW_SIZE`, the size `main`
-  opens the window at (`gpu.open(title, WINDOW_SIZE.w, WINDOW_SIZE.h)`). `resize`, `resize_x`
-  and `resize_y` — bare or `{condition}` — write `WINDOW_RESIZE_X` and `WINDOW_RESIZE_Y`, for
-  `App`'s `resize_x` and `resize_y`: `resize={false}` holds the window to its size, and a side's
-  own attribute overrides `resize` for that side (`resize={false} resize_x` resizes only across). **Effects, as CSS writes them**: `box-shadow` (`none`, or shadows a comma apart,
+  `on_edit` for while the condition does not hold. **`<window title width height min-width min-height max-width max-height resize resize_x
+  resize_y overflow/>`** at the top of a ui file writes `WINDOW`, a `ui.app.WindowSpec` with
+  the fields given (the rest its defaults), for `ui.gpu.open_app` — which opens the window,
+  builds the `App` and leaves `main` its loop — or for an `App`'s fields
+  (`WINDOW.min_size`). `width` and `height` go together; `resize`, `resize_x` and `resize_y`
+  are bare or `{condition}`: `resize={false}` holds the window to its size, and a side's own
+  attribute overrides `resize` for that side (`resize={false} resize_x` resizes only across). **Effects, as CSS writes them**: `box-shadow` (`none`, or shadows a comma apart,
   each `[inset] x y [blur [spread]] #colour`, `px` allowed), `background` or `background-image`
   as `linear-gradient([Ndeg | to side or corner,] stops…)` (a corner taken as 45°) or
   `radial-gradient([circle | ellipse,] stops…)`, each stop `#colour [N%]`, and `filter` and
   `backdrop-filter` as `blur(N)` or `none` — each checked, an error at its line.
   **`overflow`** takes one value for both axes or two (x, then y), and `overflow-x`/`overflow-y`
-  one: `visible`, `hidden`, `clip`, `scroll` or `auto`; `<window overflow="…">` writes
-  `WINDOW_OVERFLOW`. **Transitions, as CSS writes them**: `transition` is a comma list, each
+  one: `visible`, `hidden`, `clip`, `scroll` or `auto`; `<window overflow="…">` sets
+  `WINDOW.overflow`. **Transitions, as CSS writes them**: `transition` is a comma list, each
   `[property] duration [timing-function] [delay]` in any order (the property `all` when
   omitted; `none` for none), and `transition-property`, `-duration`, `-timing-function` and
   `-delay` are its longhands, their lists paired by place and a shorter one repeated. Times

@@ -9,6 +9,25 @@ Newest first.
 
 ## Dated log
 
+### 10/22/26 — `ui`: a lui app's `main` in fifteen lines
+
+7GUIs' three drivers were the same 51 lines but for a title, a module and a start state.
+
+- **lui writes one `WINDOW: WindowSpec`** (`ui.app`), not five `WINDOW_*` constants, naming
+  only the fields the markup gives; `<window>` gained `title`. The older examples read
+  `WINDOW.min_size` and the like.
+- **`ui.gpu.open_app` / `close_app`** take the font, the window (GPU or fallback), the `App`
+  (`app_in`, from the spec, on the light theme's background) and the host. **The loop stays
+  in `main`** — the one place `lyrac run --live` swaps code in — so `main` keeps `while
+  step_running(window) {}`; a reload applied in 2.8 s as before. They live in `ui.gpu`
+  because `ui.app` must not depend on a renderer.
+- **A false lyra-W018 the change surfaced**: a view naming `WindowSpec` imports `ui.app`, and
+  checking it alone advised `pure` on three host functions that call `Platform` methods —
+  with no `Platform` impl in the program, the join over impls (`boundCallEffect`) is empty,
+  which is unknown, not pure. W018 now skips a function whose own body calls through a bound
+  nothing implements (`callsAnUnimplementedBound`), as it skips an impl of a `mut`-taking
+  trait method. `TestMissingPureBound_UnimplementedBound_Silent`.
+
 ### 10/22/26 — `ui`: a double click selects a word, a triple the field
 
 - **The count is the platform's**, not the framework's: SDL counts clicks at the system's

@@ -3,6 +3,7 @@
 import ui.layout.{ Node, FieldSpec, row, text, component_of, text_input, flex }
 import ui.style.{ Style, Sheet, Rule, Theme, insets }
 import ui.draw.{ Size, rgb }
+import ui.app.{ WindowSpec }
 
 // temp_convert_view.lui:4
 import ui.app.{ Command, Subscription }
@@ -104,13 +105,11 @@ let view_sheet = pure (t: Theme) -> Sheet => Sheet { // temp_convert_view.lui:81
   ],
 }
 
-/// From temp_convert_view.lui, line 1: the least and greatest size of the window, for `App`'s
-/// `min_size` and `max_size` (nothing for no limit).
-pub const WINDOW_MIN_SIZE: Size = Size { w: 0.0, h: 0.0 }
-pub const WINDOW_MAX_SIZE: Size = Size { w: 0.0, h: 0.0 }
-/// The size the window opens at, for the program's `main` to open it with.
-pub const WINDOW_SIZE: Size = Size { w: 400.0, h: 64.0 }
-/// Whether the user may resize the window across and down, for `App`'s `resize_x` and
-/// `resize_y`.
-pub const WINDOW_RESIZE_X: bool = false
-pub const WINDOW_RESIZE_Y: bool = false
+/// From temp_convert_view.lui, line 1: the window, for `ui.gpu.open_app` — or an `App`'s
+/// `min_size`, `max_size`, `resize_x`, `resize_y` and `window_overflow`.
+pub const WINDOW: WindowSpec = WindowSpec {
+  title: "Temperature Converter",
+  size: Size { w: 400.0, h: 64.0 },
+  resize_x: false,
+  resize_y: false,
+}

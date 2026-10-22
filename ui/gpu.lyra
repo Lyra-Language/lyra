@@ -14,6 +14,19 @@ module ui.gpu
 //! gpu.close(platform, renderer)
 //! ```
 //!
+//! **[open_app]** is all of that for a program whose window markup describes (lui's
+//! `<window>`, a `WindowSpec`): the font, the window, the `App` and the host, leaving `main`
+//! only its loop — which stays `main`'s, for `lyrac run --live` — and [close_app]:
+//!
+//! ```
+//! let window = match gpu.open_app(WINDOW, view, update, subscriptions, State {}) {
+//!   Ok(w) => w,
+//!   Err(why) => { println(why); return 1 },
+//! }
+//! while step_running(window) {}
+//! gpu.close_app(window)
+//! ```
+//!
 //! **Every op is an instance** — a quad and what the fragment shader needs to shade it — in one
 //! buffer a frame, drawn in runs that share a texture. A shape's coverage is its rounded box's
 //! signed distance, so corners, borders, clips (rounded ones too) and shadows are exact at any
@@ -24,6 +37,9 @@ module ui.gpu
 //! at half size in two passes (σ half the blur radius, as CSS has it).
 
 import ui.backend.{ Renderer }
+import ui.app.{ WindowSpec, Running, Command, Subscription, running, app_in }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node }
 import ui.draw.{
   Rect,
   Radii,
@@ -106,6 +122,37 @@ pub let close = (platform: SdlPlatform, renderer: AnyRenderer) -> void => {
   if let Some(r) = renderer.gpu { gpu.destroy(r.gpu) }
   if let Some(r) = renderer.sdl { release_renderer(r) }
   close_window(platform)
+}
+
+/// `view`, `update` and `subscriptions` at `state`, in a window opened as `window` says, with
+/// the system's font: ready for `main` to step (`ui.app.step_running`) until it answers
+/// false, then to [close_app]. Why it could not, as text — no font, or no window.
+pub let open_app<s, e> = (
+  window: WindowSpec,
+  view: (s) -> Node<e>,
+  update: (s, e) -> (s, []Command<e>),
+  subscriptions: (s) -> []Subscription<e>,
+  state: s
+) -> Result<shared Running<s, e, SdlPlatform, AnyRenderer>, string> => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    return Err("no font: none of ui.text's SYSTEM_FONTS is here")
+  }
+  let opened = match open(window.title, window.size.w, window.size.h) {
+    Ok(w) => w,
+    Err(why) => {
+      fonts.close()
+      return Err(why)
+    },
+  }
+  let app = app_in(window, view, update, subscriptions)
+  Ok(running(app, state, opened.platform, opened.renderer, fonts))
+}
+
+/// A window [open_app] opened, closed: its renderer, the window, and its fonts.
+pub let close_app<s, e> = (window: shared Running<s, e, SdlPlatform, AnyRenderer>) -> void => {
+  close(window.platform, window.renderer)
+  window.fonts.close()
 }
 
 /// Whether `renderer` draws on the GPU.

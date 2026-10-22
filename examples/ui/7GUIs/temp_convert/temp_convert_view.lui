@@ -1,4 +1,4 @@
-<window width="400" height="64" resize={false} />
+<window title="Temperature Converter" width="400" height="64" resize={false} />
 
 <script target="ui">
   import ui.app.{ Command, Subscription }

@@ -3,6 +3,7 @@
 import ui.layout.{ Node, FieldSpec, component_of, button, text_input, flex }
 import ui.style.{ Style, Sheet, Rule, Theme, insets }
 import ui.draw.{ Size }
+import ui.app.{ WindowSpec }
 
 // counter_view.lui:4
 import ui.app.{ Command, Subscription }
@@ -33,13 +34,11 @@ let view_sheet = pure (t: Theme) -> Sheet => Sheet { // counter_view.lui:18
   ],
 }
 
-/// From counter_view.lui, line 1: the least and greatest size of the window, for `App`'s
-/// `min_size` and `max_size` (nothing for no limit).
-pub const WINDOW_MIN_SIZE: Size = Size { w: 0.0, h: 0.0 }
-pub const WINDOW_MAX_SIZE: Size = Size { w: 0.0, h: 0.0 }
-/// The size the window opens at, for the program's `main` to open it with.
-pub const WINDOW_SIZE: Size = Size { w: 200.0, h: 64.0 }
-/// Whether the user may resize the window across and down, for `App`'s `resize_x` and
-/// `resize_y`.
-pub const WINDOW_RESIZE_X: bool = false
-pub const WINDOW_RESIZE_Y: bool = false
+/// From counter_view.lui, line 1: the window, for `ui.gpu.open_app` — or an `App`'s
+/// `min_size`, `max_size`, `resize_x`, `resize_y` and `window_overflow`.
+pub const WINDOW: WindowSpec = WindowSpec {
+  title: "Counter",
+  size: Size { w: 200.0, h: 64.0 },
+  resize_x: false,
+  resize_y: false,
+}

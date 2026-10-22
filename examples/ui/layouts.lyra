@@ -22,7 +22,7 @@ import ui.draw.{ Point, Size, Color }
 import ui.text.{ Fonts, fonts_new, glyph_atlas }
 import ui.style.{ light_theme }
 import ui.layout.{ layout, loose, paint }
-import layouts_view.{ State, view, update, WINDOW_MIN_SIZE, WINDOW_MAX_SIZE }
+import layouts_view.{ State, view, update, WINDOW }
 import std.collections.{ parse_args }
 import std.png.{ write_png }
 import std.io.{ write_bytes }
@@ -40,8 +40,8 @@ let main = () -> u8 => {
   let background = light_theme().colors.background
   let app = App {
     sandbox(view, update, background) |
-    min_size: WINDOW_MIN_SIZE,
-    max_size: WINDOW_MAX_SIZE,
+    min_size: WINDOW.min_size,
+    max_size: WINDOW.max_size,
   }
   var status: u8 = 0
   if let Some(script) = args.value("--script") {

@@ -4,6 +4,7 @@ import ui.layout.{ Node, Vertical, MainStart, CrossStretch, column, scroll, text
 import ui.style.{ Style, Sheet, Rule, Theme, insets, Media, FlexColumn, Wrap, AlignStart, AlignStretch, BasisLength, TrackPx, TrackAuto, fr, minmax, repeat_tracks, GridSpan }
 import ui.draw.{ Size, rgb }
 import ui.backend.{ DarkMode }
+import ui.app.{ WindowSpec }
 
 // layouts_view.lui:13
 import ui.style.{ Theme, light_theme }
@@ -95,7 +96,8 @@ pub let layouts_sheet = pure (t: Theme) -> Sheet => Sheet {
   ],
 }
 
-/// From layouts_view.lui, line 10: the least and greatest size of the window, for `App`'s
-/// `min_size` and `max_size` (nothing for no limit).
-pub const WINDOW_MIN_SIZE: Size = Size { w: 360.0, h: 420.0 }
-pub const WINDOW_MAX_SIZE: Size = Size { w: 0.0, h: 0.0 }
+/// From layouts_view.lui, line 10: the window, for `ui.gpu.open_app` — or an `App`'s
+/// `min_size`, `max_size`, `resize_x`, `resize_y` and `window_overflow`.
+pub const WINDOW: WindowSpec = WindowSpec {
+  min_size: Size { w: 360.0, h: 420.0 },
+}

@@ -1,4 +1,4 @@
-<window width="200" height="64" resize={false} />
+<window title="Counter" width="200" height="64" resize={false} />
 
 <script target="ui">
   import ui.app.{ Command, Subscription }

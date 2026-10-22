@@ -61,7 +61,7 @@ import ui.backend.{
 }
 import ui.draw.{ Point, Size, Color }
 import ui.text.{ Fonts, GlyphAtlas, glyph_atlas }
-import ui.style.{ Viewport, Style, Overflow, OverflowAuto }
+import ui.style.{ Viewport, Style, Overflow, OverflowAuto, light_theme }
 import ui.layout.{ Node, Laid, LayoutCache, layout_cache, paint, tight }
 import ui.interact.{ Ui, ui_new }
 import ui.access.{ access_tree }
@@ -88,6 +88,38 @@ pub struct App<s, e> {
   /// scrolled, with bars while it does not fit, by default. Set on the view's root unless its
   /// own style says otherwise.
   window_overflow: Overflow = OverflowAuto,
+}
+
+/// A window as markup describes it — lui's `<window>`, generated as `WINDOW`: its title, the
+/// size it opens at, the least and greatest size the user may make it (nothing for no limit),
+/// which ways it resizes, and what it does with a view that does not fit.
+pub struct WindowSpec {
+  title: string = "",
+  size: Size = Size { w: 800.0, h: 600.0 },
+  min_size: Size = Size {},
+  max_size: Size = Size {},
+  resize_x: bool = true,
+  resize_y: bool = true,
+  overflow: Overflow = OverflowAuto,
+}
+
+/// `view`, `update` and `subscriptions` as an `App` in `window`: its limits, resizing and
+/// overflow, cleared to the light theme's background.
+pub let app_in<s, e> = pure (
+  window: WindowSpec,
+  view: (s) -> Node<e>,
+  update: (s, e) -> (s, []Command<e>),
+  subscriptions: (s) -> []Subscription<e>
+) -> App<s, e> => App {
+  view: view,
+  update: update,
+  subscriptions: subscriptions,
+  background: light_theme().colors.background,
+  min_size: window.min_size,
+  max_size: window.max_size,
+  resize_x: window.resize_x,
+  resize_y: window.resize_y,
+  window_overflow: window.overflow,
 }
 
 /// Work `update` asks the host to carry out, each naming the event its result comes back as.

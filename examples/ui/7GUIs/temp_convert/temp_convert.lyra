@@ -1,53 +1,17 @@
 import ui.gpu
-import ui.app.{ App, running, step_running }
-import ui.style.{ light_theme }
-import ui.text.{ fonts_new }
-import temp_convert_view.{
-  view,
-  update,
-  subscriptions,
-  BLANK_STATE,
-  WINDOW_SIZE,
-  WINDOW_MIN_SIZE,
-  WINDOW_MAX_SIZE,
-  WINDOW_RESIZE_X,
-  WINDOW_RESIZE_Y
-}
+import ui.app.{ step_running }
+import temp_convert_view.{ BLANK_STATE, view, update, subscriptions, WINDOW }
 
 let main = () -> u8 => {
-  var fonts = fonts_new()
-  if !fonts.add_system_font() {
-    println("no font: none of ui.text's SYSTEM_FONTS is here")
-    return 1
-  }
-  let app = App {
-    view: view,
-    update: update,
-    subscriptions: subscriptions,
-    background: light_theme().colors.background,
-    min_size: WINDOW_MIN_SIZE,
-    max_size: WINDOW_MAX_SIZE,
-    resize_x: WINDOW_RESIZE_X,
-    resize_y: WINDOW_RESIZE_Y,
-  }
-  var status: u8 = 0
-
-  // On the GPU where there is one.
-  let window = match gpu.open("Temperature Converter", WINDOW_SIZE.w, WINDOW_SIZE.h) {
+  let window = match gpu.open_app(WINDOW, view, update, subscriptions, BLANK_STATE) {
     Ok(w) => w,
     Err(why) => {
       println(why)
-      fonts.close()
-      return 2
+      return 1
     },
   }
-  var platform = window.platform
-  var renderer = window.renderer
-  // The loop is `main`'s own, for `lyrac run --live`; a live resize redraws it too.
-  let running_window = running(app, BLANK_STATE, platform, renderer, fonts)
-  while step_running(running_window) {}
-  gpu.close(running_window.platform, running_window.renderer)
-
-  fonts.close()
-  status
+  // The loop is `main`'s own, for `lyrac run --live`.
+  while step_running(window) {}
+  gpu.close_app(window)
+  0
 }
