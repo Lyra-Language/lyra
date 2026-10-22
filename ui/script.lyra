@@ -18,7 +18,8 @@ module ui.script
 //!   `Backspace`, `Delete`, `Left`, `Right`, `Up`, `Down`, `Home`, `End`, `PageUp`,
 //!   `PageDown`, or one character (`a`, `/`), which is its key.
 //! - `move:X,Y`, `down:X,Y`, `up:X,Y` and `click:X,Y` (a move, a press and a release) — the
-//!   pointer, in logical units; `scroll:N` scrolls down `N` lines (up for a negative `N`), `scroll:X,Y` across and down.
+//!   pointer, in logical units; `double:X,Y` and `triple:X,Y` are two and three clicks in a
+//!   row, the last press counting 2 or 3; `scroll:N` scrolls down `N` lines (up for a negative `N`), `scroll:X,Y` across and down.
 //! - `resize:W,H` — the window resized; `drag:W,H` — dragged to that size while the platform
 //!   holds the loop (its live-resize hook called, no input); `dark`, `light` — the system's
 //!   look changed.
@@ -196,12 +197,15 @@ pub let parse_steps = pure (script: string) -> Result<[]Step, string> => {
       let Some(at) = point(place) else { return Err("not a point: ${token}") }
       match verb {
         "move" => inputs.push(Played(PointerMoved(at))),
-        "down" => inputs.push(Played(PointerDown(Primary, at))),
+        "down" => inputs.push(Played(PointerDown(Primary, at, 1))),
         "up" => inputs.push(Played(PointerUp(Primary, at))),
-        "click" => {
+        "click" | "double" | "triple" => {
           inputs.push(Played(PointerMoved(at)))
-          inputs.push(Played(PointerDown(Primary, at)))
-          inputs.push(Played(PointerUp(Primary, at)))
+          let times = if verb == "triple" { 3 } else if verb == "double" { 2 } else { 1 }
+          for n in 1..<=times {
+            inputs.push(Played(PointerDown(Primary, at, n)))
+            inputs.push(Played(PointerUp(Primary, at)))
+          }
         },
         _ => return Err("not a pointer input: ${token}"),
       }
@@ -287,7 +291,7 @@ let tokens = pure (script: string) -> []string => {
 
 /// A pointer token's verb and place: `click:40,120` is `("click", "40,120")`.
 let pointer_token = pure (token: string) -> Maybe<(string, string)> => {
-  for verb in ["move", "down", "up", "click"] {
+  for verb in ["move", "down", "up", "click", "double", "triple"] {
     if let Some(place) = token.strip_prefix("${verb}:") { return Some((verb, place)) }
   }
   None

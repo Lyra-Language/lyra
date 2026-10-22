@@ -9,6 +9,25 @@ Newest first.
 
 ## Dated log
 
+### 10/22/26 — `ui`: a double click selects a word, a triple the field
+
+- **The count is the platform's**, not the framework's: SDL counts clicks at the system's
+  double-click speed and distance, so `bindings.sdl3`'s `MouseDown` and `ui`'s `PointerDown`
+  carry it (`MouseDown(button, x, y, clicks)`, `PointerDown(button, at, clicks)`); a timer in
+  `ui.interact` would have had its own idea of a double click. Two matches outside `ui`
+  changed with it (the NES editor's, a test's).
+- **The rune under the pointer, not the nearest gap** (`rune_under_x`): `rune_at_x` places a
+  caret, and a click on the right half of a word's last letter is nearer the gap after it —
+  where a double click selected the space (the test's mutation shows it).
+- **A drag extends by the unit the press picked** (`Ui.picking`), as macOS and browsers do;
+  dragging by rune after a double click would also have undone the word on the slightest
+  jitter between press and release.
+- **A double click takes a run of one kind** (`rune_kind`): letters, digits, `_` and any
+  non-ASCII rune; punctuation; spaces. So `34` alone in `12.34`, as asked — Unicode's word
+  rules (UAX #29), which macOS follows, would take `12.34` whole. Alt-arrow still moves by
+  spaces alone.
+  `TestRun_UiFieldSelectsAWordOnADoubleClick`, positions read from the laid-out field.
+
 ### 10/22/26 — `lyrac run --live` applies a ui program's save in 3 s, not 28
 
 Measured on 7GUIs' temperature converter, an idle window: every save waited lyrac's 2 s for

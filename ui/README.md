@@ -24,7 +24,7 @@ A root of its own beside `std/` and `bindings/` (`build.sh` links it into `build
 | `ui.interact` | `Ui`: the framework's state by identity (focus, hover, press, scroll offsets, carets, selections, undo), transitions (`motions`, shown at `now`; `animating`), `frame` (lay out and drop what left the tree), `handle(laid, input, platform) -> []e`, `place_text_input`; `hit`, `control_at`, `find`, `focus_order`; `Editing`, a field's editing operations. | no |
 | `ui.app` | `App { view, update: (s, e) -> (s, []Command<e>), subscriptions: (s) -> []Subscription<e>, background }` (`sandbox(view, update, bg)` for a plain update); `Command` (`WriteFile`, `ReadFile`, `After`, `CopyText`, `PasteText`, `OpenUrl`, `QuitApp`), `Subscription` (`EveryFrame`, `Every`, `OnResize`, `OnAppearance`); `run`, and `Host` (`host_of`, `step`) for a loop of `main`'s own — which `lyrac run --live` needs. | no |
 | `ui.access` | `access_tree(laid, focus) -> AccessTree`: the laid-out tree as assistive technology hears it, a node for each paragraph, image, scroll and control (and labelled group), ids its identities hashed; `access_id`, `access_node`. | no |
-| `ui.script` | `ScriptPlatform` (a `Platform` with no window and a clock of its own, playing one step a pass), `parse_script` (inputs: `"Tab 'Ada' Shift+Tab Primary+v click:10,20 scroll:1"`) and `parse_steps` (with `wait:N`, `resize:W,H`, `dark`, `light`). | no |
+| `ui.script` | `ScriptPlatform` (a `Platform` with no window and a clock of its own, playing one step a pass), `parse_script` (inputs: `"Tab 'Ada' Shift+Tab Primary+v click:10,20 double:10,20 scroll:1"`) and `parse_steps` (with `wait:N`, `resize:W,H`, `dark`, `light`). | no |
 
 **Nothing above `ui.backend` calls a platform's library**; `ui.text` calls the two text
 libraries, which every platform has. A new backend — a GPU renderer, the web, a phone's own
@@ -180,6 +180,13 @@ layer — implements the two traits; the display list is the whole contract.
   and Enter press; the arrows, Page Up/Down, Home and End move a slider; a field edits by rune
   (not yet grapheme cluster), by word with Alt (Control off a Mac), to the ends with Command or
   Home/End, selects with Shift, and takes the primary modifier's A, C, X, V and Z.
+- **A field's clicks**: one puts the caret there and a drag selects by rune; a double click
+  selects the word under the pointer (or the run of spaces it is on) and a drag goes on by
+  whole words either way; a triple click selects the whole text. The count is the
+  platform's, at the system's double-click speed (`PointerDown`'s third field, SDL's
+  `clicks`); a script writes `double:X,Y` and `triple:X,Y`. A double click takes a run of
+  one kind — letters and digits (`_` and non-ASCII too), punctuation, or spaces — so `34`
+  alone in `12.34`. (Alt-arrow still moves by spaces only.)
 - **The pointer's shape follows it**: an I-beam over a text field (and while a selection is
   dragged in one), the arrow elsewhere, set through `Platform.set_cursor` as it moves —
   `ui.sdl3` makes SDL's system cursor and changes it only when the shape does.

@@ -162,7 +162,9 @@ pub data InputEvent =
   /// and draw again at [Platform.scale].
   | ScaleChanged
   | PointerMoved(Point)
-  | PointerDown(PointerButton, Point)
+  /// A button pressed, and the clicks in a row it makes — 1, 2 for a double click, 3 for a
+  /// triple — counted by the platform at the system's double-click speed.
+  | PointerDown(PointerButton, Point, i64)
   | PointerUp(PointerButton, Point)
   /// Scrolled by this far, in lines: across (positive to the right) and down (positive
   /// toward the user, so content moves up).

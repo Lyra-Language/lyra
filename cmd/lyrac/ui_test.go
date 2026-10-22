@@ -3012,10 +3012,10 @@ let main = () -> u8 => {
   for (name, input) in [
     ("at rest", PointerMoved(Point { x: 290.0, y: 290.0 })),
     ("pointer over go", PointerMoved(Point { x: 20.0, y: 10.0 })),
-    ("go held", PointerDown(Primary, Point { x: 20.0, y: 10.0 })),
+    ("go held", PointerDown(Primary, Point { x: 20.0, y: 10.0 }, 1)),
     ("go let go", PointerUp(Primary, Point { x: 20.0, y: 10.0 })),
     ("Tab", KeyPressed(Tab, none)),
-    ("off held", PointerDown(Primary, Point { x: 20.0, y: 50.0 })),
+    ("off held", PointerDown(Primary, Point { x: 20.0, y: 50.0 }, 1)),
   ] {
     let laid = frame(ui, cache, fonts)
     let events = ui.handle(laid, input, platform)
@@ -3117,6 +3117,105 @@ off held: 0 events
 // A read-only field (read_only_input, lui's readonly): it takes the focus, moves its caret,
 // selects and copies, and raises no edit for typing, deleting, pasting, cutting or undo; the
 // cascade sees it :read-only.
+// A double click in a text field selects the word under the pointer — on the right half of a
+// word's last letter too, which is nearer the gap after it — or the run of spaces or
+// punctuation it is on, so `34` alone in `12.34`; a
+// triple click selects the whole text; and a drag after a double click extends by whole
+// words either way, after a triple keeps the whole. Positions are read from the laid-out
+// field, so no font's widths are written here; the script's `double:X,Y` is checked too.
+func TestRun_UiFieldSelectsAWordOnADoubleClick(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new }
+import ui.script.{ script_platform, parse_script }
+import ui.backend.{ InputEvent, PointerMoved, PointerDown, PointerUp, Primary }
+import std.collections
+import ui.draw.{ Size, Point }
+import ui.text.{ Fonts, fonts_new, caret_x }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, text_input, FieldSpec, Prose, tight }
+
+data Ev = Edited(string)
+
+const TEXT: string = "hello brave  world 12.34"
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  // Where rune k's left edge is, and the field's middle, from a first layout.
+  var ui = ui_new()
+  var cache: LayoutCache<Ev> = layout_cache()
+  let laid = frame(ui, cache, fonts)
+  let field = laid.children[0]
+  let Prose(block) = field.laid.content else { return 2 }
+  let left = field.at.x + field.laid.content_at.x
+  let y = field.at.y + field.laid.size.h / 2.0
+  // A point a fraction of the way across rune k.
+  let on = (k: i64, part: f32) -> Point => {
+    let a = caret_x(block, k)
+    let b = caret_x(block, k + 1)
+    Point { x: left + a + (b - a) * part, y: y }
+  }
+  let double = (at: Point) -> []InputEvent => [PointerMoved(at), PointerDown(Primary, at, 1), PointerUp(Primary, at), PointerDown(Primary, at, 2)]
+  let triple = (at: Point) -> []InputEvent => [...double(at), PointerUp(Primary, at), PointerDown(Primary, at, 3)]
+  let cases: [](string, []InputEvent) = [
+    ("double in brave", [...double(on(8, 0.5)), PointerUp(Primary, on(8, 0.5))]),
+    ("double on hello's last letter, right half", [...double(on(4, 0.9)), PointerUp(Primary, on(4, 0.9))]),
+    ("double on the two spaces", [...double(on(12, 0.5)), PointerUp(Primary, on(12, 0.5))]),
+    ("double on 34 in 12.34", [...double(on(23, 0.5)), PointerUp(Primary, on(23, 0.5))]),
+    ("double on its point", [...double(on(21, 0.5)), PointerUp(Primary, on(21, 0.5))]),
+    ("double on 12", [...double(on(19, 0.5)), PointerUp(Primary, on(19, 0.5))]),
+    ("triple", [...triple(on(8, 0.5)), PointerUp(Primary, on(8, 0.5))]),
+    ("double on brave, dragged to world", [...double(on(8, 0.5)), PointerMoved(on(15, 0.5)), PointerUp(Primary, on(15, 0.5))]),
+    ("double on brave, dragged to hello", [...double(on(8, 0.5)), PointerMoved(on(1, 0.5)), PointerUp(Primary, on(1, 0.5))]),
+    ("triple, dragged", [...triple(on(8, 0.5)), PointerMoved(on(1, 0.5)), PointerUp(Primary, on(1, 0.5))]),
+  ]
+  for (name, inputs) in cases { show(name, inputs, fonts) }
+  let at = on(15, 0.5)
+  let Ok(scripted) = parse_script("double:${at.x.round()},${at.y.round()}") else { return 3 }
+  show("script double:X,Y in world", scripted, fonts)
+  0
+}
+
+/// The field's selection after these inputs, from nothing focused.
+let show = (name: string, inputs: []InputEvent, fonts: mut Fonts) -> void => {
+  var ui = ui_new()
+  var cache: LayoutCache<Ev> = layout_cache()
+  var platform = script_platform([], Size { w: 300.0, h: 100.0 })
+  for input in inputs {
+    let laid = frame(ui, cache, fonts)
+    let _ = ui.handle(laid, input, platform)
+  }
+  let laid = frame(ui, cache, fonts)
+  let id = laid.children[0].laid.id
+  let state = ui.state.widgets.get(id)
+  let anchor = state.map((w) => w.anchor) ?? -1
+  let caret = state.map((w) => w.caret) ?? -1
+  let low = anchor.min(caret)
+  let high = anchor.max(caret)
+  println("${name}: '${TEXT.slice(low, high)}' (anchor ${anchor}, caret ${caret})")
+}
+
+let frame = (ui: mut Ui, cache: mut LayoutCache<Ev>, fonts: mut Fonts) -> Laid<Ev> =>
+  ui.frame_within(view(), tight(Size { w: 300.0, h: 100.0 }), fonts, cache)
+
+let view = pure () -> Node<Ev> => column([text_input(FieldSpec { value: TEXT, on_edit: Edited })])
+`)
+	want := `double in brave: 'brave' (anchor 6, caret 11)
+double on hello's last letter, right half: 'hello' (anchor 0, caret 5)
+double on the two spaces: '  ' (anchor 11, caret 13)
+double on 34 in 12.34: '34' (anchor 22, caret 24)
+double on its point: '.' (anchor 21, caret 22)
+double on 12: '12' (anchor 19, caret 21)
+triple: 'hello brave  world 12.34' (anchor 0, caret 24)
+double on brave, dragged to world: 'brave  world' (anchor 6, caret 18)
+double on brave, dragged to hello: 'hello brave' (anchor 11, caret 0)
+triple, dragged: 'hello brave  world 12.34' (anchor 0, caret 24)
+script double:X,Y in world: 'world' (anchor 13, caret 18)
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 func TestRun_UiReadOnlyField(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new }

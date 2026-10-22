@@ -536,7 +536,7 @@ let run = (screen: Screen, sheet: Texture, start: Editor) -> u8 => {
           if wants_quit(event) { running = false }
           match event {
             KeyDown(key) => on_key(ed, key, modifiers()),
-            MouseDown(button, wx, wy) => {
+            MouseDown(button, wx, wy, _) => {
               let (x, y) = window_to_render(screen.renderer, wx, wy)
               on_press(ed, button, x, y)
             },

@@ -499,8 +499,11 @@ let translate = (event: Event, per_point: f32) -> Maybe<InputEvent> => match eve
   SdlScaleChanged => Some(ScaleChanged),
   SdlMouseMotion(x, y) =>
     Some(PointerMoved(Point { x: x * per_point, y: y * per_point })),
-  SdlMouseDown(button, x, y) =>
-    Some(PointerDown(pointer_button(button), Point { x: x * per_point, y: y * per_point })),
+  SdlMouseDown(button, x, y, clicks) => Some(PointerDown(
+    pointer_button(button),
+    Point { x: x * per_point, y: y * per_point },
+    i64(clicks)
+  )),
   SdlMouseUp(button, x, y) =>
     Some(PointerUp(pointer_button(button), Point { x: x * per_point, y: y * per_point })),
   // The content moves as the system's scroll views move theirs: with natural scrolling on,

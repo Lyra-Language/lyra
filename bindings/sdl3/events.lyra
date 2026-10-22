@@ -198,7 +198,9 @@ pub data Event =
   | KeyDown(u32)
   | KeyUp(u32)
   | MouseMotion(f32, f32)
-  | MouseDown(u8, f32, f32)
+  /// A button pressed at (x, y), and the clicks in a row it makes — 1, 2 for a double click,
+  /// 3 for a triple — counted by SDL at the system's double-click speed.
+  | MouseDown(u8, f32, f32, u8)
   | MouseUp(u8, f32, f32)
   /// Scrolled by (x, y): x positive to the right, y positive away from the user — the
   /// same direction whatever the platform's natural-scrolling setting — and whether that
@@ -300,7 +302,8 @@ let classify = pure (raw: RawEvent) -> Event => {
     MouseDown(
       unsafe { raw.button.button },
       unsafe { raw.button.x },
-      unsafe { raw.button.y }
+      unsafe { raw.button.y },
+      unsafe { raw.button.clicks }
     )
   } else if kind == EVENT_MOUSE_BUTTON_UP {
     MouseUp(

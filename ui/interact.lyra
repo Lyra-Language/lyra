@@ -26,6 +26,9 @@ module ui.interact
 //! **The pointer's shape** follows it: an I-beam over a text field (and while a selection is
 //! dragged in one), the arrow elsewhere — said to the platform as the pointer moves.
 //!
+//! **A field's clicks**: one places the caret, two select the word under the pointer, three
+//! the whole text; a drag goes on by the unit the press picked ([Picking]).
+//!
 //! **Hit-testing** walks the laid-out tree to the deepest element under the pointer, through
 //! scrolled children (their offsets are in the tree) and never outside a clip; the element an
 //! input is for is the deepest control on that path.
@@ -76,7 +79,7 @@ import ui.backend.{
   AxDecrement,
 }
 import ui.draw.{ Point, Rect, Size, Color }
-import ui.text.{ Fonts, offset_at_x }
+import ui.text.{ Fonts, offset_at_x, caret_x }
 import ui.layout.{
   Axis,
   Constraints,
@@ -115,6 +118,9 @@ import std.collections.{ HashMap, hashmap_new }
 pub struct Ui {
   state: Interaction,
   pointer: Point = Point {},
+  /// What the press in a text field picked, for a drag to extend: by rune (a click), by word
+  /// (a double click) or the whole text (a triple), and the runes it first selected.
+  picking: Picking = Picking {},
   typing_into: string = "",
   typing_at: Rect = Rect {},
   /// Each element's transitions (`ui.motion`), by identity; the clock's milliseconds a frame
@@ -123,6 +129,14 @@ pub struct Ui {
   motions: HashMap<string, Motion>,
   now: i64 = 0,
   resized: bool = false,
+}
+
+/// What a press in a text field selected: the clicks it made (1 by rune, 2 by word, 3 all)
+/// and the runes `from` to `to` the press itself took.
+pub struct Picking {
+  clicks: i64 = 1,
+  from: i64 = 0,
+  to: i64 = 0,
 }
 
 /// An element found in a laid-out tree, and where its top-left corner is in the window.
@@ -295,7 +309,7 @@ impl Ui {
       platform.set_cursor(self.cursor_at(laid, at))
       self.pointer_moved(laid, at)
     },
-    PointerDown(Primary, at) => self.pointer_down(laid, at),
+    PointerDown(Primary, at, clicks) => self.pointer_down(laid, at, clicks),
     PointerUp(Primary, at) => self.pointer_up(laid, at),
     Scrolled(across, down) => {
       self.scrolled(laid, across, down)
@@ -428,9 +442,20 @@ impl Ui {
     match held.laid.kind {
       Ranged(spec) => slide_to(held, spec, at),
       Editable(_) => {
-        let caret = rune_at_x(held, at)
+        // A drag extends what the press picked by the same unit: a rune, a word, or (after a
+        // triple click) nothing more than the whole.
+        let p = self.picking
+        let (anchor, caret) = if p.clicks >= 3 { (p.from, p.to) } else if p.clicks == 2 {
+          let (from, to) = self.editing(held).word_around(rune_under_x(held, at))
+          if from < p.from { (p.to, from) } else { (p.from, to.max(p.to)) }
+        } else {
+          (self.widget(held.laid.id).anchor, rune_at_x(held, at))
+        }
         let state = self.widget(held.laid.id)
-        self.state.widgets.insert(held.laid.id, WidgetState { state | caret: caret })
+        self.state.widgets.insert(
+          held.laid.id,
+          WidgetState { state | caret: caret, anchor: anchor }
+        )
         []
       },
       _ => [],
@@ -440,7 +465,7 @@ impl Ui {
   /// The primary button went down at `at`: the control under it is held and takes the
   /// focus (a click elsewhere takes the focus from whatever had it); a slider jumps to the
   /// pointer, and a field's caret goes where it was clicked.
-  let pointer_down<e> = (self: mut, laid: Laid<e>, at: Point) -> []e => {
+  let pointer_down<e> = (self: mut, laid: Laid<e>, at: Point, clicks: i64) -> []e => {
     self.pointer = at
     if self.bar_press(laid, at) { return [] }
     let Some(target) = control_at(laid, at) else {
@@ -454,11 +479,20 @@ impl Ui {
     match target.laid.kind {
       Ranged(spec) => slide_to(target, spec, at),
       Editable(_) => {
-        let caret = rune_at_x(target, at)
+        // A click puts the caret there; a double click selects the word under the pointer
+        // (or the run of spaces), a triple the whole text — as every platform's fields do.
+        let ed = self.editing(target)
+        let (from, to) = if clicks >= 3 { (0, ed.runes.len()) } else if clicks == 2 {
+          ed.word_around(rune_under_x(target, at))
+        } else {
+          let caret = rune_at_x(target, at)
+          (caret, caret)
+        }
+        self.picking = Picking { clicks: clicks.clamp(1, 3), from: from, to: to }
         let state = self.widget(target.laid.id)
         self.state.widgets.insert(
           target.laid.id,
-          WidgetState { state | caret: caret, anchor: caret }
+          WidgetState { state | caret: to, anchor: from }
         )
         []
       },
@@ -906,6 +940,20 @@ impl Editing {
     at
   }
 
+  /// The run of runes of one kind holding the rune at `at` — a word of letters and digits, a
+  /// run of punctuation or one of spaces ([rune_kind]) — as the runes `from` to `to`: what a
+  /// double click selects, so `34` in `12.34`. Past the end, the last rune's.
+  pub let word_around = pure (self, at: i64) -> (i64, i64) => {
+    if self.runes.len() == 0 { return (0, 0) }
+    let i = at.clamp(0, self.runes.len() - 1)
+    let kind = rune_kind(self.runes[i])
+    var from = i
+    while from > 0 && rune_kind(self.runes[from - 1]) == kind { from -= 1 }
+    var to = i + 1
+    while to < self.runes.len() && rune_kind(self.runes[to]) == kind { to += 1 }
+    (from, to)
+  }
+
   /// Backspace: the selection deleted, else the rune — or with `by_word` the word — before the
   /// caret.
   pub let erase_back = pure (self, by_word: bool) -> Editing => {
@@ -924,6 +972,15 @@ impl Editing {
 
 /// Whether `c` separates words: a space or a tab.
 let is_space = pure (c: rune) -> bool => c == ' ' || c == '\t'
+
+/// What a double click takes `c` with: 0 a space or tab, 1 a word's — a letter, a digit, `_`,
+/// or any rune past ASCII (`é`, so `café` is one word) — and 2 punctuation and the rest.
+let rune_kind = pure (c: rune) -> i64 =>
+  if is_space(c) { 0 } else if c.is_ascii_alpha() || c.is_ascii_digit() || c == '_' || i64(c) > 127 {
+    1
+  } else {
+    2
+  }
 
 // ── Finding elements ─────────────────────────────────────────────────────────
 
@@ -1102,4 +1159,15 @@ let rune_at_x<e> = pure (found: Found<e>, at: Point) -> i64 => {
   var index = 0
   while index < spec.value.len() && byte_at(spec.value, index) < offset { index += 1 }
   index
+}
+
+/// The rune under `at` in a text field, by index — not the gap nearest it, which [rune_at_x]
+/// answers: a click on the right half of a word's last letter is on that letter, not on the
+/// space after it.
+let rune_under_x<e> = pure (found: Found<e>, at: Point) -> i64 => {
+  let gap = rune_at_x(found, at)
+  let Editable(spec) = found.laid.kind else { return 0 }
+  let Prose(block) = found.laid.content else { return 0 }
+  let x = at.x - found.origin.x - found.laid.content_at.x
+  if gap > 0 && x < caret_x(block, byte_at(spec.value, gap)) { gap - 1 } else { gap }
 }
