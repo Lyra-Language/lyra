@@ -469,7 +469,11 @@ decision, made before the program hears of it**, against generation 0 (not the p
 generation). A symbol the backend numbers program-wide must be listed in `liveNumbered`, or
 `main`'s normalized IR changes with unrelated code and every save restarts. A new runtime
 global holding state is bound to generation 0's automatically if it is mutable and not
-private (`isLiveState`); one that must stay per generation must be private.
+private (`isLiveState`); one that must stay per generation must be private. **A program
+learns it is live from `LYRA_LIVE_PID` naming its own process** (`llvm.LivePIDEnv`), never
+`LYRA_LIVE`, which generation 0 unsets at start-up: a loop that can block (a ui window
+waiting for input) must wake to reach `main`'s poll, or every save restarts after lyrac's
+2 s. **`--live` builds at -O0** unless an `-O` is given — clang's -O2 was 24 s of each save.
 
 **Naming: the two remainders** — `%` is the **truncated** remainder (sign of the dividend,
 `rem`) and `%%` the **floored** one (sign of the divisor, `rem_floor`). The grammar rules,

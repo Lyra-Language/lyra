@@ -128,7 +128,11 @@ panicking program when the toolchain is there, and runs them when `$SHELIAK` is 
 - **`--live`** (`live.go`; design `pkg/backend/LIVE.md`) is `--watch` that keeps the
   program's state: a save is built as the next **generation**, checked against generation
   0, and loaded into the running program at its next loop turn in `main`, which answers
-  over a pipe (fds 3 and 4, `LYRA_LIVE` set). `lyrac: x.lyra changed; applied`, or
+  over a pipe (fds 3 and 4, `LYRA_LIVE` set — and unset at start-up, so a program it starts
+  does not take them, with `LYRA_LIVE_PID` left naming the process for it to read: `ui.app`
+  caps its wait for input then). **Built at -O0 unless an `-O` level is given**: each save
+  compiles the whole program, and clang's optimizer was nearly all of it (24 s at -O2 against
+  1 s at -O0 for 7GUIs' temperature converter). `lyrac: x.lyra changed; applied`, or
   `restarting: <why>` and a restart as `--watch` does — when `main` changed (its IR,
   normalized by the backend), a type's Lyra shape (`typeShapes`: fields, constructors in
   order) or LLVM layout changed, a top-level `let` is retyped, the link flags changed, the
@@ -143,7 +147,8 @@ panicking program when the toolchain is there, and runs them when `$SHELIAK` is 
   `--watch`. `live_test.go` runs two sessions (a body applied with the count kept, a
   reordered `data` type and a changed `main` restarting; a callback stored in `main`'s
   state reaching an edited body, and a new `var` initialized on apply and kept through the
-  next swap) and the check's every row.
+  next swap; an idle `ui.app` program in a real SDL window taking a change, not restarted)
+  and the check's every row.
 
 ## `doc`
 

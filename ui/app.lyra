@@ -47,7 +47,7 @@ module ui.app
 //! {}` — which is what `lyrac run --live` needs: it swaps changed code in only at a loop of
 //! `main`'s, and calls `view` and `update` through the function values in [App], which reach
 //! the newest code. The host keeps the window, the framework's state and the program's state
-//! across a swap; under `--live` (`LYRA_LIVE_FD` set) it never waits longer than a tenth of a
+//! across a swap; under `--live` (`LYRA_LIVE_PID` naming this process) it never waits longer than a tenth of a
 //! second, so an idle window still reaches the swap, and lays the view out again each pass.
 //! A change to the state's shape is a restart, which lyrac says.
 
@@ -66,7 +66,7 @@ import ui.layout.{ Node, Laid, LayoutCache, layout_cache, paint, tight }
 import ui.interact.{ Ui, ui_new }
 import ui.access.{ access_tree }
 import std.io.{ read_file, write_file }
-import std.env.{ lookup }
+import std.env.{ lookup, process_id }
 
 /// A program: its view of its state `s`; the next state, and the work to carry out, for each
 /// event `e` its view raises; what its state subscribes to; the colour the window is cleared to
@@ -269,7 +269,7 @@ pub let host_of<s, e, p> where p: Platform = (
     atlas: glyph_atlas(),
     cache: layout_cache::<e>(),
     last_frame: platform.now_ms(),
-    live: lookup("LYRA_LIVE_FD").is_some(),
+    live: lookup("LYRA_LIVE_PID") == Some("${process_id()}"),
   }
 
 /// The longest a pass waits for input under `lyrac run --live`, and how long a frame lasts

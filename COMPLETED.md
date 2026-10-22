@@ -9,6 +9,28 @@ Newest first.
 
 ## Dated log
 
+### 10/22/26 — `lyrac run --live` applies a ui program's save in 3 s, not 28
+
+Measured on 7GUIs' temperature converter, an idle window: every save waited lyrac's 2 s for
+an answer, gave up, and restarted the program — a whole `-O2` build, 24 s of it clang's.
+
+- **`ui.app` never knew it was live.** It looked for `LYRA_LIVE_FD`, the design's name;
+  lyrac sets `LYRA_LIVE`. And renaming it would not have been enough: generation 0 unsets
+  `LYRA_LIVE` at start-up, so a program it launches (Vega runs `lyrac`) does not take the
+  pipe for its own. So an idle window waited for input for good and never reached `main`'s
+  poll. Generation 0 now leaves `LYRA_LIVE_PID` with its own process id, and the host is live
+  when that names it (`std.env.process_id`, new) — a child inherits the variable, not the id.
+  The existing swap test ticks every 10 ms, which woke it anyway, so the new test is the
+  real case — `TestLive_AnIdleUiProgramTakesAChange`, an SDL window under the dummy driver
+  with nothing to wake it — and it fails, "live false", with the old check.
+- **`--live` builds at -O0** unless an `-O` level is given. Each applied save, and each
+  restart, compiles the whole program — 6 MB of IR here, `ui` and the prelude in it — and
+  clang took 24 s at -O2, 18 s at -O1 and 1 s at -O0, beside 1.4 s for lyrac's front end
+  and IR. The code runs about twice as slow (the Layouts resize stress: 17 s against 9 s),
+  the trade an edit loop wants; the backend suite already runs at clang's -O0 default.
+- **Save to applied**: 2.9 s, from 26 s at -O2 even once the program woke. What is left is
+  the front end and IR (1.4 s), clang (1 s) and the watcher's poll and settle.
+
 ### 10/22/26 — `parse_f64` and `parse_f32` in the prelude
 
 - **Correctly rounded, not nearly.** `std.json`'s number reader scales a mantissa by powers

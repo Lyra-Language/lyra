@@ -110,8 +110,9 @@ run flags:
   --live        as --watch, except that a change is swapped into the running
                 program, which keeps its state (its window, its world), when that
                 is safe: a function's body, a new function or type. It restarts,
-                saying why, when main or a type's shape changed. macOS only;
-                elsewhere it is --watch
+                saying why, when main or a type's shape changed. Built at -O0
+                unless an -O level is given, so a change lands in seconds. macOS
+                only; elsewhere it is --watch
   --            everything after it is passed to the program, not to lyrac:
                 lyrac run prog.lyra -- --verbose input.txt
                 Reachable in the program through program_args(), with the
@@ -271,6 +272,15 @@ func parseBuildArgs(cmd string, args []string) (buildOptions, bool) {
 	}
 	if o.opt == "" {
 		o.opt = "-O2"
+		// **`--live` defaults to -O0**: every applied save, and every restart, compiles
+		// the whole program again, and clang's optimizer is nearly all of that. 7GUIs'
+		// temperature converter (6 MB of IR, ui and the prelude in it) took 24s at -O2,
+		// 18s at -O1 and 1s at -O0, beside 1.4s for lyrac's own front end and IR. The code
+		// it runs is about twice as slow (the Layouts resize stress: 17s against 9s) —
+		// the trade an edit loop wants. An -O level given explicitly still wins.
+		if o.live {
+			o.opt = "-O0"
+		}
 	}
 	if o.path == "" {
 		return o, false

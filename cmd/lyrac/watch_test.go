@@ -84,6 +84,26 @@ func TestWatch_IsARunFlag(t *testing.T) {
 	}
 }
 
+// `--live` rebuilds the whole program at each save, so it compiles at -O0 unless an -O level
+// is given; everything else keeps -O2.
+func TestLive_DefaultsToO0(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--live", "prog.lyra"}, "-O0"},
+		{[]string{"--live", "-O2", "prog.lyra"}, "-O2"},
+		{[]string{"-O1", "--live", "prog.lyra"}, "-O1"},
+		{[]string{"--watch", "prog.lyra"}, "-O2"},
+		{[]string{"prog.lyra"}, "-O2"},
+	} {
+		o, ok := parseBuildArgs("run", c.args)
+		if !ok || o.opt != c.want {
+			t.Errorf("run %v: ok=%v opt=%q, want %q", c.args, ok, o.opt, c.want)
+		}
+	}
+}
+
 func TestChangedFile(t *testing.T) {
 	t0 := time.Unix(1000, 0)
 	before := map[string]fileStamp{"a": {t0, 10}, "b": {t0, 20}}

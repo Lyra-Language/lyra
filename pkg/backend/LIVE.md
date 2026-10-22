@@ -185,8 +185,11 @@ report it, or restart on a failure
 ```
 
 - The pipe is a pair of descriptors the program inherits (`cmd.ExtraFiles`), named in
-  `LYRA_LIVE_FD`. A program not started by `--live` has no such variable, and generation
-  0's live pieces stay inert.
+  `LYRA_LIVE`. A program not started by `--live` has no such variable, and generation
+  0's live pieces stay inert. Generation 0 unsets it at start-up, closing both descriptors
+  on exec, and leaves `LYRA_LIVE_PID` naming itself in its place — what the program reads
+  to know it is live (`ui.app` caps its wait for input at 100 ms, or an idle window never
+  reaches a poll), and what a program it starts, with another id, is not misled by.
 - **The signal only sets a flag**; all the work happens at the back-edge, on the program's
   own stack, at a point the compiler chose. Nothing runs in the handler that is not
   async-signal-safe.

@@ -91,6 +91,12 @@ const LivePatchSymbol = "lyra_live_patch"
 // once its handler is installed, then `applied` or `failed: <why>` per library.
 const LiveEnv = "LYRA_LIVE"
 
+// LivePIDEnv is what a generation 0 leaves in its environment in LiveEnv's place, once it has
+// unset that: its own process id, so the program can ask whether it runs under `--live`
+// (`ui.app` caps its wait for input then, to reach `main`'s poll) while a program it starts,
+// which inherits the variable with another id, is not misled.
+const LivePIDEnv = "LYRA_LIVE_PID"
+
 const (
 	liveReadFD  = 3 // os/exec's ExtraFiles[0]
 	liveWriteFD = 4
@@ -432,11 +438,15 @@ func (l *lowerer) emitLivePoll(dlopenFlags int64) *ir.Func {
 // live pieces stay inert.
 //
 // The variable is unset and both descriptors closed on exec, so a program this one starts
-// — Vega runs `lyrac` — does not take them for its own.
+// — Vega runs `lyrac` — does not take them for its own. LivePIDEnv takes its place, holding
+// this process's id, for the program to read.
 func (l *lowerer) emitLiveInit(usr1 int64) *ir.Func {
 	i8ptr := lltypes.NewPointer(lltypes.I8)
 	getenv, _ := l.declareLibc("getenv", i8ptr, i8ptr)
 	unsetenv, _ := l.declareLibc("unsetenv", lltypes.I32, i8ptr)
+	setenv, _ := l.declareLibc("setenv", lltypes.I32, i8ptr, i8ptr, lltypes.I32)
+	getpid, _ := l.declareLibc("getpid", lltypes.I32)
+	snprintf := l.declareLibcVariadic("snprintf", lltypes.I32, i8ptr, lltypes.I64, i8ptr)
 	signal, _ := l.declareLibc("signal", i8ptr, lltypes.I32, i8ptr)
 	fcntl := l.declareLibcVariadic("fcntl", lltypes.I32, lltypes.I32, lltypes.I32)
 
@@ -452,11 +462,16 @@ func (l *lowerer) emitLiveInit(usr1 int64) *ir.Func {
 	entry := init.NewBlock("entry")
 	install := init.NewBlock("install")
 	done := init.NewBlock("done")
+	digits := lltypes.NewArray(16, lltypes.I8)
+	pidText := entry.NewAlloca(digits)
 	name := l.cString(LiveEnv)
 	on := entry.NewCall(getenv, name)
 	entry.NewCondBr(entry.NewICmp(enum.IPredNE, on, constant.NewNull(i8ptr)), install, done)
 
 	install.NewCall(unsetenv, name)
+	text := install.NewGetElementPtr(digits, pidText, i32c(0), i32c(0))
+	install.NewCall(snprintf, text, i64c(16), l.cString("%d"), install.NewCall(getpid))
+	install.NewCall(setenv, l.cString(LivePIDEnv), text, i32c(1))
 	const fSetFD, fdCloexec = 2, 1 // the same on macOS and Linux
 	install.NewCall(fcntl, i32c(liveReadFD), i32c(fSetFD), i32c(fdCloexec))
 	install.NewCall(fcntl, i32c(liveWriteFD), i32c(fSetFD), i32c(fdCloexec))
