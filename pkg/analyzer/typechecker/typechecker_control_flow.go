@@ -1867,7 +1867,10 @@ func (tc *TypeChecker) checkForInLoopExpr(expr *ast.ForInLoopExpr) types.Type {
 			// array as to an f32 parameter, unconverted (`xs[0]` there was refused). A range
 			// keeps its own rule (its width comes from its bounds and uses).
 			if _, isRange := iterType.(types.RangeType); !isRange {
-				if settled := promoteToDefault(iterType); settled != nil && !types.TypesEqual(settled, iterType) {
+				// Pushed down even when it is already settled: `for x in [w, 0.0]` with `w` an
+				// f32 joins to []f32, and its `0.0` must be lowered at that width too — left
+				// alone it was an f64 stored into an f32 array (a backend error).
+				if settled := promoteToDefault(iterType); settled != nil {
 					tc.typeTable.Set(expr.Iterable, settled)
 					tc.propagateExpectedType(expr.Iterable, settled)
 					iterType = settled

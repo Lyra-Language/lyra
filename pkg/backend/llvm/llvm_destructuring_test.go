@@ -319,3 +319,20 @@ let main = () -> void => {
 		t.Errorf("got %q; want \"1 2\\n3 4\\n5 6\"", got)
 	}
 }
+
+// A for loop over an array literal mixing a typed element with untyped ones lowers every
+// element at the joined width: `for x in [w, 0.0]` with `w` an f32 stored the `0.0` as an
+// f64 into the f32 array, a backend error (found by ui.gpu, 10/21).
+func TestExec_ForOverMixedLiteralArrayNarrowsItsLiterals(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `module main
+let main = () -> void => {
+  let w: f32 = 1.5
+  var total: f32 = 0.0
+  for x in [w, 0.25, 2.0] { total += x }
+  println("${total}")
+}`, "")
+	if got := strings.TrimSpace(out); got != "3.75" {
+		t.Errorf("got %q; want \"3.75\"", got)
+	}
+}
