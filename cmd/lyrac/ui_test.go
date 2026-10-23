@@ -3818,3 +3818,82 @@ func TestRun_UiPaintedExample(t *testing.T) {
 		t.Errorf("the list beside the board, at 350,%d, is a square's colour %v", y, got)
 	}
 }
+
+// The glyph atlas's pages (`ui.text`'s `GlyphAtlas`), with pages of 48 texels and two of them,
+// so a capital at 40 pixels takes a page whatever the font: a glyph that fits nowhere opens a
+// page; past two, the page drawn from least recently is cleared and filled again (its glyphs
+// rendered anew when next drawn), never one the frame being painted has drawn from, whose ops
+// still show it — when every page has been, the atlas grows a third; a glyph on a page not
+// emptied is never rendered again; and a block across pages is an op a page, in the order the
+// pages were first needed.
+func TestRun_UiAtlasPages(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.backend.{ Renderer }
+import ui.draw.{ Point, Color, TextureId, DrawOp, Glyphs }
+import ui.text.{ Fonts, FontSpec, GlyphAtlas, fonts_new, glyph_atlas_sized }
+
+/// A renderer that draws nothing, and counts what it is given: textures uploaded, pages
+/// cleared (an update the size of a page) and glyphs written.
+struct Counter {
+  uploads: i64 = 0,
+  clears: i64 = 0,
+  glyphs: i64 = 0,
+}
+
+impl Renderer for Counter {
+  upload = (self, image) => {
+    self.uploads += 1
+    Some(TextureId(self.uploads - 1))
+  }
+  update = (self, id, at, image) => {
+    if image.width == PAGE { self.clears += 1 } else { self.glyphs += 1 }
+    true
+  }
+  draw = (self, background, ops) => {}
+}
+
+const PAGE: i64 = 48
+
+/// One glyph a page: at 40 pixels a capital is more than half a 48-texel page each way.
+let draw = (atlas: mut GlyphAtlas, fonts: mut Fonts, renderer: mut Counter, text: string) -> string => {
+  let block = fonts.lay_out(text, FontSpec { size: 40.0 }, 1000.0)
+  let ops = atlas.glyphs(fonts, renderer, block, Point {}, 1.0, Color { r: 0, g: 0, b: 0 })
+  let pages = [op in ops | describe(op)].join(" ")
+  "${text}: on ${pages}; ${atlas.page_count()} pages, ${atlas.evictions()} emptied, ${renderer.uploads} uploaded, ${renderer.clears} cleared, ${renderer.glyphs} rendered"
+}
+
+let describe = pure (op: DrawOp) -> string => match op {
+  Glyphs(texture, quads, _) => "${i64(texture)}×${quads.len()}",
+  _ => "?",
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var atlas = glyph_atlas_sized(PAGE, 2)
+  var renderer = Counter {}
+  atlas.next_frame()
+  println("frame 1, ${draw(atlas, fonts, renderer, "MW")}")
+  atlas.next_frame()
+  println("frame 2, ${draw(atlas, fonts, renderer, "O")}")
+  atlas.next_frame()
+  println("frame 3, ${draw(atlas, fonts, renderer, "W")}")
+  println("frame 3, ${draw(atlas, fonts, renderer, "MH")}")
+  println("frame 3, ${draw(atlas, fonts, renderer, "WMH")}")
+  atlas.next_frame()
+  println("frame 4, ${draw(atlas, fonts, renderer, "MM")}")
+  fonts.close()
+  0
+}
+`)
+	want := `frame 1, MW: on 0×1 1×1; 2 pages, 0 emptied, 2 uploaded, 0 cleared, 2 rendered
+frame 2, O: on 0×1; 2 pages, 1 emptied, 2 uploaded, 1 cleared, 3 rendered
+frame 3, W: on 1×1; 2 pages, 1 emptied, 2 uploaded, 1 cleared, 3 rendered
+frame 3, MH: on 0×1 2×1; 3 pages, 2 emptied, 3 uploaded, 2 cleared, 5 rendered
+frame 3, WMH: on 1×1 0×1 2×1; 3 pages, 2 emptied, 3 uploaded, 2 cleared, 5 rendered
+frame 4, MM: on 0×2; 3 pages, 2 emptied, 3 uploaded, 2 cleared, 5 rendered
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}

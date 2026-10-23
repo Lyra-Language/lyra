@@ -9,7 +9,7 @@ module ui.text
 //! fonts.add_system_font()
 //! var atlas = glyph_atlas()
 //! let block = fonts.lay_out("Hello, world", FontSpec { size: 16.0 }, 200.0)
-//! let op = atlas.glyphs(fonts, renderer, block, Point { x: 20.0, y: 20.0 }, scale, BLACK)
+//! let ops = atlas.glyphs(fonts, renderer, block, Point { x: 20.0, y: 20.0 }, scale, BLACK)
 //! ```
 //!
 //! **Shaping is HarfBuzz's, rasterizing FreeType's** (`bindings.harfbuzz`,
@@ -215,27 +215,56 @@ impl Fonts {
   }
 }
 
-/// The glyphs a renderer has been given, packed in one texture: each rendered once, at one
-/// pixel size, and found again by its face, number and size.
+/// The glyphs a renderer has been given, packed into pages — a texture each — each glyph
+/// rendered once at one pixel size and found again by its face, number and size. **A page is
+/// added when a glyph fits in none**, up to `max_pages`; past that the page drawn from least
+/// recently is emptied and filled again — never one the frame being painted has drawn from
+/// ([GlyphAtlas.next_frame]), whose glyphs that frame's ops still show. A frame that needs
+/// more than `max_pages` gets more.
 pub struct GlyphAtlas {
-  texture: Maybe<TextureId> = None,
+  pages: []AtlasPage = [],
   slots: HashMap<string, AtlasSlot>,
-  /// The shelf being filled: its top, how far across it is, and its tallest glyph.
-  shelf_y: i64 = 0,
-  shelf_x: i64 = 0,
-  shelf_height: i64 = 0,
+  /// Texels on a page's side.
+  size: i64 = ATLAS_SIZE,
+  max_pages: i64 = ATLAS_PAGES,
+  /// The page new glyphs go on until it is full.
+  filling: i64 = -1,
+  /// The frame being painted, counted by [GlyphAtlas.next_frame].
+  frame: i64 = 0,
 }
 
-/// The atlas's texture is this many texels on a side.
+/// A page's texture is this many texels on a side.
 pub const ATLAS_SIZE: i64 = 1024
 
-/// An empty atlas; its texture is uploaded the first time a glyph is needed.
+/// How many pages an atlas keeps before it empties one for new glyphs.
+pub const ATLAS_PAGES: i64 = 4
+
+/// An empty atlas; a page's texture is uploaded the first time a glyph needs it.
 pub let glyph_atlas = pure () -> GlyphAtlas => GlyphAtlas { slots: hashmap_new() }
 
+/// An empty atlas of pages `size` texels on a side, emptying one past `max_pages` — small
+/// ones, for a test to fill.
+pub let glyph_atlas_sized = pure (size: i64, max_pages: i64) -> GlyphAtlas =>
+  GlyphAtlas { slots: hashmap_new(), size: size, max_pages: max_pages.max(1) }
+
 impl GlyphAtlas {
+  /// A new frame begins: the pages the last one drew from may be emptied again. `ui.layout`'s
+  /// `paint` calls it.
+  pub let next_frame = (self: mut) -> void => { self.frame += 1 }
+
+  /// How many pages the atlas has, and how many times a page has been emptied for new glyphs.
+  pub let page_count = pure (self) -> i64 => self.pages.len()
+
+  pub let evictions = pure (self) -> i64 => {
+    var n = 0
+    for page in self.pages { n += page.generation }
+    n
+  }
+
   /// `block`'s glyphs drawn in `color` with its top-left corner at `origin`, for a display
-  /// at `scale` pixels a unit: a [Glyphs] op, any glyph not yet in the atlas rendered into it
-  /// through `renderer` first. A glyph that no longer fits is left out (todo.md).
+  /// at `scale` pixels a unit: a [Glyphs] op for each page they are on, any glyph not yet in
+  /// the atlas rendered into it through `renderer` first. A glyph that cannot be rendered, or
+  /// is larger than a page, is left out.
   pub let glyphs<r> where r: Renderer = (
     self: mut,
     fonts: Fonts,
@@ -244,21 +273,22 @@ impl GlyphAtlas {
     origin: Point,
     scale: f32,
     color: Color
-  ) -> Maybe<DrawOp> => {
-    if block.face < 0 || block.lines.len() == 0 { return None }
-    let Some(texture) = self.texture_in(renderer) else { return None }
+  ) -> []DrawOp => {
+    if block.face < 0 || block.lines.len() == 0 { return [] }
     let face = fonts.faces[block.face]
     let pixels = i64((block.size * scale).round()).max(1)
-    var quads: []GlyphQuad = []
+    // Each page's quads, by page number, in the order the pages were first needed.
+    var order: []i64 = []
+    var quads: [][]GlyphQuad = []
     for line in block.lines {
       for g in line.glyphs {
-        let found = self.slot_for(renderer, texture, face, block.face, g.glyph, pixels)
+        let found = self.slot_for(renderer, face, block.face, g.glyph, pixels)
         let Some(slot) = found else { continue }
         if slot.texels.is_empty() { continue }
         // The pen rounded to a whole pixel, the bitmap placed from it as FreeType says.
         let pen_x = f32(((origin.x + g.x) * scale).round())
         let pen_y = f32(((origin.y + line.baseline - g.y) * scale).round())
-        quads.push(GlyphQuad {
+        let quad = GlyphQuad {
           at: Rect {
             x: (pen_x + slot.left) / scale,
             y: (pen_y - slot.top) / scale,
@@ -266,70 +296,148 @@ impl GlyphAtlas {
             h: slot.texels.h / scale,
           },
           texels: slot.texels,
-        })
+        }
+        var at = -1
+        for i, page in order {
+          if page == slot.page { at = i }
+        }
+        if at < 0 {
+          order.push(slot.page)
+          quads.push([quad])
+        } else {
+          quads[at].push(quad)
+        }
       }
     }
-    Some(Glyphs(texture, quads, color))
-  }
-
-  /// The atlas's texture, uploaded empty the first time.
-  let texture_in<r> where r: Renderer = (
-    self: mut,
-    renderer: mut r
-  ) -> Maybe<TextureId> => {
-    if let Some(id) = self.texture { return Some(id) }
-    let blank = Image {
-      width: ATLAS_SIZE,
-      height: ATLAS_SIZE,
-      argb: [0x00FFFFFF; ATLAS_SIZE * ATLAS_SIZE],
-    }
-    let Some(id) = renderer.upload(blank) else { return None }
-    self.texture = Some(id)
-    Some(id)
+    var ops: []DrawOp = []
+    for i, page in order { ops.push(Glyphs(self.pages[page].texture, quads[i], color)) }
+    ops
   }
 
   /// Where glyph `glyph` of face number `index` at `pixels` to the em is in the atlas,
-  /// rendering it there if it is not yet — or `None` if it cannot be rendered or no longer
-  /// fits. A glyph with no ink has an empty slot.
+  /// rendering it there if it is not yet — or `None` if it cannot be rendered or placed. A
+  /// glyph with no ink has an empty slot. Its page is marked drawn from this frame.
   let slot_for<r> where r: Renderer = (
     self: mut,
     renderer: mut r,
-    texture: TextureId,
     face: Face,
     index: i64,
     glyph: u32,
     pixels: i64
   ) -> Maybe<AtlasSlot> => {
     let key = "${index}|${glyph}|${pixels}"
-    if let Some(slot) = self.slots.get(key) { return Some(slot) }
+    if let Some(slot) = self.slots.get(key) {
+      // A slot on an emptied page is gone, and is rendered again below.
+      if slot.texels.is_empty() { return Some(slot) }
+      if self.pages[slot.page].generation == slot.generation {
+        self.pages[slot.page].drawn = self.frame
+        return Some(slot)
+      }
+    }
     let Some(bitmap) = render_glyph(face.ft, glyph, u32(pixels)) else { return None }
     var slot = AtlasSlot { left: f32(bitmap.left), top: f32(bitmap.top) }
     if bitmap.width > 0 && bitmap.rows > 0 {
-      let Some(at) = self.place(bitmap.width, bitmap.rows) else { return None }
+      let Some((page, at)) = self.place(
+        renderer,
+        bitmap.width,
+        bitmap.rows
+      ) else { return None }
       let image = Image {
         width: bitmap.width,
         height: bitmap.rows,
         argb: [c in bitmap.coverage | white_at(c)],
       }
-      if !renderer.update(texture, at, image) { return None }
+      if !renderer.update(self.pages[page].texture, at, image) { return None }
       slot = AtlasSlot {
         slot |
-        texels: Rect { x: at.x, y: at.y, w: f32(bitmap.width), h: f32(bitmap.rows) }
+        texels: Rect { x: at.x, y: at.y, w: f32(bitmap.width), h: f32(bitmap.rows) },
+        page: page,
+        generation: self.pages[page].generation,
       }
+      self.pages[page].drawn = self.frame
     }
     self.slots.insert(key, slot)
     Some(slot)
   }
 
-  /// Room for a `width` × `height` bitmap, a texel clear of its neighbours: along the shelf
-  /// being filled, or on a new one below it. `None` when the atlas is full.
-  let place = (self: mut, width: i64, height: i64) -> Maybe<Point> => {
-    if self.shelf_x + width + 1 > ATLAS_SIZE {
+  /// Room for a `width` × `height` bitmap, a texel clear of its neighbours, and the page it is
+  /// on: on the page being filled, else a new page, else the page drawn from least recently,
+  /// emptied — or `None` when the bitmap is larger than a page, or no page can be had.
+  let place<r> where r: Renderer = (
+    self: mut,
+    renderer: mut r,
+    width: i64,
+    height: i64
+  ) -> Maybe<(i64, Point)> => {
+    if width + 1 > self.size || height + 1 > self.size { return None }
+    if self.filling >= 0 {
+      if let Some(at) = self.pages[self.filling].room(width, height, self.size) {
+        return Some((self.filling, at))
+      }
+    }
+    // Emptied rather than added once there are enough — unless every page shows in this
+    // frame, whose ops would show what replaced their glyphs.
+    var page = -1
+    if self.pages.len() >= self.max_pages {
+      var oldest = self.frame
+      for i, p in self.pages {
+        if p.drawn < oldest {
+          oldest = p.drawn
+          page = i
+        }
+      }
+    }
+    if page >= 0 {
+      if !self.empty(renderer, page) { return None }
+    } else {
+      let Some(texture) = renderer.upload(self.blank()) else { return None }
+      self.pages.push(AtlasPage { texture: texture })
+      page = self.pages.len() - 1
+    }
+    self.filling = page
+    let Some(at) = self.pages[page].room(width, height, self.size) else { return None }
+    Some((page, at))
+  }
+
+  /// Page `page` emptied: its texture cleared, its shelves begun again, its slots made stale.
+  let empty<r> where r: Renderer = (self: mut, renderer: mut r, page: i64) -> bool => {
+    if !renderer.update(self.pages[page].texture, Point {}, self.blank()) { return false }
+    let was = self.pages[page]
+    self.pages[page] = AtlasPage { texture: was.texture, generation: was.generation + 1 }
+    true
+  }
+
+  /// A page's worth of clear texels.
+  let blank = pure (self) -> Image =>
+    Image {
+      width: self.size,
+      height: self.size,
+      argb: [0x00FFFFFF; self.size * self.size]
+    }
+}
+
+/// One texture of an atlas: the shelf being filled — its top, how far across it is, and its
+/// tallest glyph — the frame it was last drawn from, and how many times it has been emptied,
+/// which the slots on it carry.
+struct AtlasPage {
+  texture: TextureId,
+  shelf_y: i64 = 0,
+  shelf_x: i64 = 0,
+  shelf_height: i64 = 0,
+  drawn: i64 = 0,
+  generation: i64 = 0,
+}
+
+impl AtlasPage {
+  /// Room for a `width` × `height` bitmap on this page of `size` texels a side: along the
+  /// shelf being filled, or on a new one below it. `None` when it is full.
+  let room = (self: mut, width: i64, height: i64, size: i64) -> Maybe<Point> => {
+    if self.shelf_x + width + 1 > size {
       self.shelf_y += self.shelf_height + 1
       self.shelf_x = 0
       self.shelf_height = 0
     }
-    if self.shelf_y + height + 1 > ATLAS_SIZE || width + 1 > ATLAS_SIZE { return None }
+    if self.shelf_y + height + 1 > size { return None }
     let at = Point { x: f32(self.shelf_x), y: f32(self.shelf_y) }
     self.shelf_x += width + 1
     self.shelf_height = self.shelf_height.max(height)
@@ -352,12 +460,15 @@ struct Face {
   line_gap: f32,
 }
 
-/// Where a glyph is in the atlas (`texels`, empty for one with no ink), and where its
-/// bitmap's top-left corner is from the pen: `left` across, `top` up, in pixels.
+/// Where a glyph is in the atlas — its `page`, and its `texels` there (empty for one with no
+/// ink) while the page is still at its `generation` — and where its bitmap's top-left corner
+/// is from the pen: `left` across, `top` up, in pixels.
 struct AtlasSlot {
   texels: Rect = Rect {},
   left: f32 = 0.0,
   top: f32 = 0.0,
+  page: i64 = 0,
+  generation: i64 = 0,
 }
 
 // ── Line breaking ────────────────────────────────────────────────────────────

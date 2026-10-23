@@ -1984,6 +1984,8 @@ pub let paint<e, r> where r: Renderer = (
   renderer: mut r
 ) -> []DrawOp => {
   var ops: []DrawOp = []
+  // A frame: the atlas may empty a page the last one drew from, never one this one does.
+  atlas.next_frame()
   // What floats (an open select's list) is drawn after the whole tree, over it and outside
   // every clip — and what floats in that, after it.
   var floating: []Placed<e> = []
@@ -2088,7 +2090,7 @@ let paint_into<e, r> where r: Renderer = (
     }
     if let Prose(block) = laid.content {
       let color = faded(look.color, s.opacity)
-      if let Some(op) = atlas.glyphs(
+      for op in atlas.glyphs(
         fonts,
         renderer,
         block,
@@ -2111,7 +2113,7 @@ let paint_into<e, r> where r: Renderer = (
     match laid.content {
       Prose(block) => {
         let color = faded(s.color, s.opacity)
-        if let Some(op) = atlas.glyphs(
+        for op in atlas.glyphs(
           fonts,
           renderer,
           block,
@@ -2201,9 +2203,14 @@ let paint_painter<e, r> where r: Renderer = (
           x: at.x + baseline.x,
           y: at.y + baseline.y - block.lines[0].baseline
         }
-        if let Some(drawn) = atlas.glyphs(fonts, renderer, block, top, scale, color) {
-          ops.push(drawn)
-        }
+        for drawn in atlas.glyphs(
+          fonts,
+          renderer,
+          block,
+          top,
+          scale,
+          color
+        ) { ops.push(drawn) }
       },
     }
   }

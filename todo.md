@@ -692,13 +692,13 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   `examples/ui/settings.lyra` (COMPLETED.md, 10/21).
 - **[OPEN] What a terminal needs of `ui`** — an element the program paints, font faces and
   fallback, raw keys and pointer; designed in `ui/TERMINAL.md` (10/22), for Termina's move
-  off ImGui. Step 1, `painted` with `PaintDraw`/`PaintText` and `on_size`, is built (10/22);
-  next the atlas's pages.
+  off ImGui. Steps 1 (`painted`, `PaintDraw`/`PaintText`, `on_size`) and 2 (the atlas's
+  pages) are built (10/22); next the faces (step 3).
 - **[OPEN] `ui.text`: one font, left to right.** No fallback for a character the font lacks,
   no itemizing by script and no bidi; a paragraph is one HarfBuzz run. Also no text
   alignment (a line starts at its box's left) and no ellipsis.
-- **[OPEN] `ui.text`: the atlas is one 1024² page that never empties.** A glyph that does not
-  fit is left out; it needs a second page or eviction (sizes animating, many fonts).
+- **[DONE 10/22] `ui.text`: the atlas's pages** — a page a texture, added when a glyph fits
+  in none, the least recently drawn emptied past `ATLAS_PAGES` (COMPLETED.md, 10/22).
 - **[OPEN] `ui.layout`: a `Picture` ignores opacity.** `DrawOp.Picture` has no colour to
   fade by; give it one (a tint, as `Glyphs` has) and `paint` can pass the opacity on.
 - **[OPEN] `./asan.sh` has no HarfBuzz or FreeType** (`asan.Dockerfile`), so the `ui`

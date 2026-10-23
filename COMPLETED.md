@@ -9,6 +9,25 @@ Newest first.
 
 ## Dated log
 
+### 10/22/26 — `ui`: the glyph atlas's pages
+
+- **The atlas was one 1024² texture that never emptied**, a glyph that did not fit left out —
+  too small for a terminal's four faces, CJK and two sizes (`ui/TERMINAL.md` §2, step 2). It
+  is **pages now**, a texture each: a glyph that fits on none opens one; past `ATLAS_PAGES`
+  (4) the page drawn from least recently is cleared (one update the page's size) and filled
+  again. **Never a page the frame being painted has drawn from**: the display list is drawn
+  after it is built, so a page emptied mid-frame would show its new glyphs in that frame's
+  earlier ops. `paint` begins a frame (`next_frame`), each slot found or placed marks its
+  page drawn then, and a frame that needs more pages than the limit grows the atlas rather
+  than break that.
+- **A slot carries its page's generation** instead of being removed: an emptied page's
+  generation moves on, so its slots are stale when next found and their glyphs rendered
+  again — no walk over the slots. `glyphs` answers an op a page, in the order the pages were
+  first needed (`ui.layout` pushes each). Pages are reused rather than freed: a `Renderer` has
+  no way to release a texture.
+- `TestRun_UiAtlasPages` uses pages of 48 texels (`glyph_atlas_sized`), where a capital at
+  40 pixels takes a whole page in any font, so the counts are the font's no matter which.
+
 ### 10/22/26 — `ui`: an element the program paints
 
 - **`painted(paint, on_size)`** (`Painted(Painter<e>)`, `ui/TERMINAL.md` §1, step 1): laid out
