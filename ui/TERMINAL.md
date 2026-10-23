@@ -357,7 +357,7 @@ the end.
    composition, `PointerInput` with capture, `App.shortcuts`, `OnFocus`, `Focus`.
 7. **`Readable`** and **`scroll_follow`**/`ScrollTo`. **Built 10/23.**
 8. **Termina**: the grid, the box and the cards as one painter over a following scroller;
-   then the tab bar, menus and Settings (the next note). **The first half built 10/23**,
+   then the tab bar, menus and Settings (the next note, `WINDOW.md`). **The first half built 10/23**,
    beside the ImGui app rather than replacing it: Termina's session and command line made
    framework-free (`session`, `term`), ImGui's drawing moved to `gui`, and `face` painting
    them on `ui` as `build/termina-ui` — the tabs as buttons, the Mac's menus not yet, the

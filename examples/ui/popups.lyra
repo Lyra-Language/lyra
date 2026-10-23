@@ -1,0 +1,236 @@
+// Popups: `ui.layout`'s `popup`, content floating from an anchor while the program says it is
+// open — a File button's list with a submenu beside it, a long select whose list scrolls
+// with its chosen option in view, and a button at the window's foot whose popup flips above
+// it and is moved in from the window's right edge. A press outside a popup, Escape or the
+// window losing the focus dismisses it; opened from the keyboard, the focus goes into it.
+//
+//     lyrac run examples/ui/popups.lyra
+//     lyrac run examples/ui/popups.lyra -- --script "click:30,22 click:60,90" [--png FILE]
+//
+// **The second form** plays a script (`ui.script`) headless, prints what happened and with
+// `--png FILE` writes the last frame.
+
+import ui.sdl3
+import ui.sdl3.{ SdlRenderer, capture }
+import ui.gpu
+import ui.app.{ App, run, running, step_running, Command, Subscription }
+import ui.script.{ timed_platform, parse_steps }
+import ui.draw.{ Point, Size, Color }
+import ui.text.{ Fonts, fonts_new, glyph_atlas }
+import ui.style.{ Style, Sheet, Rule, Insets, light_theme, insets, OverflowVisible }
+import ui.layout.{
+  Node,
+  Laid,
+  paint,
+  column,
+  row,
+  button,
+  select,
+  SelectSpec,
+  popup,
+  FloatBeside,
+  expanded,
+  sized,
+  padding,
+  themed,
+  MainStart,
+  MainEnd,
+  CrossStart,
+  CrossStretch,
+}
+import std.collections.{ parse_args }
+import std.png.{ write_png }
+import std.io.{ write_bytes }
+
+const WIDTH: f32 = 560.0
+const HEIGHT: f32 = 380.0
+
+let main = () -> u8 => {
+  let args = parse_args(["--script", "--png"])
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let _ = fonts.add_system_fallbacks()
+  let app = App {
+    view: view,
+    update: update,
+    subscriptions: (_: State) -> []Subscription<Event> => [],
+    background: Color { r: 0xF4, g: 0xF4, b: 0xF6 },
+    window_overflow: OverflowVisible,
+  }
+  if let Some(script) = args.value("--script") {
+    let Ok(steps) = parse_steps(script) else {
+      println("the script does not parse")
+      return 1
+    }
+    let window = match sdl3.open("Popups", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    let played = running(
+      app,
+      State {},
+      timed_platform(steps, Size { w: WIDTH, h: HEIGHT }),
+      window.renderer,
+      fonts
+    )
+    while step_running(played) {}
+    for line in played.host.state.log { println(line) }
+    var status: u8 = 0
+    if let Some(path) = args.value("--png") {
+      if !save(played.renderer, played.fonts, played.host.shown[0], path) { status = 1 }
+    }
+    sdl3.close(window.platform, played.renderer)
+    fonts.close()
+    return status
+  }
+  let window = match gpu.open("Popups", WIDTH, HEIGHT) {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      fonts.close()
+      return 2
+    },
+  }
+  var platform = window.platform
+  var renderer = window.renderer
+  let _ = run(app, State {}, platform, renderer, fonts)
+  gpu.close(platform, renderer)
+  fonts.close()
+  0
+}
+
+/// Which popup is open (`""` for none) and whether File's Recent submenu is, the font chosen,
+/// and what happened, newest last.
+struct State {
+  open: string = "",
+  recent: bool = false,
+  font: i64 = 30,
+  log: []string = [],
+}
+
+data Event = Toggled(string) | Dismissed | RecentToggled | RecentDismissed | Did(string) | Font(i64)
+
+let update = pure (state: State, event: Event) -> (State, []Command<Event>) =>
+  match event {
+    // A popup's own button opens it, and closes it again.
+    Toggled(name) => (
+      State { state | open: if state.open == name { "" } else { name }, recent: false, log: [...state.log, "toggled ${name}"] },
+      []
+    ),
+    Dismissed =>
+      (State { state | open: "", recent: false, log: [...state.log, "dismissed"] }, []),
+    RecentToggled => (State { state | recent: !state.recent }, []),
+    RecentDismissed => (State { state | recent: false }, []),
+    Did(what) =>
+      (State { state | open: "", recent: false, log: [...state.log, what] }, []),
+    Font(k) =>
+      (State { state | font: k, log: [...state.log, "font ${typefaces()[k]}"] }, []),
+  }
+
+/// Sixty names, so the select's list is longer than the window.
+let typefaces = pure () -> []string => [i in 0..<60 | "Typeface ${i + 1}"]
+
+/// The window: File and a font along the top; at the foot, on the right, More.
+let view = pure (state: State) -> Node<Event> => themed::<Event>(light_theme(), sheet(), [
+  padding(insets(12.0), column([
+    row([
+      popup(button("File", Toggled("file")), state.open == "file", file_menu(state), Dismissed),
+      select(SelectSpec { options: typefaces(), selected: state.font, on_change: Font }),
+    ]).with_style(Style { gap: Some(12.0) }),
+    expanded(sized(None, None)),
+    row([
+      popup(button("More", Toggled("more")), state.open == "more", more_menu(), Dismissed),
+    ]).aligned(MainEnd, CrossStart),
+  ])),
+])
+
+/// File's items, Recent a submenu beside them.
+let file_menu = pure (state: State) -> Node<Event> => menu([
+  button("New", Did("new")),
+  button("Open…", Did("open")),
+  popup(
+    button("Recent ▸", RecentToggled),
+    state.recent,
+    menu([button("notes.txt", Did("open notes.txt")), button("todo.md", Did("open todo.md"))]),
+    RecentDismissed,
+    FloatBeside
+  ),
+  button("Quit", Did("quit")),
+])
+
+/// More's items: wider than its button, so at the window's edge the list is moved in.
+let more_menu = pure () -> Node<Event> => menu([
+  button("Show the long description", Did("described")),
+  button("Settings", Did("settings")),
+])
+
+/// A popup's list of items, styled as a menu (`.menu`, each item `.item`), each item the
+/// list's width.
+let menu = pure (items: []Node<Event>) -> Node<Event> =>
+  column([i in items | item(i)]).aligned(MainStart, CrossStretch).with_class("menu")
+
+/// A menu's item: its button, or the button a submenu's popup is anchored to, as a row.
+let item = pure (n: Node<Event>) -> Node<Event> =>
+  if n.tag == "Button" { n.with_class("item") } else {
+    Node { n | children: [i in n.children | if i.tag == "Button" { i.with_class("item") } else { i }] }
+  }
+
+let sheet = pure () -> Sheet => Sheet {
+  rules: [
+    Rule { selector: ".menu", style: Style {
+      background: Some(Color { r: 0xFF, g: 0xFF, b: 0xFF }),
+      border_color: Some(Color { r: 0xC8, g: 0xCA, b: 0xD0 }),
+      border_width: Some(1.0),
+      radius: Some(6.0),
+      padding: Some(insets(4.0)),
+      gap: Some(2.0),
+    } },
+    Rule { selector: ".item", style: Style {
+      background: Some(Color { r: 0xFF, g: 0xFF, b: 0xFF, a: 0 }),
+      color: Some(Color { r: 0x22, g: 0x24, b: 0x2A }),
+      radius: Some(4.0),
+      padding: Some(Insets { top: 5.0, right: 12.0, bottom: 5.0, left: 10.0 }),
+    } },
+    Rule { selector: ".item:hover, .item:focus-visible", style: Style {
+      background: Some(Color { r: 0x2F, g: 0x6F, b: 0xD8 }),
+      color: Some(Color { r: 0xFF, g: 0xFF, b: 0xFF }),
+    } },
+  ],
+}
+
+/// `laid` — the window as the host last laid it out — drawn without showing it, and written to
+/// `path` as a PNG.
+let save = (
+  renderer: SdlRenderer,
+  fonts: Fonts,
+  laid: Laid<Event>,
+  path: string
+) -> bool => {
+  var r = renderer
+  var f = fonts
+  var atlas = glyph_atlas()
+  let ops = paint(laid, Point {}, 1.0, f, atlas, r)
+  let Some(frame) = capture(
+    r,
+    Color { r: 0xF4, g: 0xF4, b: 0xF6 },
+    ops
+  ) else { return false }
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(u8((p >> 24) & 0xFF))
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(png) => write_bytes(path, png),
+    Err(_) => false,
+  }
+}

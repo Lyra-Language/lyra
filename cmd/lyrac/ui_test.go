@@ -3470,6 +3470,414 @@ Space, Up, Escape: [] chosen 2, open false, focus on it true
 	}
 }
 
+// A popup (WINDOW.md §1): its content floats below its anchor, flipped above it at the
+// window's foot and moved in from the window's right edge, and a long one is no taller than
+// the window and scrolls. A press outside it dismisses it and goes on — but not one on its
+// anchor, whose button closes it itself — as do Escape (the innermost of nested popups) and
+// the window losing the focus; a press inside a popup opened from inside another dismisses
+// neither, and one in the outer away from the inner dismisses the inner. Opened from the
+// keyboard, the focus goes to its first control, and back to the anchor when it closes.
+func TestRun_UiPopup(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new, find, Found }
+import ui.script.{ script_platform, ScriptPlatform }
+import ui.backend.{ InputEvent, PointerMoved, PointerDown, PointerUp, Primary, KeyPressed, Key, Modifiers, Enter, Escape, Tab, WindowUnfocused }
+import ui.draw.{ Size, Point, Rect }
+import ui.text.{ Fonts, fonts_new }
+import ui.style.{ light_theme, Sheet }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, button, popup, align, Alignment, themed, tight, PopsUp, Pressable, FloatBeside }
+
+data Ev = Toggle | Dismiss | Pick(i64) | ToggleInner | DismissInner
+
+/// The framework's state, the program's — whether each popup is open, where the anchor sits
+/// in the window, how many items more the popup holds — and the events since the last line.
+struct Run {
+  ui: Ui,
+  cache: LayoutCache<Ev>,
+  platform: ScriptPlatform,
+  open: bool = false,
+  inner: bool = false,
+  corner: Alignment = Alignment {},
+  more: i64 = 0,
+  events: []string = [],
+}
+
+const W: f32 = 400.0
+const H: f32 = 300.0
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var run = Run { ui: ui_new(), cache: layout_cache(), platform: script_platform([], Size { w: W, h: H }) }
+
+  run.open = true
+  placed(run, fonts, "top left")
+  run.corner = Alignment { x: 1.0, y: 1.0 }
+  placed(run, fonts, "bottom right")
+  run.corner = Alignment {}
+  run.more = 40
+  placed(run, fonts, "forty more")
+  run.more = 0
+
+  play(run, fonts, click(Point { x: 390.0, y: 290.0 }))
+  say(run, fonts, "press outside")
+  run.open = true
+  play(run, fonts, click(anchor_middle(run, fonts)))
+  say(run, fonts, "press the anchor")
+  run.open = true
+  play(run, fonts, click(control_middle(run, fonts, Pick(1))))
+  say(run, fonts, "press First")
+  run.open = true
+  play(run, fonts, key(Escape))
+  say(run, fonts, "Escape")
+  run.open = true
+  play(run, fonts, [WindowUnfocused])
+  say(run, fonts, "the window loses the focus")
+
+  run.open = true
+  play(run, fonts, click(control_middle(run, fonts, ToggleInner)))
+  say(run, fonts, "press More")
+  beside(run, fonts)
+  play(run, fonts, click(control_middle(run, fonts, Pick(3))))
+  say(run, fonts, "press Deep, in the inner popup")
+  run.open = true
+  run.inner = true
+  play(run, fonts, click(control_middle(run, fonts, Pick(1))))
+  say(run, fonts, "press First, outside the inner")
+  run.open = true
+  run.inner = true
+  play(run, fonts, key(Escape))
+  say(run, fonts, "Escape, both open")
+
+  run.open = false
+  run.inner = false
+  play(run, fonts, key(Tab))
+  say(run, fonts, "Tab")
+  play(run, fonts, key(Enter))
+  say(run, fonts, "Enter")
+  play(run, fonts, key(Escape))
+  say(run, fonts, "Escape")
+  0
+}
+
+/// Where the popup's content went against its anchor, laid out as it is now.
+let placed = (run: mut Run, fonts: mut Fonts, name: string) -> void => {
+  let laid = laid_out(run, fonts)
+  let Some(p) = popup_in(laid, Point {}) else {
+    println("${name}: no popup")
+    return
+  }
+  let a = Rect { x: p.origin.x, y: p.origin.y, w: p.laid.size.w, h: p.laid.size.h }
+  let c = p.laid.children[1]
+  let b = Rect { x: p.origin.x + c.at.x, y: p.origin.y + c.at.y, w: c.laid.size.w, h: c.laid.size.h }
+  let side = if b.y >= a.y + a.h { "below" } else if b.y + b.h <= a.y { "above" } else { "over" }
+  let inside = b.x >= 0.0 && b.y >= 0.0 && b.x + b.w <= W + 0.01 && b.y + b.h <= H + 0.01
+  let left = if b.x == a.x { "at the anchor's left" } else { "moved in" }
+  let scrolls = match c.laid.scroller {
+    Some(sc) => sc.content.h > sc.port.h + 0.5,
+    None => false,
+  }
+  println("${name}: ${side} the anchor, ${left}, inside the window ${inside}, scrolls ${scrolls}")
+}
+
+/// Where the inner popup, opened from More, went against More.
+let beside = (run: mut Run, fonts: mut Fonts) -> void => {
+  let Some(outer) = popup_in(laid_out(run, fonts), Point {}) else { return }
+  let c = outer.laid.children[1]
+  let Some(inner) = popup_in(c.laid, Point { x: outer.origin.x + c.at.x, y: outer.origin.y + c.at.y }) else {
+    println("  no inner popup")
+    return
+  }
+  let content = inner.laid.children[1]
+  let right = inner.origin.x + content.at.x >= inner.origin.x + inner.laid.size.w
+  let level = (content.at.y).abs() < 0.01
+  println("  the inner popup: to More's right ${right}, level with it ${level}")
+}
+
+/// Each input played against a fresh layout, its events applied as a program would.
+let play = (run: mut Run, fonts: mut Fonts, inputs: []InputEvent) -> void => {
+  for input in inputs {
+    let laid = laid_out(run, fonts)
+    for e in run.ui.handle(laid, input, run.platform) {
+      run.events.push(named(e))
+      match e {
+        Toggle => { run.open = !run.open },
+        Dismiss => {
+          run.open = false
+          run.inner = false
+        },
+        Pick(_) => {
+          run.open = false
+          run.inner = false
+        },
+        ToggleInner => { run.inner = !run.inner },
+        DismissInner => { run.inner = false },
+      }
+    }
+  }
+}
+
+/// A line for the step just played: its events, what is open, and what has the focus.
+let say = (run: mut Run, fonts: mut Fonts, name: string) -> void => {
+  let laid = laid_out(run, fonts)
+  let focus = match find(laid, run.ui.state.focus, Point {}) {
+    Some(f) => match f.laid.kind {
+      Pressable(e) => named(e),
+      _ => "?",
+    },
+    None => "nothing",
+  }
+  println("${name}: [${run.events.join(", ")}] open ${run.open}, inner ${run.inner}, focus ${focus}")
+  run.events = []
+}
+
+let named = pure (e: Ev) -> string => match e {
+  Toggle => "Toggle",
+  Dismiss => "Dismiss",
+  Pick(i) => "Pick(${i})",
+  ToggleInner => "ToggleInner",
+  DismissInner => "DismissInner",
+}
+
+let laid_out = (run: mut Run, fonts: mut Fonts) -> Laid<Ev> =>
+  run.ui.frame_within(view(run), tight(Size { w: W, h: H }), fonts, run.cache)
+
+let view = pure (run: Run) -> Node<Ev> => {
+  let deep = column([button("Deep", Pick(3))])
+  let items = [
+    button("First", Pick(1)),
+    popup(button("More", ToggleInner), run.inner, deep, DismissInner, FloatBeside),
+    button("Last", Pick(2)),
+    button("An item wider than the anchor", Pick(4)),
+    ...[i in 0..<run.more | button("Item ${i}", Pick(10 + i))],
+  ]
+  themed::<Ev>(light_theme(), Sheet {}, [
+    align(run.corner, popup(button("Menu", Toggle), run.open, column(items), Dismiss)),
+  ])
+}
+
+/// The outermost popup in laid, and where it is.
+let popup_in = pure (laid: Laid<Ev>, origin: Point) -> Maybe<Found<Ev>> => {
+  if let PopsUp(_, _, _) = laid.kind { return Some(Found { laid: laid, origin: origin }) }
+  for child in laid.children {
+    if let Some(f) = popup_in(child.laid, Point { x: origin.x + child.at.x, y: origin.y + child.at.y }) {
+      return Some(f)
+    }
+  }
+  None
+}
+
+let anchor_middle = (run: mut Run, fonts: mut Fonts) -> Point => {
+  let Some(p) = popup_in(laid_out(run, fonts), Point {}) else { return Point {} }
+  Point { x: p.origin.x + p.laid.size.w / 2.0, y: p.origin.y + p.laid.size.h / 2.0 }
+}
+
+/// The middle of the button raising e.
+let control_middle = (run: mut Run, fonts: mut Fonts, e: Ev) -> Point =>
+  button_at(laid_out(run, fonts), Point {}, named(e)) ?? Point { x: -1.0, y: -1.0 }
+
+let button_at = pure (laid: Laid<Ev>, origin: Point, name: string) -> Maybe<Point> => {
+  if let Pressable(e) = laid.kind {
+    if named(e) == name { return Some(Point { x: origin.x + laid.size.w / 2.0, y: origin.y + laid.size.h / 2.0 }) }
+  }
+  for child in laid.children {
+    if let Some(p) = button_at(child.laid, Point { x: origin.x + child.at.x, y: origin.y + child.at.y }, name) {
+      return Some(p)
+    }
+  }
+  None
+}
+
+let click = pure (at: Point) -> []InputEvent =>
+  [PointerMoved(at), PointerDown(Primary, at, 1), PointerUp(Primary, at)]
+
+let key = pure (k: Key) -> []InputEvent => [KeyPressed(k, Modifiers {})]
+`)
+	want := `top left: below the anchor, at the anchor's left, inside the window true, scrolls false
+bottom right: above the anchor, moved in, inside the window true, scrolls false
+forty more: over the anchor, at the anchor's left, inside the window true, scrolls true
+press outside: [Dismiss] open false, inner false, focus nothing
+press the anchor: [Toggle] open false, inner false, focus Toggle
+press First: [Pick(1)] open false, inner false, focus Toggle
+Escape: [Dismiss] open false, inner false, focus Toggle
+the window loses the focus: [Dismiss] open false, inner false, focus Toggle
+press More: [ToggleInner] open true, inner true, focus ToggleInner
+  the inner popup: to More's right true, level with it true
+press Deep, in the inner popup: [Pick(3)] open false, inner false, focus Toggle
+press First, outside the inner: [DismissInner, Pick(1)] open false, inner false, focus Toggle
+Escape, both open: [DismissInner] open true, inner false, focus Toggle
+Tab: [] open false, inner false, focus Toggle
+Enter: [Toggle] open true, inner false, focus Pick(1)
+Escape: [Dismiss] open false, inner false, focus Toggle
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A select's list (WINDOW.md §1, on the popups' placement): longer than the window, it is no
+// taller than the window and scrolls, opening with the chosen option in view and keeping the
+// option under the keys in view as they move it; at the window's foot it opens above the
+// select.
+func TestRun_UiSelectListScrollsAndFlips(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new, find }
+import ui.script.{ script_platform, ScriptPlatform }
+import ui.backend.{ InputEvent, PointerMoved, PointerDown, PointerUp, Primary, KeyPressed, Key, Modifiers, Escape, ArrowDown, Home, End }
+import ui.draw.{ Size, Point, Rect }
+import ui.text.{ Fonts, fonts_new }
+import ui.style.{ light_theme, Sheet }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, select, SelectSpec, sized, expanded, themed, tight, Choosing, option_id }
+
+data Ev = Chose(i64) | Other(i64)
+
+struct Run {
+  ui: Ui,
+  cache: LayoutCache<Ev>,
+  platform: ScriptPlatform,
+  chosen: i64 = 45,
+}
+
+const W: f32 = 400.0
+const H: f32 = 300.0
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var run = Run { ui: ui_new(), cache: layout_cache(), platform: script_platform([], Size { w: W, h: H }) }
+  let (top, bottom) = selects(laid_out(run, fonts))
+
+  play(run, fonts, click(middle(laid_out(run, fonts), top)))
+  seen(run, fonts, top, "opened, option 45 chosen", 45)
+  play(run, fonts, [i in 0..<10 | KeyPressed(ArrowDown, Modifiers {})])
+  seen(run, fonts, top, "Down ten times", 55)
+  play(run, fonts, [KeyPressed(End, Modifiers {})])
+  seen(run, fonts, top, "End", 59)
+  play(run, fonts, [KeyPressed(Home, Modifiers {})])
+  seen(run, fonts, top, "Home", 0)
+  play(run, fonts, [KeyPressed(Escape, Modifiers {})])
+
+  play(run, fonts, click(middle(laid_out(run, fonts), bottom)))
+  let laid = laid_out(run, fonts)
+  let face = box_of(laid, bottom)
+  let list = box_of(laid, "${bottom}/:list")
+  println("the select at the foot: its list ${if list.y + list.h <= face.y { "above" } else { "not above" }} it")
+  0
+}
+
+/// How the open list of the select identified as id sits: within the window, scrolled, and
+/// whether option shown is in view in it.
+let seen = (run: mut Run, fonts: mut Fonts, id: string, name: string, shown: i64) -> void => {
+  let laid = laid_out(run, fonts)
+  let list = box_of(laid, "${id}/:list")
+  let option = box_of(laid, option_id(id, shown))
+  let inside = list.y >= 0.0 && list.y + list.h <= H + 0.01
+  let in_view = option.y >= list.y - 0.01 && option.y + option.h <= list.y + list.h + 0.01
+  println("${name}: list inside the window ${inside}, option ${shown} in view ${in_view}")
+}
+
+let play = (run: mut Run, fonts: mut Fonts, inputs: []InputEvent) -> void => {
+  for input in inputs {
+    let laid = laid_out(run, fonts)
+    for e in run.ui.handle(laid, input, run.platform) {
+      if let Chose(i) = e { run.chosen = i }
+    }
+  }
+}
+
+let laid_out = (run: mut Run, fonts: mut Fonts) -> Laid<Ev> =>
+  run.ui.frame_within(view(run.chosen), tight(Size { w: W, h: H }), fonts, run.cache)
+
+let view = pure (chosen: i64) -> Node<Ev> => themed::<Ev>(light_theme(), Sheet {}, [
+  column([
+    select(SelectSpec { options: [i in 0..<60 | "Option ${i}"], selected: chosen, on_change: Chose }),
+    expanded(sized(None, None)),
+    select(SelectSpec { options: ["one", "two", "three"], selected: 0, on_change: Other }),
+  ]),
+])
+
+/// The two selects' identities, top first.
+let selects = pure (laid: Laid<Ev>) -> (string, string) => {
+  var ids: []string = []
+  collect(laid, ids)
+  (ids[0], ids[1])
+}
+
+let collect = (laid: Laid<Ev>, ids: mut []string) -> void => {
+  if let Choosing(_) = laid.kind { ids.push(laid.id) }
+  for child in laid.children { collect(child.laid, ids) }
+}
+
+let box_of = pure (laid: Laid<Ev>, id: string) -> Rect => {
+  let Some(f) = find(laid, id, Point {}) else { return Rect { x: -1.0, y: -1.0 } }
+  Rect { x: f.origin.x, y: f.origin.y, w: f.laid.size.w, h: f.laid.size.h }
+}
+
+let middle = pure (laid: Laid<Ev>, id: string) -> Point => {
+  let b = box_of(laid, id)
+  Point { x: b.x + b.w / 2.0, y: b.y + b.h / 2.0 }
+}
+
+let click = pure (at: Point) -> []InputEvent =>
+  [PointerMoved(at), PointerDown(Primary, at, 1), PointerUp(Primary, at)]
+`)
+	want := `opened, option 45 chosen: list inside the window true, option 45 in view true
+Down ten times: list inside the window true, option 55 in view true
+End: list inside the window true, option 59 in view true
+Home: list inside the window true, option 0 in view true
+the select at the foot: its list above it
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// examples/ui/popups.lyra played from the keyboard: Tab to File and Enter opens its popup
+// with the focus on its first item; Tab to Recent and Enter opens the submenu beside it, the
+// focus going in again, and Enter chooses notes.txt, closing both; Tab past the select to More
+// and Enter opens its popup, Escape dismisses it; and the select, opened with Space, chooses
+// two options down. The last frame is written.
+func TestRun_UiPopupsExample(t *testing.T) {
+	t.Parallel()
+	skipWithoutText(t)
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "popups")
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, filepath.Join(repoRoot(t), "examples", "ui", "popups.lyra")); code != 0 {
+		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
+	}
+	shot := filepath.Join(dir, "end.png")
+	cmd := command(t, bin, "--script",
+		"Tab Enter Tab Tab Enter Enter Tab Tab Enter Escape click:20,300 Tab Tab Space Down Down Enter",
+		"--png", shot)
+	cmd.Dir = dir
+	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+	out, err := cmd.CombinedOutput()
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 &&
+		strings.Contains(string(out), "SDL could not") {
+		t.Skipf("SDL could not open a dummy window here: %s", out)
+	} else if ok && exitErr.ExitCode() == 1 && strings.HasPrefix(string(out), "no font") {
+		t.Skipf("no font here: %s", out)
+	} else if err != nil {
+		t.Fatalf("running: %v\n%s", err, out)
+	}
+	want := `toggled file
+open notes.txt
+toggled more
+dismissed
+font Typeface 33
+`
+	if string(out) != want {
+		t.Errorf("got\n%s\nwant\n%s", out, want)
+	}
+	if _, err := os.Stat(shot); err != nil {
+		t.Errorf("no last frame: %v", err)
+	}
+}
+
 // A control disabled or enabled again with nothing else changed is laid out anew: its
 // `:disabled` look and its refusal of input follow at once. The layout cache gave the last
 // frame's layout back for a node the same in every field but `disabled` until 10/22, so 7GUIs'

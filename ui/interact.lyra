@@ -53,6 +53,7 @@ import ui.backend.{
   KeyReleased,
   TextTyped,
   TextComposing,
+  WindowUnfocused,
   Primary,
   Key,
   Modifiers,
@@ -103,6 +104,7 @@ import ui.layout.{
   Ranged,
   Editable,
   Choosing,
+  PopsUp,
   Painted,
   RawInput,
   KeyInput,
@@ -158,6 +160,19 @@ pub struct Ui {
   /// The key of a scroller to scroll once it is laid out, and how far down ([Ui.scroll_keyed]).
   scroll_wanted: string = "",
   scroll_wanted_to: f32 = 0.0,
+  /// An element to scroll into view once it is laid out — the option under an open select's
+  /// keys — `""` for none.
+  reveal_wanted: string = "",
+  /// The popups open at the last frame: whose focus a popup just opened takes, and which one
+  /// just closed gives back.
+  popups: []OpenPopup = [],
+}
+
+/// A popup open at a frame, by its identity and its anchor's and content's.
+pub struct OpenPopup {
+  id: string,
+  anchor: string,
+  content: string,
 }
 
 /// What a press in a text field selected: the clicks it made (1 by rune, 2 by word, 3 all)
@@ -272,6 +287,23 @@ impl Ui {
         false
       )
     }
+    // An element asked to be in view, scrolled there — and the tree laid out again with it.
+    if self.reveal_wanted.len() > 0 {
+      let wanted = self.reveal_wanted
+      self.reveal_wanted = ""
+      if present.contains_key(wanted) {
+        self.reveal(laid, wanted)
+        laid = layout_cached(view, c, fonts, self.state, cache)
+        shown = self.moved(
+          laid,
+          laid.style.opacity / laid.style.own_opacity.max(0.0001),
+          laid.style.color,
+          laid.style.color,
+          false
+        )
+      }
+    }
+    self.popups_followed(laid)
     if !present.contains_key(self.state.focus) { self.state.focus = "" }
     if !present.contains_key(self.state.open) { self.state.open = "" }
     // A control disabled since it took the focus or the press gives them up.
@@ -364,9 +396,59 @@ impl Ui {
     input: InputEvent,
     platform: mut p
   ) -> []e => {
+    // Open popups hear it before anything: Escape dismisses the innermost (an open select's
+    // list being the select's to close), the window losing the focus every one, and a press
+    // each it falls outside of — and the press goes on.
+    var dismissed: []e = []
+    let popups = open_popups(laid)
+    if popups.len() > 0 {
+      match input {
+        KeyPressed(Escape, _) =>
+          if self.state.open.len() == 0 { return [popups[popups.len() - 1].dismissed] },
+        WindowUnfocused => {
+          for p in popups { dismissed.push(p.dismissed) }
+        },
+        PointerDown(_, at, _) => {
+          for p in popups {
+            if !p.anchor_box.contains(at) && !p.areas.any((r) => r.contains(at)) {
+              dismissed.push(p.dismissed)
+            }
+          }
+        },
+        _ => {},
+      }
+    }
     // An element taking input raw hears it first; what it hands back goes on as before.
-    if let Some(events) = self.heard_raw(laid, input, platform) { return events }
-    self.handled(laid, input, platform)
+    if let Some(events) = self.heard_raw(
+      laid,
+      input,
+      platform
+    ) { return [...dismissed, ...events] }
+    [...dismissed, ...self.handled(laid, input, platform)]
+  }
+
+  /// The focus after popups opened or closed since the last frame: one just opened while the
+  /// keyboard had the focus on its anchor takes it, on its first control; one just closed
+  /// with the focus inside gives it back to its anchor's.
+  let popups_followed<e> = (self: mut, laid: Laid<e>) -> void => {
+    let now = open_popups(laid)
+    for p in now {
+      if self.popups.any((q) => q.id == p.id) { continue }
+      if !self.state.keyboard_focus || !within_id(self.state.focus, p.anchor) { continue }
+      if let Some(first) = first_control(laid, p.content) { self.state.focus = first }
+    }
+    for q in self.popups {
+      if now.any((p) => p.id == q.id) || !within_id(
+        self.state.focus,
+        q.content
+      ) { continue }
+      self.state.focus = first_control(laid, q.anchor) ?? ""
+    }
+    self.popups = [p in now | OpenPopup {
+      id: p.id,
+      anchor: p.anchor,
+      content: p.content
+    }]
   }
 
   /// The focus to the element keyed `key` ([Node.keyed]) once a layout has it — the frame
@@ -746,6 +828,7 @@ impl Ui {
   let open_select<e> = (self: mut, id: string, spec: SelectSpec<e>) -> void => {
     self.state.open = id
     self.state.hover = option_id(id, spec.selected.max(0))
+    self.reveal_wanted = self.state.hover
   }
 
   /// An option of the open list chosen: the list closed, the focus back on its select, and
@@ -796,6 +879,7 @@ impl Ui {
     let to = stepped.clamp(0, last)
     if self.state.open == id {
       self.state.hover = option_id(id, to)
+      self.reveal_wanted = self.state.hover
       return []
     }
     if to == spec.selected { [] } else { [(spec.on_change)(to)] }
@@ -1387,6 +1471,84 @@ pub let along_path<e> = pure (laid: Laid<e>, id: string) -> []Found<e> => {
   }
   out
 }
+
+/// A popup open in a laid-out tree: its identity, its anchor's and its content's, the event
+/// dismissing it, and where in the window its anchor is and its content — with what floats
+/// from that, a submenu's popup — covers. (`pub` only because a private generic struct as
+/// another module's type argument does not lay out yet, todo.md.)
+pub struct Opened<e> {
+  id: string,
+  anchor: string,
+  content: string,
+  dismissed: e,
+  anchor_box: Rect,
+  areas: []Rect,
+}
+
+/// The popups open in `laid`, each before those opened from inside it.
+let open_popups<e> = pure (laid: Laid<e>) -> []Opened<e> => {
+  var out: []Opened<e> = []
+  gather_popups(laid, Point {}, out)
+  out
+}
+
+/// [open_popups] below `laid`, whose top-left corner is at `origin`: only what floats, or
+/// holds what does, is looked in — an open popup's content floats.
+let gather_popups<e> = (laid: Laid<e>, origin: Point, out: mut []Opened<e>) -> void => {
+  if let PopsUp(true, _, dismissed) = laid.kind {
+    if laid.children.len() > 1 {
+      let content = laid.children[1]
+      var areas: []Rect = []
+      covered(
+        content.laid,
+        Point { x: origin.x + content.at.x, y: origin.y + content.at.y },
+        true,
+        areas
+      )
+      out.push(Opened {
+        id: laid.id,
+        anchor: laid.children[0].laid.id,
+        content: content.laid.id,
+        dismissed: dismissed,
+        anchor_box: Rect { x: origin.x, y: origin.y, w: laid.size.w, h: laid.size.h },
+        areas: areas,
+      })
+    }
+  }
+  for child in laid.children {
+    if child.laid.floats || child.laid.floating {
+      gather_popups(
+        child.laid,
+        Point { x: origin.x + child.at.x, y: origin.y + child.at.y },
+        out
+      )
+    }
+  }
+}
+
+/// The boxes in the window that `laid` (at `origin`) covers, its own if `own`, and those of
+/// everything floating inside it.
+let covered<e> = (laid: Laid<e>, origin: Point, own: bool, out: mut []Rect) -> void => {
+  if own { out.push(Rect { x: origin.x, y: origin.y, w: laid.size.w, h: laid.size.h }) }
+  for child in laid.children {
+    if child.laid.floats || child.laid.floating {
+      let corner = Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
+      covered(child.laid, corner, child.laid.floats, out)
+    }
+  }
+}
+
+/// The first control, in Tab's order, of the element identified as `id` in `laid`.
+let first_control<e> = pure (laid: Laid<e>, id: string) -> Maybe<string> => {
+  let Some(found) = find(laid, id, Point {}) else { return None }
+  var order: []string = []
+  focus_order(found.laid, order)
+  if order.len() == 0 { None } else { Some(order[0]) }
+}
+
+/// Whether the identity `id` is `root`'s or one inside it.
+let within_id = pure (id: string, root: string) -> bool =>
+  id.len() > 0 && (id == root || id.starts_with("${root}/"))
 
 /// The identity a scrollbar's thumb is held and hovered by: its scroller's and the axis.
 let thumb_id = pure (id: string, axis: Axis) -> string =>

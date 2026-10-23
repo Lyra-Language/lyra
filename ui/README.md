@@ -19,7 +19,7 @@ A root of its own beside `std/` and `bindings/` (`build.sh` links it into `build
 | `ui.sdl3` | Both traits over `bindings.sdl3`: `open` → `SdlWindow { platform, renderer }` (and its pieces, `open_window`, `renderer_for`, `platform_for`, which `ui.gpu` opens with), `close`, and `capture` (a frame read back, for tests). Draws through `SDL_RenderGeometry`, a call a run of ops on one texture (`geometry_calls` counts them); on macOS tells VoiceOver through `bindings.accesskit`. | SDL3, AccessKit |
 | `ui.text` | `Fonts` (a family's faces by weight and style, `add(family, path, index, weight, italic)`; `add_system_font` tries `SYSTEM_FONTS`; `fallbacks`, `add_fallback`, `add_system_fallbacks` from `SYSTEM_FALLBACKS`; `hinting`), `FontSpec` (family, size, `line_height`, `weight`, `italic`), `metrics` → `FontMetrics` (ascent, descent, advance, underline and strikeout), `cells` (a row of `Cell`s, unshaped, as a one-line `TextBlock`), `lay_out` → `TextBlock` (lines of placed glyphs, cached by text, font and width), and `GlyphAtlas`, which renders glyphs into pages — a texture each, `ATLAS_SIZE` texels a side — through `Renderer.update` and answers a `Glyphs` op a page; `next_frame`, which `paint` calls, and `glyph_atlas_sized` for small pages. | HarfBuzz, FreeType |
 | `ui.style` | `Style` (all `Maybe`), `Insets`, `Rule`/`Sheet`, `Theme` (`Palette`, `Spacing`, radius, font, `elements` sheet; `light_theme`, `dark_theme`), its layout properties (sizes, flex's and grid's — `FlexDirection`, `LineWrap`, `Justify`, `ItemAlign`, `Basis`, tracks built by `px`, `fr`, `auto_track`, `min_content`, `max_content`, `minmax`, `repeat_tracks`, `GridSpan`, `GridFlow`), its effects (`box_shadow`, `background_gradient`, `filter_blur`, `backdrop_blur`), and the cascade: `Cascade` settles an element's tag, classes, part and inline style into `Computed`. `scroll_follow` (lui's `scroll-follow`): a scroller at its end stays there as its content grows. | no |
-| `ui.layout` | `Node<e>` (kind, tag, class, part, style, children, key, label; `e` the program's event type, `NoEvent` for none) built by `row`, `column`, `flex`, `grid`, `expanded`, `stack`, `positioned`, `padding`, `align`, `sized`, `scroll`, `text`, `image`, `themed`, `component`, `painted` (an element the program draws, `.takes_input(RawInput)` for one taking input raw: a `Painter` asked for `PaintOp`s — `PaintDraw`, `PaintText`, `PaintCells` (a row of a grid of characters), `PaintWave` (a curly underline) — for a `PaintArea`) and the controls `button`, `checkbox`, `slider`, `select`, `text_input`, and `.with_class`/`.with_style`/`.with_part`/`.keyed`/`.labelled`/`.aligned`; `layout`/`layout_with(node, Constraints, fonts, Interaction) -> Laid<e>` (each with its identity, role, label, focus ring and a field's caret) and `paint(laid, origin, scale, fonts, atlas, renderer) -> []DrawOp` (`fonts` `mut`: a painter's text is laid out as it is painted). Flex and grid are in `ui/layout/flex.lyra` and `grid.lyra` (one module, a directory). | no (text through `ui.text`) |
+| `ui.layout` | `Node<e>` (kind, tag, class, part, style, children, key, label; `e` the program's event type, `NoEvent` for none) built by `row`, `column`, `flex`, `grid`, `expanded`, `stack`, `positioned`, `padding`, `align`, `sized`, `scroll`, `text`, `image`, `themed`, `component`, `painted` (an element the program draws, `.takes_input(RawInput)` for one taking input raw: a `Painter` asked for `PaintOp`s — `PaintDraw`, `PaintText`, `PaintCells` (a row of a grid of characters), `PaintWave` (a curly underline) — for a `PaintArea`) and the controls `button`, `checkbox`, `slider`, `select`, `text_input`, a `popup` (content floating from an anchor while the program says it is open, placed within the window after the layout: `place_floats`), and `.with_class`/`.with_style`/`.with_part`/`.keyed`/`.labelled`/`.aligned`; `layout`/`layout_with(node, Constraints, fonts, Interaction) -> Laid<e>` (each with its identity, role, label, focus ring and a field's caret) and `paint(laid, origin, scale, fonts, atlas, renderer) -> []DrawOp` (`fonts` `mut`: a painter's text is laid out as it is painted). Flex and grid are in `ui/layout/flex.lyra` and `grid.lyra` (one module, a directory). | no (text through `ui.text`) |
 | `ui.motion` | Transitions' values: `progress` (CSS's timing functions), `blended`/`differs` (each property that animates), `mix_color` (premultiplied), and an element's `Motion` — its target and what is `Moving` towards it — moved on by `advance`; `with_layout`/`layout_key` for the sizes a layout lays out while they move. | no |
 | `ui.interact` | `Ui`: the framework's state by identity (focus, hover, press, scroll offsets, carets, selections, undo), transitions (`motions`, shown at `now`; `animating`), `frame` (lay out and drop what left the tree), `handle(laid, input, platform) -> []e`, `place_text_input`; `hit`, `control_at`, `find`, `focus_order`; `Editing`, a field's editing operations. | no |
 | `ui.app` | `App { view, update: (s, e) -> (s, []Command<e>), subscriptions: (s) -> []Subscription<e>, background }` (`sandbox(view, update, bg)` for a plain update); `Command` (`WriteFile`, `ReadFile`, `After`, `CopyText`, `PasteText`, `OpenUrl`, `QuitApp`), `Subscription` (`EveryFrame`, `Every`, `OnResize`, `OnAppearance`); `run`, and `Host` (`host_of`, `step`) for a loop of `main`'s own — which `lyrac run --live` needs. `App.shortcuts` (`[Shortcuts { of }]`, an array of at most one) answers the `Shortcut`s matched before any element hears a key (`chord_matches`: `primary` the shortcut modifier); `Subscription.OnFocus` the window's focus; `Command.FocusKeyed(key)` the focus to a keyed element once it is laid out. `Subscription.Readable(fd, e)` is the event each pass that descriptor has data, the wait waking for it; `Command.ScrollTo(key, y)` scrolls a keyed scroller once it is laid out. | no |
@@ -261,7 +261,26 @@ layer — implements the two traits; the display list is the whole contract.
   the select taking none of its size, painted after the whole tree outside every clip, and
   hit before anything else (`hit` looks for floating elements first) — so it covers what is
   below it, inside a scroller too. Heard as a combo box (its value the chosen option) with
-  a list box of options while open. It does not yet scroll or open upwards (todo.md).
+  a list box of options while open. **Placed as a popup's content is** (below): no taller
+  than the window, scrolling, opened with the chosen option in view and the option under the
+  keys kept there (`Ui.reveal_wanted`, the frame after), and above the select at the window's
+  foot.
+- **A popup** (`popup(anchor, open, content, on_dismiss, side)`, lui's `<Popup>`) is its
+  anchor in its place and, while the program says it is `open`, its content floating from it
+  (`Laid.floats`, `PopsUp`) in a scroller of the framework's (`Popup::content`): as wide as
+  it needs (laid out once with no width to learn it, then at it — CSS's shrink-to-fit, so a
+  menu's stretched rows span the menu, not the window) and no larger than the window less a
+  margin. **Placement is a pass after the layout** (`place_floats`, from `layout_cached`):
+  a floating element with an `Anchor` goes below its parent's box (`FloatBelow`) or beside it
+  (`FloatBeside`, a submenu's), flipped above or to the left where the window has no room,
+  moved in from an edge it would pass, and over the anchor where neither side fits; placed
+  from the anchor every time, so a layout given back by the cache places alike, walking only
+  what holds a float (`Laid.floating`). **Open is the program's** — a press outside the anchor
+  and the content (and what floats from it), Escape (the innermost of nested popups; an open
+  select's list first) and the window losing the focus raise `on_dismiss`, a press going on to
+  what it fell on; a press on the anchor raises none, so its button can close it (`Ui.handle`).
+  Opened while the keyboard had the focus on its anchor, the focus moves to the content's first
+  control; closed with the focus inside, back to the anchor's (`Ui.popups`, the frame after).
 - **The keyboard**: Tab/Shift-Tab through the controls in the tree's order, wrapping; Space
   and Enter press; the arrows, Page Up/Down, Home and End move a slider; a field edits by rune
   (not yet grapheme cluster), by word with Alt (Control off a Mac), to the ends with Command or
@@ -363,6 +382,9 @@ layer — implements the two traits; the display list is the whole contract.
 - `examples/ui/follow.lyra` — a command's output as it comes, on a pseudo-terminal, read through
   `Readable` and shown in a scroller following its end (`--headless` runs it under SDL's dummy
   driver until the command ends).
+- `examples/ui/popups.lyra` — popups: File's list with a submenu beside it, a select of sixty
+  whose list scrolls, and More at the window's foot whose popup flips above it and moves in
+  from the right edge (`--script "…" [--png FILE]` headless, printing what happened).
 - `examples/ui/form.lyra` — phase 3's gate, a form that works from the keyboard: two
   fields, a checkbox, a slider and Submit, run by `ui.app`. `--script "…"` plays input
   instead of waiting for a user and prints the state it left; `--png FILE` the last frame.
@@ -400,6 +422,10 @@ layer — implements the two traits; the display list is the whole contract.
   `TestLui_UiTargetTransitions` the markup's.
   `TestRun_UiPseudoClasses` the states; `TestRun_UiReadOnlyField` a read-only field;
   `TestRun_UiSelect` a select by pointer and keys, its list over a button, and what is heard;
+  `TestRun_UiSelectListScrollsAndFlips` a long list scrolling with its option in view, and
+  one at the foot opening above; `TestRun_UiPopup` a popup's placement, dismissal, nesting and
+  focus; `TestRun_UiPopupsExample` the example from the keyboard; `TestLui_UiTargetPopup`
+  the markup's `<Popup>`;
   `TestRun_UiDisabledIsLaidOutAtOnce` a control disabled with nothing else changed;
   `TestLui_UiTargetReadOnlyField` the markup's `readonly`.
   `TestRun_UiPaintedElement` a painter's area, its ops moved and clipped, its text, the newest

@@ -698,8 +698,11 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   off ImGui. Steps 1 (`painted`, `PaintDraw`/`PaintText`, `on_size`), 2 (the atlas's pages)
   and 3 (faces, metrics, hinting), 4 (fallback) and 5 (`PaintCells`, `PaintWave`) are built
   (10/22), 6 (raw input) and 7 (`Readable`, `scroll_follow`, `ScrollTo`) 10/23, and step 8's
-  first half 10/23: `termina-ui` beside the ImGui app. Next the next note's widgets — a tab
-  bar, menus off macOS, the Settings tab's controls, a title bar the program draws.
+  first half 10/23: `termina-ui` beside the ImGui app.
+- **[OPEN] What a terminal's window needs of `ui`** — popups, menus (drawn, and native on a
+  Mac), a tab bar, the window's controls and a drawn title bar, a file dialog, colour; designed
+  in `ui/WINDOW.md` (10/23), the rest of Termina's move off ImGui. Step 1 (popups, the select's
+  list on them) built 10/23; next menus drawn (step 2).
 - **[OPEN] `ui` focuses nothing at start, and `App` has no first command.** termina-ui asks
   `FocusKeyed` from its painter's first `on_size`; an `App.start: []Command<e>`, or an
   `autofocus` on an element, would say it directly.
@@ -839,8 +842,10 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   a lambda needs the default instantiated (or elaborated) per literal.
 - **[DONE 10/22] `ui`: a select** (HTML's `<select>`, `select`/`SelectSpec`, lui's
   `<Select>`) — its list floats over the page (`Laid.floats`) (COMPLETED.md, 10/22).
-- **[OPEN] `ui`: a select's list does not scroll or flip** — a long list runs off the window's
-  bottom, and one near the bottom does not open upwards; nor is AccessKit told it is expanded.
+- **[DONE 10/23] `ui`: a select's list scrolls and flips** — placed as a popup's content is
+  (`ui/WINDOW.md` step 1, COMPLETED.md 10/23).
+- **[OPEN] `ui`: AccessKit is not told a select is expanded, nor what a popup is** — an open
+  popup's content is heard as its elements, with no menu or dialog role around them.
 - **[OPEN] `ui`: a disabled control is not told to assistive technology** (AccessKit's
   `disabled` flag), nor disabled through its ancestors (CSS's disabled `fieldset`).
 - **[OPEN] `ui.interact`: a caret moves by rune, not grapheme cluster.** `é` written as `e`

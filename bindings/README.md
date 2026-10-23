@@ -508,7 +508,9 @@ The example's interface is `examples/imgui/components_view.lui`.
   at="top-left">`, `<Scroll axis offset>`, `<SizedBox width height>`, `<Text>`, `<Button
   on_click>`, `<Checkbox checked on_toggle>`, `<Slider value min max step on_change>`,
   `<Select selected on_change>` with `<Option>`s inside (each its text) or `options={…}`
-  (`on_change` takes the index, an `i64`), `<TextInput value placeholder on_edit>`, `<Image texture texels width height>`, `<Themed
+  (`on_change` takes the index, an `i64`), `<Popup open on_dismiss side>` holding its anchor
+  then its content (`open` bare or `{condition}`, `side="beside"` for a submenu's; its
+  content the `Popup::content` part), `<TextInput value placeholder on_edit>`, `<Image texture texels width height>`, `<Themed
   theme sheet>`, `<Flex direction wrap justify align align-content gap row-gap column-gap>`,
   `<Grid columns rows gap row-gap column-gap flow justify-items align-items auto-columns
   auto-rows>` — a `<Flex>`'s or `<Grid>`'s attributes are the style properties they name,

@@ -9,6 +9,33 @@ Newest first.
 
 ## Dated log
 
+### 10/23/26 — `ui`: popups, and the select's list placed on them
+
+- **`popup(anchor, open, content, on_dismiss, side)`** (`ui/WINDOW.md` step 1): the select's
+  floating list generalized. Open is the program's, not the framework's as the select's is —
+  a menu's opening is what the program's menus say — so a press outside, Escape (the
+  innermost; an open select's list first) or the window's blur raises `on_dismiss`, heard in
+  `Ui.handle` before an element taking input raw, so a press on a terminal's painter dismisses
+  too. **A press on the anchor raises none**: otherwise a button that toggles its popup would be
+  dismissed and toggled open again by the one press.
+- **Placement is a pass after the layout** (`place_floats`, in `layout_cached`), because a
+  node's place in the window is not known while it is laid out — its parent places it after.
+  Each floating element carries an `Anchor` (`FloatBelow`, `FloatBeside`) and is placed from
+  its parent's box every time, never from where it was, so a layout the cache gives back
+  places alike; `Laid.floating` keeps the walk to what holds a float. Flipped where the
+  window has no room after, moved in only from an edge it would pass (a popup at x 0 stays at
+  0), and over the anchor where neither side fits — as macOS's long pop-up menus are.
+- **A popup's content is as wide as it needs**: a column stretching its children takes all
+  the width it is given, and a floating box is given the window, so a menu spanned it. It is
+  laid out first with no width, then at that width — Flutter's `IntrinsicWidth`, CSS's
+  shrink-to-fit — costing a second layout of an open popup's content each frame.
+- **The select's list scrolls** (inline `overflow-y: auto`, no taller than the window) and
+  keeps the chosen option, then the one under the keys, in view through `Ui.reveal_wanted`:
+  the existing `reveal` (which Tab uses) run the frame after, since the list is not laid out
+  when the select opens.
+- `Opened<e>` is `pub` for the same reason `Cached<e>` is: a private generic struct as another
+  module's type argument does not lay out yet.
+
 ### 10/23/26 — Glue keyed by declaration: retain, and drop where the name is not visible
 
 - **Found by Termina on `ui`** (`ui/TERMINAL.md` step 8): `termina-ui` crashed at start-up

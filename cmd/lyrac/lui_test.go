@@ -571,6 +571,11 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"select options text", ui + "<script target=\"ui\">\n  pub data Ev = Chose(i64)\n</script>\n<component name=\"a\" event={Ev}>\n  <Select options=\"a\" selected={0} on_change={Chose}/>\n</component>", "x.lui:6: options of <Select> takes {…}, a []string"},
 		{"option outside", ui + "<script target=\"ui\">\n  pub data Ev = Chose(i64)\n</script>\n<component name=\"a\" event={Ev}>\n  <Option>b</Option>\n</component>", "x.lui:6: <Option> is not an element of ui"},
 		{"window resize text", ui + "<window resize_x=\"false\"/>", "x.lui:2: resize_x is bare or {condition}, not text"},
+		{"popup one child", ui + "<script target=\"ui\">\n  pub data Ev = Go\n</script>\n<component name=\"a\" event={Ev}>\n  <Popup open on_dismiss={Go}><Button on_click={Go}>a</Button></Popup>\n</component>", "x.lui:6: <Popup> holds two elements, its anchor and what opens from it"},
+		{"popup open", ui + "<script target=\"ui\">\n  pub data Ev = Go\n</script>\n<component name=\"a\" event={Ev}>\n  <Popup on_dismiss={Go}><Button on_click={Go}>a</Button><Text>b</Text></Popup>\n</component>", "x.lui:6: <Popup> needs open"},
+		{"popup open text", ui + "<script target=\"ui\">\n  pub data Ev = Go\n</script>\n<component name=\"a\" event={Ev}>\n  <Popup open=\"yes\" on_dismiss={Go}><Button on_click={Go}>a</Button><Text>b</Text></Popup>\n</component>", "x.lui:6: open of <Popup> is bare or {condition}"},
+		{"popup side", ui + "<script target=\"ui\">\n  pub data Ev = Go\n</script>\n<component name=\"a\" event={Ev}>\n  <Popup open side=\"above\" on_dismiss={Go}><Button on_click={Go}>a</Button><Text>b</Text></Popup>\n</component>", "x.lui:6: side of <Popup> is below or beside, not above"},
+		{"popup dismiss", ui + "<script target=\"ui\">\n  pub data Ev = Go\n</script>\n<component name=\"a\" event={Ev}>\n  <Popup open><Button on_click={Go}>a</Button><Text>b</Text></Popup>\n</component>", "x.lui:6: <Popup> needs on_dismiss"},
 	}
 	for _, c := range cases {
 		path := filepath.Join(dir, "x.lui")
@@ -1017,6 +1022,60 @@ func TestLui_UiTargetSelect(t *testing.T) {
 		`select(SelectSpec { options: s.cities, selected: s.city, on_change: (value: i64) -> Ev => Picked(value) })`,
 		`selector: "Select::option:hover"`,
 		"SelectSpec",
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+}
+
+// `<Popup>` in the ui target: its anchor and its content, `open` bare or a condition,
+// `on_dismiss`, and `side="beside"` for a submenu's; a sheet styles its content
+// (`Popup::content`). The module checks clean.
+func TestLui_UiTargetPopup(t *testing.T) {
+	t.Parallel()
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script target="ui">
+  pub data Ev = Toggle | Dismiss | Pick(i64)
+</script>
+<component name="view" props={{ open: bool }} event={Ev}>
+  <style>
+    Popup::content { background: #ffffff }
+  </style>
+  <Popup open={open} on_dismiss={Dismiss}>
+    <Button on_click={Toggle}>File</Button>
+    <Column>
+      <Button on_click={Pick(1)}>New</Button>
+      <Popup open on_dismiss={Dismiss} side="beside">
+        <Button on_click={Toggle}>Recent</Button>
+        <Text>none</Text>
+      </Popup>
+    </Column>
+  </Popup>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`popup(button("File", Toggle), open, column([`,
+		`popup(button("Recent", Toggle), true, text("none"), Dismiss, FloatBeside)`,
+		`selector: "Popup::content"`,
+		"FloatBeside",
 	} {
 		if !strings.Contains(string(generated), want) {
 			t.Errorf("the generated module lacks %q:\n%s", want, generated)

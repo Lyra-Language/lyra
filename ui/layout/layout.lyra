@@ -163,6 +163,10 @@ pub data Kind<e> =
   /// A select (HTML's `<select>`): one of a list of options, chosen from a list that opens
   /// over everything below it.
   | Choosing(SelectSpec<e>)
+  /// A popup ([popup]): its first child the anchor, laid out in its place; its second, while
+  /// open, floating from it on that side; and the event a press outside it, Escape or the
+  /// window losing the focus raises.
+  | PopsUp(bool, FloatSide, e)
   /// A one-line text field.
   | Editable(FieldSpec<e>)
   /// A flex container (CSS's flexbox), laid out by its computed style: direction, wrap,
@@ -532,6 +536,23 @@ let select_arrow<e> = pure () -> Node<e> => {
     .aligned(MainStart, CrossCenter)
 }
 
+/// A popup: `anchor` in its place, and while `open` — the program's to say — `content`
+/// floating from it (`Laid.floats`), taking none of its size: below it (or beside it, a
+/// submenu's), flipped above (to its left) where the window leaves no room, moved in from the
+/// window's edges, and no larger than the window, scrolling past that ([place_floats]). A press outside the anchor and the content
+/// (and what floats from it), Escape, or the window losing the focus raises `on_dismiss`; the
+/// program closes it. A press on the anchor raises none, so a button that opens a popup can
+/// close it too. Opened from the keyboard, the focus goes into it, and back to the anchor when
+/// it closes (`ui.interact`).
+pub let popup<e> = pure (
+  anchor: Node<e>,
+  open: bool,
+  content: Node<e>,
+  on_dismiss: e,
+  side: FloatSide = FloatBelow
+) -> Node<e> =>
+  Node { kind: PopsUp(open, side, on_dismiss), tag: "Popup", children: [anchor, content] }
+
 /// The identity of option `index` in the list of the select identified as `select`.
 pub let option_id = pure (select: string, index: i64) -> string =>
   "${select}/:list/:${index}"
@@ -645,6 +666,7 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
     selected: spec.selected,
     on_change: (i: i64) -> b => f((spec.on_change)(i)),
   }),
+  PopsUp(open, side, dismissed) => PopsUp(open, side, f(dismissed)),
   Editable(spec) => Editable(FieldSpec {
     value: spec.value,
     placeholder: spec.placeholder,
@@ -813,9 +835,13 @@ pub struct Laid<e> {
   moves: bool = false,
   /// Whether it takes no input ([Node.disabled]).
   disabled: bool = false,
-  /// Whether it floats over everything (an open select's list): painted after the whole tree,
-  /// outside every clip, and hit before anything else (`ui.interact`'s `hit`).
+  /// Whether it floats over everything (an open select's list, a popup's content): painted
+  /// after the whole tree, outside every clip, and hit before anything else (`ui.interact`'s
+  /// `hit`); where it goes against the element it floats from ([place_floats]); and whether
+  /// anything in it floats, for that pass to look in.
   floats: bool = false,
+  anchor: Maybe<Anchor> = None,
+  floating: bool = false,
   /// The media queries this node's sheets, and those below it, asked of the viewport, and
   /// their answers: while they answer the same, so does its layout.
   media: []MediaAnswer = [],
@@ -826,6 +852,22 @@ pub struct Placed<e> {
   at: Point,
   laid: Laid<e>,
 }
+
+/// Where a floating element goes against the element it floats from — its parent, whose box
+/// is the anchor: below it, or beside it (a submenu's), `gap` apart. [place_floats] puts it
+/// there after the layout, within the window.
+pub struct Anchor {
+  side: FloatSide = FloatBelow,
+  gap: f32 = FLOAT_GAP,
+}
+
+/// Below the anchor (flipped above it where the window's foot leaves no room), or beside it
+/// (to its right, or its left where the window's right edge leaves none).
+pub data FloatSide = FloatBelow | FloatBeside
+
+/// How far a floating element stands from its anchor, and in from the window's edges.
+const FLOAT_GAP: f32 = 2.0
+const FLOAT_MARGIN: f32 = 4.0
 
 /// What a node draws besides its box: nothing, a paragraph, or part of a texture at a size.
 pub data Content = Blank | Prose(TextBlock) | Bitmap(TextureId, Rect, Size)
@@ -888,7 +930,73 @@ pub let layout_cached<e> = (
   // The root given back is the whole of last frame given back: its entries stand as they were.
   if cache.laid_out > 0 { cache.last = cache.now }
   cache.now = hashmap_new::<string, Cached<e>>()
-  laid
+  place_floats(laid, seen.viewport.size)
+}
+
+/// `laid` with each floating element that has an [Anchor] placed against its anchor within a
+/// window `window` large (a side of nothing for no edge that way): below the anchor where it
+/// fits, else above where that fits, else as low as it fits — over the anchor — and moved in
+/// from the window's left and right; beside it the same way across. Placed from the anchor,
+/// never from where it was, so a layout given back from the cache is placed alike. Only what
+/// holds a float is walked ([Laid.floating]).
+let place_floats<e> = pure (laid: Laid<e>, window: Size) -> Laid<e> =>
+  if laid.floating { placed_within(laid, Point {}, window) } else { laid }
+
+/// [place_floats] below `laid`, whose top-left corner is at `origin` in the window.
+let placed_within<e> = pure (laid: Laid<e>, origin: Point, window: Size) -> Laid<e> => {
+  var children: []Placed<e> = []
+  for child in laid.children {
+    if !child.laid.floats && !child.laid.floating {
+      children.push(child)
+      continue
+    }
+    var at = child.at
+    if child.laid.floats {
+      if let Some(anchor) = child.laid.anchor {
+        let box = Rect { x: origin.x, y: origin.y, w: laid.size.w, h: laid.size.h }
+        let spot = float_spot(anchor, box, child.laid.size, window)
+        at = Point { x: spot.x - origin.x, y: spot.y - origin.y }
+      }
+    }
+    let corner = Point { x: origin.x + at.x, y: origin.y + at.y }
+    let inner = if child.laid.floating { placed_within(
+      child.laid,
+      corner,
+      window
+    ) } else { child.laid }
+    children.push(Placed { at: at, laid: inner })
+  }
+  Laid { laid | children: children }
+}
+
+/// Where a floating element `size` large goes in the window against the anchor `box`.
+let float_spot = pure (anchor: Anchor, box: Rect, size: Size, window: Size) -> Point =>
+  match anchor.side {
+    FloatBelow => Point {
+      x: within_edges(box.x, size.w, window.w),
+      y: flipped(box.y + box.h + anchor.gap, box.y - anchor.gap - size.h, size.h, window.h),
+    },
+    FloatBeside => Point {
+      x: flipped(box.x + box.w + anchor.gap, box.x - anchor.gap - size.w, size.w, window.w),
+      y: within_edges(box.y, size.h, window.h),
+    },
+  }
+
+/// Where something `length` long starts along an axis `room` long: at `after` (past the
+/// anchor) where it fits there, else at `before` (ahead of it) where that fits, else moved in
+/// to fit — over the anchor. A room of nothing has no end.
+let flipped = pure (after: f32, before: f32, length: f32, room: f32) -> f32 => {
+  if room <= 0.0 || after + length <= room { return after }
+  if before >= 0.0 { return before }
+  within_edges(after, length, room)
+}
+
+/// `start`, where something `length` long fits in a room from there; else moved in to leave
+/// [FLOAT_MARGIN] at the end it passed — or at the room's start, where it is longer than the
+/// room. A room of nothing has no ends.
+let within_edges = pure (start: f32, length: f32, room: f32) -> f32 => {
+  if room <= 0.0 || (start >= 0.0 && start + length <= room) { return start }
+  start.min(room - FLOAT_MARGIN - length).max(FLOAT_MARGIN)
 }
 
 /// What laid out each element last frame, and this frame so far, by identity — two frames
@@ -1096,6 +1204,7 @@ let same_kind<e> = (a: Kind<e>, b: Kind<e>, theme: Theme) -> bool => match (a, b
   (Editable(f1), Editable(f2)) =>
     f1.value == f2.value && f1.placeholder == f2.placeholder,
   (Choosing(s1), Choosing(s2)) => s1.selected == s2.selected && s1.options == s2.options,
+  (PopsUp(open1, side1, _), PopsUp(open2, side2, _)) => open1 == open2 && side1 == side2,
   (Flexbox, Flexbox) => true,
   (Gridbox, Gridbox) => true,
   // What a painter draws is asked at paint, not kept with the layout: its box lays out alike.
@@ -1215,6 +1324,8 @@ let lay_fresh<e> = (
     Ranged(spec) => lay_slider(spec, inner, ctx, fonts, cache),
     Editable(spec) => lay_field(spec, inner, style, ctx, fonts),
     Choosing(spec) => lay_select(node.children, spec, inner, space, ctx, fonts, cache),
+    PopsUp(open, side, _) =>
+      lay_popup(node.children, open, side, inner, ctx, fonts, cache),
     Flexbox => lay_flex(node.children, style, inner, ctx, fonts, cache),
     Gridbox => lay_grid(node.children, style, inner, ctx, fonts, cache),
     // All the room it is given, on each axis that has a limit; nothing on one that has none.
@@ -1310,6 +1421,7 @@ let lay_fresh<e> = (
     children: children,
     scroller: scroller,
     moves: styled.goal.transition.len() > 0 || children.any((p) => p.laid.moves),
+    floating: children.any((p) => p.laid.floats || p.laid.floating),
     disabled: node.disabled,
     media: asked_below(styled.media, children),
   }
@@ -1676,14 +1788,21 @@ let lay_select<e> = (
         children: [text::<e>(spec.options[i])],
       }
   ]
+  // Scrolling where it is longer than the window has room for (`ui.interact` keeps the
+  // option under the keys in view).
   let list = column::<e>(options)
     .aligned(MainStart, CrossStretch)
     .with_part("list")
+    .with_style(Style { overflow_y: Some(OverflowAuto) })
     .keyed("list")
   // As wide as the select — which is as wide as its widest option — so each option's row
   // spans the list.
   let wide = face.size.w + space.horizontal()
-  let limits = Constraints { min_w: wide, max_w: wide }
+  let limits = Constraints {
+    min_w: wide,
+    max_w: wide,
+    max_h: float_room(ctx.ui.viewport.size).h
+  }
   let laid = lay(
     list,
     limits,
@@ -1694,15 +1813,94 @@ let lay_select<e> = (
     cache
   )
   let floating = Placed {
-    at: Point { x: -space.left, y: face.size.h + space.bottom + 2.0 },
+    at: Point { x: -space.left, y: face.size.h + space.bottom + FLOAT_GAP },
     laid: Laid {
       laid |
       role: ListBoxRole,
       floats: true,
+      anchor: Some(Anchor {}),
       children: [p in laid.children | Placed { p | laid: Laid { p.laid | role: OptionRole } }],
     },
   }
   Body { size: face.size, children: [...face.children, floating] }
+}
+
+/// A popup's anchor, as a wrapper lays its child out, and — while `open` — its content
+/// floating on `side` of it ([place_floats] puts it within the window), taking none of its
+/// size. The content is as wide as it needs and no larger than the window has room for, in a
+/// scroller of the framework's (`Popup::content`), so a long one scrolls.
+let lay_popup<e> = (
+  children: []Node<e>,
+  open: bool,
+  side: FloatSide,
+  c: Constraints,
+  ctx: Ctx,
+  fonts: mut Fonts,
+  cache: mut LayoutCache<e>
+) -> Body<e> => {
+  if children.len() == 0 { return Body::<e> { size: c.constrain(Size {}) } }
+  let anchor = lay(
+    children[0],
+    c,
+    ctx.cascade,
+    fonts,
+    ctx.ui,
+    child_id(ctx.id, children[0], 0),
+    cache
+  )
+  let laid_anchor = Placed { at: Point {}, laid: anchor }
+  if !open || children.len() < 2 { return Body {
+    size: anchor.size,
+    children: [laid_anchor]
+  } }
+  let most = float_room(ctx.ui.viewport.size)
+  let wrapping: Kind<e> = Inset(Insets {})
+  let holder: Node<e> = Node {
+    kind: wrapping,
+    tag: "Popup",
+    part: "content",
+    style: Style { overflow_y: Some(OverflowAuto) },
+    children: [children[1]],
+    key: "content",
+  }
+  // As wide as it needs — CSS's shrink-to-fit, a floating box's width — and no wider than the
+  // window: laid out first with no width to learn it, then at that width, so what stretches
+  // across it (a menu's rows) spans it rather than the window.
+  let holder_id = child_id(ctx.id, holder, 1)
+  let natural = lay(
+    holder,
+    Constraints { max_h: most.h },
+    ctx.cascade,
+    fonts,
+    ctx.ui,
+    holder_id,
+    cache
+  )
+  let wide = natural.size.w.min(most.w)
+  let content = lay(
+    holder,
+    Constraints { min_w: wide, max_w: wide, max_h: most.h },
+    ctx.cascade,
+    fonts,
+    ctx.ui,
+    holder_id,
+    cache
+  )
+  let at = if side == FloatBeside { Point { x: anchor.size.w + FLOAT_GAP } } else {
+    Point { y: anchor.size.h + FLOAT_GAP }
+  }
+  let floating = Placed {
+    at: at,
+    laid: Laid { content | floats: true, anchor: Some(Anchor { side: side }) }
+  }
+  Body { size: anchor.size, children: [laid_anchor, floating] }
+}
+
+/// The most a floating element may take of a window `window` large: all of it but a margin
+/// at each edge; no limit on a side of nothing.
+let float_room = pure (window: Size) -> Size => Size {
+  w: if window.w > 0.0 { (window.w - 2.0 * FLOAT_MARGIN).max(0.0) } else { UNBOUNDED },
+  h: if window.h > 0.0 { (window.h - 2.0 * FLOAT_MARGIN).max(0.0) } else { UNBOUNDED },
 }
 
 let lay_wrapped<e> = (
