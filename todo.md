@@ -693,8 +693,12 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] What a terminal needs of `ui`** — an element the program paints, font faces and
   fallback, raw keys and pointer; designed in `ui/TERMINAL.md` (10/22), for Termina's move
   off ImGui. Steps 1 (`painted`, `PaintDraw`/`PaintText`, `on_size`), 2 (the atlas's pages)
-  and 3 (faces, metrics, hinting) and 4 (fallback) are built (10/22); next `PaintCells` and
-  `PaintWave` (step 5).
+  and 3 (faces, metrics, hinting), 4 (fallback) and 5 (`PaintCells`, `PaintWave`) are built
+  (10/22); next raw input (step 6).
+- **[OPEN] `Fonts.cells` looks every cell up each frame**: the faces' character maps and
+  advances through HarfBuzz, a few calls a cell — 12,000 cells on a 200×60 screen. A cache by
+  face order and character would make a frame of an unchanged screen cost lookups only;
+  measure under Termina first.
 - **[OPEN] `ui.text`'s hinting is light everywhere unless a program says.** macOS draws
   text unhinted; `ui.text` cannot ask which platform it is on (it calls no platform library),
   so the default belongs to whatever opens the window (`ui.sdl3`, `ui.gpu`'s `open_app`).

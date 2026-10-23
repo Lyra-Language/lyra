@@ -9,6 +9,25 @@ Newest first.
 
 ## Dated log
 
+### 10/22/26 — `ui`: a terminal's line, and a curly underline
+
+- **`PaintCells(baseline, advance, cells, font, color)`** (`ui/TERMINAL.md` §1, step 5) draws a
+  row of a grid of characters through **`Fonts.cells`**, which answers a one-line `TextBlock`
+  — so the atlas draws it as any text, one `Glyphs` op a colour. **Not shaped**: a cell's
+  character is found by the character maps of the faces its spec resolves to (the four styles'
+  faces found once a row, made faces and fallbacks among them) with HarfBuzz's
+  `nominal_glyph`, and its glyph **centred on its cell's columns** — a monospaced glyph's
+  advance is the cell's, so it sits at the left, while a wide one or a narrower fallback's
+  sits in the middle, as Termina centres wide runes today. A cell with combining marks is
+  shaped alone, as a cluster, in the face that has its base.
+- **`PaintWave`** is the display list's one curve: fills a device pixel wide, each from the
+  curve's lowest to its highest over its column with half the thickness beyond, so a steep
+  stretch leaves no gap — a path op was not worth it for one curve.
+- `examples/ui/cells.lyra` is a terminal's screen — Menlo's four faces (DejaVu Sans Mono's on
+  Linux), runs over backgrounds, CJK and marks from the fallbacks, the underlines and strikeout
+  at the font's metrics — and the first program to use all of steps 1–5 together.
+  `TestRun_UiCells`, `TestRun_UiCellsExample`. Not run on Linux yet.
+
 ### 10/22/26 — `ui`: fallback fonts
 
 - **A paragraph is shaped a run at a time now** (`ui/TERMINAL.md` §2, step 4): `runs_of` cuts

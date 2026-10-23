@@ -1,0 +1,310 @@
+// Cells: a terminal's screen drawn by a painter (`ui.layout`'s `PaintCells`, `PaintWave`) — rows
+// of a monospaced font a character a cell, bold and italic from the family's own faces, runs
+// of colour over background fills, wide CJK characters across two cells and combining marks
+// on theirs from the fallbacks, underlines straight and curly, and a strikeout, each where the
+// font's own metrics put it.
+//
+//     lyrac run examples/ui/cells.lyra
+//     lyrac run examples/ui/cells.lyra -- --script "" --png FILE
+//
+// **The second form** draws one frame headless, prints the cell's size and where the screen
+// starts, and with `--png FILE` writes the frame.
+
+import ui.sdl3
+import ui.sdl3.{ SdlRenderer, capture }
+import ui.gpu
+import ui.app.{ App, sandbox, run, running, step_running }
+import ui.script.{ timed_platform, parse_steps }
+import ui.draw.{ Point, Size, Rect, Color, Fill, radius }
+import ui.text.{ Fonts, FontSpec, FontMetrics, Cell, fonts_new, glyph_atlas }
+import ui.style.{ OverflowVisible }
+import ui.layout.{
+  Node,
+  Laid,
+  PaintArea,
+  PaintOp,
+  PaintDraw,
+  PaintCells,
+  PaintWave,
+  painted,
+  paint
+}
+import std.collections.{ parse_args }
+import std.png.{ write_png }
+import std.io.{ write_bytes }
+
+const WIDTH: f32 = 720.0
+const HEIGHT: f32 = 400.0
+
+let main = () -> u8 => {
+  let args = parse_args(["--script", "--png"])
+  var fonts = fonts_new()
+  if !add_monospace(fonts) {
+    println("no font: neither Menlo nor DejaVu Sans Mono is here")
+    return 1
+  }
+  let _ = fonts.add_system_fallbacks()
+  let app = App { sandbox(view, update, BACKGROUND) | window_overflow: OverflowVisible }
+  var status: u8 = 0
+  if let Some(script) = args.value("--script") {
+    // Played headless through SDL's 2D renderer, whose frame `--png` reads back.
+    let window = match sdl3.open("Cells", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    var renderer = window.renderer
+    let grid = grid_of(fonts, 1.0)
+    println("cell: ${grid.advance}x${grid.line}, from ${MARGIN},${MARGIN}, baseline ${grid.ascent} down")
+    match parse_steps(script) {
+      Ok(steps) => {
+        let played = running(
+          app,
+          grid,
+          timed_platform(steps, Size { w: WIDTH, h: HEIGHT }),
+          renderer,
+          fonts
+        )
+        while step_running(played) {}
+        if let Some(path) = args.value("--png") {
+          if !save(
+            played.renderer,
+            played.fonts,
+            played.host.shown[0],
+            path
+          ) { status = 1 }
+        }
+        renderer = played.renderer
+        fonts = played.fonts
+      },
+      Err(why) => {
+        println("the script: ${why}")
+        status = 1
+      },
+    }
+    sdl3.close(window.platform, renderer)
+  } else {
+    // On the GPU where there is one.
+    let window = match gpu.open("Cells", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    var platform = window.platform
+    var renderer = window.renderer
+    let _ = run(app, grid_of(fonts, platform.scale()), platform, renderer, fonts)
+    gpu.close(platform, renderer)
+  }
+  fonts.close()
+  status
+}
+
+/// The font's cell: its advance, the line's height (its ascent, descent and gap, a whole
+/// unit), its ascent, and its underline's and strikeout's places and thicknesses.
+struct Grid {
+  advance: f32 = 8.0,
+  line: f32 = 16.0,
+  ascent: f32 = 12.0,
+  metrics: FontMetrics = FontMetrics {},
+}
+
+data Event = Nothing
+
+let update = pure (grid: Grid, _: Event) -> Grid => grid
+
+/// The grid measured in `fonts` at `scale` pixels a unit.
+let grid_of = (fonts: mut Fonts, scale: f32) -> Grid => {
+  let m = fonts.metrics(FONT, scale)
+  let line = f32((m.ascent + m.descent + m.line_gap).ceil())
+  Grid { advance: m.advance, line: line, ascent: f32(m.ascent.round()), metrics: m }
+}
+
+/// Menlo where it is (its four faces in one collection), else DejaVu Sans Mono's four files.
+let add_monospace = (fonts: mut Fonts) -> bool => {
+  let menlo = "/System/Library/Fonts/Menlo.ttc"
+  if fonts.add("mono", menlo, 0) {
+    let _ = fonts.add("mono", menlo, 1, 700)
+    let _ = fonts.add("mono", menlo, 2, 400, true)
+    let _ = fonts.add("mono", menlo, 3, 700, true)
+    return true
+  }
+  let dejavu = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono"
+  if !fonts.add("mono", "${dejavu}.ttf") { return false }
+  let _ = fonts.add("mono", "${dejavu}-Bold.ttf", 0, 700)
+  let _ = fonts.add("mono", "${dejavu}-Oblique.ttf", 0, 400, true)
+  let _ = fonts.add("mono", "${dejavu}-BoldOblique.ttf", 0, 700, true)
+  true
+}
+
+const FONT: FontSpec = FontSpec { family: "mono", size: 15.0 }
+const MARGIN: f32 = 16.0
+
+const BACKGROUND: Color = Color { r: 0x1E, g: 0x1F, b: 0x26 }
+const TEXT: Color = Color { r: 0xD8, g: 0xDA, b: 0xE0 }
+const GREEN: Color = Color { r: 0x7F, g: 0xC8, b: 0x6A }
+const YELLOW: Color = Color { r: 0xE5, g: 0xC0, b: 0x7B }
+const BLUE: Color = Color { r: 0x61, g: 0xAF, b: 0xEF }
+const RED: Color = Color { r: 0xE0, g: 0x6C, b: 0x75 }
+const SELECTED: Color = Color { r: 0x3E, g: 0x44, b: 0x51 }
+
+/// The screen, filling the window.
+let view = pure (grid: Grid) -> Node<Event> =>
+  painted((_: PaintArea) -> []PaintOp => screen(grid))
+
+/// One run of text on the screen: where it starts, its text, its colour, and how it is drawn.
+struct Run {
+  row: i64,
+  col: i64,
+  text: string,
+  color: Color = TEXT,
+  bold: bool = false,
+  italic: bool = false,
+  background: Maybe<Color> = None,
+  underline: bool = false,
+  curly: bool = false,
+  strike: bool = false,
+}
+
+/// The screen's runs.
+let runs = pure () -> []Run => [
+  Run { row: 0, col: 0, text: "~/lyra $ ls -l examples/ui", color: GREEN },
+  Run { row: 1, col: 0, text: "drwxr-xr-x  7GUIs       " },
+  Run { row: 1, col: 24, text: "cells.lyra", color: BLUE, bold: true },
+  Run { row: 2, col: 0, text: "Bold, ", bold: true },
+  Run { row: 2, col: 6, text: "italic, ", italic: true },
+  Run { row: 2, col: 14, text: "both", bold: true, italic: true },
+  Run { row: 2, col: 19, text: "and plain." },
+  Run { row: 3, col: 0, text: " selected ", background: Some(SELECTED) },
+  Run { row: 3, col: 11, text: " warning ", color: BACKGROUND, background: Some(YELLOW) },
+  Run { row: 3, col: 21, text: " error ", color: BACKGROUND, background: Some(RED) },
+  Run { row: 4, col: 0, text: "Wide: 漢字 and 中文 take two cells each." },
+  Run { row: 5, col: 0, text: "Marks: é ñ ä sit on one cell." },
+  Run { row: 6, col: 0, text: "underlined", underline: true },
+  Run { row: 6, col: 11, text: "curly", curly: true, color: RED },
+  Run { row: 6, col: 17, text: "struck through", strike: true },
+  Run { row: 7, col: 0, text: "Symbols: ☃ ✓ → ∑ ░▒▓█", color: YELLOW },
+  Run { row: 8, col: 0, text: "████████", color: BLUE },
+]
+
+/// The ops the screen's runs make: each one's background, text and lines.
+let screen = pure (grid: Grid) -> []PaintOp => {
+  let m = grid.metrics
+  var ops: []PaintOp = []
+  for item in runs() {
+    let cells = cells_of(item)
+    let top = MARGIN + f32(item.row) * grid.line
+    let left = MARGIN + f32(item.col) * grid.advance
+    let span = f32(columns(cells)) * grid.advance
+    if let Some(fill) = item.background {
+      ops.push(PaintDraw(Fill(
+        Rect { x: left, y: top, w: span, h: grid.line },
+        radius(0.0),
+        fill
+      )))
+    }
+    let baseline = top + grid.ascent
+    ops.push(PaintCells(
+      Point { x: left, y: baseline },
+      grid.advance,
+      cells,
+      FONT,
+      item.color
+    ))
+    let thick = m.underline_thickness.max(1.0)
+    if item.underline {
+      ops.push(PaintDraw(Fill(
+        Rect { x: left, y: baseline + m.underline_y - thick / 2.0, w: span, h: thick },
+        radius(0.0),
+        item.color
+      )))
+    }
+    if item.curly {
+      ops.push(PaintWave(
+        Point { x: left, y: baseline + m.underline_y + thick },
+        span,
+        thick * 1.5,
+        thick,
+        item.color
+      ))
+    }
+    if item.strike {
+      let t = m.strike_thickness.max(1.0)
+      ops.push(PaintDraw(Fill(
+        Rect { x: left, y: baseline - m.strike_y - t / 2.0, w: span, h: t },
+        radius(0.0),
+        item.color
+      )))
+    }
+  }
+  ops
+}
+
+/// A run's text as cells from column 0: a wide character two columns, a combining mark on the
+/// cell before it.
+let cells_of = pure (run: Run) -> []Cell => {
+  var cells: []Cell = []
+  var col = 0
+  for c in run.text {
+    if is_combining(c) && cells.len() > 0 {
+      let last = cells[cells.len() - 1]
+      cells[cells.len() - 1] = Cell { last | text: "${last.text}${c}" }
+      continue
+    }
+    let width = if is_wide(c) { 2 } else { 1 }
+    cells.push(Cell {
+      col: col,
+      text: "${c}",
+      width: width,
+      bold: run.bold,
+      italic: run.italic
+    })
+    col += width
+  }
+  cells
+}
+
+/// How many columns `cells` cover.
+let columns = pure (cells: []Cell) -> i64 => {
+  var last = 0
+  for cell in cells { last = last.max(cell.col + cell.width) }
+  last
+}
+
+/// The combining marks this screen uses.
+let is_combining = pure (c: rune) -> bool => i32(c) >= 0x0300 && i32(c) <= 0x036F
+
+/// Whether `c` takes two columns — the CJK this screen uses.
+let is_wide = pure (c: rune) -> bool =>
+  i32(c) >= 0x4E00 && i32(c) <= 0x9FFF
+
+/// `laid` — the window as the host last laid it out — drawn without showing it, and written to
+/// `path` as a PNG.
+let save = (
+  renderer: SdlRenderer,
+  fonts: Fonts,
+  laid: Laid<Event>,
+  path: string
+) -> bool => {
+  var r = renderer
+  var f = fonts
+  var atlas = glyph_atlas()
+  let ops = paint(laid, Point {}, 1.0, f, atlas, r)
+  let Some(frame) = capture(r, BACKGROUND, ops) else { return false }
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(u8((p >> 24) & 0xFF))
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(png) => write_bytes(path, png),
+    Err(_) => false,
+  }
+}

@@ -4184,3 +4184,187 @@ drawn from every face: glyphs rendered true, in one op true
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
 }
+
+// A row of cells (`ui.text`'s `Fonts.cells`, `ui.layout`'s `PaintCells`): unshaped, each glyph
+// centred on its cell's columns — a narrow one on its own, a wide one across two — a space
+// drawing nothing, a cell with a combining mark shaped as one cluster in one face, a bold
+// cell in a face made bold, a character no face has the missing glyph; painted at the
+// element's place on its baseline, inside its cell. And a wave (`PaintWave`): columns a device
+// pixel wide covering its width with no gap, within its amplitude and thickness.
+func TestRun_UiCells(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.backend.{ Renderer }
+import ui.draw.{ Point, Size, Rect, Color, TextureId, DrawOp, Fill, Glyphs }
+import ui.text.{ Fonts, FontSpec, Cell, fonts_new, glyph_atlas }
+import ui.layout.{ Node, PaintArea, PaintOp, PaintCells, PaintWave, painted, layout, tight, paint }
+import bindings.harfbuzz.{ advance_of }
+
+/// A renderer that draws nothing.
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => {}
+}
+
+data Ev = Nothing
+
+let near = pure (a: f32, b: f32) -> bool => (a - b).abs() < 0.01
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  let font = FontSpec { size: 20.0 }
+  let cell: f32 = 30.0
+  let row = fonts.cells([
+    Cell { col: 0, text: "M" },
+    Cell { col: 1, text: " " },
+    Cell { col: 2, text: "i" },
+    Cell { col: 3, text: "W", width: 2 },
+    Cell { col: 5, text: "é" },
+    Cell { col: 6, text: "B", bold: true },
+  ], font, cell)
+  let glyphs = row.lines[0].glyphs
+  let i_width = advance_of(fonts.faces[0].hb, 20.0, 'i') ?? 0.0
+  let w_width = advance_of(fonts.faces[0].hb, 20.0, 'W') ?? 0.0
+  println("a row of cells, 30 wide:")
+  println("  the space draws nothing: ${[g in glyphs | g.pen >= cell && g.pen < 2.0 * cell | g].len() == 0}")
+  println("  M's pen centred on column 0: ${near(glyphs[0].pen, (cell - (advance_of(fonts.faces[0].hb, 20.0, 'M') ?? 0.0)) / 2.0)}")
+  println("  i's centred on column 2: ${near(glyphs[1].pen, 2.0 * cell + (cell - i_width) / 2.0)}")
+  println("  a wide W centred across columns 3 and 4: ${near(glyphs[2].pen, 3.0 * cell + (2.0 * cell - w_width) / 2.0)}")
+  let marked = [g in glyphs | g.pen >= 5.0 * cell && g.pen < 6.0 * cell | g]
+  println("  e and its accent on column 5, one face: ${marked.len() >= 1 && marked.all((g) => g.face == marked[0].face)}")
+  let bold = glyphs[glyphs.len() - 1]
+  println("  the bold B in a face of its own: ${bold.face != glyphs[0].face && fonts.faces[bold.face].embolden}")
+  println("  the row is as wide as its columns: ${near(row.width, 7.0 * cell)}")
+  let missing = fonts.cells([Cell { col: 0, text: "\uE000" }], font, cell)
+  println("  a character no face has is the missing glyph: ${missing.lines[0].glyphs[0].glyph == 0}")
+
+  println("painted at 100,50:")
+  let grid = painted::<Ev>((_: PaintArea) -> []PaintOp => [
+    PaintCells(Point { x: 10.0, y: 40.0 }, cell, [Cell { col: 1, text: "M" }], font, Color { r: 1, g: 2, b: 3 }),
+    PaintWave(Point { x: 0.0, y: 60.0 }, 40.0, 3.0, 2.0, Color { r: 4, g: 5, b: 6 }),
+  ])
+  let laid = layout(grid, tight(Size { w: 200.0, h: 100.0 }), fonts)
+  var atlas = glyph_atlas()
+  var renderer = Blank {}
+  let ops = paint(laid, Point { x: 100.0, y: 50.0 }, 2.0, fonts, atlas, renderer)
+  var wave: []Rect = []
+  for op in ops {
+    match op {
+      Glyphs(_, quads, c) => {
+        let q = quads[0].at
+        println("  M's glyph in 1,2,3 inside its cell: ${q.x >= 140.0 && q.x + q.w <= 170.0}, above its baseline at 90: ${q.y < 90.0 && q.y + q.h <= 90.5}")
+      },
+      Fill(r, _, c) => { if c.r == 4 { wave.push(r) } },
+      _ => {},
+    }
+  }
+  var covered = true
+  for i, r in wave {
+    if i > 0 && !near(wave[i - 1].x + wave[i - 1].w, r.x) { covered = false }
+  }
+  var top: f32 = 1000.0
+  var bottom: f32 = 0.0
+  for r in wave {
+    top = top.min(r.y)
+    bottom = bottom.max(r.y + r.h)
+  }
+  println("  the wave: ${wave.len()} columns a device pixel wide, from 100 to 140 with no gap ${covered && near(wave[0].x, 100.0) && near(wave[wave.len() - 1].x + wave[wave.len() - 1].w, 140.0)}, within its amplitude and thickness ${top >= 106.0 && bottom <= 114.0 && top < 108.0 && bottom > 112.0}")
+  fonts.close()
+  0
+}
+`)
+	want := `a row of cells, 30 wide:
+  the space draws nothing: true
+  M's pen centred on column 0: true
+  i's centred on column 2: true
+  a wide W centred across columns 3 and 4: true
+  e and its accent on column 5, one face: true
+  the bold B in a face of its own: true
+  the row is as wide as its columns: true
+  a character no face has is the missing glyph: true
+painted at 100,50:
+  M's glyph in 1,2,3 inside its cell: true, above its baseline at 90: true
+  the wave: 80 columns a device pixel wide, from 100 to 140 with no gap true, within its amplitude and thickness true
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// examples/ui/cells.lyra drawn headless, read a pixel at a time at the cells its printed cell
+// size places: a row of full blocks fills its cells in blue and stops at its last; a selected
+// run's background and a warning's are their colours under their spaces; the screen's
+// background between rows.
+func TestRun_UiCellsExample(t *testing.T) {
+	t.Parallel()
+	skipWithoutText(t)
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "cells")
+	if _, stderr, code := captureRun(t, "build", "-o", bin, filepath.Join(root, "examples", "ui", "cells.lyra")); code != 0 {
+		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
+	}
+	shot := filepath.Join(dir, "frame.png")
+	cmd := command(t, bin, "--script", "", "--png", shot)
+	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+	out, err := cmd.CombinedOutput()
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
+		t.Skipf("SDL could not open a dummy window here: %s", out)
+	} else if ok && exitErr.ExitCode() == 1 && strings.HasPrefix(string(out), "no font") {
+		t.Skipf("no font here: %s", out)
+	} else if err != nil {
+		t.Fatalf("drawing: %v\n%s", err, out)
+	}
+	m := regexp.MustCompile(`cell: ([0-9.]+)x([0-9.]+), from ([0-9.]+),([0-9.]+)`).FindStringSubmatch(string(out))
+	if m == nil {
+		t.Fatalf("no cell size printed: %s", out)
+	}
+	w, _ := strconv.ParseFloat(m[1], 64)
+	h, _ := strconv.ParseFloat(m[2], 64)
+	x0, _ := strconv.ParseFloat(m[3], 64)
+	y0, _ := strconv.ParseFloat(m[4], 64)
+	f, err := os.Open(shot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	frame, err := png.Decode(f)
+	if err != nil {
+		t.Fatalf("the frame is not a PNG: %v", err)
+	}
+	// The middle of the cell at a column and row.
+	at := func(col, row float64) (int, int) {
+		return int(x0 + (col+0.5)*w), int(y0 + (row+0.5)*h)
+	}
+	blue, background := [3]int{0x61, 0xAF, 0xEF}, [3]int{0x1E, 0x1F, 0x26}
+	selected, yellow := [3]int{0x3E, 0x44, 0x51}, [3]int{0xE5, 0xC0, 0x7B}
+	for _, c := range []struct {
+		col, row float64
+		want     [3]int
+		what     string
+	}{
+		{0, 8, blue, "the first full block"},
+		{7, 8, blue, "the last full block"},
+		{8.5, 8, background, "past the blocks"},
+		{0, 3, selected, "the selected run's leading space"},
+		{11, 3, yellow, "the warning's leading space"},
+		{40, 2, background, "the screen beyond the text"},
+	} {
+		x, y := at(c.col, c.row)
+		if got := rgbAt(frame, x, y); !near(got, c.want, 6) {
+			t.Errorf("%s, at %d,%d, is %v, not %v", c.what, x, y, got, c.want)
+		}
+	}
+}

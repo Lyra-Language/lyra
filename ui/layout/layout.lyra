@@ -82,7 +82,7 @@ import ui.draw.{
   radius,
 }
 import ui.backend.{ Renderer }
-import ui.text.{ Fonts, FontSpec, TextBlock, GlyphAtlas, caret_x }
+import ui.text.{ Fonts, FontSpec, Cell, TextBlock, GlyphAtlas, caret_x }
 import ui.style.{
   Style,
   scrollbar_rules,
@@ -200,6 +200,14 @@ pub data PaintOp =
   /// Text shaped and laid out as a `text` element's is, a line at each `\n` and nowhere else,
   /// its first line's baseline at the point.
   | PaintText(Point, string, FontSpec, Color)
+  /// A row of a grid of characters — a terminal's line — unshaped ([Fonts.cells]): each cell
+  /// at the point's `x` plus its column times the advance (the second value), on the baseline
+  /// at its `y`. One op a colour: the cells of a run of one.
+  | PaintCells(Point, f32, []Cell, FontSpec, Color)
+  /// A wavy line — a curly underline — from the point (its middle, at its left end) across a
+  /// width (the first value), an amplitude above and below it, a thickness thick (the last),
+  /// a wave every eight amplitudes.
+  | PaintWave(Point, f32, f32, f32, Color)
 
 /// A slider's value between `min` and `max`, moved in steps of `step` (`0.0` for none) from
 /// the keyboard, and the event for a new value.
@@ -2196,6 +2204,28 @@ let paint_painter<e, r> where r: Renderer = (
   for op in (painter.paint)(area) {
     match op {
       PaintDraw(drawn) => ops.push(moved_op(drawn, at)),
+      PaintCells(baseline, advance, cells, font, color) => {
+        let block = fonts.cells(cells, font, advance)
+        let from = Point { x: at.x + baseline.x, y: at.y + baseline.y }
+        for drawn in atlas.glyphs(
+          fonts,
+          renderer,
+          block,
+          from,
+          scale,
+          color
+        ) { ops.push(drawn) }
+      },
+      PaintWave(start, width, amplitude, thickness, color) => {
+        for fill in wave(
+          Point { x: at.x + start.x, y: at.y + start.y },
+          width,
+          amplitude,
+          thickness,
+          scale,
+          color
+        ) { ops.push(fill) }
+      },
       PaintText(baseline, text, font, color) => {
         let block = fonts.lay_out(text, font, UNBOUNDED)
         if block.lines.len() == 0 { continue }
@@ -2216,6 +2246,43 @@ let paint_painter<e, r> where r: Renderer = (
   }
   ops.push(PopClip)
 }
+
+/// A wave from `start` (its middle, at its left end) across `width`, `amplitude` either side,
+/// `thickness` thick, as fills a device pixel wide: each column from the curve's lowest to its
+/// highest over it, with half the thickness beyond each, so a steep stretch leaves no gap. (The
+/// display list has no paths; a wave is the one curve a terminal draws.)
+let wave = pure (
+  start: Point,
+  width: f32,
+  amplitude: f32,
+  thickness: f32,
+  scale: f32,
+  color: Color
+) -> []DrawOp => {
+  if width <= 0.0 { return [] }
+  let step = 1.0 / scale.max(0.25)
+  let period = (8.0 * amplitude).max(2.0)
+  var fills: []DrawOp = []
+  var x: f32 = 0.0
+  while x < width {
+    let w = step.min(width - x)
+    let a = wave_y(start.y, amplitude, period, x)
+    let b = wave_y(start.y, amplitude, period, x + w)
+    let top = a.min(b) - thickness / 2.0
+    let bottom = a.max(b) + thickness / 2.0
+    fills.push(Fill(
+      Rect { x: start.x + x, y: top, w: w, h: bottom - top },
+      radius(0.0),
+      color
+    ))
+    x += step
+  }
+  fills
+}
+
+/// Where a wave about `middle`, `amplitude` either side and a `period` long, is `x` along.
+let wave_y = pure (middle: f32, amplitude: f32, period: f32, x: f32) -> f32 =>
+  middle - amplitude * (6.2831855 * x / period).sin()
 
 /// `op` moved by `by`.
 let moved_op = pure (op: DrawOp, by: Point) -> DrawOp => match op {

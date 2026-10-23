@@ -48,6 +48,7 @@ import bindings.harfbuzz.{
   font_metric,
   advance_of,
   has_glyph,
+  nominal_glyph,
   METRIC_UNDERLINE_OFFSET,
   METRIC_UNDERLINE_SIZE,
   METRIC_STRIKEOUT_OFFSET,
@@ -79,6 +80,17 @@ pub struct FontSpec {
   size: f32 = 14.0,
   line_height: f32 = 0.0,
   weight: i64 = 400,
+  italic: bool = false,
+}
+
+/// One cell of a grid of characters ([Fonts.cells]) — a terminal's: its column, its text (a
+/// character and any combining marks after it), how many columns it takes (2 for a wide
+/// character), and whether it is bold or italic.
+pub struct Cell {
+  col: i64,
+  text: string,
+  width: i64 = 1,
+  bold: bool = false,
   italic: bool = false,
 }
 
@@ -367,6 +379,107 @@ impl Fonts {
       underline_thickness: font_metric(face.hb, size, METRIC_UNDERLINE_SIZE),
       strike_y: font_metric(face.hb, size, METRIC_STRIKEOUT_OFFSET),
       strike_thickness: font_metric(face.hb, size, METRIC_STRIKEOUT_SIZE),
+    }
+  }
+
+  /// A row of `cells` in `font`, each `advance` units wide, as one line of a block whose
+  /// baseline is its top (so its glyphs are drawn from a baseline): **not shaped** — a cell's
+  /// character found by the character maps of the faces `font` draws from (a bold or italic
+  /// cell's as that spec would be, made faces and all), its glyph centred on its cell's columns,
+  /// so a monospaced font's glyph sits at its cell's left and a fallback's or a wide one's in
+  /// the middle. A cell with combining marks is shaped alone, as a cluster, so each mark sits
+  /// where its font puts it. Empty cells and spaces draw nothing.
+  pub let cells = (
+    self: mut,
+    cells: []Cell,
+    font: FontSpec,
+    advance: f32
+  ) -> TextBlock => {
+    // The faces of each of the four styles, found once for the row.
+    var orders: [][]i64 = []
+    for style in 0..<4 {
+      let bold = style % 2 == 1
+      let italic = style >= 2
+      orders.push(self.faces_for(FontSpec {
+        font |
+        weight: if bold { font.weight.max(700) } else { font.weight },
+        italic: italic || font.italic,
+      }))
+    }
+    if orders[0].len() == 0 { return TextBlock {} }
+    var placed: []LineGlyph = []
+    for cell in cells {
+      if cell.text.len() == 0 || cell.text == " " { continue }
+      let order = orders[(if cell.bold { 1 } else { 0 }) + (if cell.italic { 2 } else { 0 })]
+      let left = f32(cell.col) * advance
+      let span = f32(cell.width.max(1)) * advance
+      var first: rune = ' '
+      var count = 0
+      for c in cell.text {
+        if count == 0 { first = c }
+        count += 1
+      }
+      if count > 1 {
+        // A cluster: shaped in the first face that has its base, as a paragraph would be.
+        var face = order[0]
+        for f in order {
+          if has_glyph(self.faces[f].hb, first) {
+            face = f
+            break
+          }
+        }
+        let shaped = shape(self.faces[face].hb, cell.text.encode_utf8(), font.size)
+        var width: f32 = 0.0
+        for g in shaped { width += g.x_advance }
+        var pen = left + (span - width) / 2.0
+        for g in shaped {
+          placed.push(LineGlyph {
+            face: face,
+            glyph: g.glyph,
+            x: pen + g.x_offset,
+            y: g.y_offset,
+            pen: pen,
+            advance: g.x_advance,
+          })
+          pen += g.x_advance
+        }
+        continue
+      }
+      var found = false
+      for f in order {
+        if let Some((glyph, width)) = nominal_glyph(self.faces[f].hb, font.size, first) {
+          let x = left + (span - width) / 2.0
+          placed.push(LineGlyph {
+            face: f,
+            glyph: glyph,
+            x: x,
+            y: 0.0,
+            pen: x,
+            advance: width
+          })
+          found = true
+          break
+        }
+      }
+      // None has it: the first face's missing glyph, as text draws it.
+      if !found {
+        placed.push(LineGlyph {
+          face: order[0],
+          glyph: 0,
+          x: left,
+          y: 0.0,
+          pen: left,
+          advance: span
+        })
+      }
+    }
+    var last = 0
+    for cell in cells { last = last.max(cell.col + cell.width.max(1)) }
+    TextBlock {
+      face: orders[0][0],
+      size: font.size,
+      lines: [TextLine { glyphs: placed, width: f32(last) * advance, advance: f32(last) * advance }],
+      width: f32(last) * advance,
     }
   }
 
