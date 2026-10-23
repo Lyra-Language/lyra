@@ -20,6 +20,8 @@ module ui.script
 //! - `compose:'text'` — an input method's composition in progress, its caret at its end
 //!   (`compose:''` ends it).
 //! - `focus`, `blur` — the window gained the keyboard's focus, or lost it.
+//! - `maximize`, `minimize`, `restore` — the system did that to the window
+//!   ([WindowStateChanged]).
 //! - `menu:N` — the item tagged `N` of the platform's own menu bar chosen ([MenuChosen]), as
 //!   on a Mac; a script platform has such a bar where its `native_menus` says.
 //! - a pointer input with modifiers, `Shift+click:X,Y` — held for its inputs alone
@@ -80,6 +82,11 @@ import ui.backend.{
   AccessTree,
   NativeMenu,
   MenuChosen,
+  WindowState,
+  ToMinimized,
+  ToMaximized,
+  ToRestored,
+  WindowStateChanged,
 }
 import ui.draw.{ Point, Size, Rect }
 
@@ -102,6 +109,15 @@ pub struct ScriptPlatform {
   apple_keys: bool = false,
   native_menus: bool = false,
   menus: []NativeMenu = [],
+  /// The window's state; whether it has the system's frame; the areas a drawn title bar was
+  /// last given ([Platform.set_window_areas]); and the system's answers to changes asked of
+  /// it, said at the next pass.
+  window: WindowState = WindowState {},
+  decorated: bool = true,
+  drag_areas: []Rect = [],
+  keep_areas: []Rect = [],
+  resize_margin: f32 = 0.0,
+  answers: []InputEvent = [],
   opened: []string = [],
   access: AccessTree = AccessTree {},
   /// The least and greatest size the window may be (nothing for no limit), which a step's
@@ -135,6 +151,12 @@ pub let timed_platform = pure (steps: []Step, size: Size) -> ScriptPlatform =>
 
 impl Platform for ScriptPlatform {
   next_events = (self, wait_ms) => {
+    // A change asked of the window, done as a system would, said first.
+    if self.answers.len() > 0 {
+      let said = self.answers
+      self.answers = []
+      return said
+    }
     if self.next >= self.steps.len() { return [CloseRequested] }
     match self.steps[self.next] {
       // Time passes as far as the program waits — no further than the step says.
@@ -166,6 +188,7 @@ impl Platform for ScriptPlatform {
       Played(input) => {
         self.next += 1
         match input {
+          WindowStateChanged(state) => { self.window = state },
           Resized(size) => {
             self.size = size.held(self.least, self.most)
             return [Resized(self.size)]
@@ -207,6 +230,21 @@ impl Platform for ScriptPlatform {
   set_menus = (self, menus) => {
     self.menus = menus
     self.native_menus
+  }
+  window_state = pure (self) => self.window
+  change_window = (self, change) => {
+    self.window = match change {
+      ToMinimized => WindowState { self.window | minimized: true },
+      ToMaximized => WindowState { minimized: false, maximized: true },
+      ToRestored => WindowState {},
+    }
+    self.answers.push(WindowStateChanged(self.window))
+  }
+  set_decorated = (self, on) => { self.decorated = on }
+  set_window_areas = (self, drags, keeps, margin) => {
+    self.drag_areas = drags
+    self.keep_areas = keeps
+    self.resize_margin = margin
   }
 }
 
@@ -296,6 +334,15 @@ pub let parse_steps = pure (script: string) -> Result<[]Step, string> => {
     }
     if token == "dark" || token == "light" {
       inputs.push(Played(AppearanceChanged(if token == "dark" { DarkMode } else { LightMode })))
+      continue
+    }
+    if token == "maximize" || token == "minimize" || token == "restore" {
+      let state = if token == "maximize" { WindowState { maximized: true } } else if token == "minimize" {
+        WindowState { minimized: true }
+      } else {
+        WindowState {}
+      }
+      inputs.push(Played(WindowStateChanged(state)))
       continue
     }
     if let Some(tag) = token.strip_prefix("menu:") {

@@ -648,6 +648,17 @@ left readable would wake the loop without end. SDL's two functions are declared 
 taken from SDL's headers, so `build.sh` builds `liblyra-wake.a` with nothing but a C compiler,
 and the test harness compiles it itself where `build/lib` has none (CI tests before it builds).
 
+## `bindings/hittest/`
+
+SDL's hit test for a window that draws its own title bar (`ui.app`'s `DrawnTitleBar`):
+`set_areas(window, drags, keeps, margin)` says which of the window moves it, which of that keeps
+a press (the program's controls), and how wide a margin round a borderless, resizable window's
+edges resizes it when it is not maximized; SDL, asking at each press through a C function
+pointer — which Lyra cannot hand C — is answered from them by `hittest.c`. `answer(x, y, w, h,
+flags)` is that answer, for a test to ask with no window (`set_areas_only`). Like the wake's,
+its C declares SDL's three functions itself, so `build.sh` builds `liblyra-hittest.a` with a
+bare C compiler and the test harness compiles it where `build/lib` has none.
+
 ## `bindings/pty/`
 
 A program on a pseudo-terminal, for a terminal emulator (`../termina`). `spawn(args, cols,

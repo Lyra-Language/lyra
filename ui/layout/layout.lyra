@@ -123,6 +123,9 @@ pub struct Node<e> {
   label: string = "",
   /// A control that takes no input: not pressed, not focused, `:disabled` to the cascade.
   disabled: bool = false,
+  /// Whether a press on it, where none of its controls takes the press, moves the window — a
+  /// title bar the program draws ([Node.window_drag]).
+  drags_window: bool = false,
 }
 
 /// What an element does with its children, its space and its input. Built by the functions
@@ -176,6 +179,9 @@ pub data Kind<e> =
   | TabStrip
   /// A tab of a tab bar.
   | Tabbed(TabSpot<e>)
+  /// One of the window's own buttons ([window_buttons]): pressed, the framework minimizes,
+  /// maximizes or restores, or closes the window.
+  | WindowControl(WindowButton)
   /// A one-line text field.
   | Editable(FieldSpec<e>)
   /// A flex container (CSS's flexbox), laid out by its computed style: direction, wrap,
@@ -611,6 +617,10 @@ impl Node<e> {
   /// The node disabled while `off` holds: a control that takes no input, `:disabled`.
   pub let disabled_if = pure (self, off: bool) -> Node<e> => Node { self | disabled: off }
 
+  /// The node as a title bar the program draws (`ui.app`'s `DrawnTitleBar`): a press on it,
+  /// but on one of its controls, moves the window, as the system's title bar's would.
+  pub let window_drag = pure (self) -> Node<e> => Node { self | drags_window: true }
+
   /// The node with every event its controls raise passed through `f` — a component written
   /// for its own event type, placed in a tree of another's (Elm's `Html.map`):
   /// `settings_panel(s).map(SettingsSaid)`.
@@ -624,6 +634,7 @@ impl Node<e> {
     key: self.key,
     label: self.label,
     disabled: self.disabled,
+    drags_window: self.drags_window,
   }
 
   /// A painted element ([painted]) taking input raw ([RawInput]): every key and the text it
@@ -681,6 +692,7 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
   Opens(spec) => Opens(MenuSpec { entries: mapped_entries(spec.entries, f), side: spec.side, in_bar: spec.in_bar }),
   Spelled(chord) => Spelled(chord),
   TabStrip => TabStrip,
+  WindowControl(button) => WindowControl(button),
   Tabbed(spot) => Tabbed(TabSpot {
     index: spot.index,
     selected: spot.selected,
@@ -868,6 +880,8 @@ pub struct Laid<e> {
   floats: bool = false,
   anchor: Maybe<Anchor> = None,
   floating: bool = false,
+  /// Whether a press on it moves the window ([Node.window_drag]).
+  drags_window: bool = false,
   /// The media queries this node's sheets, and those below it, asked of the viewport, and
   /// their answers: while they answer the same, so does its layout.
   media: []MediaAnswer = [],
@@ -1134,6 +1148,8 @@ let laid_children<e> = pure (node: Node<e>) -> []Node<e> => match node.kind {
     if node.children.len() > 1 { [node.children[0], popup_holder(node.children[1])] } else { node.children },
   Opens(spec) =>
     if node.children.len() > 0 { [node.children[0], menu_list::<e>(spec.entries)] } else { node.children },
+  // Its glyph's events are none, so whichever glyph it shows refreshes alike.
+  WindowControl(button) => [window_glyph::<e>(button, false)],
   _ => node.children,
 }
 
@@ -1141,7 +1157,9 @@ let laid_children<e> = pure (node: Node<e>) -> []Node<e> => match node.kind {
 /// focus, hover and press among them, and each one's own state — as a string to compare.
 let state_under = pure (ui: Interaction, id: string) -> string => {
   let inside = (other: string) -> bool => other == id || other.starts_with("${id}/")
-  var out = ""
+  // A window maximized or put back shows its maximize button otherwise (`window_buttons`) —
+  // and is resized, so it is all laid out again then anyway.
+  var out = if ui.viewport.maximized { "maximized" } else { "" }
   for holder in [ui.focus, ui.hover, ui.pressed, ui.open] {
     out = "${out}|${if inside(holder) { holder } else { "" }}"
   }
@@ -1213,7 +1231,7 @@ let same_node<e> = (a: Node<e>, b: Node<e>, theme: Theme) -> bool => {
   }
   // A control disabled or enabled is styled anew (`:disabled`, `:enabled`) and takes input or
   // none: not the same layout, though nothing else about it changed.
-  if a.disabled != b.disabled { return false }
+  if a.disabled != b.disabled || a.drags_window != b.drags_window { return false }
   if !same_kind(a.kind, b.kind, theme) { return false }
   for i in 0..<a.children.len() {
     if !same_node(a.children[i], b.children[i], theme) { return false }
@@ -1250,6 +1268,7 @@ let same_kind<e> = (a: Kind<e>, b: Kind<e>, theme: Theme) -> bool => match (a, b
     m1.side == m2.side && m1.in_bar == m2.in_bar && same_entries(m1.entries, m2.entries),
   (Spelled(c1), Spelled(c2)) => c1 == c2,
   (TabStrip, TabStrip) => true,
+  (WindowControl(b1), WindowControl(b2)) => b1 == b2,
   (Tabbed(t1), Tabbed(t2)) =>
     t1.index == t2.index && t1.selected == t2.selected && t1.closable == t2.closable && t1.movable == t2.movable,
   (Flexbox, Flexbox) => true,
@@ -1377,6 +1396,7 @@ let lay_fresh<e> = (
       lay_popup(node.children, open, side, inner, ctx, fonts, cache),
     Opens(spec) => lay_opens(node.children, spec, inner, ctx, fonts, cache),
     TabStrip => lay_tab_strip(node.children, inner, ctx, fonts, cache),
+    WindowControl(button) => lay_window_control(button, inner, ctx, fonts, cache),
     Spelled(chord) => {
       let block = fonts.lay_out(
         chord_text(chord, ui.viewport.apple),
@@ -1489,6 +1509,7 @@ let lay_fresh<e> = (
     moves: styled.goal.transition.len() > 0 || children.any((p) => p.laid.moves),
     floating: children.any((p) => p.laid.floats || p.laid.floating),
     disabled: node.disabled,
+    drags_window: node.drags_window,
     media: asked_below(styled.media, children),
   }
 }
@@ -1586,6 +1607,9 @@ let styled_at<e> = (
       media = asked
       own.in_component(node.tag, classes, scoped).inside(style)
     },
+    // A control owns its parts (`Slider::thumb`) — a window's own button too, which takes no
+    // focus.
+    WindowControl(_) => own.in_component(node.tag, classes, Sheet {}).inside(style),
     _ => if focusable(node.kind) {
       own.in_component(node.tag, classes, Sheet {}).inside(style)
     } else {
@@ -1798,6 +1822,7 @@ let role_of<e> = pure (kind: Kind<e>) -> Role => match kind {
   Spelled(_) => TextRole,
   Opens(_) => ButtonRole,
   TabStrip => TabListRole,
+  WindowControl(_) => ButtonRole,
   Tabbed(_) => TabRole,
   Texels(_, _, _) => ImageRole,
   Scrolls(_, _) => ScrollRole,

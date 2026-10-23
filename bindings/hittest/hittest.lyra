@@ -1,0 +1,88 @@
+@link("lyra-hittest")
+module bindings.hittest
+//! SDL's hit test for a window that draws its own title bar: [set_areas] says which of the
+//! window moves it (a bar's empty stretch), which of that keeps a press (the program's own
+//! controls), and how wide a margin round a borderless window's edges resizes it — and SDL,
+//! asking at each press, is answered from them (`hittest.c`). `ui.sdl3` hands it a layout's
+//! areas each pass, for `ui.app`'s `DrawnTitleBar`.
+//!
+//! **A shim because SDL asks through a C function pointer**, which Lyra cannot hand C; its C
+//! half needs no SDL headers (the program links SDL3 itself) and builds into
+//! `build/lib/liblyra-hittest.a` with `build.sh`.
+
+import std.ffi
+import bindings.sdl3.{ Window }
+
+/// What a point of the window is to the system, as [answer] says.
+pub const HIT_NORMAL: i32 = 0
+pub const HIT_DRAGGABLE: i32 = 1
+pub const HIT_RESIZE_TOPLEFT: i32 = 2
+pub const HIT_RESIZE_TOP: i32 = 3
+pub const HIT_RESIZE_TOPRIGHT: i32 = 4
+pub const HIT_RESIZE_RIGHT: i32 = 5
+pub const HIT_RESIZE_BOTTOMRIGHT: i32 = 6
+pub const HIT_RESIZE_BOTTOM: i32 = 7
+pub const HIT_RESIZE_BOTTOMLEFT: i32 = 8
+pub const HIT_RESIZE_LEFT: i32 = 9
+
+/// `window`'s areas that move it (`drags`) and, inside them, those keeping a press (`keeps`) —
+/// each four numbers, x, y, width and height, in the window's coordinates, at most 64 of each —
+/// and the `margin` round its edges a borderless, resizable window not maximized resizes from.
+/// The hit test is installed the first time. False where SDL refuses one (its dummy driver).
+pub let set_areas = (window: Window, drags: []f32, keeps: []f32, margin: f32) -> bool => {
+  var d = drags
+  var k = keeps
+  unsafe {
+    lyra_hittest_set(
+      window,
+      if d.len() == 0 { nullptr } else { d.data_mut() },
+      i32(d.len() / 4),
+      if k.len() == 0 { nullptr } else { k.data_mut() },
+      i32(k.len() / 4),
+      margin
+    )
+  }
+}
+
+/// What the point (`x`, `y`) of a window `w` × `h` whose `WINDOW_*` flags are `flags` is, from
+/// the areas last set: an edge or corner to resize from, a control's (`HIT_NORMAL`), a drag
+/// area, or the rest (`HIT_NORMAL`) — what SDL is answered, for a test to ask.
+pub let answer = (x: f32, y: f32, w: f32, h: f32, flags: u64) -> i32 =>
+  unsafe { lyra_hittest_answer(x, y, w, h, flags) }
+
+/// The areas set with no window to install on: for a test of [answer].
+pub let set_areas_only = (drags: []f32, keeps: []f32, margin: f32) -> void => {
+  var d = drags
+  var k = keeps
+  unsafe {
+    lyra_hittest_set_areas(
+      if d.len() == 0 { nullptr } else { d.data_mut() },
+      i32(d.len() / 4),
+      if k.len() == 0 { nullptr } else { k.data_mut() },
+      i32(k.len() / 4),
+      margin
+    )
+  }
+}
+
+@symbol("lyra_hittest_set_areas")
+unsafe extern lyra_hittest_set_areas: (
+  drag: ^mut f32,
+  drag_count: i32,
+  keep: ^mut f32,
+  keep_count: i32,
+  margin: f32
+) -> void
+
+@symbol("lyra_hittest_set")
+unsafe extern lyra_hittest_set: (
+  window: Window,
+  drag: ^mut f32,
+  drag_count: i32,
+  keep: ^mut f32,
+  keep_count: i32,
+  margin: f32
+) -> bool
+
+@symbol("lyra_hittest_answer")
+unsafe extern lyra_hittest_answer: (x: f32, y: f32, w: f32, h: f32, flags: u64) -> i32

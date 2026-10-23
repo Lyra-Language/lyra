@@ -1,0 +1,77 @@
+module ui.layout
+//! The window's own buttons, for a title bar the program draws (`ui/WINDOW.md` §4): minimize,
+//! maximize — restore, while the window is maximized — and close ([window_buttons]), each a
+//! `WindowButton` whose press the framework carries out (`ui.interact`, `ui.app`), not the
+//! program. Their glyphs are lines and boxes (the display list has no paths, and the font may
+//! have no ❐), chosen at layout by whether the window is maximized (`Viewport.maximized`).
+//! **On Apple's systems they are nothing**: a Mac keeps the system's title bar and its buttons
+//! where macOS puts them (`Viewport.apple`).
+
+/// One of the window's own buttons.
+pub data WindowButton = MinimizeButton | MaximizeButton | CloseButton
+
+/// The window's buttons in a row, as Linux's desktops put them at a title bar's right end:
+/// minimize, maximize or restore, close (`WindowButtons`, each `WindowButton` — `.minimize`,
+/// `.maximize`, `.close` — its glyph the `WindowButton::glyph` part). Nothing on Apple's systems.
+pub let window_buttons<e> = pure () -> Node<e> => {
+  let kind: Kind<e> = Flow(Horizontal, MainStart, CrossStretch)
+  Node {
+    kind: kind,
+    tag: "WindowButtons",
+    children: [b in [MinimizeButton, MaximizeButton, CloseButton] | window_control::<e>(b)],
+  }
+}
+
+/// The node for button `b`.
+let window_control<e> = pure (b: WindowButton) -> Node<e> => {
+  let kind: Kind<e> = WindowControl(b)
+  let (class, label) = match b {
+    MinimizeButton => ("minimize", "Minimize"),
+    MaximizeButton => ("maximize", "Maximize"),
+    CloseButton => ("close", "Close"),
+  }
+  Node { kind: kind, tag: "WindowButton", class: class, label: label }
+}
+
+/// Button `b`'s glyph, with the room round it: minimize a bar, maximize a box — two, offset, to
+/// restore while `maximized` — and close a ×.
+let window_glyph<e> = pure (b: WindowButton, maximized: bool) -> Node<e> => {
+  let glyph: Node<e> = match b {
+    MinimizeButton => sized::<e>(Some(10.0), Some(1.0)).with_part("glyph"),
+    MaximizeButton => if maximized {
+      stack::<e>([
+        positioned::<e>(Edges { left: Some(2.0), top: Some(0.0) }, sized::<e>(Some(7.0), Some(7.0)).with_part("frame")),
+        positioned::<e>(Edges { left: Some(0.0), top: Some(2.0) }, sized::<e>(Some(7.0), Some(7.0)).with_part("frame")),
+        sized::<e>(Some(9.0), Some(9.0)),
+      ])
+    } else {
+      sized::<e>(Some(10.0), Some(10.0)).with_part("frame")
+    },
+    CloseButton => text::<e>("×").with_part("cross"),
+  }
+  // Every glyph centred in one 10 × 10 box, so the three buttons are one size.
+  let boxed = sized::<e>(
+    Some(10.0),
+    Some(10.0),
+    [align::<e>(Alignment { x: 0.5, y: 0.5 }, glyph)]
+  )
+  padding::<e>(
+    Insets { top: 8.0, right: 14.0, bottom: 8.0, left: 14.0 },
+    boxed
+  ).keyed("glyph")
+}
+
+/// A window button: its glyph for the window as it is, centred in the room it is given — or
+/// nothing at all on Apple's systems, whose title bar keeps the system's buttons.
+let lay_window_control<e> = (
+  button: WindowButton,
+  c: Constraints,
+  ctx: Ctx,
+  fonts: mut Fonts,
+  cache: mut LayoutCache<e>
+) -> Body<e> => {
+  if ctx.ui.viewport.apple { return Body::<e> { size: Size {} } }
+  let glyph = window_glyph::<e>(button, ctx.ui.viewport.maximized)
+  let laid = lay(glyph, c, ctx.cascade, fonts, ctx.ui, child_id(ctx.id, glyph, 0), cache)
+  Body { size: laid.size, children: [Placed { at: Point {}, laid: laid }] }
+}

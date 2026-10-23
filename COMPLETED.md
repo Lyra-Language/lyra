@@ -9,6 +9,28 @@ Newest first.
 
 ## Dated log
 
+### 10/23/26 — `ui`: the window's controls, and a title bar the program draws
+
+- **`WindowMinimize`, `WindowMaximize`, `WindowRestore`** and **`OnWindowState`**
+  (`ui/WINDOW.md` step 5): `Platform.change_window` asks the system, which may do it later or
+  not at all, and `ui.sdl3` reads the window's flags each pass, saying a change once
+  (`WindowStateChanged`), as it does for the system's look.
+- **`App.title_bar: DrawnTitleBar`**: the host takes the system's frame away once and, after
+  each redraw, tells the platform what moves the window (`.window_drag()`) and what inside
+  that keeps a press — every control, and the window's buttons — from the layout just drawn:
+  told before the redraw, the first pass had none. SDL asks through a C function pointer, so
+  the areas go to a shim (`bindings.hittest`), answered by a function a test can ask without a
+  window, since the dummy driver refuses a hit test.
+- **`window_buttons()`** are the framework's, not the program's: a press on one is carried out
+  by the host (`Ui.take_window_buttons`), close as the system's close is. Their glyphs are lines
+  and boxes made at layout by `Viewport.maximized`, which the cache's key now carries — a
+  window maximized is resized and laid out afresh anyway. Not focusable, they still own their
+  parts in the cascade, as a control does, or `WindowButton::glyph` styled nothing. On Apple's
+  systems they are nothing and the frame stays: a Mac keeps the system's title bar for now.
+- **The test harness compiles `liblyra-menubar.a`'s stub** where `build/lib` lacks it: since
+  step 3 every `ui.sdl3` program links it, and CI tests before `build.sh` runs, so every `ui`
+  test would have failed to link there. The new `liblyra-hittest.a` is in the same list.
+
 ### 10/23/26 — `ui`: a tab bar
 
 - **`tab_bar(TabsSpec { … })`** (`ui/WINDOW.md` step 4): the order is the program's — a drag

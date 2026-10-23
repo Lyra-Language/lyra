@@ -352,8 +352,10 @@ pub data Orientation = Portrait | Landscape
 pub struct Viewport {
   size: Size = Size {},
   appearance: Appearance = LightMode,
-  /// Whether it is on one of Apple's systems: how a menu spells its shortcuts.
+  /// Whether it is on one of Apple's systems: how a menu spells its shortcuts; and whether the
+  /// window is maximized, which its maximize button shows as restore (`window_buttons`).
   apple: bool = false,
+  maximized: bool = false,
 }
 
 impl Media {
@@ -638,6 +640,12 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
   },
   Rule { selector: "TabClose", style: Style { padding: Some(insets_xy(4.0, 0.0)), radius: Some(3.0), opacity: Some(0.45) } },
   Rule { selector: "TabClose:hover", style: Style { background: Some(faded(c.text, 0.12)), opacity: Some(1.0) } },
+  // The window's own buttons on a drawn title bar: quiet until the pointer is over one, close
+  // red then, as on every desktop.
+  Rule { selector: "WindowButton:hover", style: Style { background: Some(faded(c.text, 0.08)) } },
+  Rule { selector: "WindowButton.close:hover", style: Style { background: Some(rgb(0xE81123)), color: Some(rgb(0xFFFFFF)) } },
+  Rule { selector: "WindowButton::glyph", style: Style { background: Some(c.text) } },
+  Rule { selector: "WindowButton::frame", style: Style { border_color: Some(c.text), border_width: Some(1.0) } },
 ]
 
 /// A scroller's bars, drawn over its content's edge: a faint track and a thumb the text's

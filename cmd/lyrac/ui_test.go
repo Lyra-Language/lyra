@@ -4547,6 +4547,239 @@ func TestRun_UiTabsExample(t *testing.T) {
 	}
 }
 
+// A title bar the program draws (WINDOW.md §4) through the host: the window's frame taken away
+// once; each pass the platform told the drag area the view marks and the controls inside it
+// that keep a press; the window's buttons pressed — maximize, then restore (its glyph two boxes
+// while maximized), minimize — carried out by the framework and heard through OnWindowState, as
+// the system's own changes are; the program's own button asking the same by command; nothing of
+// the buttons on Apple's systems; and close ending the run as the system's close does.
+func TestRun_UiDrawnTitleBar(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, Host, DrawnTitleBar, Command, Subscription, OnWindowState, WindowMaximize, host_of }
+import ui.script.{ timed_platform, ScriptPlatform, Played, Waited }
+import ui.backend.{ Renderer, TextureId, PointerMoved, PointerDown, PointerUp, Primary, WindowState, WindowStateChanged }
+import ui.draw.{ Size, Point, Color }
+import ui.text.{ Fonts, fonts_new }
+import ui.layout.{ Node, Laid, row, column, text, button, expanded, window_buttons, WindowControl, WindowButton, MinimizeButton, MaximizeButton, CloseButton, Pressable }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => {}
+}
+
+data Ev = Changed(WindowState) | Max
+
+let main = () -> u8 => {
+  for apple in [false, true] {
+    var platform = timed_platform([Waited(1)], Size { w: 400.0, h: 200.0 })
+    platform.apple_keys = apple
+    var renderer = Blank {}
+    var fonts = fonts_new()
+    var host = host_of(app(), "", platform)
+    let _ = host.step(platform, renderer, fonts)
+    let laid = host.shown[0]
+    if apple {
+      println("on Apple's systems: the buttons ${width_of(laid, Point {}, 0.0)} wide")
+      continue
+    }
+    println("frame ${platform.decorated}, drag areas ${platform.drag_areas.len()}, controls in them ${platform.keep_areas.len()}, margin ${platform.resize_margin}")
+    let steps: [](string, Point) = [
+      ("maximize", middle_of(laid, MaximizeButton)),
+      ("restore", middle_of(laid, MaximizeButton)),
+      ("the program's Max", program_button(laid, Point {}) ?? Point {}),
+    ]
+    for (name, at) in steps {
+      press(platform, host, renderer, fonts, at)
+      println("${name}: heard '${host.state}', maximized ${platform.window.maximized}, the maximize glyph's boxes ${frames(host.shown[0])}")
+    }
+    platform.steps = [...platform.steps, Played(WindowStateChanged(WindowState {})), Waited(1)]
+    while platform.next < platform.steps.len() { let _ = host.step(platform, renderer, fonts) }
+    println("the system restores it: heard '${host.state}'")
+    press(platform, host, renderer, fonts, middle_of(host.shown[0], MinimizeButton))
+    println("minimize: heard '${host.state}', minimized ${platform.window.minimized}")
+    let at = middle_of(host.shown[0], CloseButton)
+    platform.steps = [...platform.steps, Played(PointerMoved(at)), Played(PointerDown(Primary, at, 1)), Played(PointerUp(Primary, at)), Waited(1)]
+    var passes = 0
+    while host.step(platform, renderer, fonts) { passes += 1 }
+    println("close: the run ended with ${platform.steps.len() - platform.next} steps unplayed")
+  }
+  0
+}
+
+let app = pure () -> App<string, Ev> => App {
+  view: (heard: string) -> Node<Ev> => column([
+    row([text("Title"), expanded(row([])), button("Max", Max), window_buttons()]).window_drag(),
+    text(heard),
+  ]),
+  update: (heard: string, e: Ev) -> (string, []Command<Ev>) => match e {
+    Changed(w) => (if w.minimized { "minimized" } else if w.maximized { "maximized" } else { "restored" }, []),
+    Max => (heard, [WindowMaximize]),
+  },
+  subscriptions: (_: string) -> []Subscription<Ev> => [OnWindowState(Changed)],
+  background: Color { r: 0, g: 0, b: 0 },
+  title_bar: DrawnTitleBar,
+}
+
+/// A press and release at at, played and passed.
+let press = (platform: mut ScriptPlatform, host: mut Host<string, Ev>, renderer: mut Blank, fonts: mut Fonts, at: Point) -> void => {
+  platform.steps = [...platform.steps, Played(PointerMoved(at)), Played(PointerDown(Primary, at, 1)), Played(PointerUp(Primary, at)), Waited(1)]
+  // Every step played — the system's answer comes before the last — and no pass more: a script
+  // platform out of steps closes the window.
+  while platform.next < platform.steps.len() { let _ = host.step(platform, renderer, fonts) }
+}
+
+let middle_of = pure (laid: Laid<Ev>, b: WindowButton) -> Point => control(laid, Point {}, b) ?? Point { x: -1.0, y: -1.0 }
+
+let control = pure (laid: Laid<Ev>, origin: Point, b: WindowButton) -> Maybe<Point> => {
+  if let WindowControl(w) = laid.kind {
+    if w == b { return Some(Point { x: origin.x + laid.size.w / 2.0, y: origin.y + laid.size.h / 2.0 }) }
+  }
+  for child in laid.children {
+    if let Some(p) = control(child.laid, Point { x: origin.x + child.at.x, y: origin.y + child.at.y }, b) { return Some(p) }
+  }
+  None
+}
+
+let program_button = pure (laid: Laid<Ev>, origin: Point) -> Maybe<Point> => {
+  if let Pressable(_) = laid.kind { return Some(Point { x: origin.x + laid.size.w / 2.0, y: origin.y + laid.size.h / 2.0 }) }
+  for child in laid.children {
+    if let Some(p) = program_button(child.laid, Point { x: origin.x + child.at.x, y: origin.y + child.at.y }) { return Some(p) }
+  }
+  None
+}
+
+/// How many boxes the maximize button's glyph draws: one to maximize, two to restore.
+let frames = pure (laid: Laid<Ev>) -> i64 => {
+  if let WindowControl(MaximizeButton) = laid.kind { return boxes(laid) }
+  var n = 0
+  for child in laid.children { n += frames(child.laid) }
+  n
+}
+
+let boxes = pure (laid: Laid<Ev>) -> i64 => {
+  var n = if laid.style.border_width > 0.0 { 1 } else { 0 }
+  for child in laid.children { n += boxes(child.laid) }
+  n
+}
+
+/// The window buttons' row's width.
+let width_of = pure (laid: Laid<Ev>, origin: Point, none: f32) -> f32 => {
+  if laid.tag == "WindowButtons" { return laid.size.w }
+  for child in laid.children {
+    let w = width_of(child.laid, origin, -1.0)
+    if w >= 0.0 { return w }
+  }
+  none
+}
+`)
+	want := `frame false, drag areas 1, controls in them 4, margin 5
+maximize: heard 'maximized', maximized true, the maximize glyph's boxes 2
+restore: heard 'restored', maximized false, the maximize glyph's boxes 1
+the program's Max: heard 'maximized', maximized true, the maximize glyph's boxes 2
+the system restores it: heard 'restored'
+minimize: heard 'minimized', minimized true
+close: the run ended with 1 steps unplayed
+on Apple's systems: the buttons 0 wide
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// bindings.hittest's answers, asked with no window: a borderless, resizable window is resized
+// from a margin round its edges and corners — not while maximized — moved from its drag areas,
+// and the controls inside them keep their presses; elsewhere it is the window's own.
+func TestRun_HitTestAnswers(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import bindings.hittest.{ set_areas_only, answer }
+
+let main = () -> void => {
+  // A bar along the top, a button at its right end inside it; a margin of 4.
+  set_areas_only([0.0, 0.0, 400.0, 30.0], [350.0, 0.0, 50.0, 30.0], 4.0)
+  let frameless: u64 = 0x10 | 0x20
+  let maximized: u64 = frameless | 0x80
+  for (name, x, y, flags) in [
+    ("the bar", 100.0, 15.0, frameless),
+    ("its button", 370.0, 15.0, frameless),
+    ("the page", 100.0, 200.0, frameless),
+    ("the top-left corner", 1.0, 1.0, frameless),
+    ("the top edge", 100.0, 2.0, frameless),
+    ("the right edge", 398.0, 150.0, frameless),
+    ("the bottom-right corner", 399.0, 299.0, frameless),
+    ("the left edge", 2.0, 150.0, frameless),
+    ("the top-left corner, maximized", 1.0, 1.0, maximized),
+    ("the left edge, framed", 2.0, 150.0, 0x20),
+  ] {
+    println("${name}: ${answer(f32(x), f32(y), 400.0, 300.0, flags)}")
+  }
+}
+`)
+	want := `the bar: 1
+its button: 0
+the page: 0
+the top-left corner: 2
+the top edge: 3
+the right edge: 5
+the bottom-right corner: 6
+the left edge: 9
+the top-left corner, maximized: 1
+the left edge, framed: 0
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// examples/ui/titlebar.lyra played: its window's maximize button pressed, the system restoring
+// it, its minimize button pressed — each heard — and the drag area and controls it told the
+// platform, the system's frame taken away. The buttons' places are the window's right end, a
+// glyph's width each, whatever the font.
+func TestRun_UiTitleBarExample(t *testing.T) {
+	t.Parallel()
+	skipWithoutText(t)
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "titlebar")
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, filepath.Join(repoRoot(t), "examples", "ui", "titlebar.lyra")); code != 0 {
+		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
+	}
+	shot := filepath.Join(dir, "end.png")
+	cmd := command(t, bin, "--script", "move:503,12 click:503,12 restore move:465,12 click:465,12", "--png", shot)
+	cmd.Dir = dir
+	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+	out, err := cmd.CombinedOutput()
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 &&
+		strings.Contains(string(out), "SDL could not") {
+		t.Skipf("SDL could not open a dummy window here: %s", out)
+	} else if ok && exitErr.ExitCode() == 1 && strings.HasPrefix(string(out), "no font") {
+		t.Skipf("no font here: %s", out)
+	} else if err != nil {
+		t.Fatalf("running: %v\n%s", err, out)
+	}
+	want := `maximized
+restored
+minimized
+drag areas 1, controls in them 4, the system's frame false
+`
+	if string(out) != want {
+		t.Errorf("got\n%s\nwant\n%s", out, want)
+	}
+	if _, err := os.Stat(shot); err != nil {
+		t.Errorf("no last frame: %v", err)
+	}
+}
+
 // A control disabled or enabled again with nothing else changed is laid out anew: its
 // `:disabled` look and its refusal of input follow at once. The layout cache gave the last
 // frame's layout back for a node the same in every field but `disabled` until 10/22, so 7GUIs'

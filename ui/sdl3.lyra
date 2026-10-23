@@ -128,6 +128,17 @@ import bindings.sdl3.{
 }
 import bindings.wake
 import bindings.menubar
+import bindings.hittest
+import bindings.sdl3.{
+  window_flags,
+  minimize_window,
+  maximize_window,
+  restore_window,
+  set_window_bordered,
+  WINDOW_MINIMIZED,
+  WINDOW_MAXIMIZED,
+  WINDOW_FULLSCREEN,
+}
 import ui.backend.{
   Platform,
   NativeMenu,
@@ -137,6 +148,11 @@ import ui.backend.{
   NativeSeparator,
   MenuChosen,
   Chord,
+  WindowState,
+  ToMinimized,
+  ToMaximized,
+  ToRestored,
+  WindowStateChanged,
   Renderer,
   InputEvent,
   Appearance,
@@ -342,6 +358,8 @@ pub struct SdlPlatform {
   shape: Cursor = Arrow,
   /// The system's look as last reported, to say when it changes.
   look: Appearance = LightMode,
+  /// The window's state as last said ([WindowStateChanged]).
+  state: WindowState = WindowState {},
   /// Whether assistive technology can be told about the window (AccessKit's adapter is on
   /// it — macOS), and the element each node of the tree it was last told stands for.
   listening: bool = false,
@@ -379,6 +397,12 @@ impl Platform for SdlPlatform {
     if look != self.look {
       self.look = look
       events.push(AppearanceChanged(look))
+    }
+    // Minimized, maximized or fullscreen: read as the look is, said once a change.
+    let state = state_of(window_flags(self.window))
+    if state != self.state {
+      self.state = state
+      events.push(WindowStateChanged(state))
     }
     events
   }
@@ -439,6 +463,29 @@ impl Platform for SdlPlatform {
   }
   set_title = (self, title) => {
     let _ = set_window_title(self.window, title)
+  }
+  window_state = (self) => state_of(window_flags(self.window))
+  change_window = (self, change) => {
+    let _ = match change {
+      ToMinimized => minimize_window(self.window),
+      ToMaximized => maximize_window(self.window),
+      ToRestored => restore_window(self.window),
+    }
+  }
+  // A Mac's title bar stays the system's, its buttons where macOS puts them (`ui/WINDOW.md`).
+  set_decorated = (self, on) => {
+    if !apple() { let _ = set_window_bordered(self.window, on) }
+  }
+  set_window_areas = (self, drags, keeps, margin) => {
+    if apple() { return }
+    // The window's coordinates: SDL's points, not the interface's logical units.
+    let per_point = units_per_point(self.window)
+    let _ = hittest.set_areas(
+      self.window,
+      flat_areas(drags, per_point),
+      flat_areas(keeps, per_point),
+      margin / per_point
+    )
   }
   set_menus = (self, menus) => {
     self.menus_installed = install_menus(menus, self.menus_installed)
@@ -641,6 +688,25 @@ let modifiers_of = (held: u16) -> Modifiers => {
     command: command,
     primary: if apple() { command } else { control },
   }
+}
+
+/// The window's state as its `WINDOW_*` flags say.
+let state_of = pure (flags: u64) -> WindowState => WindowState {
+  minimized: (flags & WINDOW_MINIMIZED) != 0,
+  maximized: (flags & WINDOW_MAXIMIZED) != 0,
+  fullscreen: (flags & WINDOW_FULLSCREEN) != 0,
+}
+
+/// `areas` in logical units as `bindings.hittest` takes them: four numbers each, in points.
+let flat_areas = pure (areas: []Rect, per_point: f32) -> []f32 => {
+  var out: []f32 = []
+  for a in areas {
+    out.push(a.x / per_point)
+    out.push(a.y / per_point)
+    out.push(a.w / per_point)
+    out.push(a.h / per_point)
+  }
+  out
 }
 
 /// `menus` in the Mac's own menu bar (`bindings.menubar`): installed — the first as the

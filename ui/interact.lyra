@@ -110,6 +110,8 @@ import ui.layout.{
   Tabbed,
   TabSpot,
   TabStrip,
+  WindowControl,
+  WindowButton,
   Painted,
   RawInput,
   KeyInput,
@@ -176,6 +178,9 @@ pub struct Ui {
   menu_first: bool = false,
   /// The tabs selected at the last frame: one selected since is scrolled into view.
   tabs_selected: []string = [],
+  /// The window's own buttons pressed and let go on since the host last took them
+  /// ([Ui.take_window_buttons]): the framework's to carry out, not the program's.
+  window_asked: []WindowButton = [],
 }
 
 /// A popup open at a frame, by its identity and its anchor's and content's.
@@ -716,6 +721,14 @@ impl Ui {
   /// after the one that made it, if that is when it appears.
   pub let focus_keyed = (self: mut, key: string) -> void => { self.focus_wanted = key }
 
+  /// The window's own buttons pressed and let go on since the last time, taken: minimize,
+  /// maximize or restore, close — for the host to carry out.
+  pub let take_window_buttons = (self: mut) -> []WindowButton => {
+    let asked = self.window_asked
+    self.window_asked = []
+    asked
+  }
+
   /// The scroller keyed `key` scrolled `y` units down — past its end is its end, where one that
   /// follows its end (`scroll_follow`) follows it again — once a layout has it.
   pub let scroll_keyed = (self: mut, key: string, y: f32) -> void => {
@@ -1038,6 +1051,12 @@ impl Ui {
   let pointer_down<e> = (self: mut, laid: Laid<e>, at: Point, clicks: i64) -> []e => {
     self.pointer = at
     if self.bar_press(laid, at) { return [] }
+    // One of the window's own buttons, which is no control of the program's: held, as a
+    // button is, until let go.
+    if let Some(button) = window_control_at(laid, at) {
+      self.state.pressed = button.laid.id
+      return []
+    }
     if let Some(events) = self.menu_press(laid, at) { return events }
     // An open select's list takes a press on one of its options; any other press closes it —
     // on the select itself, only that.
@@ -1100,6 +1119,12 @@ impl Ui {
     self.pointer = at
     let held = self.state.pressed
     self.state.pressed = ""
+    if let Some(button) = window_control_at(laid, at) {
+      if button.laid.id == held {
+        if let WindowControl(b) = button.laid.kind { self.window_asked.push(b) }
+      }
+      return []
+    }
     let Some(target) = control_at(laid, at) else { return [] }
     if target.laid.id != held { return [] }
     if self.state.open.len() > 0 && option_of(self.state.open, held).is_some() {
@@ -1921,6 +1946,14 @@ let strip_tabs<e> = pure (laid: Laid<e>, id: string) -> []Found<e> => {
     }
   }
   out
+}
+
+/// The window's own button under `at`, if one is.
+let window_control_at<e> = pure (laid: Laid<e>, at: Point) -> Maybe<Found<e>> => {
+  for f in hit(laid, at) {
+    if let WindowControl(_) = f.laid.kind { return Some(f) }
+  }
+  None
 }
 
 /// What `laid` is as a tab, if it is one.

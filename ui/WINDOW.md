@@ -1,6 +1,6 @@
 # What a terminal's window needs of `ui` — design
 
-**Status: proposed 10/23; steps 1–4 built 10/23** (a tab bar — `tab_bar`, a tab carrying the spec's functions since a builder may call none, the × no control of its own, `overflow-x: hidden` scrolled by the wheel and the selection, the focus kept by a × press; menus native — `App.menus` through `Platform.set_menus` as tagged `NativeMenu`s, reinstalled only on a change of shape, `MenuChosen`, the bar's keys left to it, `menubar.m` waking SDL's wait through `dlsym`; menus drawn — `menu_bar`, `menu_button`, `Spelled` shortcuts spelled by `Viewport.apple`, the app taking every drawn menu's shortcuts, Tab from an open menu moving on from its title; popups — `popup`, `place_floats`, the select's list on them; the content as wide as it needs, laid out twice, as CSS's shrink-to-fit; over the anchor where neither side has room; `examples/ui/popups.lyra`). The second half of `TERMINAL.md`'s step 8: what Termina's window
+**Status: proposed 10/23; steps 1–5 built 10/23** (the window — `WindowMinimize`/`WindowMaximize`/`WindowRestore`, `OnWindowState`, `DrawnTitleBar` with `bindings.hittest`, `window_buttons` drawn as lines and boxes chosen at layout, the areas told after each redraw; the double click on a drag area still open; a tab bar — `tab_bar`, a tab carrying the spec's functions since a builder may call none, the × no control of its own, `overflow-x: hidden` scrolled by the wheel and the selection, the focus kept by a × press; menus native — `App.menus` through `Platform.set_menus` as tagged `NativeMenu`s, reinstalled only on a change of shape, `MenuChosen`, the bar's keys left to it, `menubar.m` waking SDL's wait through `dlsym`; menus drawn — `menu_bar`, `menu_button`, `Spelled` shortcuts spelled by `Viewport.apple`, the app taking every drawn menu's shortcuts, Tab from an open menu moving on from its title; popups — `popup`, `place_floats`, the select's list on them; the content as wide as it needs, laid out twice, as CSS's shrink-to-fit; over the anchor where neither side has room; `examples/ui/popups.lyra`). The second half of `TERMINAL.md`'s step 8: what Termina's window
 still takes from Dear ImGui, now that its tabs run on `ui` (`termina/build/termina-ui`, beside
 the ImGui app). §1 is popups, which the rest stand on; §2 menus, §3 a tab bar, §4 the
 window's own controls and title bar, §5 a file dialog, §6 colour, §7 the smaller pieces and
@@ -189,9 +189,23 @@ pub let swatch<e> = pure (color: Color, open: bool, on_open: e, on_change: (Colo
   terminal's selection is), opening on a press **a picker** in a §1 popup: a saturation and
   value square (two gradients over the hue: white to it across, transparent to black down,
   both of which the display list draws, the fallback renderer included), a hue strip, an
-  alpha strip, and a hex field (`#rrggbb` or `#rrggbbaa`). Dragging raises `on_change` with
-  each colour, as ImGui's picker does, so the program shows it live and keeps it when it is
-  let go.
+  alpha strip, and a text field for the colour as CSS writes it. Dragging raises `on_change`
+  with each colour, as ImGui's picker does, so the program shows it live and keeps it when it
+  is let go.
+- **The colour's text is CSS Color 4's** — `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb(…)`, and
+  `oklab(L a b [/ alpha])` and `oklch(L C H [/ alpha])`, the lightness as `N%` or 0–1, the hue
+  in degrees (`deg` allowed) — read by one parser in `ui.draw` (`parse_color`), which lui's
+  style sheets use too (`color: oklch(70% 0.12 250)`). Oklab is converted to sRGB as CSS does
+  (Björn Ottosson's matrices, then the sRGB transfer function); a colour outside sRGB's gamut
+  is brought in by CSS's gamut mapping, its chroma lowered in OKLCH at the same lightness and
+  hue until it is in, rather than clipped channel by channel, which shifts the hue. The field
+  shows a colour as it was typed while it is edited, and as `#rrggbb` (`#rrggbbaa` when
+  translucent) once it is set; `Color` stays 8-bit sRGB, so a colour read from `oklch(…)` is
+  stored as the nearest sRGB one.
+- **An OKLCH mode for the picker**, beside the saturation-and-value square: lightness, chroma
+  and hue sliders, perceptually even where HSV's are not — a hue strip in OKLCH keeps its
+  lightness — the out-of-gamut part of each strip drawn faded. Proposed as a toggle on the
+  picker, HSV first; the open question below says why it is not the default.
 - **Open is the program's** (§1), so a program can keep one picker open while it shows the
   colour elsewhere; most will keep "which swatch is open" in their state as one key.
 - The picker holds its hue while the colour is grey (saturation or value 0), where the colour
@@ -229,7 +243,8 @@ Termina moves at the end.
 4. **The tab bar**: order by `on_move`, keys, closing, shrinking and scrolling. **Built
    10/23**; its lui element waits for step 8.
 5. **The window**: the commands, `OnWindowState`, `DrawnTitleBar` with its hit-test shim and
-   `window_buttons` (Linux; a Mac keeps the system's).
+   `window_buttons` (Linux; a Mac keeps the system's). **Built 10/23**; SDL's calling the shim
+   for a real borderless window is untested here (the dummy driver refuses a hit test).
 6. **`ChooseFile`** and its shim; a script's `choose:`.
 7. **Colour**: `swatch` and the picker.
 8. **lui's elements** for all of it, and `Fragment`.
@@ -255,3 +270,8 @@ Termina moves at the end.
    the Mac's Window menu is macOS's and lists the window, not its tabs.
 5. **Colour as `ui.draw.Color` or a packed integer?** Proposed: `Color` (what the framework
    draws with); Termina converts its ABGR at the edge, as it already does to paint.
+6. **The picker's first mode: HSV's square or OKLCH's sliders?** OKLCH is the better space to
+   choose in — even steps of lightness and hue look even — but every other picker a user knows
+   is HSV's square, and OKLCH's chroma has no fixed top (it depends on the lightness and hue),
+   so its slider's end moves under the thumb. Proposed: HSV first, OKLCH a toggle away, the
+   text field taking either syntax whichever is shown.

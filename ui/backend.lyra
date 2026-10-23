@@ -84,7 +84,30 @@ pub trait Platform {
   /// items greyed and checked as these say. A chosen item comes back as [MenuChosen] with its
   /// tag. Whether there is such a bar: a platform without one ignores them.
   set_menus: (mut Self, []NativeMenu) -> bool
+  /// The window minimized, maximized or fullscreen, as it is now.
+  window_state: (Self) -> WindowState
+  /// Ask the system to minimize the window, maximize it or put it back — which it may do
+  /// later, or not at all; [WindowStateChanged] says when it has.
+  change_window: (mut Self, WindowChange) -> void
+  /// Take the system's title bar and frame away from the window (`false`), or give them back:
+  /// for a program drawing its own. A platform whose title bar stays the system's (a Mac's,
+  /// for now) ignores it.
+  set_decorated: (mut Self, bool) -> void
+  /// Where a window without the system's frame is moved from — the program's title bar —
+  /// and, inside that, what keeps a press (its controls), in logical units; and the margin
+  /// round its edges it is resized from. Ignored where the window keeps the system's frame.
+  set_window_areas: (mut Self, []Rect, []Rect, f32) -> void
 }
+
+/// The window as the system has it: minimized, maximized, fullscreen.
+pub struct WindowState {
+  minimized: bool = false,
+  maximized: bool = false,
+  fullscreen: bool = false,
+}
+
+/// What a program may ask of the window: to minimize it, maximize it, or restore it from either.
+pub data WindowChange = ToMinimized | ToMaximized | ToRestored
 
 /// A menu as a platform's own menu bar takes it: its title and entries, each item by a tag
 /// standing for its event — `ui.app` keeps the events, since a platform is not generic in
@@ -246,6 +269,8 @@ pub data InputEvent =
   | FieldEdited(string, string, i64)
   /// The item of the system's own menu bar tagged this was chosen ([Platform.set_menus]).
   | MenuChosen(i32)
+  /// The window was minimized, maximized, made fullscreen or put back, to this.
+  | WindowStateChanged(WindowState)
 
 /// A mouse button, or a touch (which is [Primary]).
 pub data PointerButton = Primary | Secondary | Middle | OtherButton(u8)

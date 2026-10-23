@@ -37,7 +37,8 @@ func TestMain(m *testing.M) {
 }
 
 // findAccessKit puts the shim archives every program over `ui.sdl3` and `ui.gpu` links —
-// liblyra-accesskit.a, liblyra-gpu.a and liblyra-wake.a — on `LIBRARY_PATH`: build.sh's in
+// liblyra-accesskit.a, liblyra-gpu.a, liblyra-wake.a, liblyra-menubar.a (`ui.sdl3` installs
+// `App.menus` through it) and liblyra-hittest.a — on `LIBRARY_PATH`: build.sh's in
 // build/lib when it has run, else each one's stub compiled into `tmp` (CI tests before it
 // builds, and a test needs neither AccessKit nor a GPU) — the wake's own source, which needs
 // nothing but a C compiler. A machine with no C compiler gets neither, and those
@@ -51,6 +52,8 @@ func findAccessKit(tmp string) {
 		{"liblyra-accesskit.a", filepath.Join(root, "bindings", "accesskit", "accesskit_stub.c")},
 		{"liblyra-gpu.a", filepath.Join(root, "bindings", "gpu", "gpu_stub.c")},
 		{"liblyra-wake.a", filepath.Join(root, "bindings", "wake", "wake.c")},
+		{"liblyra-menubar.a", filepath.Join(root, "bindings", "menubar", "menubar_stub.c")},
+		{"liblyra-hittest.a", filepath.Join(root, "bindings", "hittest", "hittest.c")},
 	} {
 		if _, err := os.Stat(filepath.Join(built, shim.archive)); err == nil {
 			continue

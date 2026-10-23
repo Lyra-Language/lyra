@@ -18,6 +18,11 @@ pub type Window = ^u8
 /// `SDL_WindowFlags` for [create_window], combined with `|`. `0` is an ordinary window.
 pub const WINDOW_FULLSCREEN: u64 = 0x0000000000000001
 pub const WINDOW_HIDDEN: u64 = 0x0000000000000008
+/// No title bar or frame of the system's: a program drawing its own ([set_window_bordered]).
+pub const WINDOW_BORDERLESS: u64 = 0x0000000000000010
+/// What [window_flags] says of a window minimized, or maximized.
+pub const WINDOW_MINIMIZED: u64 = 0x0000000000000040
+pub const WINDOW_MAXIMIZED: u64 = 0x0000000000000080
 /// Let the user resize the window. With a logical presentation the renderer rescales
 /// on its own, so a program that set one has nothing to do when this happens.
 pub const WINDOW_RESIZABLE: u64 = 0x0000000000000020
@@ -60,6 +65,21 @@ unsafe extern sdl_set_window_resizable: (window: Window, resizable: bool) -> boo
 
 @symbol("SDL_SetWindowTitle")
 unsafe extern sdl_set_window_title: (window: Window, title: ^u8) -> bool
+
+@symbol("SDL_GetWindowFlags")
+unsafe extern sdl_get_window_flags: (window: Window) -> u64
+
+@symbol("SDL_MinimizeWindow")
+unsafe extern sdl_minimize_window: (window: Window) -> bool
+
+@symbol("SDL_MaximizeWindow")
+unsafe extern sdl_maximize_window: (window: Window) -> bool
+
+@symbol("SDL_RestoreWindow")
+unsafe extern sdl_restore_window: (window: Window) -> bool
+
+@symbol("SDL_SetWindowBordered")
+unsafe extern sdl_set_window_bordered: (window: Window, bordered: bool) -> bool
 
 /// Open a window, or `None` if SDL could not — [last_error] says why.
 ///
@@ -110,6 +130,24 @@ pub let set_window_resizable = (window: Window, resizable: bool) -> bool =>
 /// The window's title bar.
 pub let set_window_title = (window: Window, title: string) -> bool =>
   title.with_cstring((t) => unsafe { sdl_set_window_title(window, t) })
+
+/// The window's `WINDOW_*` flags as they are now: minimized, maximized, fullscreen, borderless…
+pub let window_flags = (window: Window) -> u64 => unsafe { sdl_get_window_flags(window) }
+
+/// Minimize the window, maximize it, or put it back as it was before either — asked of the
+/// system, which may do it later or not at all (a tiling window manager); [window_flags] says.
+pub let minimize_window = (window: Window) -> bool =>
+  unsafe { sdl_minimize_window(window) }
+
+pub let maximize_window = (window: Window) -> bool =>
+  unsafe { sdl_maximize_window(window) }
+
+pub let restore_window = (window: Window) -> bool => unsafe { sdl_restore_window(window) }
+
+/// Give the window the system's title bar and frame, or take them away — for a program drawing
+/// its own, which then says which of it moves the window (`bindings.hittest`).
+pub let set_window_bordered = (window: Window, bordered: bool) -> bool =>
+  unsafe { sdl_set_window_bordered(window, bordered) }
 
 @symbol("SDL_GetWindowSize")
 unsafe extern sdl_get_window_size: (window: Window, w: ^mut i32, h: ^mut i32) -> bool

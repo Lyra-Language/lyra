@@ -1,0 +1,175 @@
+// A title bar the program draws (`ui.app`'s `DrawnTitleBar`), as GNOME's header bars are: the
+// window without the system's frame, moved from the bar (`Node.window_drag`) — but not from its
+// buttons — and resized from its edges; the window's own buttons at the bar's right end
+// (`window_buttons`: minimize, maximize or restore, close), and a button of the program's asking
+// the same as a command (`WindowMaximize`, `WindowRestore`). What the window went through is
+// heard (`OnWindowState`). A Mac keeps the system's title bar and buttons, for now.
+//
+//     lyrac run examples/ui/titlebar.lyra
+//     lyrac run examples/ui/titlebar.lyra -- --script "click:520,16 restore" [--png FILE]
+//
+// **The second form** plays a script (`ui.script`) headless, prints what the window went
+// through and with `--png FILE` writes the last frame.
+
+import ui.sdl3
+import ui.sdl3.{ SdlRenderer, capture }
+import ui.gpu
+import ui.app.{
+  App,
+  DrawnTitleBar,
+  run,
+  running,
+  step_running,
+  Command,
+  Subscription,
+  OnWindowState,
+  WindowMaximize,
+  WindowRestore,
+}
+import ui.script.{ timed_platform, parse_steps }
+import ui.backend.{ WindowState }
+import ui.draw.{ Point, Size, Color }
+import ui.text.{ Fonts, fonts_new, glyph_atlas }
+import ui.style.{ Style, insets, insets_xy, OverflowVisible }
+import ui.layout.{
+  Node,
+  Laid,
+  row,
+  column,
+  text,
+  button,
+  expanded,
+  padding,
+  window_buttons,
+  paint,
+  MainStart,
+  CrossCenter,
+}
+import std.collections.{ parse_args }
+import std.png.{ write_png }
+import std.io.{ write_bytes }
+
+const WIDTH: f32 = 560.0
+const HEIGHT: f32 = 320.0
+const BACKGROUND: Color = Color { r: 0xF6, g: 0xF5, b: 0xF4 }
+
+let main = () -> u8 => {
+  let args = parse_args(["--script", "--png"])
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let app = App {
+    view: view,
+    update: update,
+    subscriptions: (_: State) -> []Subscription<Event> => [OnWindowState(Changed)],
+    background: BACKGROUND,
+    window_overflow: OverflowVisible,
+    title_bar: DrawnTitleBar,
+  }
+  if let Some(script) = args.value("--script") {
+    let Ok(steps) = parse_steps(script) else {
+      println("the script does not parse")
+      return 1
+    }
+    let window = match sdl3.open("Title bar", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    let played = running(
+      app,
+      State {},
+      timed_platform(steps, Size { w: WIDTH, h: HEIGHT }),
+      window.renderer,
+      fonts
+    )
+    while step_running(played) {}
+    for line in played.host.state.heard { println(line) }
+    println("drag areas ${played.platform.drag_areas.len()}, controls in them ${played.platform.keep_areas.len()}, the system's frame ${played.platform.decorated}")
+    var status: u8 = 0
+    if let Some(path) = args.value("--png") {
+      if !save(played.renderer, played.fonts, played.host.shown[0], path) { status = 1 }
+    }
+    sdl3.close(window.platform, played.renderer)
+    fonts.close()
+    return status
+  }
+  let window = match gpu.open("Title bar", WIDTH, HEIGHT) {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      fonts.close()
+      return 2
+    },
+  }
+  var system = window.platform
+  var renderer = window.renderer
+  let _ = run(app, State {}, system, renderer, fonts)
+  gpu.close(system, renderer)
+  fonts.close()
+  0
+}
+
+/// The window as last heard of, and what was heard, newest last.
+struct State {
+  window: WindowState = WindowState {},
+  heard: []string = [],
+}
+
+data Event = Changed(WindowState) | Toggle
+
+let update = pure (s: State, e: Event) -> (State, []Command<Event>) => match e {
+  Changed(w) => (State { s | window: w, heard: [...s.heard, described(w)] }, []),
+  Toggle => (s, [if s.window.maximized { WindowRestore } else { WindowMaximize }]),
+}
+
+let described = pure (w: WindowState) -> string =>
+  if w.minimized { "minimized" } else if w.maximized { "maximized" } else if w.fullscreen { "fullscreen" } else { "restored" }
+
+/// The bar — its title taking what is left, a button of the program's, the window's buttons —
+/// over the page.
+let view = pure (s: State) -> Node<Event> => column([
+  row([
+    padding(insets_xy(12.0, 0.0), text("A window of its own")),
+    expanded(row([])),
+    button(if s.window.maximized { "Restore" } else { "Maximize" }, Toggle),
+    window_buttons(),
+  ]).aligned(MainStart, CrossCenter)
+    .with_style(Style {
+      background: Some(Color { r: 0xE4, g: 0xE2, b: 0xDF }),
+      gap: Some(8.0)
+    })
+    .window_drag(),
+  padding(insets(20.0), text("The window is ${described(s.window)}.")),
+])
+
+/// `laid` — the window as the host last laid it out — drawn without showing it, and written to
+/// `path` as a PNG.
+let save = (
+  renderer: SdlRenderer,
+  fonts: Fonts,
+  laid: Laid<Event>,
+  path: string
+) -> bool => {
+  var r = renderer
+  var f = fonts
+  var atlas = glyph_atlas()
+  let ops = paint(laid, Point {}, 1.0, f, atlas, r)
+  let Some(frame) = capture(r, BACKGROUND, ops) else { return false }
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(u8((p >> 24) & 0xFF))
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(png) => write_bytes(path, png),
+    Err(_) => false,
+  }
+}
