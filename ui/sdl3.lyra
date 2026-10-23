@@ -127,8 +127,16 @@ import bindings.sdl3.{
   KEY_F24,
 }
 import bindings.wake
+import bindings.menubar
 import ui.backend.{
   Platform,
+  NativeMenu,
+  NativeEntry,
+  NativeItem,
+  NativeSubmenu,
+  NativeSeparator,
+  MenuChosen,
+  Chord,
   Renderer,
   InputEvent,
   Appearance,
@@ -338,6 +346,9 @@ pub struct SdlPlatform {
   /// it — macOS), and the element each node of the tree it was last told stands for.
   listening: bool = false,
   access_keys: HashMap<u64, string>,
+  /// The shape of the menus last installed in the Mac's own bar ([install_menus]), `""` for
+  /// none.
+  menus_installed: string = "",
 }
 
 impl Platform for SdlPlatform {
@@ -351,6 +362,9 @@ impl Platform for SdlPlatform {
       if let Some(input) = translate(event, held, per_point) { events.push(input) }
       next = poll_event_with_modifiers()
     }
+    // The items of the Mac's own bar chosen — by click or key equivalent, during SDL's pump —
+    // whose choice woke the wait above (`bindings.menubar` pushes an event for it).
+    while let Some(tag) = menubar.poll_menu() { events.push(MenuChosen(tag)) }
     // What assistive technology asked for; its request woke the wait above.
     while let Some(raw) = accesskit.next_request() {
       let Some(element) = self.access_keys.get(raw.target) else { continue }
@@ -425,6 +439,10 @@ impl Platform for SdlPlatform {
   }
   set_title = (self, title) => {
     let _ = set_window_title(self.window, title)
+  }
+  set_menus = (self, menus) => {
+    self.menus_installed = install_menus(menus, self.menus_installed)
+    self.menus_installed.len() > 0
   }
   on_live_resize = (self, hook) => {
     live_hook = Some(hook)
@@ -621,6 +639,99 @@ let modifiers_of = (held: u16) -> Modifiers => {
     command: command,
     primary: if apple() { command } else { control },
   }
+}
+
+/// `menus` in the Mac's own menu bar (`bindings.menubar`): installed — the first as the
+/// application menu, named for its title, and macOS's Window menu after the last — where
+/// `installed`, the shape last installed, is not theirs ([menu_shape]); then every item greyed
+/// and checked as they say. The shape now installed, or `""` where there is no such bar.
+pub let install_menus = (menus: []NativeMenu, installed: string) -> string => {
+  if platform() != "macOS" || menus.len() == 0 { return "" }
+  let shape = menu_shape(menus)
+  if shape != installed {
+    for i, m in menus {
+      if i == 0 { menubar.app_menu() } else { menubar.menu(m.label) }
+      add_entries(m.entries)
+    }
+    menubar.window_menu()
+    if !menubar.install(menus[0].label) { return "" }
+  }
+  for m in menus { sync_entries(m.entries) }
+  shape
+}
+
+/// What installing menus depends on — their titles, entries and shortcuts, not their greying
+/// or checks — as text to compare.
+pub let menu_shape = pure (menus: []NativeMenu) -> string =>
+  [m in menus | "${m.label}{${entries_shape(m.entries)}}"].join("")
+
+let entries_shape = pure (entries: []NativeEntry) -> string => [
+  entry in entries |
+    match entry {
+      NativeItem(it) => "${it.label}#${it.tag}${match it.shortcut { Some(c) => "@${key_equivalent(c)}${modifier_bits(c)}", None => "" }};",
+      NativeSubmenu(label, inner) => "${label}>${entries_shape(inner)}<",
+      NativeSeparator => "-;",
+    }
+].join("")
+
+let add_entries = (entries: []NativeEntry) -> void => {
+  for entry in entries {
+    match entry {
+      NativeItem(it) => match it.shortcut {
+        Some(c) => menubar.item(it.label, key_equivalent(c), modifier_bits(c), it.tag),
+        None => menubar.item(it.label, "", 0, it.tag),
+      },
+      NativeSubmenu(label, inner) => {
+        menubar.submenu(label)
+        add_entries(inner)
+        menubar.end_submenu()
+      },
+      NativeSeparator => menubar.separator(),
+    }
+  }
+}
+
+let sync_entries = (entries: []NativeEntry) -> void => {
+  for entry in entries {
+    match entry {
+      NativeItem(it) => {
+        menubar.set_enabled(it.tag, it.enabled)
+        menubar.set_checked(it.tag, it.checked)
+      },
+      NativeSubmenu(_, inner) => sync_entries(inner),
+      NativeSeparator => {},
+    }
+  }
+}
+
+/// A shortcut's key as AppKit's key equivalent: a letter in lower case (Shift is a modifier
+/// bit), the editing keys' control characters, and the arrows, Home, End, the pages, Insert
+/// and F1–F24 as AppKit's private-use function-key characters. `""` for a key it has none for.
+let key_equivalent = pure (c: Chord) -> string => match c.key {
+  Character(r) => "${r.to_ascii_lower()}",
+  Enter => "\r",
+  Tab => "\t",
+  Escape => "\e",
+  Backspace => "\x08",
+  Delete => "\x7f",
+  ArrowUp => "${rune(0xF700)}",
+  ArrowDown => "${rune(0xF701)}",
+  ArrowLeft => "${rune(0xF702)}",
+  ArrowRight => "${rune(0xF703)}",
+  FunctionKey(n) => if n >= 1 && n <= 24 { "${rune(0xF704 + n - 1)}" } else { "" },
+  Insert => "${rune(0xF727)}",
+  Home => "${rune(0xF729)}",
+  End => "${rune(0xF72B)}",
+  PageUp => "${rune(0xF72C)}",
+  PageDown => "${rune(0xF72D)}",
+  _ => "",
+}
+
+/// A shortcut's modifiers as `bindings.menubar`'s bits: the primary modifier is Command here.
+let modifier_bits = pure (c: Chord) -> u32 => {
+  let m = c.mods
+  (if m.primary || m.command { menubar.COMMAND } else { 0 }) | (if m.shift { menubar.SHIFT } else { 0 }) |
+    (if m.alt { menubar.OPTION } else { 0 }) | (if m.control { menubar.CONTROL } else { 0 })
 }
 
 let apple = () -> bool => {

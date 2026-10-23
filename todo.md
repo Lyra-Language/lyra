@@ -702,7 +702,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] What a terminal's window needs of `ui`** — popups, menus (drawn, and native on a
   Mac), a tab bar, the window's controls and a drawn title bar, a file dialog, colour; designed
   in `ui/WINDOW.md` (10/23), the rest of Termina's move off ImGui. Steps 1 (popups, the
-  select's list on them) and 2 (menus drawn) built 10/23; next menus native on a Mac (step 3).
+  select's list on them), 2 (menus drawn) and 3 (menus native on a Mac) built 10/23; next the
+  tab bar (step 4).
 - **[OPEN] `ui` focuses nothing at start, and `App` has no first command.** termina-ui asks
   `FocusKeyed` from its painter's first `on_size`; an `App.start: []Command<e>`, or an
   `autofocus` on an element, would say it directly.

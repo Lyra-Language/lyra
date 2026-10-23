@@ -8,7 +8,10 @@ module bindings.menubar
 //! items chosen since. Nothing calls back into Lyra — a chosen item is queued by the C
 //! half (`menubar.m`), because AppKit calls a method on an object and Lyra cannot hand C a
 //! function. SDL's event pump runs AppKit's, so a choice made by click or key equivalent is
-//! queued during the program's own `poll_event`.
+//! queued during the program's own `poll_event` — and **wakes a program waiting in SDL's
+//! event wait**: the C half pushes an SDL event of its own as it queues the tag, SDL looked up
+//! when it is there rather than linked, so a click is heard at once by a loop that sleeps until
+//! something happens (`ui`'s). [choose] queues a tag as a click would, for tests.
 //!
 //! ```
 //! menu("File")
@@ -121,6 +124,11 @@ pub let describe = () -> string => {
   if p.is_null() { return "" }
   CBuffer { ptr: p, len: unsafe { cstring_len(p) } }.decode_utf8()
 }
+
+/// The item tagged `tag` chosen, as a click on it would choose it — [poll_menu] answers it,
+/// and a program waiting in SDL's event wait is woken — for a program's tests. Nothing off
+/// macOS.
+pub let choose = (tag: i32) -> void => unsafe { lyra_menubar_choose(tag) }
 
 /// The tag of the oldest item chosen and not yet read, or `None`.
 pub let poll_menu = () -> Maybe<i32> => {
@@ -256,6 +264,9 @@ unsafe extern lyra_menubar_describe: () -> ^u8
 
 @symbol("lyra_menubar_next")
 unsafe extern lyra_menubar_next: () -> i32
+
+@symbol("lyra_menubar_choose")
+unsafe extern lyra_menubar_choose: (tag: i32) -> void
 
 @symbol("lyra_menubar_set_checked")
 unsafe extern lyra_menubar_set_checked: (tag: i32, checked: bool) -> void

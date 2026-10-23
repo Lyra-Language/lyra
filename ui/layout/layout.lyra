@@ -81,7 +81,7 @@ import ui.draw.{
   LayerEffect,
   radius,
 }
-import ui.backend.{ Renderer, Key, Modifiers, PointerButton }
+import ui.backend.{ Renderer, Key, Modifiers, PointerButton, Chord }
 import ui.text.{ Fonts, FontSpec, Cell, TextBlock, GlyphAtlas, caret_x }
 import ui.style.{
   Style,

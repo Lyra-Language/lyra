@@ -79,6 +79,42 @@ pub trait Platform {
   /// frame. `ui.app`'s `follow_resizes` hands it a redraw; a platform whose loop is never held
   /// may ignore it.
   on_live_resize: (mut Self, () -> void) -> void
+  /// The program's menus in the system's own menu bar — the Mac's — or nothing: installed
+  /// (again, when their shape — labels, entries, shortcuts — has changed since), else their
+  /// items greyed and checked as these say. A chosen item comes back as [MenuChosen] with its
+  /// tag. Whether there is such a bar: a platform without one ignores them.
+  set_menus: (mut Self, []NativeMenu) -> bool
+}
+
+/// A menu as a platform's own menu bar takes it: its title and entries, each item by a tag
+/// standing for its event — `ui.app` keeps the events, since a platform is not generic in
+/// them. The first menu is the application menu, its title the application's name.
+pub struct NativeMenu {
+  label: string,
+  entries: []NativeEntry,
+}
+
+/// What a native menu holds: an item, a submenu (its title and entries), or a rule.
+pub data NativeEntry = NativeItem(NativeItemSpec) | NativeSubmenu(
+  string,
+  []NativeEntry
+) | NativeSeparator
+
+/// A native menu's item: its label, its tag (what [MenuChosen] answers), its shortcut, and
+/// whether it can be chosen and is checked.
+pub struct NativeItemSpec {
+  label: string,
+  tag: i32,
+  shortcut: Maybe<Chord> = None,
+  enabled: bool = true,
+  checked: bool = false,
+}
+
+/// A key and the modifiers held with it — `primary` the shortcut modifier, Command on a Mac
+/// and Control elsewhere, as [Modifiers] has it: a menu item's shortcut.
+pub struct Chord {
+  key: Key,
+  mods: Modifiers = Modifiers {},
 }
 
 /// The interface for assistive technology: its nodes, the root's id and the focused node's.
@@ -206,6 +242,8 @@ pub data InputEvent =
   /// A system text field ([NativeFields]) identified as the first string was edited: its value
   /// is now the second, with the caret before this rune. Never sent by a desktop platform.
   | FieldEdited(string, string, i64)
+  /// The item of the system's own menu bar tagged this was chosen ([Platform.set_menus]).
+  | MenuChosen(i32)
 
 /// A mouse button, or a touch (which is [Primary]).
 pub data PointerButton = Primary | Secondary | Middle | OtherButton(u8)

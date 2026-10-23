@@ -1,7 +1,9 @@
 // Menus: `ui.layout`'s `menu_bar` and `menu_button` — menus as data (`Menu`, `MenuEntry`,
 // `MenuItem`), drawn as a bar of titles and as a ☰ button, with separators, an item greyed,
 // one checked, a submenu beside its item, and shortcuts spelled as the platform spells them and
-// taken by the app without being written twice. A press on a title opens its menu; while one is
+// taken by the app without being written twice. **On a Mac the same menus are in the system's
+// own menu bar** (`App.menus`), after an application menu of ☰'s entries, and the window
+// draws no bar of its own. A press on a title opens its menu; while one is
 // open the pointer moves it from title to title; the arrows walk the items and across the bar,
 // Enter chooses, Escape closes.
 //
@@ -14,9 +16,10 @@
 import ui.sdl3
 import ui.sdl3.{ SdlRenderer, capture }
 import ui.gpu
-import ui.app.{ App, run, running, step_running, Command, Subscription }
+import ui.app.{ App, Menus, run, running, step_running, Command, Subscription }
+import bindings.sdl3.{ platform }
 import ui.script.{ timed_platform, parse_steps }
-import ui.backend.{ Modifiers, Character }
+import ui.backend.{ Modifiers, Character, Chord }
 import ui.draw.{ Point, Size, Color }
 import ui.text.{ Fonts, fonts_new, glyph_atlas }
 import ui.style.{ Style, insets, OverflowVisible }
@@ -29,7 +32,6 @@ import ui.layout.{
   MenuItemEntry,
   Submenu,
   MenuSeparator,
-  Chord,
   column,
   row,
   text,
@@ -52,6 +54,7 @@ const BACKGROUND: Color = Color { r: 0xF4, g: 0xF4, b: 0xF6 }
 
 let main = () -> u8 => {
   let args = parse_args(["--script", "--png"])
+  let mac = platform() == "macOS"
   var fonts = fonts_new()
   if !fonts.add_system_font() {
     println("no font: none of ui.text's SYSTEM_FONTS is here")
@@ -64,6 +67,8 @@ let main = () -> u8 => {
     subscriptions: (_: State) -> []Subscription<Event> => [],
     background: BACKGROUND,
     window_overflow: OverflowVisible,
+    menus: [Menus { of: (state: State) -> []Menu<Event> =>
+      [Menu { label: "Menus", entries: more_entries() }, ...menus(state)] }],
   }
   if let Some(script) = args.value("--script") {
     let Ok(steps) = parse_steps(script) else {
@@ -103,16 +108,18 @@ let main = () -> u8 => {
       return 2
     },
   }
-  var platform = window.platform
+  var system = window.platform
   var renderer = window.renderer
-  let _ = run(app, State {}, platform, renderer, fonts)
-  gpu.close(platform, renderer)
+  let _ = run(app, State { draw_bar: !mac }, system, renderer, fonts)
+  gpu.close(system, renderer)
   fonts.close()
   0
 }
 
-/// What was chosen, newest last; whether the status bar is shown; the zoom, in steps.
+/// What was chosen, newest last; whether the status bar is shown; the zoom, in steps; and
+/// whether the window draws the menu bar — not where the system's holds the menus.
 struct State {
+  draw_bar: bool = true,
   chosen: []string = [],
   status_bar: bool = true,
   zoom: i64 = 0,
@@ -129,7 +136,10 @@ let update = pure (state: State, event: Event) -> (State, []Command<Event>) =>
 
 /// The window: the bar and ☰ along the top, what was chosen below.
 let view = pure (state: State) -> Node<Event> => column([
-  row([expanded(menu_bar(menus(state))), menu_button(burger(), more_entries())]).aligned(MainStart, CrossCenter),
+  row([
+    expanded(if state.draw_bar { menu_bar(menus(state)) } else { sized(None, None) }),
+    menu_button(burger(), more_entries()),
+  ]).aligned(MainStart, CrossCenter),
   padding(insets(16.0), column([
     text("chosen: ${if state.chosen.len() == 0 { "nothing yet" } else { state.chosen[state.chosen.len() - 1] }}"),
     text("zoom ${state.zoom}"),

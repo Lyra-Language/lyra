@@ -20,6 +20,8 @@ module ui.script
 //! - `compose:'text'` — an input method's composition in progress, its caret at its end
 //!   (`compose:''` ends it).
 //! - `focus`, `blur` — the window gained the keyboard's focus, or lost it.
+//! - `menu:N` — the item tagged `N` of the platform's own menu bar chosen ([MenuChosen]), as
+//!   on a Mac; a script platform has such a bar where its `native_menus` says.
 //! - a pointer input with modifiers, `Shift+click:X,Y` — held for its inputs alone
 //!   ([Platform.held]); only [parse_steps] reads it.
 //! - `move:X,Y`, `down:X,Y`, `up:X,Y` and `click:X,Y` (a move, a press and a release) — the
@@ -76,6 +78,8 @@ import ui.backend.{
   DarkMode,
   AppearanceChanged,
   AccessTree,
+  NativeMenu,
+  MenuChosen,
 }
 import ui.draw.{ Point, Size, Rect }
 
@@ -92,8 +96,12 @@ pub struct ScriptPlatform {
   typing: Maybe<Rect> = None,
   shape: Cursor = Arrow,
   look: Appearance = LightMode,
-  /// Whether it plays one of Apple's systems, as far as shortcuts are spelled.
+  /// Whether it plays one of Apple's systems, as far as shortcuts are spelled; and whether
+  /// it has a menu bar of its own, as a Mac does, and the menus it was last given for it
+  /// ([Platform.set_menus]).
   apple_keys: bool = false,
+  native_menus: bool = false,
+  menus: []NativeMenu = [],
   opened: []string = [],
   access: AccessTree = AccessTree {},
   /// The least and greatest size the window may be (nothing for no limit), which a step's
@@ -196,6 +204,10 @@ impl Platform for ScriptPlatform {
     self.size = size.held(self.least, self.most)
   }
   set_title = (self, title) => { self.title = title }
+  set_menus = (self, menus) => {
+    self.menus = menus
+    self.native_menus
+  }
 }
 
 /// The inputs `script` writes down, or what is wrong with it — a script of inputs alone,
@@ -284,6 +296,11 @@ pub let parse_steps = pure (script: string) -> Result<[]Step, string> => {
     }
     if token == "dark" || token == "light" {
       inputs.push(Played(AppearanceChanged(if token == "dark" { DarkMode } else { LightMode })))
+      continue
+    }
+    if let Some(tag) = token.strip_prefix("menu:") {
+      let Some(n) = tag.parse_i64() else { return Err("not a menu item's tag: ${token}") }
+      inputs.push(Played(MenuChosen(i32(n))))
       continue
     }
     let parts = token.split("+")

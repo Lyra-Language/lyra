@@ -9,6 +9,26 @@ Newest first.
 
 ## Dated log
 
+### 10/23/26 — `ui`: menus in the Mac's own bar
+
+- **`App.menus`** (`ui/WINDOW.md` step 3): the host builds the state's menus each pass and
+  hands the platform `NativeMenu`s (`Platform.set_menus`) — every item a tag in order, the
+  events kept by the host, since a platform is not generic in them — and a chosen item comes
+  back as `MenuChosen(tag)`. `ui.sdl3`'s `install_menus` installs them through
+  `bindings.menubar`, the first as the application menu named for its title, and **installs
+  again only when their shape changes** (`menu_shape`), else greys and checks in place: a
+  reinstall rebuilds every `NSMenu`, and the host syncs every pass.
+- **A choice must wake the loop.** `bindings.menubar` queued a chosen tag and left it to the
+  program's next pass; ImGui's hosts draw every frame, but `ui` sleeps in SDL's wait, which
+  returns only for an event in SDL's own queue. `menubar.m` now pushes one as it queues —
+  SDL found with `dlsym`, not linked, so a program using the binding without SDL still links.
+  `choose(tag)` queues as a click does, for the test that the wait wakes.
+- **A key the bar holds is the bar's**: AppKit chooses the item through its key equivalent
+  and SDL hears the key too, so the host gives it to nothing (`native_chords`). Without a native
+  bar, `App.menus`' shortcuts are taken as `App.shortcuts`' are.
+- `Chord` moved to `ui.backend`, beside `Key` and `Modifiers`: the platform's description of a
+  menu needs it, and `ui.backend` cannot import `ui.layout`.
+
 ### 10/23/26 — `ui`: menus drawn
 
 - **Menus are data** (`Menu`, `MenuEntry`, `MenuItem`, `Chord`; `ui/layout/menu.lyra`), drawn by

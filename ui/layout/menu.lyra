@@ -17,7 +17,7 @@ module ui.layout
 
 import ui.backend.{
   Key,
-  Modifiers,
+  Chord,
   Enter,
   Escape,
   Tab,
@@ -58,13 +58,6 @@ pub struct MenuItem<e> {
   shortcut: Maybe<Chord> = None,
   enabled: bool = true,
   checked: bool = false,
-}
-
-/// A key and the modifiers held with it — `primary` the shortcut modifier, Command on a Mac
-/// and Control elsewhere, as [Modifiers] has it.
-pub struct Chord {
-  key: Key,
-  mods: Modifiers = Modifiers {},
 }
 
 /// What an opener opens: its entries, the side they open on, and whether it is a title in a
@@ -222,6 +215,13 @@ let key_text = pure (key: Key, apple: bool) -> string => match key {
   PageDown => if apple { "⇟" } else { "PgDn" },
   Insert => "Insert",
   Unnamed(code) => "#${code}",
+}
+
+/// Every enabled item's shortcut in `entries` — submenus' included — and the event it chooses.
+pub let entries_shortcuts<e> = pure (entries: []MenuEntry<e>) -> [](Chord, e) => {
+  var out: [](Chord, e) = []
+  entry_shortcuts(entries, out)
+  out
 }
 
 /// Every enabled item's shortcut in the menus `laid` draws, open or not — submenus' included —

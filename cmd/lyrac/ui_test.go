@@ -3892,11 +3892,11 @@ func TestRun_UiMenus(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new, find }
 import ui.script.{ script_platform, ScriptPlatform }
-import ui.backend.{ InputEvent, PointerMoved, PointerDown, PointerUp, Primary, KeyPressed, Key, Modifiers, Enter, Escape, Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Character, FunctionKey }
+import ui.backend.{ InputEvent, PointerMoved, PointerDown, PointerUp, Primary, KeyPressed, Key, Modifiers, Enter, Escape, Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Character, FunctionKey, Chord }
 import ui.draw.{ Size, Point }
 import ui.text.{ Fonts, fonts_new }
 import ui.style.{ light_theme, Sheet }
-import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, row, button, text, popup, themed, tight, Pressable, Opens, Menu, MenuEntry, MenuItem, MenuItemEntry, Submenu, MenuSeparator, Chord, menu_bar, menu_button, menu_shortcuts, chord_text }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, row, button, text, popup, themed, tight, Pressable, Opens, Menu, MenuEntry, MenuItem, MenuItemEntry, Submenu, MenuSeparator, menu_bar, menu_button, menu_shortcuts, chord_text }
 
 data Ev = Chose(string) | Count(i64)
 
@@ -4147,6 +4147,113 @@ preferences
 	}
 	if _, err := os.Stat(shot); err != nil {
 		t.Errorf("no last frame: %v", err)
+	}
+}
+
+// App.menus (WINDOW.md step 3) through the host: each pass the menus the state says are handed
+// to the platform, every item a tag in order — greyed and checked as the state has them — and a
+// chosen tag raises that item's event. Where the platform has a bar of its own (a Mac), a key the
+// bar holds is left to it, AppKit choosing the item; where it has none, the same key is taken as
+// a shortcut, as App.shortcuts' are. A program with no menus hands the platform none.
+func TestRun_UiAppMenus(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, Menus, Command, Subscription, host_of }
+import ui.script.{ timed_platform, ScriptPlatform, Played, Step }
+import ui.backend.{ Renderer, TextureId, KeyPressed, MenuChosen, Modifiers, Character, Chord, NativeMenu, NativeEntry, NativeItem, NativeSubmenu, NativeSeparator }
+import ui.draw.{ Size, Color }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, Menu, MenuEntry, MenuItem, MenuItemEntry, Submenu, MenuSeparator, column, text }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => {}
+}
+
+data Ev = Added(i64) | Undone
+
+let main = () -> u8 => {
+  let steps = [
+    Played(MenuChosen(0)),
+    Played(MenuChosen(1)),
+    Played(KeyPressed(Character('n'), Modifiers { primary: true })),
+  ]
+  for native in [true, false] {
+    var platform = timed_platform(steps, Size { w: 200.0, h: 100.0 })
+    platform.native_menus = native
+    var renderer = Blank {}
+    var fonts = fonts_new()
+    var host = host_of(app(true), 0, platform)
+    while host.step(platform, renderer, fonts) {}
+    println("native ${native}: state ${host.state}")
+    for m in platform.menus { println("  ${m.label}: ${described(m.entries)}") }
+  }
+  var platform = timed_platform([], Size { w: 200.0, h: 100.0 })
+  var renderer = Blank {}
+  var fonts = fonts_new()
+  var host = host_of(app(false), 0, platform)
+  while host.step(platform, renderer, fonts) {}
+  println("no menus: ${platform.menus.len()} handed over")
+  0
+}
+
+let app = pure (with_menus: bool) -> App<i64, Ev> => App {
+  view: (n: i64) -> Node<Ev> => column([text("${n}")]),
+  update: (n: i64, e: Ev) -> (i64, []Command<Ev>) => match e {
+    Added(k) => (n + k, []),
+    Undone => (n - 100, []),
+  },
+  subscriptions: (_: i64) -> []Subscription<Ev> => [],
+  background: Color { r: 0, g: 0, b: 0 },
+  menus: if with_menus { [Menus { of: menus }] } else { [] },
+}
+
+/// Counter's New adds 1 (Primary+N) and More adds 10; Edit's Undo is greyed; the ticked item
+/// is checked while the count is odd.
+let menus = pure (n: i64) -> []Menu<Ev> => [
+  Menu {
+    label: "Counter",
+    entries: [
+      MenuItemEntry(MenuItem { label: "New", on_select: Added(1), shortcut: Some(Chord { key: Character('n'), mods: Modifiers { primary: true } }) }),
+      MenuSeparator,
+      Submenu("More", [MenuItemEntry(MenuItem { label: "Ten", on_select: Added(10) })]),
+    ],
+  },
+  Menu {
+    label: "Edit",
+    entries: [
+      MenuItemEntry(MenuItem { label: "Undo", on_select: Undone, enabled: false }),
+      MenuItemEntry(MenuItem { label: "Odd", on_select: Added(0), checked: n % 2 == 1 }),
+    ],
+  },
+]
+
+let described = pure (entries: []NativeEntry) -> string => [
+  entry in entries |
+    match entry {
+      NativeItem(it) => "${it.label}#${it.tag}${if it.shortcut.is_some() { "@" } else { "" }}${if it.enabled { "" } else { " (off)" }}${if it.checked { " [x]" } else { "" }}",
+      NativeSubmenu(label, inner) => "${label} > (${described(inner)})",
+      NativeSeparator => "---",
+    }
+].join(", ")
+`)
+	want := `native true: state 11
+  Counter: New#0@, ---, More > (Ten#1)
+  Edit: Undo#2 (off), Odd#3 [x]
+native false: state 12
+  Counter: New#0@, ---, More > (Ten#1)
+  Edit: Undo#2 (off), Odd#3
+no menus: 0 handed over
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
 }
 

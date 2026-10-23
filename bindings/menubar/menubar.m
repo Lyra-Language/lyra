@@ -21,8 +21,10 @@
 @import AppKit;
 @import UniformTypeIdentifiers;
 
+#include <dlfcn.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 // Modifier bits for `lyra_menubar_item`, as the Lyra side spells them.
 enum { MOD_COMMAND = 1, MOD_SHIFT = 2, MOD_OPTION = 4, MOD_CONTROL = 8 };
@@ -34,6 +36,29 @@ static int32_t queue[QUEUE_SIZE];
 static int queue_head = 0;
 static int queue_count = 0;
 
+// Wake a program waiting in SDL's event wait — `ui`'s loop sleeps there until something
+// happens — when something is queued: the wait returns only for an event in SDL's own queue,
+// and a choice made in AppKit's menu is none, so a click would go unheard until the next input.
+// SDL is looked up, not linked (as `bindings.wake` declares it rather than including its
+// headers): a program using this binding need not use SDL at all.
+static void wake_sdl(void) {
+  static bool looked = false;
+  static bool (*push_event)(void *) = NULL;
+  static uint32_t event_type = 0;
+  if (!looked) {
+    looked = true;
+    uint32_t (*register_events)(int) = (uint32_t (*)(int))dlsym(RTLD_DEFAULT, "SDL_RegisterEvents");
+    push_event = (bool (*)(void *))dlsym(RTLD_DEFAULT, "SDL_PushEvent");
+    if (register_events != NULL && push_event != NULL) event_type = register_events(1);
+  }
+  if (event_type == 0) return;
+  // SDL_Event is a 128-byte union whose first word is its type; the rest is zero.
+  uint32_t event[32];
+  memset(event, 0, sizeof event);
+  event[0] = event_type;
+  push_event(event);
+}
+
 // Queue a tag — once, if it is already the newest waiting: a slider dragged while its menu
 // is open sends a stream of changes the program can only read once the menu closes, and
 // what it wants then is the value, which `lyra_menubar_slider_value` reads.
@@ -42,7 +67,11 @@ static void enqueue(int32_t tag) {
   if (queue_count == QUEUE_SIZE) return;
   queue[(queue_head + queue_count) % QUEUE_SIZE] = tag;
   queue_count++;
+  wake_sdl();
 }
+
+// The item tagged `tag` chosen, as a click on it would choose it: for a program's tests.
+void lyra_menubar_choose(int32_t tag) { enqueue(tag); }
 
 @interface LyraMenubarTarget : NSObject <NSWindowDelegate>
 - (void)chosen:(NSMenuItem *)item;

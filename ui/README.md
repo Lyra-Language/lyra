@@ -22,7 +22,7 @@ A root of its own beside `std/` and `bindings/` (`build.sh` links it into `build
 | `ui.layout` | `Node<e>` (kind, tag, class, part, style, children, key, label; `e` the program's event type, `NoEvent` for none) built by `row`, `column`, `flex`, `grid`, `expanded`, `stack`, `positioned`, `padding`, `align`, `sized`, `scroll`, `text`, `image`, `themed`, `component`, `painted` (an element the program draws, `.takes_input(RawInput)` for one taking input raw: a `Painter` asked for `PaintOp`s — `PaintDraw`, `PaintText`, `PaintCells` (a row of a grid of characters), `PaintWave` (a curly underline) — for a `PaintArea`) and the controls `button`, `checkbox`, `slider`, `select`, `text_input`, a `popup` (content floating from an anchor while the program says it is open, placed within the window after the layout: `place_floats`), menus drawn — `menu_bar` and `menu_button` over menus as data (`Menu`, `MenuEntry`, `MenuItem`, `Chord`; `ui/layout/menu.lyra`) — and `.with_class`/`.with_style`/`.with_part`/`.keyed`/`.labelled`/`.aligned`; `layout`/`layout_with(node, Constraints, fonts, Interaction) -> Laid<e>` (each with its identity, role, label, focus ring and a field's caret) and `paint(laid, origin, scale, fonts, atlas, renderer) -> []DrawOp` (`fonts` `mut`: a painter's text is laid out as it is painted). Flex and grid are in `ui/layout/flex.lyra` and `grid.lyra` (one module, a directory). | no (text through `ui.text`) |
 | `ui.motion` | Transitions' values: `progress` (CSS's timing functions), `blended`/`differs` (each property that animates), `mix_color` (premultiplied), and an element's `Motion` — its target and what is `Moving` towards it — moved on by `advance`; `with_layout`/`layout_key` for the sizes a layout lays out while they move. | no |
 | `ui.interact` | `Ui`: the framework's state by identity (focus, hover, press, scroll offsets, carets, selections, undo), transitions (`motions`, shown at `now`; `animating`), `frame` (lay out and drop what left the tree), `handle(laid, input, platform) -> []e`, `place_text_input`; `hit`, `control_at`, `find`, `focus_order`; `Editing`, a field's editing operations. | no |
-| `ui.app` | `App { view, update: (s, e) -> (s, []Command<e>), subscriptions: (s) -> []Subscription<e>, background }` (`sandbox(view, update, bg)` for a plain update); `Command` (`WriteFile`, `ReadFile`, `After`, `CopyText`, `PasteText`, `OpenUrl`, `QuitApp`), `Subscription` (`EveryFrame`, `Every`, `OnResize`, `OnAppearance`); `run`, and `Host` (`host_of`, `step`) for a loop of `main`'s own — which `lyrac run --live` needs. `App.shortcuts` (`[Shortcuts { of }]`, an array of at most one) answers the `Shortcut`s matched before any element hears a key (`chord_matches`: `primary` the shortcut modifier); `Subscription.OnFocus` the window's focus; `Command.FocusKeyed(key)` the focus to a keyed element once it is laid out. `Subscription.Readable(fd, e)` is the event each pass that descriptor has data, the wait waking for it; `Command.ScrollTo(key, y)` scrolls a keyed scroller once it is laid out. | no |
+| `ui.app` | `App { view, update: (s, e) -> (s, []Command<e>), subscriptions: (s) -> []Subscription<e>, background }` (`sandbox(view, update, bg)` for a plain update); `Command` (`WriteFile`, `ReadFile`, `After`, `CopyText`, `PasteText`, `OpenUrl`, `QuitApp`), `Subscription` (`EveryFrame`, `Every`, `OnResize`, `OnAppearance`); `run`, and `Host` (`host_of`, `step`) for a loop of `main`'s own — which `lyrac run --live` needs. `App.shortcuts` (`[Shortcuts { of }]`, an array of at most one) answers the `Shortcut`s matched before any element hears a key (`chord_matches`: `primary` the shortcut modifier); `App.menus` (`[Menus { of }]`) the program's menus — on a Mac in the system's own bar (`Platform.set_menus` with `NativeMenu`s, each item a tag the host keeps the event of; a choice is `MenuChosen(tag)`; a key the bar holds left to it), elsewhere installing nothing, their shortcuts taken as `App.shortcuts`' are; `Subscription.OnFocus` the window's focus; `Command.FocusKeyed(key)` the focus to a keyed element once it is laid out. `Subscription.Readable(fd, e)` is the event each pass that descriptor has data, the wait waking for it; `Command.ScrollTo(key, y)` scrolls a keyed scroller once it is laid out. | no |
 | `ui.access` | `access_tree(laid, focus) -> AccessTree`: the laid-out tree as assistive technology hears it, a node for each paragraph, image, scroll and control (and labelled group), ids its identities hashed; `access_id`, `access_node`. | no |
 | `ui.script` | `ScriptPlatform` (a `Platform` with no window and a clock of its own, playing one step a pass), `parse_script` (inputs: `"Tab 'Ada' Shift+Tab Primary+v click:10,20 double:10,20 scroll:1"`) and `parse_steps` (with `wait:N`, `resize:W,H`, `dark`, `light`). Also `compose:'text'`, `focus`/`blur`, `Insert` and `F1`–`F24`, and a pointer input with modifiers (`Shift+click:X,Y`, a `Holding(Modifiers)` step each side). | no |
 
@@ -299,6 +299,16 @@ layer — implements the two traits; the display list is the whole contract.
   `Ctrl+Shift+T`), so the list made from the entries is the same everywhere and a layout from
   the cache refreshes through it (`laid_children`, which a popup's holder needs too) — and
   **the app takes every drawn menu's shortcuts** (`menu_shortcuts`, after `App.shortcuts`).
+- **Menus in the Mac's own bar** (`App.menus`, `ui/WINDOW.md` step 3): each pass the host
+  builds the state's menus and hands the platform `NativeMenu`s — the events kept by the host,
+  every item a tag in order, since a platform is not generic in them — and `ui.sdl3`'s
+  `install_menus` puts them in the bar through `bindings.menubar`: the first as the application
+  menu named for its title, macOS's Window menu after the last, **installed again only when
+  their shape changes** (`menu_shape`: titles, entries, tags, key equivalents), else greyed and
+  checked in place. A chosen item's tag is drained after SDL's events (`MenuChosen`), the
+  binding having woken the wait. **A key the bar holds is the bar's**: AppKit chooses the
+  item and SDL hears the key too, so the host gives it to nothing. A script plays a bar where
+  its `native_menus` says, and chooses with `menu:N`.
 - **The keyboard**: Tab/Shift-Tab through the controls in the tree's order, wrapping; Space
   and Enter press; the arrows, Page Up/Down, Home and End move a slider; a field edits by rune
   (not yet grapheme cluster), by word with Alt (Control off a Mac), to the ends with Command or
@@ -404,7 +414,8 @@ layer — implements the two traits; the display list is the whole contract.
   whose list scrolls, and More at the window's foot whose popup flips above it and moves in
   from the right edge (`--script "…" [--png FILE]` headless, printing what happened).
 - `examples/ui/menus.lyra` — menus drawn: a bar (File, Edit with Undo greyed, View with a
-  checked item and a Zoom submenu) and ☰, the shortcuts shown and taken
+  checked item and a Zoom submenu) and ☰, the shortcuts shown and taken; on a Mac the menus
+  in the system's own bar instead (`App.menus`)
   (`--script "…" [--png FILE]` headless, printing what was chosen).
 - `examples/ui/form.lyra` — phase 3's gate, a form that works from the keyboard: two
   fields, a checkbox, a slider and Submit, run by `ui.app`. `--script "…"` plays input
@@ -448,7 +459,9 @@ layer — implements the two traits; the display list is the whole contract.
   focus; `TestRun_UiPopupsExample` the example from the keyboard; `TestLui_UiTargetPopup`
   the markup's `<Popup>`; `TestRun_UiMenus` menus by pointer and keys, events fresh from the
   cache (a popup's too), shortcuts spelled and gathered; `TestRun_UiMenusExample` the example,
-  its shortcuts taken by the app;
+  its shortcuts taken by the app; `TestRun_UiAppMenus` `App.menus` through the host, natively
+  and not; `TestRun_UiMenusInstalledInTheMacsBar` (`menubar_test.go`) the bar AppKit was given,
+  synced and reinstalled, and a choice waking SDL's wait;
   `TestRun_UiDisabledIsLaidOutAtOnce` a control disabled with nothing else changed;
   `TestLui_UiTargetReadOnlyField` the markup's `readonly`.
   `TestRun_UiPaintedElement` a painter's area, its ops moved and clipped, its text, the newest

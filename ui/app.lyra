@@ -63,6 +63,14 @@ import ui.backend.{
   WindowUnfocused,
   Key,
   Modifiers,
+  Chord,
+  MenuChosen,
+  NativeMenu,
+  NativeEntry,
+  NativeItem,
+  NativeItemSpec,
+  NativeSubmenu,
+  NativeSeparator,
 }
 import ui.draw.{ Point, Size, Color }
 import ui.text.{ Fonts, FontSpec, FontMetrics, GlyphAtlas, glyph_atlas }
@@ -75,7 +83,13 @@ import ui.layout.{
   paint,
   tight,
   Painted,
-  menu_shortcuts
+  Menu,
+  MenuEntry,
+  MenuItemEntry,
+  Submenu,
+  MenuSeparator,
+  menu_shortcuts,
+  entries_shortcuts,
 }
 import ui.interact.{ Ui, ui_new }
 import ui.access.{ access_tree }
@@ -113,6 +127,19 @@ pub struct App<s, e> {
   /// state answering them ([Shortcuts]), or none. (An array of at most one: a generic struct's
   /// `None` default is not settled yet, todo.md.)
   shortcuts: []Shortcuts<s, e> = [],
+  /// The program's menus, a function of the state ([Menus]), or none: **on a Mac in the
+  /// system's own menu bar** — the first as the application menu, its title the app's name,
+  /// macOS's Window menu after the last — kept as the state says each pass (greyed, checked;
+  /// installed again when their shape changes), a choice raising its item's event and a
+  /// shortcut the bar holds left to it. Elsewhere nothing is installed — the program draws
+  /// `menu_bar` or a `menu_button` where it wants them — and their shortcuts are taken as
+  /// `shortcuts`' are. (An array of at most one, as `shortcuts` is.)
+  menus: []Menus<s, e> = [],
+}
+
+/// What a state's menus are ([App.menus]): `Menus { of: (state) => [...] }`.
+pub struct Menus<s, e> {
+  of: (s) -> []Menu<e>,
 }
 
 /// What a state's shortcuts are ([App.shortcuts]): `Shortcuts { of: (state) => [...] }`.
@@ -310,6 +337,11 @@ pub struct Host<s, e> {
   measures: []Measure<e> = [],
   timers: []Timer<e> = [],
   fired: [](i64, i64) = [],
+  /// What the items of the menus last handed to the platform raise, by tag; whether the
+  /// platform took them into a bar of its own; and the shortcuts that bar holds.
+  menu_events: []e = [],
+  native_menus: bool = false,
+  native_chords: []Chord = [],
   last_frame: i64 = -1,
   running: bool = true,
   live: bool = false,
@@ -343,6 +375,35 @@ pub let in_window<e> = pure (view: Node<e>, overflow: Overflow) -> Node<e> => No
     overflow_x: view.style.overflow_x.or(Some(overflow)),
     overflow_y: view.style.overflow_y.or(Some(overflow)),
   },
+}
+
+/// `entries` as a platform's own menu bar takes them, each item tagged by its place in
+/// `events`, where its event is put; each shortcut put in `chords`.
+let native_entries<e> = (
+  entries: []MenuEntry<e>,
+  events: mut []e,
+  chords: mut []Chord
+) -> []NativeEntry => {
+  var out: []NativeEntry = []
+  for entry in entries {
+    match entry {
+      MenuItemEntry(item) => {
+        if let Some(c) = item.shortcut { chords.push(c) }
+        out.push(NativeItem(NativeItemSpec {
+          label: item.label,
+          tag: i32(events.len()),
+          shortcut: item.shortcut,
+          enabled: item.enabled,
+          checked: item.checked,
+        }))
+        events.push(item.on_select)
+      },
+      Submenu(label, inner) =>
+        out.push(NativeSubmenu(label, native_entries(inner, events, chords))),
+      MenuSeparator => out.push(NativeSeparator),
+    }
+  }
+  out
 }
 
 /// The window as a sheet's media rules ask of it: its size and the system's look — and whether
@@ -423,6 +484,7 @@ impl Host<s, e> {
     // every pass under `--live`, where the code itself may have.
     if self.shown.len() == 0 { self.limit_size(platform, platform.window_size()) }
     if self.live { self.follow_window(platform) }
+    self.sync_menus(platform)
     // A transition moving draws every frame too, until it arrives.
     if self.dirty || self.live || self.shown.len() == 0 || self.ui.animating() { self.redraw(
       platform,
@@ -456,16 +518,31 @@ impl Host<s, e> {
           OnFocus(make) => Some(make(false)),
           _ => None,
         }),
+        MenuChosen(tag) => {
+          if tag >= 0 && i64(tag) < self.menu_events.len() { self.dispatch(
+            self.menu_events[tag],
+            at,
+            platform
+          ) }
+        },
         _ => {},
+      }
+      // A key the system's own menu bar holds is the bar's: AppKit chooses its item, and SDL
+      // hears the key as well.
+      let barred = match input {
+        KeyPressed(key, mods) => self.native_menus && self.native_chords.any((c) => c.key == key && chord_matches(c.mods, mods)),
+        _ => false,
       }
       // A shortcut is the program's before any element hears the key.
       let taken = match input {
-        KeyPressed(key, mods) => self.shortcut_for(key, mods),
+        KeyPressed(key, mods) => if barred { None } else { self.shortcut_for(key, mods) },
         _ => None,
       }
-      let events = match taken {
-        Some(event) => [event],
-        None => self.ui.handle(laid, input, platform),
+      let events = if barred { [] } else {
+        match taken {
+          Some(event) => [event],
+          None => self.ui.handle(laid, input, platform),
+        }
       }
       for event in events { self.dispatch(event, at, platform) }
       self.deliver_due(at, platform)
@@ -664,12 +741,42 @@ impl Host<s, e> {
         if s.key == key && chord_matches(s.mods, mods) { return Some(s.event) }
       }
     }
+    if !self.native_menus {
+      for list in self.app.menus {
+        for m in (list.of)(self.state) {
+          for (chord, event) in entries_shortcuts(m.entries) {
+            if chord.key == key && chord_matches(chord.mods, mods) { return Some(event) }
+          }
+        }
+      }
+    }
     for laid in self.shown {
       for (chord, event) in menu_shortcuts(laid) {
         if chord.key == key && chord_matches(chord.mods, mods) { return Some(event) }
       }
     }
     None
+  }
+
+  /// The program's menus ([App.menus]) as the state has them now, handed to the platform for
+  /// its own menu bar: each item a tag, its event kept here by it, and the shortcuts a bar
+  /// that took them holds. Nothing when the program has none, so SDL's own bar stays.
+  let sync_menus<p> where p: Platform = (self: mut, platform: mut p) -> void => {
+    if self.app.menus.len() == 0 { return }
+    var events: []e = []
+    var chords: []Chord = []
+    var natives: []NativeMenu = []
+    for list in self.app.menus {
+      for m in (list.of)(self.state) {
+        natives.push(NativeMenu {
+          label: m.label,
+          entries: native_entries(m.entries, events, chords)
+        })
+      }
+    }
+    self.menu_events = events
+    self.native_chords = chords
+    self.native_menus = platform.set_menus(natives)
   }
 
   /// The descriptors the state's `Readable` subscriptions read.
