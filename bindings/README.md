@@ -671,8 +671,8 @@ install jpeg-turbo`, Debian `libturbojpeg0-dev`), found through `pkg: "libturboj
 HarfBuzz's 26.6 fixed point divided out, so a position is in the units of the size asked for,
 and a glyph's `cluster` is a **byte** offset into the UTF-8 given; a variable font's axes
 (`variation_axes`, `set_variations`), a metric by its OpenType tag with HarfBuzz's fallback
-(`font_metric`: `METRIC_UNDERLINE_OFFSET` and the rest) and a character's advance
-(`advance_of`). `open_ft_font(path, index)` / `render_glyph(font, glyph, pixels, hinting,
+(`font_metric`: `METRIC_UNDERLINE_OFFSET` and the rest), whether it has a character
+(`has_glyph`, what a fallback is chosen by) and a character's advance (`advance_of`). `open_ft_font(path, index)` / `render_glyph(font, glyph, pixels, hinting,
 embolden, oblique) -> Maybe<GlyphBitmap>`: 8-bit coverage with its bearing from the pen,
 hinted as `Hinting` says (`HintNone`, `HintLight` — the default — or `HintFull`), and for a
 face a family lacks emboldened or slanted by FreeType's synthesis (`FT_GlyphSlot_Embolden`,

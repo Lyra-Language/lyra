@@ -19,8 +19,10 @@ module ui.text
 //! reading of Unicode's line breaking (UAX #14): after a run of spaces, after a hyphen inside
 //! a word, either side of an ideograph, and a mandatory break at a newline — are byte offsets
 //! of its UTF-8, matched against each glyph's cluster. Lines are filled greedily; spaces at
-//! a line's end hang past its width, as a browser's do. One face a paragraph and left to
-//! right: no fallback for a character the face lacks, and no bidirectional text yet.
+//! a line's end hang past its width, as a browser's do. **A paragraph is shaped a run at a
+//! time**, each run a stretch of characters the same face has — a spec's families in turn, then
+//! [Fonts.fallbacks] — so a character the first family lacks is drawn from the next that has
+//! it; a combining mark stays with its base. Left to right, and runs are not cut by script yet.
 //!
 //! **A family is faces by weight and style** ([Fonts.add]), and a [FontSpec] is drawn in the
 //! one CSS's font matching picks; what the family lacks is made — a variable font's instance at
@@ -45,6 +47,7 @@ import bindings.harfbuzz.{
   set_variations,
   font_metric,
   advance_of,
+  has_glyph,
   METRIC_UNDERLINE_OFFSET,
   METRIC_UNDERLINE_SIZE,
   METRIC_STRIKEOUT_OFFSET,
@@ -65,7 +68,9 @@ import std.collections.{ HashMap, hashmap_new }
 import ui.draw.{ Point, Rect, Color, Image, TextureId, GlyphQuad, DrawOp, Glyphs }
 import ui.backend.{ Renderer }
 
-/// Which font, and how large: a `family` added to [Fonts] (`""` is the first added) at `size`
+/// Which font, and how large: a `family` added to [Fonts] — or several, comma-separated, as
+/// CSS's `font-family` lists them, each tried in turn for a character the ones before lack,
+/// then [Fonts.fallbacks]; `""` (or none added) is the first added — at `size`
 /// logical units to the em, its lines `line_height` sizes apart — CSS's unitless
 /// `line-height`; `0.0` for the font's own spacing — at `weight` (CSS's: 400 regular, 700
 /// bold), italic or upright.
@@ -104,6 +109,9 @@ pub struct Fonts {
   faces: []Face = [],
   /// What was added, in order.
   added: []Added = [],
+  /// The families tried, after a spec's own, for a character those lack — in order
+  /// ([Fonts.add_fallback], [Fonts.add_system_fallbacks]).
+  fallbacks: []string = [],
   /// The faces made, by what they were made as (`made_key`).
   made: HashMap<string, i64>,
   /// How glyphs are fitted to the pixel grid — light (vertically only) unless the program says
@@ -120,7 +128,8 @@ pub struct Fonts {
 pub const LAID_LIMIT: i64 = 2048
 
 /// A paragraph laid out: its lines, top to bottom, and the box they fill — as wide as its
-/// widest line, as tall as its lines.
+/// widest line, as tall as its lines. `face` is the face its lines are spaced by, its first
+/// family's; each glyph says the face it is drawn from.
 pub struct TextBlock {
   face: i64 = -1,
   size: f32 = 0.0,
@@ -142,11 +151,13 @@ pub struct TextLine {
   start: i64 = 0,
 }
 
-/// A glyph placed on a line: its number in the font, and where it is drawn — `x` across from
-/// the line's start, `y` up from the baseline. `pen` is where the pen was before it (`x`
-/// without the glyph's own offset), `advance` how far it moved it, and `cluster` the byte
-/// offset, in the block's UTF-8, of the text it draws.
+/// A glyph placed on a line: its number in its face (`face`, of [Fonts.faces] — a fallback's
+/// for a character the block's own face lacks), and where it is drawn — `x` across from the
+/// line's start, `y` up from the baseline. `pen` is where the pen was before it (`x` without
+/// the glyph's own offset), `advance` how far it moved it, and `cluster` the byte offset, in
+/// the block's UTF-8, of the text it draws.
 pub struct LineGlyph {
+  face: i64 = -1,
   glyph: u32,
   x: f32,
   y: f32,
@@ -191,6 +202,27 @@ pub const SYSTEM_FONTS: []string = [
   "/usr/share/fonts/dejavu/DejaVuSans.ttf",
 ]
 
+/// The fallback fonts [Fonts.add_system_fallbacks] looks for, a group each — Chinese, Japanese
+/// and Korean, then symbols — where macOS and the Linux distributions keep them. Arial Unicode
+/// covers all three of the first in one file; Noto Sans CJK likewise on Linux.
+pub const SYSTEM_FALLBACKS: [][]string = [
+  [
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc",
+    "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+  ],
+  [
+    "/System/Library/Fonts/Apple Symbols.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+  ],
+]
+
 impl Fonts {
   /// Add face `index` of the font file at `path` to `family`, as its face of `weight` (CSS's:
   /// 400 regular, 700 bold) and italic or not — a variable font with a weight axis is every
@@ -217,6 +249,7 @@ impl Fonts {
       if axis.tag == WEIGHT_AXIS { heaviness = Some(axis) }
     }
     self.faces.push(face)
+    self.forget_laid()
     self.added.push(Added {
       family: family,
       path: path,
@@ -231,6 +264,36 @@ impl Fonts {
       face: self.faces.len() - 1,
     })
     true
+  }
+
+  /// Try `family` for the characters a spec's own families lack, after those already added.
+  pub let add_fallback = (self: mut, family: string) -> void => {
+    if !self.fallbacks.contains(family) { self.fallbacks.push(family) }
+    self.forget_laid()
+  }
+
+  /// Add, as fallbacks, the first there is of each group of [SYSTEM_FALLBACKS] — a font with
+  /// Chinese, Japanese and Korean, one of symbols — as `"system fallback 1"` and on; how many
+  /// were found.
+  pub let add_system_fallbacks = (self: mut) -> i64 => {
+    var found = 0
+    for group in SYSTEM_FALLBACKS {
+      for path in group {
+        let family = "system fallback ${found + 1}"
+        if self.add(family, path) {
+          self.add_fallback(family)
+          found += 1
+          break
+        }
+      }
+    }
+    found
+  }
+
+  /// The paragraphs laid out forgotten: a face added since may draw them otherwise.
+  let forget_laid = (self: mut) -> void => {
+    self.laid = hashmap_new::<string, TextBlock>()
+    self.older = hashmap_new::<string, TextBlock>()
   }
 
   /// Add the first of [SYSTEM_FONTS] there is as `"system"`; `false` if there is none.
@@ -254,15 +317,15 @@ impl Fonts {
     font: FontSpec,
     width: f32
   ) -> TextBlock => {
-    let face = self.face_for(font)
-    if face < 0 { return TextBlock {} }
-    let key = "${face}|${font.size}|${font.line_height}|${width}|${text}"
+    let faces = self.faces_for(font)
+    if faces.len() == 0 { return TextBlock {} }
+    let key = "${[f in faces | "${f}"].join(",")}|${font.size}|${font.line_height}|${width}|${text}"
     if let Some(block) = self.laid.get(key) { return block }
     if let Some(block) = self.older.get(key) {
       self.keep(key, block)
       return block
     }
-    let block = break_lines(self.faces[face], face, text, font, width)
+    let block = break_lines(self.faces, faces, text, font, width)
     self.keep(key, block)
     block
   }
@@ -284,7 +347,8 @@ impl Fonts {
     }
   }
 
-  /// `font`'s measurements at its size ([FontMetrics]), for a display at `scale` pixels a unit:
+  /// `font`'s measurements at its size ([FontMetrics]) — its first family's — for a display at
+  /// `scale` pixels a unit:
   /// its advance a whole number of pixels unless glyphs are drawn unhinted, as a hinted glyph's
   /// pen is. All zero with no font added.
   pub let metrics = (self: mut, font: FontSpec, scale: f32 = 1.0) -> FontMetrics => {
@@ -306,8 +370,28 @@ impl Fonts {
     }
   }
 
-  /// The face `font` is drawn in — made and opened the first time it is asked for, where the
-  /// family has none as it is — or `-1` with none added (or one that cannot be opened again).
+  /// The faces `font` draws from, in the order a character is looked for in them: its families'
+  /// (those added, in its list's order), then the fallbacks' — each as CSS's matching picks for
+  /// its weight and style. With none of its families added, the first added family's first.
+  let faces_for = (self: mut, font: FontSpec) -> []i64 => {
+    var faces: []i64 = []
+    var families = [f in font.family.split(",") | f.trim()]
+    for fallback in self.fallbacks { families.push(fallback) }
+    for family in families {
+      if [a in self.added | a.family == family | a].len() == 0 { continue }
+      let face = self.face_for(FontSpec { font | family: family })
+      if face >= 0 && !faces.contains(face) { faces.push(face) }
+    }
+    if faces.len() == 0 {
+      let face = self.face_for(font)
+      if face >= 0 { faces.push(face) }
+    }
+    faces
+  }
+
+  /// The face `font`'s first family is drawn in — made and opened the first time it is asked
+  /// for, where the family has none as it is — or `-1` with none added (or one that cannot be
+  /// opened again).
   let face_for = (self: mut, font: FontSpec) -> i64 => {
     let Some(picked) = self.matching(font) else { return -1 }
     let added = self.added[picked]
@@ -353,7 +437,7 @@ impl Fonts {
   /// them (`weight_rank`); `None` with none added.
   let matching = pure (self, font: FontSpec) -> Maybe<i64> => {
     if self.added.len() == 0 { return None }
-    var family = font.family
+    var family = font.family.split(",")[0].trim()
     if [a in self.added | a.family == family | a].len() == 0 { family = self.added[0].family }
     let styled = [i in 0..<self.added.len() | self.added[i].family == family && self.added[i].italic == font.italic | i]
     let pool = if styled.len() > 0 { styled } else {
@@ -512,17 +596,18 @@ impl GlyphAtlas {
     color: Color
   ) -> []DrawOp => {
     if block.face < 0 || block.lines.len() == 0 { return [] }
-    let face = fonts.faces[block.face]
     let pixels = i64((block.size * scale).round()).max(1)
     // Each page's quads, by page number, in the order the pages were first needed.
     var order: []i64 = []
     var quads: [][]GlyphQuad = []
     for line in block.lines {
       for g in line.glyphs {
+        // Its own face: a fallback's where the block's lacks its character.
+        let index = if g.face >= 0 { g.face } else { block.face }
         let found = self.slot_for(
           renderer,
-          face,
-          block.face,
+          fonts.faces[index],
+          index,
           g.glyph,
           pixels,
           fonts.hinting
@@ -739,12 +824,13 @@ struct AtlasSlot {
 /// `text` in `face` (number `index`) at `font`'s size, broken into lines no wider than `width`.
 /// A `line_height` taller than the font's own splits the extra above and below each line.
 let break_lines = (
-  face: Face,
-  index: i64,
+  faces: []Face,
+  order: []i64,
   text: string,
   font: FontSpec,
   width: f32
 ) -> TextBlock => {
+  let face = faces[order[0]]
   let size = font.size
   let natural = (face.ascender - face.descender + face.line_gap) * size
   let line_height = if font.line_height > 0.0 { font.line_height * size } else { natural }
@@ -754,9 +840,18 @@ let break_lines = (
   var base = 0
   for paragraph in text.split("\n") {
     let bytes = paragraph.encode_utf8()
-    let shaped = shape(face.hb, bytes, size)
+    // Shaped a run at a time, each run in the face that has its characters; the glyphs'
+    // clusters are offsets into the whole paragraph.
+    var shaped: []ShapedGlyph = []
+    var drawn_from: []i64 = []
+    for run in runs_of(paragraph, faces, order) {
+      for g in shape(faces[run.face].hb, bytes.slice(run.start, run.end), size) {
+        shaped.push(ShapedGlyph { g | cluster: g.cluster + u32(run.start) })
+        drawn_from.push(run.face)
+      }
+    }
     let breaks = break_opportunities(paragraph, bytes.len())
-    for line in fill_lines(shaped, bytes, breaks, width) {
+    for line in fill_lines(shaped, drawn_from, bytes, breaks, width) {
       let baseline = f32(lines.len()) * line_height + ascent
       let moved = [g in line.glyphs | LineGlyph { g | cluster: g.cluster + base }]
       lines.push(TextLine {
@@ -770,7 +865,7 @@ let break_lines = (
   var widest: f32 = 0.0
   for line in lines { widest = widest.max(line.width) }
   TextBlock {
-    face: index,
+    face: order[0],
     size: size,
     lines: lines,
     width: widest,
@@ -779,11 +874,76 @@ let break_lines = (
   }
 }
 
+/// A stretch of a paragraph's UTF-8, from byte `start` up to `end`, shaped in one face.
+struct Run {
+  start: i64,
+  end: i64,
+  face: i64,
+}
+
+/// `paragraph` cut into runs by the face each character is drawn from: the first of `order`
+/// whose font has it (the first of all when none has, which draws its missing glyph). A
+/// combining mark, or a space the run's face has, stays in the run before it, so a mark is
+/// never shaped apart from its base and a run is not broken at every space.
+let runs_of = (paragraph: string, faces: []Face, order: []i64) -> []Run => {
+  var runs: []Run = []
+  var at = 0
+  for c in paragraph {
+    let length = utf8_length(c)
+    if runs.len() > 0 {
+      let last = runs[runs.len() - 1]
+      if (is_mark(c) || c == ' ') && (is_mark(c) || has_glyph(faces[last.face].hb, c)) {
+        runs[runs.len() - 1] = Run { last | end: at + length }
+        at += length
+        continue
+      }
+    }
+    var face = order[0]
+    for f in order {
+      if has_glyph(faces[f].hb, c) {
+        face = f
+        break
+      }
+    }
+    if runs.len() > 0 && runs[runs.len() - 1].face == face {
+      let last = runs[runs.len() - 1]
+      runs[runs.len() - 1] = Run { last | end: at + length }
+    } else {
+      runs.push(Run { start: at, end: at + length, face: face })
+    }
+    at += length
+  }
+  runs
+}
+
+/// Whether `c` combines with the character before it — the combining marks of the blocks most
+/// text uses, the joiners and the variation selectors — so it belongs to that character's run.
+let is_mark = pure (c: rune) -> bool => {
+  let n = i32(c)
+  (n >= 0x0300 && n <= 0x036F) ||
+    (n >= 0x0483 && n <= 0x0489) ||
+    (n >= 0x0591 && n <= 0x05BD) ||
+    (n >= 0x0610 && n <= 0x061A) ||
+    (n >= 0x064B && n <= 0x065F) ||
+    (n >= 0x0900 && n <= 0x0903) ||
+    (n >= 0x093A && n <= 0x094F) ||
+    (n >= 0x1AB0 && n <= 0x1AFF) ||
+    (n >= 0x1DC0 && n <= 0x1DFF) ||
+    (n >= 0x200C && n <= 0x200D) ||
+    (n >= 0x20D0 && n <= 0x20FF) ||
+    (n >= 0x302A && n <= 0x302F) ||
+    (n >= 0x3099 && n <= 0x309A) ||
+    (n >= 0xFE00 && n <= 0xFE0F) ||
+    (n >= 0xFE20 && n <= 0xFE2F) ||
+    (n >= 0xE0100 && n <= 0xE01EF)
+}
+
 /// Lines from one paragraph's glyphs, filled greedily: each runs to the last opportunity at
 /// which it still fits in `width`, or past it to the first opportunity when even one word
 /// does not. An empty paragraph is one empty line.
 let fill_lines = pure (
   glyphs: []ShapedGlyph,
+  faces: []i64,
   bytes: []u8,
   breaks: []bool,
   width: f32
@@ -817,6 +977,7 @@ let fill_lines = pure (
     for i in start..<end {
       let g = glyphs[i]
       placed.push(LineGlyph {
+        face: faces[i],
         glyph: g.glyph,
         x: pens[i] - pens[start] + g.x_offset,
         y: g.y_offset,

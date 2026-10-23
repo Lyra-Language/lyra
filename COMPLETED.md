@@ -9,6 +9,26 @@ Newest first.
 
 ## Dated log
 
+### 10/22/26 — `ui`: fallback fonts
+
+- **A paragraph is shaped a run at a time now** (`ui/TERMINAL.md` §2, step 4): `runs_of` cuts
+  it by the face each character is drawn from — the first of the spec's families (a
+  comma-separated list, as CSS's `font-family`), then `Fonts.fallbacks`, whose font has it by
+  HarfBuzz's character map (`has_glyph`) — and each run is shaped in its face, its clusters
+  moved to the paragraph's offsets, so line breaking and the caret read one glyph list as
+  before. Each glyph carries its face (`LineGlyph.face`) and the atlas draws it from that face;
+  the block's `face` spaces its lines, as CSS's first available font does.
+- **A run is not cut where nothing needs it to be**: a combining mark (`is_mark`, a table of
+  the common blocks — std has no Unicode categories) and a space the run's face has stay in
+  the run before, so a mark is never shaped apart from its base and `A 漢` is not three runs.
+- **`add_system_fallbacks`** adds the first there is of a CJK group and a symbols group
+  (`SYSTEM_FALLBACKS`, Termina's paths), and **adding any face forgets what was laid out**: the
+  cache's key is the faces a spec resolves to, which a new fallback changes for text already
+  laid out.
+- `TestRun_UiFontFallback` checks each glyph's face against HarfBuzz's own answer for its
+  character, so it holds on any machine's fonts, and checks the CJK case where a CJK font is on
+  disk. Not run on Linux yet.
+
 ### 10/22/26 — `ui`: a family's faces, and a font's metrics
 
 - **A family is faces by weight and style now** (`ui/TERMINAL.md` §2, step 3):

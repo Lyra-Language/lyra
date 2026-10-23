@@ -4061,3 +4061,126 @@ metrics, through MeasureFont:
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
 }
+
+// Fallback fonts (`ui.text`): a paragraph cut into runs by the face each character is drawn
+// from — the first of a spec's families, then the fallbacks, whose font has it — each shaped
+// in its face, every glyph checked against HarfBuzz's own answer, so the test holds whatever
+// fonts the machine has; the layout made again once fallbacks are added; a combining mark in
+// its base's face; an unknown family in a list passed over; and every face's glyphs drawn
+// into one atlas page. Where the machine has a CJK font, 漢 is drawn from it, where without
+// it the system font drew its missing glyph.
+func TestRun_UiFontFallback(t *testing.T) {
+	t.Parallel()
+	program := `import ui.backend.{ Renderer }
+import ui.draw.{ Point, Color, TextureId }
+import ui.text.{ Fonts, FontSpec, TextBlock, fonts_new, glyph_atlas }
+import bindings.harfbuzz.{ has_glyph }
+
+/// A renderer that draws nothing, and counts the glyphs it is given.
+struct Counter {
+  textures: i64 = 0,
+  glyphs: i64 = 0,
+}
+
+impl Renderer for Counter {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = (self, id, at, image) => {
+    if image.width < 1024 { self.glyphs += 1 }
+    true
+  }
+  draw = (self, background, ops) => {}
+}
+
+/// The characters of text, each with the byte it starts at.
+let starts = (text: string) -> [](i64, rune) => {
+  var out: [](i64, rune) = []
+  var at = 0
+  for c in text {
+    out.push((at, c))
+    at += "${c}".encode_utf8().len()
+  }
+  out
+}
+
+/// Whether every glyph of block is drawn from the first of order whose font has the
+/// character its cluster starts with — or the first of all where none has.
+let agrees = (fonts: Fonts, block: TextBlock, text: string, order: []i64) -> bool => {
+  let chars = starts(text)
+  for line in block.lines {
+    for g in line.glyphs {
+      var c: rune = ' '
+      for (at, ch) in chars { if at == g.cluster { c = ch } }
+      var want = order[0]
+      for f in order {
+        if has_glyph(fonts.faces[f].hb, c) {
+          want = f
+          break
+        }
+      }
+      if c != ' ' && g.face != want { return false }
+    }
+  }
+  true
+}
+
+/// The faces of block's glyphs, in order.
+let faces_of = pure (block: TextBlock) -> string => {
+  var out: []string = []
+  for line in block.lines { for g in line.glyphs { out.push("${g.face}") } }
+  out.join(" ")
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  let text = "A漢B☃ é𝐀"
+  let spec = FontSpec { family: "system" }
+  let before = fonts.lay_out(text, spec, 1000.0)
+  println("one face, no fallbacks: every glyph from it ${faces_of(before).split(" ").all((f) => f == "0")}")
+  let found = fonts.add_system_fallbacks()
+  let order = [0, ...[i in 1..<(found + 1) | i]]
+  let after = fonts.lay_out(text, spec, 1000.0)
+  println("with the system's fallbacks: each glyph from the first face that has it ${agrees(fonts, after, text, order)}, the layout made again ${faces_of(after) != faces_of(before) || found == 0 || !after.lines[0].glyphs.any((g) => g.face > 0)}")
+  let marked = fonts.lay_out("漢\u0301", spec, 1000.0)
+  let mark_faces = faces_of(marked).split(" ")
+  println("a mark keeps its base's face: ${mark_faces.all((f) => f == mark_faces[0])}")
+  let listed = fonts.lay_out("A", FontSpec { family: "nope, system" }, 1000.0)
+  println("an unknown family in a list is passed over: ${faces_of(listed) == "0"}")
+  var atlas = glyph_atlas()
+  var renderer = Counter {}
+  let ops = atlas.glyphs(fonts, renderer, after, Point {}, 1.0, Color { r: 0, g: 0, b: 0 })
+  println("drawn from every face: glyphs rendered ${renderer.glyphs >= 5}, in one op ${ops.len() == 1}")
+  CJK
+  fonts.close()
+  0
+}
+`
+	cjk := `  let han = fonts.lay_out("漢", spec, 1000.0).lines[0].glyphs[0]
+  println("漢 from the CJK fallback: ${han.face == 1}, a glyph of its own ${han.glyph != 0}; without it, the missing glyph ${before.lines[0].glyphs[1].glyph == 0}")
+`
+	want := `one face, no fallbacks: every glyph from it true
+with the system's fallbacks: each glyph from the first face that has it true, the layout made again true
+a mark keeps its base's face: true
+an unknown family in a list is passed over: true
+drawn from every face: glyphs rendered true, in one op true
+`
+	found := false
+	for _, path := range []string{"/System/Library/Fonts/Supplemental/Arial Unicode.ttf", "/System/Library/Fonts/Hiragino Sans GB.ttc", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc", "/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc", "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"} {
+		if _, err := os.Stat(path); err == nil {
+			found = true
+			break
+		}
+	}
+	if found {
+		program = strings.Replace(program, "  CJK\n", cjk, 1)
+		want += "漢 from the CJK fallback: true, a glyph of its own true; without it, the missing glyph true\n"
+	} else {
+		program = strings.Replace(program, "  CJK\n", "", 1)
+	}
+	if got := runUiProgram(t, program); got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}

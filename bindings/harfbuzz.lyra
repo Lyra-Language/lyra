@@ -185,6 +185,13 @@ pub const METRIC_UNDERLINE_SIZE: u32 = 0x756E6473
 pub const METRIC_STRIKEOUT_OFFSET: u32 = 0x7374726F
 pub const METRIC_STRIKEOUT_SIZE: u32 = 0x73747273
 
+/// Whether the font has a glyph for `character` (its character map has it) — what a fallback
+/// is chosen by.
+pub let has_glyph = (font: HbFont, character: rune) -> bool => {
+  var glyph: u32 = 0
+  unsafe { hb_font_get_nominal_glyph(font.handle, u32(i32(character)), &mut glyph) } != 0
+}
+
 /// How far the glyph the font draws `character` with moves the pen at `size`, or `None` if the
 /// font has none for it.
 pub let advance_of = (font: HbFont, size: f32, character: rune) -> Maybe<f32> => {
