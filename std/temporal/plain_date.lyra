@@ -83,9 +83,7 @@ impl PlainDate {
     let (_, _, d) = civil_from_days(i64(self))
     d
   }
-}
 
-impl PlainDate {
   /// The day of the week, **1 (Monday) to 7 (Sunday)** — ISO 8601's numbering and
   /// Temporal's, not C's 0-for-Sunday.
   ///
