@@ -821,7 +821,11 @@ changes the process's and forbids `t.Parallel` — and starts programs and tools
 in-process with the process's environment or globals (`watch`, `linkFlags` with its seams
 swapped, `useColor`) or drives the Simulator; those stay serial, and Go runs them before the
 parallel ones. Under `-cover` the lyrac processes write coverage where the test binary does,
-so it still counts.
+so it still counts. **A test of what a `ui` program (or `lui`) does builds it at `-O0`**
+(`captureRunUnoptimized`): clang's optimizer is nearly all of building a program holding `ui`
+(33.5 s against 3.2 s), and those tests ran 90 s each on CI at `-O2`; the backend's suite
+holds codegen to every `-O` level. `TestRepo_EveryLyraFileChecksUnderBothRoots` checks its
+files in parallel subtests, a file a process.
 
 **A test file's name can silently exclude it.** A final `_arm`, `_ios`, `_js`, `_plan9`,
 `_android`, `_wasm`, `_mips`, `_s390x`, `_windows` (any GOOS/GOARCH) segment is a build

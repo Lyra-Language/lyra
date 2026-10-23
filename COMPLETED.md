@@ -9,6 +9,24 @@ Newest first.
 
 ## Dated log
 
+### 10/22/26 — CI in less time
+
+- **The test step was 17 of CI's 19 minutes**, nearly all `cmd/lyrac`: some thirty `ui` tests
+  of ~90 s each, every one building a program that holds the whole of `ui` — and clang's
+  `-O2` is nearly all of that (examples/ui/overflow.lyra: 33.5 s, against 3.2 s at `-O0`) —
+  and `TestRepo_EveryLyraFileChecksUnderBothRoots` at 322 s, a `lyrac check` a file, one root
+  after the other.
+- **`ui` and `lui` tests build at `-O0`** (`captureRunUnoptimized`, as `--live` does): they
+  test what `ui` does, and the backend's suite already holds the code to every `-O` level. The
+  stress tests run about twice as slowly, still in seconds. **The repo check runs its roots
+  and files as parallel subtests.** Here the `ui`, `lui`, live and repo tests went from 176 s
+  (without the repo check) to 64 s with it.
+- **CI keeps the backend tests' binaries between runs** (`actions/cache/restore` and `save`,
+  a key a run, restored from the newest): a hit now touches its binary, and after the tests
+  everything older than a marker made before them is deleted, so what is saved is the
+  binaries this tree's tests use, not every run's. The 30-day prune counts from a binary's
+  last use for the same reason.
+
 ### 10/22/26 — `ui`: a terminal's line, and a curly underline
 
 - **`PaintCells(baseline, advance, cells, font, color)`** (`ui/TERMINAL.md` §1, step 5) draws a

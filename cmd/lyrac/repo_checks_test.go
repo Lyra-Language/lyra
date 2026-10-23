@@ -73,14 +73,21 @@ func TestRepo_EveryLyraFileChecksUnderBothRoots(t *testing.T) {
 		{"repo root", root},
 		{"beside the executable", editorRoot(t, root)},
 	} {
+		// Both roots, and every file under each, in parallel: a file a process, so they run
+		// as wide as -parallel lets them — one after another, the two took 322s of CI's
+		// 17-minute test step.
 		t.Run(roots.name, func(t *testing.T) {
+			t.Parallel()
 			setenv(t, "LYRA_STD", roots.std)
 			for _, file := range files {
 				rel, _ := filepath.Rel(root, file)
-				_, stderr, code := captureRun(t, "check", file)
-				if code != 0 {
-					t.Errorf("%s does not check with the root %s:\n%s", rel, roots.name, stderr)
-				}
+				t.Run(rel, func(t *testing.T) {
+					t.Parallel()
+					_, stderr, code := captureRun(t, "check", file)
+					if code != 0 {
+						t.Errorf("%s does not check with the root %s:\n%s", rel, roots.name, stderr)
+					}
+				})
 			}
 		})
 	}

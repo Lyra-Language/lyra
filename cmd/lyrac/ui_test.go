@@ -130,7 +130,7 @@ let in_range = (m: Mesh) -> bool =>
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, code := captureRun(t, "run", src)
+	stdout, stderr, code := captureRunUnoptimized(t, "run", src)
 	if code != 0 {
 		t.Fatalf("exited %d\nstderr: %s", code, stderr)
 	}
@@ -171,7 +171,7 @@ func drawUiExampleWith(t *testing.T, src string, extra ...string) (image.Image, 
 	setenv(t, "LYRA_STD", repoRoot(t))
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "ui")
-	if _, stderr, code := captureRun(t, "build", "-o", bin, src); code != 0 {
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, src); code != 0 {
 		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
 	}
 	shot := filepath.Join(dir, "frame.png")
@@ -232,7 +232,7 @@ func runUiProgram(t *testing.T, program string) string {
 	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, code := captureRun(t, "run", src)
+	stdout, stderr, code := captureRunUnoptimized(t, "run", src)
 	if code != 0 {
 		t.Fatalf("exited %d\nstderr: %s", code, stderr)
 	}
@@ -925,7 +925,7 @@ func TestRun_UiFormFromTheKeyboard(t *testing.T) {
 	setenv(t, "LYRA_STD", repoRoot(t))
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "form")
-	if _, stderr, code := captureRun(t, "build", "-o", bin, filepath.Join(repoRoot(t), "examples", "ui", "form.lyra")); code != 0 {
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, filepath.Join(repoRoot(t), "examples", "ui", "form.lyra")); code != 0 {
 		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
 	}
 	shot := filepath.Join(dir, "form.png")
@@ -1194,7 +1194,7 @@ func TestRun_UiComponentsPort(t *testing.T) {
 	setenv(t, "LYRA_STD", repoRoot(t))
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "components")
-	if _, stderr, code := captureRun(t, "build", "-o", bin, filepath.Join(repoRoot(t), "examples", "ui", "components.lyra")); code != 0 {
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, filepath.Join(repoRoot(t), "examples", "ui", "components.lyra")); code != 0 {
 		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
 	}
 	cmd := command(t, bin, "--script",
@@ -1398,7 +1398,7 @@ let labelled_box = pure (label: string) -> Node<NoEvent> =>
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, code := captureRun(t, "run", src)
+	stdout, stderr, code := captureRunUnoptimized(t, "run", src)
 	if code == 1 && strings.HasPrefix(stdout, "no font") {
 		t.Skip("no font here")
 	}
@@ -1594,7 +1594,7 @@ let main = () -> u8 => {
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, code := captureRun(t, "run", src)
+	stdout, stderr, code := captureRunUnoptimized(t, "run", src)
 	if code != 0 {
 		t.Fatalf("exited %d\nstderr: %s", code, stderr)
 	}
@@ -2223,7 +2223,7 @@ let main = () -> u8 => {
 			t.Fatal(err)
 		}
 		bin := filepath.Join(dir, name)
-		if _, stderr, code := captureRun(t, "build", path, "-o", bin); code != 0 {
+		if _, stderr, code := captureRunUnoptimized(t, "build", path, "-o", bin); code != 0 {
 			t.Fatalf("building %s exited %d: %s", name, code, stderr)
 		}
 	}
@@ -2304,7 +2304,7 @@ let box = pure (style: Style) -> Node<NoEvent> =>
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, code := captureRun(t, "run", src)
+	stdout, stderr, code := captureRunUnoptimized(t, "run", src)
 	if code == 2 {
 		t.Skipf("SDL could not open a dummy window here: %s", stdout)
 	}
@@ -2533,7 +2533,7 @@ let main = () -> u8 => {
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, code := captureRun(t, "run", src)
+	stdout, stderr, code := captureRunUnoptimized(t, "run", src)
 	switch code {
 	case 2, 3, 4:
 		t.Skipf("no GPU frame here (%d): %s", code, stdout)
@@ -3759,7 +3759,7 @@ func TestRun_UiPaintedExample(t *testing.T) {
 	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "painted")
-	if _, stderr, code := captureRun(t, "build", "-o", bin, filepath.Join(root, "examples", "ui", "painted.lyra")); code != 0 {
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, filepath.Join(root, "examples", "ui", "painted.lyra")); code != 0 {
 		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
 	}
 	shot := filepath.Join(dir, "frame.png")
@@ -4313,7 +4313,7 @@ func TestRun_UiCellsExample(t *testing.T) {
 	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "cells")
-	if _, stderr, code := captureRun(t, "build", "-o", bin, filepath.Join(root, "examples", "ui", "cells.lyra")); code != 0 {
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, filepath.Join(root, "examples", "ui", "cells.lyra")); code != 0 {
 		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
 	}
 	shot := filepath.Join(dir, "frame.png")

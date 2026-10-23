@@ -795,8 +795,10 @@ serialized system-wide), so:
   capped by `asanRunSlots` (concurrent shadow-memory mapping fails sporadically).
 - **Binaries are cached** (`exec_cache_test.go`): `compileCached` keys on
   SHA-256(clang version | GOOS/GOARCH | flags | IR) in `~/Library/Caches/lyra-llvm-tests`
-  (`os.UserCacheDir()`). Warm run ~2 s; cold ~2 min. Entries unused for 30 days are pruned;
-  deleting the directory forces a full recompile.
+  (`os.UserCacheDir()`). Warm run ~2 s; cold ~2 min. A hit touches its binary, and entries
+  unused for 30 days are pruned; deleting the directory forces a full recompile. **CI keeps the
+  directory between runs** (`ci.yml`'s `actions/cache`), pruned after its tests to the binaries
+  that run touched, so a commit pays clang only for the tests whose IR it changed.
 - **A source file's path is in its IR** (every trap names its place), so a harness writing
   sources to disk uses `sourceDir`/`sourceTree` (named by the sources' hash), never
   `t.TempDir()`: a fresh directory each run is a cache miss each run.

@@ -130,6 +130,22 @@ jobs:
         working-directory: lyra
         run: go vet ./...
 
+      # The backend's behavioural tests keep each program they compile, keyed on its IR, flags
+      # and clang (pkg/backend/llvm/exec_cache_test.go): kept between runs, a test whose IR a
+      # commit did not change skips clang. Restored from the newest run's (a run's key is its
+      # own, so every run saves), and pruned after the tests to what this run used — the
+      # marker's time, which only a hit or a new binary passes — so it holds one tree's
+      # programs rather than every run's.
+      - name: Restore the backend tests' binaries
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/lyra-llvm-tests
+          key: lyra-llvm-tests-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: lyra-llvm-tests-${{ runner.os }}-
+
+      - name: Mark the binaries' time
+        run: mkdir -p ~/.cache/lyra-llvm-tests && touch "$RUNNER_TEMP/tests-began" && sleep 1
+
       # -coverpkg=./... instruments every package so tests that live in a
       # separate `…/tests` subpackage (collector, typechecker) are credited
       # against the code they exercise. Without it those packages read as
@@ -160,6 +176,19 @@ jobs:
         run: |
           ./build.sh
           build/lyrafmt --check .
+
+      - name: Keep only the binaries this run used
+        if: always()
+        run: |
+          find ~/.cache/lyra-llvm-tests -type f ! -newer "$RUNNER_TEMP/tests-began" -delete
+          echo "kept $(find ~/.cache/lyra-llvm-tests -type f | wc -l) binaries, $(du -sh ~/.cache/lyra-llvm-tests | cut -f1)"
+
+      - name: Save the backend tests' binaries
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/lyra-llvm-tests
+          key: lyra-llvm-tests-${{ runner.os }}-${{ github.run_id }}
 
       - name: Report total coverage
         working-directory: lyra

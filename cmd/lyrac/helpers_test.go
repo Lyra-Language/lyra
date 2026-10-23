@@ -33,6 +33,16 @@ func captureRun(t *testing.T, args ...string) (stdout, stderr string, code int) 
 	return outBuf.String(), errBuf.String(), code
 }
 
+// captureRunUnoptimized is captureRun for a `build` or `run` (args[0]) whose program is tested
+// for what it does, not how fast: at -O0, as `--live` builds, since clang's optimizer is
+// nearly all of building a program that holds `ui` — examples/ui/overflow.lyra took 33.5s at
+// -O2 and 3.2s at -O0, and CI's `ui` tests ran 90s each at -O2 on its four cores, contending.
+// The backend's suite holds the code to every -O level; these tests are about `ui`.
+func captureRunUnoptimized(t *testing.T, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+	return captureRun(t, append([]string{args[0], "-O0"}, args[1:]...)...)
+}
+
 // asLyrac is the command running lyrac with args as its own process, in t's environment: this
 // test binary, which TestMain makes lyrac when LYRAC_TEST_AS_LYRAC is set. Under -cover it
 // writes its coverage where the test binary's own goes, so the run counts.

@@ -18,7 +18,7 @@ func buildLui(t *testing.T) string {
 	root := repoRoot(t)
 	setenv(t, "LYRA_STD", root)
 	lui := filepath.Join(t.TempDir(), "lui")
-	if _, stderr, code := captureRun(t, "build", "-o", lui, filepath.Join(root, "tools", "lui", "lui.lyra")); code != 0 {
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", lui, filepath.Join(root, "tools", "lui", "lui.lyra")); code != 0 {
 		t.Fatalf("building lui exited %d\nstderr: %s", code, stderr)
 	}
 	return lui
@@ -664,7 +664,7 @@ let main = () -> u8 => {
 		t.Fatal(err)
 	}
 	setenv(t, "LYRA_STD", repoRoot(t))
-	stdout, stderr, code := captureRun(t, "run", main)
+	stdout, stderr, code := captureRunUnoptimized(t, "run", main)
 	if code != 0 || stdout != "view Themed\n" {
 		t.Errorf("running it exited %d, printed %q\nstderr: %s", code, stdout, stderr)
 	}

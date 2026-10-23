@@ -71,8 +71,8 @@ func binCacheDir() string {
 			return
 		}
 		binCache.dir = dir
-		// Best-effort prune: entries untouched for 30 days are stale IR from
-		// old compiler states (and any tmp-* orphans from a killed run).
+		// Best-effort prune: entries unused for 30 days (a hit touches its binary) are
+		// stale IR from old compiler states (and any tmp-* orphans from a killed run).
 		cutoff := time.Now().AddDate(0, 0, -30)
 		if entries, err := os.ReadDir(dir); err == nil {
 			for _, e := range entries {
@@ -149,6 +149,11 @@ func compileCachedSalted(t *testing.T, clang, ir, salt string, extraArgs ...stri
 	h.Write([]byte(ir))
 	bin := filepath.Join(dir, hex.EncodeToString(h.Sum(nil)))
 	if _, err := os.Stat(bin); err == nil {
+		// Touched, so the prune above counts 30 days from its last use, not its making —
+		// and CI, which keeps this directory between runs, can drop what a run did not use
+		// (.github/workflows/ci.yml).
+		now := time.Now()
+		_ = os.Chtimes(bin, now, now)
 		return bin
 	}
 	// Compile to a temp name in the cache dir, then atomically rename into
