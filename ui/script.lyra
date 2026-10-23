@@ -92,6 +92,8 @@ pub struct ScriptPlatform {
   typing: Maybe<Rect> = None,
   shape: Cursor = Arrow,
   look: Appearance = LightMode,
+  /// Whether it plays one of Apple's systems, as far as shortcuts are spelled.
+  apple_keys: bool = false,
   opened: []string = [],
   access: AccessTree = AccessTree {},
   /// The least and greatest size the window may be (nothing for no limit), which a step's
@@ -178,6 +180,7 @@ impl Platform for ScriptPlatform {
   set_cursor = (self, cursor) => { self.shape = cursor }
   now_ms = pure (self) => self.clock
   appearance = pure (self) => self.look
+  apple = pure (self) => self.apple_keys
   open_url = (self, url) => {
     self.opened.push(url)
     true

@@ -1,6 +1,6 @@
 # What a terminal's window needs of `ui` — design
 
-**Status: proposed 10/23; step 1 built 10/23** (popups — `popup`, `place_floats`, the select's list on them; the content as wide as it needs, laid out twice, as CSS's shrink-to-fit; over the anchor where neither side has room; `examples/ui/popups.lyra`). The second half of `TERMINAL.md`'s step 8: what Termina's window
+**Status: proposed 10/23; steps 1 and 2 built 10/23** (menus drawn — `menu_bar`, `menu_button`, `Spelled` shortcuts spelled by `Viewport.apple`, the app taking every drawn menu's shortcuts, Tab from an open menu moving on from its title; popups — `popup`, `place_floats`, the select's list on them; the content as wide as it needs, laid out twice, as CSS's shrink-to-fit; over the anchor where neither side has room; `examples/ui/popups.lyra`). The second half of `TERMINAL.md`'s step 8: what Termina's window
 still takes from Dear ImGui, now that its tabs run on `ui` (`termina/build/termina-ui`, beside
 the ImGui app). §1 is popups, which the rest stand on; §2 menus, §3 a tab bar, §4 the
 window's own controls and title bar, §5 a file dialog, §6 colour, §7 the smaller pieces and
@@ -221,7 +221,8 @@ Termina moves at the end.
 
 1. **Popups**, with the select rebuilt on them: its list scrolls and flips, as the test of the
    placement. Example: `examples/ui/popups.lyra`. **Built 10/23.**
-2. **Menus drawn**: `menu_bar`, `menu_button`, shortcuts from the menus, their text.
+2. **Menus drawn**: `menu_bar`, `menu_button`, shortcuts from the menus, their text. **Built
+   10/23**; their lui elements wait for step 8.
 3. **Menus native**: `App.menus` installed through `bindings.menubar` on a Mac, synced,
    reinstalled on a change of shape; `menubar.m` pushing its event. Checked by a test that
    installs and reads back, as Termina's `menutest` does.

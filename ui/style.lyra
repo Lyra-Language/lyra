@@ -352,6 +352,8 @@ pub data Orientation = Portrait | Landscape
 pub struct Viewport {
   size: Size = Size {},
   appearance: Appearance = LightMode,
+  /// Whether it is on one of Apple's systems: how a menu spells its shortcuts.
+  apple: bool = false,
 }
 
 impl Media {
@@ -583,6 +585,45 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
     selector: "Select::option:hover",
     style: Style { background: Some(c.accent), color: Some(rgb(0xFFFFFF)) },
   },
+  // Menus: a bar's titles and a menu button quiet until the pointer is over them or their menu
+  // is open; the menu a raised panel as a select's list is, its items lit under the pointer or
+  // the keys, a submenu's while it is open.
+  Rule { selector: "MenuBar", style: Style { gap: Some(2.0) } },
+  Rule {
+    selector: "MenuTitle, MenuButton",
+    style: Style { padding: Some(insets_xy(10.0, 4.0)), radius: Some(4.0) },
+  },
+  Rule {
+    selector: "MenuTitle:hover, MenuTitle:open, MenuButton:hover, MenuButton:open",
+    style: Style { background: Some(faded(c.text, 0.08)) },
+  },
+  // Its own text's colour: a submenu's list is inside its item, lit while it is open.
+  Rule {
+    selector: "Menu",
+    style: Style {
+      color: Some(c.text),
+      background: Some(c.surface),
+      border_color: Some(c.border),
+      border_width: Some(1.0),
+      radius: Some(6.0),
+      padding: Some(insets(4.0)),
+      box_shadow: Some([
+        BoxShadow { x: 0.0, y: 4.0, blur: 12.0, spread: 0.0, color: faded(c.text, 0.18) },
+      ]),
+    },
+  },
+  Rule {
+    selector: "MenuItem",
+    style: Style { padding: Some(Insets { top: 4.0, right: 10.0, bottom: 4.0, left: 4.0 }), radius: Some(4.0) },
+  },
+  Rule {
+    selector: "MenuItem:hover, MenuItem:focus-visible, MenuItem:open",
+    style: Style { background: Some(c.accent), color: Some(rgb(0xFFFFFF)) },
+  },
+  Rule { selector: "MenuItem:disabled", style: Style { color: Some(faded(c.text, 0.4)) } },
+  Rule { selector: "MenuItem::shortcut", style: Style { opacity: Some(0.6) } },
+  Rule { selector: "MenuItem::arrow", style: Style { background: Some(faded(c.text, 0.6)) } },
+  Rule { selector: "MenuSeparator", style: Style { background: Some(c.border) } },
 ]
 
 /// A scroller's bars, drawn over its content's edge: a faint track and a thumb the text's
@@ -896,8 +937,8 @@ pub let specificity = pure (selector: string, tag: string, classes: string) -> i
 
 /// The states an element can be in, as CSS's pseudo-classes: the pointer over it or inside it,
 /// pressed on it or inside it (`active`), the focus on it, on it from the keyboard
-/// (`focus-visible`) or inside it (`focus-within`), a checkbox ticked, a text field read-only
-/// or not, and a control disabled or not.
+/// (`focus-visible`) or inside it (`focus-within`), a checkbox ticked, a menu open, a text field
+/// read-only or not, and a control disabled or not.
 pub const PSEUDO_CLASSES: []string = [
   "hover",
   "active",
@@ -905,6 +946,7 @@ pub const PSEUDO_CLASSES: []string = [
   "focus-visible",
   "focus-within",
   "checked",
+  "open",
   "read-only",
   "read-write",
   "disabled",

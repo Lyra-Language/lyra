@@ -67,7 +67,16 @@ import ui.backend.{
 import ui.draw.{ Point, Size, Color }
 import ui.text.{ Fonts, FontSpec, FontMetrics, GlyphAtlas, glyph_atlas }
 import ui.style.{ Viewport, Style, Overflow, OverflowAuto, light_theme }
-import ui.layout.{ Node, Laid, LayoutCache, layout_cache, paint, tight, Painted }
+import ui.layout.{
+  Node,
+  Laid,
+  LayoutCache,
+  layout_cache,
+  paint,
+  tight,
+  Painted,
+  menu_shortcuts
+}
 import ui.interact.{ Ui, ui_new }
 import ui.access.{ access_tree }
 import std.io.{ read_file, write_file, readable }
@@ -336,9 +345,14 @@ pub let in_window<e> = pure (view: Node<e>, overflow: Overflow) -> Node<e> => No
   },
 }
 
-/// The window as a sheet's media rules ask of it: its size and the system's look.
+/// The window as a sheet's media rules ask of it: its size and the system's look — and whether
+/// it is Apple's, which a menu's shortcuts are spelled by.
 let viewport_of<p> where p: Platform = (platform: p) -> Viewport =>
-  Viewport { size: platform.window_size(), appearance: platform.appearance() }
+  Viewport {
+    size: platform.window_size(),
+    appearance: platform.appearance(),
+    apple: platform.apple()
+  }
 
 /// The sooner of a wait (`-1` for none) and `delay` milliseconds, never below none at all.
 let sooner = pure (wait: i64, delay: i64) -> i64 => {
@@ -641,11 +655,18 @@ impl Host<s, e> {
     }
   }
 
-  /// The event of the program's shortcut for `key` held with `mods`, if it has one.
+  /// The event of the program's shortcut for `key` held with `mods`, if it has one: one of
+  /// [App.shortcuts], else an enabled item's of a menu the window draws (`menu_shortcuts`), so
+  /// a menu's shortcut is written once, on its item.
   let shortcut_for = (self, key: Key, mods: Modifiers) -> Maybe<e> => {
     for list in self.app.shortcuts {
       for s in (list.of)(self.state) {
         if s.key == key && chord_matches(s.mods, mods) { return Some(s.event) }
+      }
+    }
+    for laid in self.shown {
+      for (chord, event) in menu_shortcuts(laid) {
+        if chord.key == key && chord_matches(chord.mods, mods) { return Some(event) }
       }
     }
     None

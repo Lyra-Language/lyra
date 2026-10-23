@@ -404,6 +404,7 @@ impl Platform for SdlPlatform {
   }
   now_ms = (self) => i64(ticks())
   appearance = pure (self) => self.look
+  apple = (self) => apple()
   open_url = (self, url) => open_url(url)
   set_size_limits = (self, least, most) => {
     let per_point = units_per_point(self.window)

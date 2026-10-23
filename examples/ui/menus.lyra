@@ -1,0 +1,225 @@
+// Menus: `ui.layout`'s `menu_bar` and `menu_button` — menus as data (`Menu`, `MenuEntry`,
+// `MenuItem`), drawn as a bar of titles and as a ☰ button, with separators, an item greyed,
+// one checked, a submenu beside its item, and shortcuts spelled as the platform spells them and
+// taken by the app without being written twice. A press on a title opens its menu; while one is
+// open the pointer moves it from title to title; the arrows walk the items and across the bar,
+// Enter chooses, Escape closes.
+//
+//     lyrac run examples/ui/menus.lyra
+//     lyrac run examples/ui/menus.lyra -- --script "click:30,16 click:60,52" [--png FILE]
+//
+// **The second form** plays a script (`ui.script`) headless, prints what was chosen and with
+// `--png FILE` writes the last frame.
+
+import ui.sdl3
+import ui.sdl3.{ SdlRenderer, capture }
+import ui.gpu
+import ui.app.{ App, run, running, step_running, Command, Subscription }
+import ui.script.{ timed_platform, parse_steps }
+import ui.backend.{ Modifiers, Character }
+import ui.draw.{ Point, Size, Color }
+import ui.text.{ Fonts, fonts_new, glyph_atlas }
+import ui.style.{ Style, insets, OverflowVisible }
+import ui.layout.{
+  Node,
+  Laid,
+  Menu,
+  MenuEntry,
+  MenuItem,
+  MenuItemEntry,
+  Submenu,
+  MenuSeparator,
+  Chord,
+  column,
+  row,
+  text,
+  sized,
+  expanded,
+  padding,
+  menu_bar,
+  menu_button,
+  paint,
+  MainStart,
+  CrossCenter,
+}
+import std.collections.{ parse_args }
+import std.png.{ write_png }
+import std.io.{ write_bytes }
+
+const WIDTH: f32 = 560.0
+const HEIGHT: f32 = 360.0
+const BACKGROUND: Color = Color { r: 0xF4, g: 0xF4, b: 0xF6 }
+
+let main = () -> u8 => {
+  let args = parse_args(["--script", "--png"])
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let _ = fonts.add_system_fallbacks()
+  let app = App {
+    view: view,
+    update: update,
+    subscriptions: (_: State) -> []Subscription<Event> => [],
+    background: BACKGROUND,
+    window_overflow: OverflowVisible,
+  }
+  if let Some(script) = args.value("--script") {
+    let Ok(steps) = parse_steps(script) else {
+      println("the script does not parse")
+      return 1
+    }
+    let window = match sdl3.open("Menus", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    let played = running(
+      app,
+      State {},
+      timed_platform(steps, Size { w: WIDTH, h: HEIGHT }),
+      window.renderer,
+      fonts
+    )
+    while step_running(played) {}
+    for line in played.host.state.chosen { println(line) }
+    var status: u8 = 0
+    if let Some(path) = args.value("--png") {
+      if !save(played.renderer, played.fonts, played.host.shown[0], path) { status = 1 }
+    }
+    sdl3.close(window.platform, played.renderer)
+    fonts.close()
+    return status
+  }
+  let window = match gpu.open("Menus", WIDTH, HEIGHT) {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      fonts.close()
+      return 2
+    },
+  }
+  var platform = window.platform
+  var renderer = window.renderer
+  let _ = run(app, State {}, platform, renderer, fonts)
+  gpu.close(platform, renderer)
+  fonts.close()
+  0
+}
+
+/// What was chosen, newest last; whether the status bar is shown; the zoom, in steps.
+struct State {
+  chosen: []string = [],
+  status_bar: bool = true,
+  zoom: i64 = 0,
+}
+
+data Event = Chose(string) | StatusBar | Zoom(i64)
+
+let update = pure (state: State, event: Event) -> (State, []Command<Event>) =>
+  match event {
+    Chose(what) => (State { state | chosen: [...state.chosen, what] }, []),
+    StatusBar => (State { state | status_bar: !state.status_bar, chosen: [...state.chosen, "status bar"] }, []),
+    Zoom(by) => (State { state | zoom: state.zoom + by, chosen: [...state.chosen, "zoom ${state.zoom + by}"] }, []),
+  }
+
+/// The window: the bar and ☰ along the top, what was chosen below.
+let view = pure (state: State) -> Node<Event> => column([
+  row([expanded(menu_bar(menus(state))), menu_button(burger(), more_entries())]).aligned(MainStart, CrossCenter),
+  padding(insets(16.0), column([
+    text("chosen: ${if state.chosen.len() == 0 { "nothing yet" } else { state.chosen[state.chosen.len() - 1] }}"),
+    text("zoom ${state.zoom}"),
+  ]).with_style(Style { gap: Some(6.0) })),
+])
+
+/// The bar's menus: File, Edit — Undo greyed, nothing to undo — and View, a checked item and a
+/// submenu.
+let menus = pure (state: State) -> []Menu<Event> => [
+  Menu {
+    label: "File",
+    entries: [
+      item("New", Chose("new"), Some('n'), false),
+      item("Open…", Chose("open"), Some('o'), false),
+      MenuSeparator,
+      item("Save", Chose("save"), Some('s'), false),
+      item("Save As…", Chose("save as"), Some('s'), true),
+    ],
+  },
+  Menu {
+    label: "Edit",
+    entries: [
+      MenuItemEntry(MenuItem { label: "Undo", on_select: Chose("undo"), shortcut: Some(Chord { key: Character('z'), mods: Modifiers { primary: true } }), enabled: false }),
+      MenuSeparator,
+      item("Cut", Chose("cut"), Some('x'), false),
+      item("Copy", Chose("copy"), Some('c'), false),
+      item("Paste", Chose("paste"), Some('v'), false),
+    ],
+  },
+  Menu {
+    label: "View",
+    entries: [
+      MenuItemEntry(MenuItem { label: "Status Bar", on_select: StatusBar, checked: state.status_bar }),
+      Submenu("Zoom", [item("Zoom In", Zoom(1), Some('='), false), item("Zoom Out", Zoom(-1), Some('-'), false)]),
+    ],
+  },
+]
+
+/// ☰'s entries.
+let more_entries = pure () -> []MenuEntry<Event> => [
+  item("Preferences…", Chose("preferences"), Some(','), false),
+  MenuSeparator,
+  item("About Menus", Chose("about"), None, false),
+]
+
+/// An item, its shortcut the primary modifier and `key` (and Shift, if `shift`).
+let item = pure (
+  label: string,
+  event: Event,
+  key: Maybe<rune>,
+  shift: bool
+) -> MenuEntry<Event> => {
+  let shortcut: Maybe<Chord> = match key {
+    Some(k) =>
+      Some(Chord { key: Character(k), mods: Modifiers { primary: true, shift: shift } }),
+    None => None,
+  }
+  MenuItemEntry(MenuItem { label: label, on_select: event, shortcut: shortcut })
+}
+
+/// ☰, drawn as three bars: the font may have no ☰.
+let burger = pure () -> Node<Event> => column([
+  i in 0..<3 | sized(
+    Some(14.0),
+    Some(2.0)
+  ).with_style(Style { background: Some(Color { r: 0x44, g: 0x46, b: 0x4C }) })
+]).with_style(Style { gap: Some(3.0), padding: Some(insets(3.0)) })
+
+/// `laid` — the window as the host last laid it out — drawn without showing it, and written to
+/// `path` as a PNG.
+let save = (
+  renderer: SdlRenderer,
+  fonts: Fonts,
+  laid: Laid<Event>,
+  path: string
+) -> bool => {
+  var r = renderer
+  var f = fonts
+  var atlas = glyph_atlas()
+  let ops = paint(laid, Point {}, 1.0, f, atlas, r)
+  let Some(frame) = capture(r, BACKGROUND, ops) else { return false }
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(u8((p >> 24) & 0xFF))
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(png) => write_bytes(path, png),
+    Err(_) => false,
+  }
+}

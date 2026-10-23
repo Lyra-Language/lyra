@@ -535,7 +535,7 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"media nested", ui + "<style global>\n  @media (min-width: 1) {\n    @media (max-width: 2) {\n      .a { gap: 1 }\n    }\n  }\n</style>", "x.lui:4: an @media inside an @media"},
 		{"at-rule", ui + "<style global>\n  @supports (x: y) {\n  }\n</style>", "x.lui:3: @supports is not an at-rule of a <style>; @media is"},
 		{"selector in a list", ui + "<style global>\n  .a,\n  Column Text { gap: 1 }\n</style>", "x.lui:4: Column Text is not a selector ui reads"},
-		{"pseudo-class", ui + "<style global>\n  .a:visited { gap: 1 }\n</style>", "x.lui:3: .a:visited: :visited is not a pseudo-class ui has (hover, active, focus, focus-visible, focus-within, checked, read-only, read-write, disabled, enabled)"},
+		{"pseudo-class", ui + "<style global>\n  .a:visited { gap: 1 }\n</style>", "x.lui:3: .a:visited: :visited is not a pseudo-class ui has (hover, active, focus, focus-visible, focus-within, checked, open, read-only, read-write, disabled, enabled)"},
 		{"state class", ui + "<style global>\n  Button.pressed { gap: 1 }\n</style>", "x.lui:3: Button.pressed: a state is a pseudo-class, as in CSS: write :active, not .pressed"},
 		{"class on a part", ui + "<style global>\n  Slider::thumb.big { gap: 1 }\n</style>", "x.lui:3: Slider::thumb.big: a part takes pseudo-classes after it (Comp::part:hover), not classes"},
 		{"pseudo-element", ui + "<style global>\n  .a::before:hover { gap: 1 }\n</style>", "x.lui:3: .a::before:hover is not a selector ui reads"},

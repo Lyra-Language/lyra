@@ -105,6 +105,7 @@ import ui.layout.{
   Editable,
   Choosing,
   PopsUp,
+  Opens,
   Painted,
   RawInput,
   KeyInput,
@@ -166,6 +167,9 @@ pub struct Ui {
   /// The popups open at the last frame: whose focus a popup just opened takes, and which one
   /// just closed gives back.
   popups: []OpenPopup = [],
+  /// Whether the deepest open menu's first item takes the focus once it is laid out — a menu
+  /// opened from the keyboard.
+  menu_first: bool = false,
 }
 
 /// A popup open at a frame, by its identity and its anchor's and content's.
@@ -304,6 +308,7 @@ impl Ui {
       }
     }
     self.popups_followed(laid)
+    self.menus_followed(laid, present)
     if !present.contains_key(self.state.focus) { self.state.focus = "" }
     if !present.contains_key(self.state.open) { self.state.open = "" }
     // A control disabled since it took the focus or the press gives them up.
@@ -404,7 +409,9 @@ impl Ui {
     if popups.len() > 0 {
       match input {
         KeyPressed(Escape, _) =>
-          if self.state.open.len() == 0 { return [popups[popups.len() - 1].dismissed] },
+          if self.state.open.len() == 0 && self.state.menus.len() == 0 {
+            return [popups[popups.len() - 1].dismissed]
+          },
         WindowUnfocused => {
           for p in popups { dismissed.push(p.dismissed) }
         },
@@ -425,6 +432,221 @@ impl Ui {
       platform
     ) { return [...dismissed, ...events] }
     [...dismissed, ...self.handled(laid, input, platform)]
+  }
+
+  /// Which open menu's list `id` is in — its place in `Interaction.menus`, the deepest holding
+  /// it — or -1 for none.
+  let menu_level = pure (self, id: string) -> i64 => {
+    let menus = self.state.menus
+    var k = menus.len() - 1
+    while k >= 0 {
+      if within_id(id, "${menus[k]}/:menu") { return k }
+      k -= 1
+    }
+    -1
+  }
+
+  /// The menu the opener identified as `id` opens, opened: after the menus holding it, closing
+  /// any deeper, or on its own.
+  let open_menu = (self: mut, id: string) -> void => {
+    let level = self.menu_level(id)
+    self.state.menus = [...self.state.menus.slice(0, level + 1), id]
+  }
+
+  /// A menu's item chosen: every menu closed, the focus on the opener of the first.
+  let menu_chosen = (self: mut) -> void => {
+    if self.state.menus.len() > 0 { self.state.focus = self.state.menus[0] }
+    self.state.menus = []
+  }
+
+  /// A press on an opener, or while a menu is open: an opener's opens its menu, or closes it
+  /// and those from it when it is open — the press taken; any other press outside every open
+  /// menu closes them all, and goes on (`None`).
+  let menu_press<e> = (self: mut, laid: Laid<e>, at: Point) -> Maybe<[]e> => {
+    if let Some(target) = control_at(laid, at) {
+      if let Opens(_) = target.laid.kind {
+        let id = target.laid.id
+        match self.state.menus.index_of(id) {
+          Some(place) => { self.state.menus = self.state.menus.slice(0, place) },
+          None => self.open_menu(id),
+        }
+        self.state.focus = id
+        self.state.keyboard_focus = false
+        self.state.pressed = ""
+        return Some([])
+      }
+    }
+    if self.state.menus.len() == 0 { return None }
+    var inside = false
+    for f in hit(laid, at) {
+      if self.menu_level(f.laid.id) >= 0 { inside = true }
+    }
+    if !inside { self.state.menus = [] }
+    None
+  }
+
+  /// The pointer moved while a menu is open: over another title of the bar the first open
+  /// menu's title is in, that one opens instead; over a submenu's item, its submenu opens; over
+  /// another item, the submenus deeper than its menu close.
+  let menu_hover<e> = (self: mut, laid: Laid<e>, at: Point) -> void => {
+    let menus = self.state.menus
+    if menus.len() == 0 { return }
+    let Some(target) = control_at(laid, at) else { return }
+    let id = target.laid.id
+    if let Opens(spec) = target.laid.kind {
+      if spec.in_bar {
+        if id != menus[0] && bar_title(
+          laid,
+          menus[0]
+        ) && parent_of(id) == parent_of(menus[0]) {
+          self.state.menus = [id]
+          self.state.focus = id
+        }
+        return
+      }
+      if self.menu_level(id) >= 0 && !menus.contains(id) { self.open_menu(id) }
+      return
+    }
+    let level = self.menu_level(id)
+    if level >= 0 { self.state.menus = menus.slice(0, level + 1) }
+  }
+
+  /// A key while a menu is open: Escape closes the deepest, the focus back on its opener; Down
+  /// and Up move the focus along its items, wrapping; Right opens the submenu of the item
+  /// focused, or in a menu bar the next title's menu; Left closes a submenu, or in a bar opens
+  /// the previous title's; Enter or Space chooses the item focused, or opens its submenu; Tab
+  /// (Shift-Tab) closes them all and moves the focus on (back) from the first's title. Keys no
+  /// menu takes go on (`None`).
+  let menu_key<e> = (self: mut, laid: Laid<e>, key: Key, shift: bool) -> Maybe<[]e> => {
+    // What a key the menus take raises: nothing, but an item chosen.
+    let taken: []e = []
+    let menus = self.state.menus
+    let deepest = menus[menus.len() - 1]
+    let focused = find(laid, self.state.focus, Point {})
+    let opens = match focused {
+      Some(f) => match f.laid.kind {
+        Opens(_) => true,
+        _ => false,
+      },
+      None => false,
+    }
+    let on_item = self.menu_level(self.state.focus) == menus.len() - 1
+    match key {
+      Escape => {
+        self.state.menus = menus.slice(0, menus.len() - 1)
+        self.state.focus = deepest
+        self.state.keyboard_focus = true
+        Some(taken)
+      },
+      // From the title the menus opened from, among the controls outside them.
+      Tab => {
+        var order: []string = []
+        focus_order(laid, order)
+        var outside: []string = []
+        for id in order {
+          if self.menu_level(id) < 0 { outside.push(id) }
+        }
+        self.state.menus = []
+        if let Some(at) = outside.index_of(menus[0]) {
+          self.state.focus = outside[(at + if shift { -1 } else { 1 }) %% outside.len()]
+          self.state.keyboard_focus = true
+        }
+        Some(taken)
+      },
+      ArrowDown => {
+        self.step_menu(laid, deepest, 1)
+        Some(taken)
+      },
+      ArrowUp => {
+        self.step_menu(laid, deepest, -1)
+        Some(taken)
+      },
+      ArrowRight => {
+        if opens && on_item {
+          self.open_menu(self.state.focus)
+          self.menu_first = true
+        } else if bar_title(laid, menus[0]) {
+          self.next_title(laid, 1)
+        }
+        Some(taken)
+      },
+      ArrowLeft => {
+        if menus.len() > 1 {
+          self.state.menus = menus.slice(0, menus.len() - 1)
+          self.state.focus = deepest
+          self.state.keyboard_focus = true
+        } else if bar_title(laid, menus[0]) {
+          self.next_title(laid, -1)
+        }
+        Some(taken)
+      },
+      _ => {
+        if key != Enter && key != Character(' ') { return None }
+        // On the opener itself, into its menu; on a submenu's item, into the submenu.
+        if !on_item || opens {
+          if on_item { self.open_menu(self.state.focus) }
+          self.menu_first = true
+          return Some(taken)
+        }
+        let Some(f) = focused else { return Some(taken) }
+        let events = activated(f.laid)
+        self.menu_chosen()
+        Some(events)
+      },
+    }
+  }
+
+  /// The focus `by` items along the menu the opener identified as `opener` opens, wrapping;
+  /// from outside it, to its first item (or last, going up). The item scrolls into view.
+  let step_menu<e> = (self: mut, laid: Laid<e>, opener: string, by: i64) -> void => {
+    let items = menu_items(laid, opener)
+    if items.len() == 0 { return }
+    let next = match items.index_of(self.state.focus) {
+      Some(at) => (at + by) %% items.len(),
+      None => if by > 0 { 0 } else { items.len() - 1 },
+    }
+    self.state.focus = items[next]
+    self.state.keyboard_focus = true
+    self.reveal_wanted = items[next]
+  }
+
+  /// The menu of the title `by` along from the first open menu's, in its bar, wrapping, opened
+  /// in its place, the focus to its first item.
+  let next_title<e> = (self: mut, laid: Laid<e>, by: i64) -> void => {
+    let title = self.state.menus[0]
+    let Some(bar) = find(laid, parent_of(title), Point {}) else { return }
+    var titles: []string = []
+    for child in bar.laid.children {
+      if bar_title(child.laid, child.laid.id) { titles.push(child.laid.id) }
+    }
+    let Some(at) = titles.index_of(title) else { return }
+    let next = titles[(at + by) %% titles.len()]
+    self.state.menus = [next]
+    self.state.focus = next
+    self.menu_first = true
+  }
+
+  /// The open menus after a layout: those whose openers are gone closed (with those after them),
+  /// and the deepest's first item focused if a key opened it.
+  let menus_followed<e> = (
+    self: mut,
+    laid: Laid<e>,
+    present: HashMap<string, bool>
+  ) -> void => {
+    var kept: []string = []
+    for opened in self.state.menus {
+      if !present.contains_key(opened) { break }
+      kept.push(opened)
+    }
+    self.state.menus = kept
+    if !self.menu_first { return }
+    self.menu_first = false
+    if kept.len() == 0 { return }
+    let items = menu_items(laid, kept[kept.len() - 1])
+    if items.len() > 0 {
+      self.state.focus = items[0]
+      self.state.keyboard_focus = true
+    }
   }
 
   /// The focus after popups opened or closed since the last frame: one just opened while the
@@ -485,6 +707,10 @@ impl Ui {
       self.edit(field, (ed) => ed.insert(typed))
     },
     AccessAction(id, request) => self.access_action(laid, id, request),
+    WindowUnfocused => {
+      self.state.menus = []
+      []
+    },
     _ => [],
   }
 
@@ -603,6 +829,13 @@ impl Ui {
         []
       },
       AxClick => match found.laid.kind {
+        Opens(_) => {
+          match self.state.menus.index_of(id) {
+            Some(place) => { self.state.menus = self.state.menus.slice(0, place) },
+            None => self.open_menu(id),
+          }
+          []
+        },
         Choosing(spec) => {
           if self.state.open == id {
             self.state.open = ""
@@ -614,7 +847,9 @@ impl Ui {
         _ => if self.state.open.len() > 0 && option_of(self.state.open, id).is_some() {
           self.choose_option(found.laid)
         } else {
-          activated(found.laid)
+          let events = activated(found.laid)
+          if self.menu_level(id) >= 0 { self.menu_chosen() }
+          events
         },
       },
       AxIncrement => match found.laid.kind {
@@ -725,6 +960,7 @@ impl Ui {
       }
       break
     }
+    self.menu_hover(laid, at)
     if self.state.pressed.contains("#thumb-") {
       self.drag_thumb(laid, at)
       return []
@@ -760,6 +996,7 @@ impl Ui {
   let pointer_down<e> = (self: mut, laid: Laid<e>, at: Point, clicks: i64) -> []e => {
     self.pointer = at
     if self.bar_press(laid, at) { return [] }
+    if let Some(events) = self.menu_press(laid, at) { return events }
     // An open select's list takes a press on one of its options; any other press closes it —
     // on the select itself, only that.
     let open = self.state.open
@@ -821,7 +1058,9 @@ impl Ui {
     if self.state.open.len() > 0 && option_of(self.state.open, held).is_some() {
       return self.choose_option(target.laid)
     }
-    activated(target.laid)
+    let events = activated(target.laid)
+    if self.menu_level(held) >= 0 { self.menu_chosen() }
+    events
   }
 
   /// The select identified as `id` opened, the option under the keys its chosen one.
@@ -1059,6 +1298,9 @@ impl Ui {
     mods: Modifiers,
     platform: mut p
   ) -> []e => {
+    if self.state.menus.len() > 0 {
+      if let Some(events) = self.menu_key(laid, key, mods.shift) { return events }
+    }
     // An open select's list: Escape closes it, and Tab closes it and moves on.
     if self.state.open.len() > 0 && (key == Escape || key == Tab) {
       self.state.open = ""
@@ -1075,6 +1317,7 @@ impl Ui {
         Ranged(_) => true,
         Editable(_) => true,
         Choosing(_) => true,
+        Opens(_) => true,
         _ => false,
       },
       None => false,
@@ -1089,6 +1332,14 @@ impl Ui {
       Ranged(spec) => step_slider(spec, key),
       Editable(_) => self.field_key(focused, key, mods, platform),
       Choosing(spec) => self.select_key(focused.laid.id, spec, key, mods),
+      // A focused opener: Enter, Space or Down opens its menu, the focus to its first item.
+      Opens(_) => {
+        if key == Enter || key == Character(' ') || key == ArrowDown {
+          self.open_menu(focused.laid.id)
+          self.menu_first = true
+        }
+        []
+      },
       _ => [],
     }
   }
@@ -1544,6 +1795,33 @@ let first_control<e> = pure (laid: Laid<e>, id: string) -> Maybe<string> => {
   var order: []string = []
   focus_order(found.laid, order)
   if order.len() == 0 { None } else { Some(order[0]) }
+}
+
+/// The identities of the items, in order, of the menu the opener identified as `opener` opens
+/// — those that can be chosen — while it is open.
+let menu_items<e> = pure (laid: Laid<e>, opener: string) -> []string => {
+  let Some(list) = find(laid, "${opener}/:menu", Point {}) else { return [] }
+  var out: []string = []
+  for child in list.laid.children {
+    if focusable(child.laid.kind) && !child.laid.disabled { out.push(child.laid.id) }
+  }
+  out
+}
+
+/// Whether the element identified as `id` in `laid` is a menu bar's title.
+let bar_title<e> = pure (laid: Laid<e>, id: string) -> bool =>
+  match find(laid, id, Point {}) {
+    Some(f) => match f.laid.kind {
+      Opens(spec) => spec.in_bar,
+      _ => false,
+    },
+    None => false,
+  }
+
+/// The identity of the element holding the one identified as `id`.
+let parent_of = pure (id: string) -> string => {
+  let parts = id.split("/")
+  parts.slice(0, parts.len() - 1).join("/")
 }
 
 /// Whether the identity `id` is `root`'s or one inside it.

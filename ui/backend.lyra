@@ -57,6 +57,9 @@ pub trait Platform {
   now_ms: (Self) -> i64
   /// Whether the system is set to a light or a dark look.
   appearance: (Self) -> Appearance
+  /// Whether it is one of Apple's systems, whose shortcuts are spelled with their symbols
+  /// (`⇧⌘T`, not `Ctrl+Shift+T`) and whose primary modifier is Command.
+  apple: (Self) -> bool
   /// Open a web address (or `mailto:`, `file://`) in the program the system chooses for it;
   /// whether it was taken.
   open_url: (mut Self, string) -> bool

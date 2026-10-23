@@ -3878,6 +3878,278 @@ font Typeface 33
 	}
 }
 
+// Menus drawn (WINDOW.md §2): a press on a title opens its menu and another closes it; while
+// one is open the pointer over another title opens that one, over a submenu's item opens the
+// submenu beside it, and over another item closes the submenu; a press on an item chooses it,
+// closing every menu with the focus on the first's title; a press outside closes them. From
+// the keyboard, Enter on a title opens its menu on its first item; Down and Up walk the items
+// that can be chosen, wrapping, past separators and greyed items; Right opens a submenu or the
+// next title's menu, Left closes the submenu; Escape closes the deepest; Tab closes them all and
+// moves on. A layout from the cache raises this frame's events, a menu's and a popup's content's
+// alike. Shortcuts are spelled for Apple's systems and the others, and gathered from every menu
+// drawn, greyed items left out.
+func TestRun_UiMenus(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new, find }
+import ui.script.{ script_platform, ScriptPlatform }
+import ui.backend.{ InputEvent, PointerMoved, PointerDown, PointerUp, Primary, KeyPressed, Key, Modifiers, Enter, Escape, Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Character, FunctionKey }
+import ui.draw.{ Size, Point }
+import ui.text.{ Fonts, fonts_new }
+import ui.style.{ light_theme, Sheet }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, row, button, text, popup, themed, tight, Pressable, Opens, Menu, MenuEntry, MenuItem, MenuItemEntry, Submenu, MenuSeparator, Chord, menu_bar, menu_button, menu_shortcuts, chord_text }
+
+data Ev = Chose(string) | Count(i64)
+
+struct Run {
+  ui: Ui,
+  cache: LayoutCache<Ev>,
+  platform: ScriptPlatform,
+  count: i64 = 0,
+  popup: bool = false,
+  events: []string = [],
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var run = Run { ui: ui_new(), cache: layout_cache(), platform: script_platform([], Size { w: 500.0, h: 400.0 }) }
+
+  play(run, fonts, click(title(run, fonts, "File")))
+  say(run, fonts, "press File")
+  play(run, fonts, [PointerMoved(title(run, fonts, "Edit"))])
+  say(run, fonts, "over Edit")
+  play(run, fonts, click(item(run, fonts, "cut")))
+  say(run, fonts, "press Cut")
+  play(run, fonts, click(title(run, fonts, "View")))
+  play(run, fonts, [PointerMoved(title(run, fonts, "Zoom"))])
+  say(run, fonts, "press View, over Zoom")
+  play(run, fonts, [PointerMoved(item(run, fonts, "full"))])
+  say(run, fonts, "over Full Screen")
+  play(run, fonts, click(Point { x: 480.0, y: 380.0 }))
+  say(run, fonts, "press outside")
+  play(run, fonts, click(title(run, fonts, "File")))
+  play(run, fonts, click(title(run, fonts, "File")))
+  say(run, fonts, "press File twice")
+
+  play(run, fonts, [...click(Point { x: 480.0, y: 380.0 }), ...key(Tab), ...key(Enter)])
+  say(run, fonts, "press outside, Tab, Enter")
+  play(run, fonts, [...key(ArrowDown), ...key(ArrowDown)])
+  say(run, fonts, "Down, Down")
+  play(run, fonts, key(ArrowDown))
+  say(run, fonts, "Down")
+  play(run, fonts, key(ArrowUp))
+  say(run, fonts, "Up")
+  play(run, fonts, key(Escape))
+  say(run, fonts, "Escape")
+  play(run, fonts, [...key(Enter), ...key(ArrowRight)])
+  say(run, fonts, "Enter, Right")
+  play(run, fonts, [...key(ArrowRight), ...key(ArrowDown), ...key(ArrowRight)])
+  say(run, fonts, "Right, Down, Right")
+  play(run, fonts, key(ArrowLeft))
+  say(run, fonts, "Left")
+  play(run, fonts, [...key(ArrowRight), ...key(Enter)])
+  say(run, fonts, "Right, Enter")
+  play(run, fonts, [...key(Enter), ...key(Tab)])
+  say(run, fonts, "Enter, Tab")
+
+  run.count = 5
+  play(run, fonts, click(title(run, fonts, "File")))
+  run.count = 7
+  play(run, fonts, click(item(run, fonts, "Count")))
+  say(run, fonts, "count 5 then 7, press Count")
+  run.popup = true
+  run.count = 1
+  let _ = laid_out(run, fonts)
+  run.count = 2
+  play(run, fonts, click(item(run, fonts, "Count")))
+  say(run, fonts, "a popup open, count 1 then 2, press Inner")
+  run.popup = false
+
+  for (chord, e) in menu_shortcuts(laid_out(run, fonts)) {
+    println("shortcut ${chord_text(chord, true)} / ${chord_text(chord, false)}: ${named(e)}")
+  }
+  let alt_f4 = Chord { key: FunctionKey(4), mods: Modifiers { alt: true } }
+  let ctrl_c = Chord { key: Character('c'), mods: Modifiers { control: true } }
+  let enter = Chord { key: Enter, mods: Modifiers { primary: true, shift: true } }
+  println("${chord_text(alt_f4, true)} ${chord_text(alt_f4, false)} ${chord_text(ctrl_c, true)} ${chord_text(enter, true)} ${chord_text(enter, false)}")
+  0
+}
+
+let menus = pure (count: i64) -> []Menu<Ev> => [
+  Menu {
+    label: "File",
+    entries: [
+      entry("New", Chose("new"), Some('n')),
+      entry("Open", Chose("open"), None),
+      MenuSeparator,
+      MenuItemEntry(MenuItem { label: "Count", on_select: Count(count) }),
+    ],
+  },
+  Menu {
+    label: "Edit",
+    entries: [
+      MenuItemEntry(MenuItem { label: "Undo", on_select: Chose("undo"), shortcut: Some(Chord { key: Character('z'), mods: Modifiers { primary: true } }), enabled: false }),
+      entry("Cut", Chose("cut"), Some('x')),
+    ],
+  },
+  Menu {
+    label: "View",
+    entries: [
+      entry("Full Screen", Chose("full"), None),
+      Submenu("Zoom", [entry("Zoom In", Chose("zoom in"), Some('=')), entry("Zoom Out", Chose("zoom out"), None)]),
+    ],
+  },
+]
+
+let entry = pure (label: string, e: Ev, key: Maybe<rune>) -> MenuEntry<Ev> => {
+  let shortcut: Maybe<Chord> = match key {
+    Some(k) => Some(Chord { key: Character(k), mods: Modifiers { primary: true } }),
+    None => None,
+  }
+  MenuItemEntry(MenuItem { label: label, on_select: e, shortcut: shortcut })
+}
+
+let view = pure (run: Run) -> Node<Ev> => {
+  let bar = row([menu_bar(menus(run.count)), menu_button(text::<Ev>("More"), [entry("About", Chose("about"), None)])])
+  let below: []Node<Ev> = if run.popup { [popup(button("Pop", Chose("pop")), true, button("Inner", Count(run.count)), Chose("dismiss"))] } else { [] }
+  themed::<Ev>(light_theme(), Sheet {}, [column([bar, ...below])])
+}
+
+let play = (run: mut Run, fonts: mut Fonts, inputs: []InputEvent) -> void => {
+  for input in inputs {
+    let laid = laid_out(run, fonts)
+    for e in run.ui.handle(laid, input, run.platform) { run.events.push(named(e)) }
+  }
+}
+
+/// A line for the step just played: its events, the menus open by their titles, and the focus.
+let say = (run: mut Run, fonts: mut Fonts, name: string) -> void => {
+  let laid = laid_out(run, fonts)
+  let open = [id in run.ui.state.menus | named_id(laid, id)]
+  println("${name}: [${run.events.join(", ")}] open [${open.join(", ")}], focus ${named_id(laid, run.ui.state.focus)}")
+  run.events = []
+}
+
+let named = pure (e: Ev) -> string => match e {
+  Chose(what) => what,
+  Count(n) => "Count(${n})",
+}
+
+let named_id = pure (laid: Laid<Ev>, id: string) -> string => match find(laid, id, Point {}) {
+  Some(f) => match f.laid.kind {
+    Opens(_) => f.laid.label,
+    Pressable(e) => named(e),
+    _ => "?",
+  },
+  None => "nothing",
+}
+
+let laid_out = (run: mut Run, fonts: mut Fonts) -> Laid<Ev> =>
+  run.ui.frame_within(view(run), tight(Size { w: 500.0, h: 400.0 }), fonts, run.cache)
+
+/// The middle of the opener labelled label.
+let title = (run: mut Run, fonts: mut Fonts, label: string) -> Point =>
+  middle_where(laid_out(run, fonts), Point {}, (l: Laid<Ev>) -> bool => match l.kind {
+    Opens(_) => l.label == label,
+    _ => false,
+  }) ?? Point { x: -1.0, y: -1.0 }
+
+/// The middle of the item raising the event named name.
+let item = (run: mut Run, fonts: mut Fonts, name: string) -> Point =>
+  middle_where(laid_out(run, fonts), Point {}, (l: Laid<Ev>) -> bool => match l.kind {
+    Pressable(e) => named(e) == name || (name == "Count" && named(e).starts_with("Count")),
+    _ => false,
+  }) ?? Point { x: -1.0, y: -1.0 }
+
+let middle_where = pure (laid: Laid<Ev>, origin: Point, wanted: (Laid<Ev>) -> bool) -> Maybe<Point> => {
+  if wanted(laid) { return Some(Point { x: origin.x + laid.size.w / 2.0, y: origin.y + laid.size.h / 2.0 }) }
+  for child in laid.children {
+    if let Some(p) = middle_where(child.laid, Point { x: origin.x + child.at.x, y: origin.y + child.at.y }, wanted) {
+      return Some(p)
+    }
+  }
+  None
+}
+
+let click = pure (at: Point) -> []InputEvent =>
+  [PointerMoved(at), PointerDown(Primary, at, 1), PointerUp(Primary, at)]
+
+let key = pure (k: Key) -> []InputEvent => [KeyPressed(k, Modifiers {})]
+`)
+	want := `press File: [] open [File], focus File
+over Edit: [] open [Edit], focus Edit
+press Cut: [cut] open [], focus Edit
+press View, over Zoom: [] open [View, Zoom], focus View
+over Full Screen: [] open [View], focus View
+press outside: [] open [], focus nothing
+press File twice: [] open [], focus File
+press outside, Tab, Enter: [] open [File], focus new
+Down, Down: [] open [File], focus Count(0)
+Down: [] open [File], focus new
+Up: [] open [File], focus Count(0)
+Escape: [] open [], focus File
+Enter, Right: [] open [Edit], focus cut
+Right, Down, Right: [] open [View, Zoom], focus zoom in
+Left: [] open [View], focus Zoom
+Right, Enter: [zoom in] open [], focus View
+Enter, Tab: [] open [], focus More
+count 5 then 7, press Count: [Count(7)] open [], focus File
+a popup open, count 1 then 2, press Inner: [Count(2)] open [], focus Count(2)
+shortcut ⌘N / Ctrl+N: new
+shortcut ⌘X / Ctrl+X: cut
+shortcut ⌘= / Ctrl+=: zoom in
+⌥F4 Alt+F4 ⌃C ⇧⌘↩ Ctrl+Shift+Enter
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// examples/ui/menus.lyra played: from the keyboard File's Save (Down past a separator), then
+// View's Zoom In (Right across the bar, into the submenu); the shortcuts the menus show, taken
+// by the app with no table of the program's (Primary+N, Primary+Shift+S); a press outside an
+// open menu choosing nothing; and ☰'s first item by pointer. The last frame is written.
+func TestRun_UiMenusExample(t *testing.T) {
+	t.Parallel()
+	skipWithoutText(t)
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "menus")
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, filepath.Join(repoRoot(t), "examples", "ui", "menus.lyra")); code != 0 {
+		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
+	}
+	shot := filepath.Join(dir, "end.png")
+	cmd := command(t, bin, "--script",
+		"Tab Enter Down Down Enter Enter Right Right Down Right Enter Escape Primary+n Primary+Shift+s click:22,14 click:400,300 click:540,14 click:520,52",
+		"--png", shot)
+	cmd.Dir = dir
+	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+	out, err := cmd.CombinedOutput()
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 &&
+		strings.Contains(string(out), "SDL could not") {
+		t.Skipf("SDL could not open a dummy window here: %s", out)
+	} else if ok && exitErr.ExitCode() == 1 && strings.HasPrefix(string(out), "no font") {
+		t.Skipf("no font here: %s", out)
+	} else if err != nil {
+		t.Fatalf("running: %v\n%s", err, out)
+	}
+	want := `save
+zoom 1
+new
+save as
+preferences
+`
+	if string(out) != want {
+		t.Errorf("got\n%s\nwant\n%s", out, want)
+	}
+	if _, err := os.Stat(shot); err != nil {
+		t.Errorf("no last frame: %v", err)
+	}
+}
+
 // A control disabled or enabled again with nothing else changed is laid out anew: its
 // `:disabled` look and its refusal of input follow at once. The layout cache gave the last
 // frame's layout back for a node the same in every field but `disabled` until 10/22, so 7GUIs'

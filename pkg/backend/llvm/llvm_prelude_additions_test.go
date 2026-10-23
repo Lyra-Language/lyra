@@ -28,6 +28,28 @@ let main = () -> void => {
 	}
 }
 
+// `index_of` on `[]t` (10/23, asked for by ui's menus, which find an opener in the chain of
+// open ones): the first place equal by `==`, structurally on a struct, `None` where there is
+// none — an empty array too.
+func TestExec_ArrayIndexOf(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+struct Pt { x: i64, y: i64 }
+let main = () -> void => {
+  let xs = [3, -1, 4, -1]
+  let pts = [Pt { x: 0, y: 0 }, Pt { x: 1, y: 2 }]
+  let none: []string = []
+  print("${xs.index_of(-1) ?? -9} ${xs.index_of(5) ?? -9} ${["a", "b"].index_of("b") ?? -9} ")
+  print("${pts.index_of(Pt { x: 1, y: 2 }) ?? -9} ${none.index_of("a") ?? -9}")
+}
+`
+	want := "1 -9 1 1 -9"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("got %q; want %q", got, want)
+	}
+}
+
 // A float's IEEE bits and back (10/19, asked for by Vega's Furnace reader, which assembled
 // an `f32` from its bytes by hand): exact patterns, checked against Python's `struct`.
 func TestExec_FloatBits(t *testing.T) {

@@ -3030,6 +3030,7 @@ const PSEUDO_CLASSES = [
   "focus-visible",
   "focus-within",
   "checked",
+  "open",
   "read-only",
   "read-write",
   "disabled",

@@ -40,7 +40,7 @@ module ui.layout
 //! classes and inline [Style] go through the cascade, and any element may have a background,
 //! a border, rounded corners and padding. A row's or column's `gap` is a style too, so a
 //! theme can set it. **An element's state is a pseudo-class**, as CSS's: `:hover`, `:active`,
-//! `:focus`, `:focus-visible`, `:focus-within`, `:checked`, `:disabled` and `:enabled`, so
+//! `:focus`, `:focus-visible`, `:focus-within`, `:checked`, `:open`, `:disabled` and `:enabled`, so
 //! `Button:hover` is a rule like any other.
 //!
 //! **Identity** is a node's path from the root ([Laid.id]): each step its index among its
@@ -167,6 +167,11 @@ pub data Kind<e> =
   /// open, floating from it on that side; and the event a press outside it, Escape or the
   /// window losing the focus raises.
   | PopsUp(bool, FloatSide, e)
+  /// A menu's opener ([menu_bar]'s titles, [menu_button], a submenu's item): its child its
+  /// face, and while it is open (`Interaction.menus`) its entries' list floating from it.
+  | Opens(MenuSpec<e>)
+  /// A shortcut's text, spelled as the platform spells it ([chord_text]).
+  | Spelled(Chord)
   /// A one-line text field.
   | Editable(FieldSpec<e>)
   /// A flex container (CSS's flexbox), laid out by its computed style: direction, wrap,
@@ -667,6 +672,8 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
     on_change: (i: i64) -> b => f((spec.on_change)(i)),
   }),
   PopsUp(open, side, dismissed) => PopsUp(open, side, f(dismissed)),
+  Opens(spec) => Opens(MenuSpec { entries: mapped_entries(spec.entries, f), side: spec.side, in_bar: spec.in_bar }),
+  Spelled(chord) => Spelled(chord),
   Editable(spec) => Editable(FieldSpec {
     value: spec.value,
     placeholder: spec.placeholder,
@@ -771,6 +778,9 @@ pub struct Interaction {
   keyboard_focus: bool = false,
   /// The select whose list is open, by identity — one at a time, as a browser has it.
   open: string = "",
+  /// The menus open, by their openers' identities: the one opened first, then each submenu
+  /// open from it ([menu_bar], [menu_button]).
+  menus: []string = [],
   /// The window as media queries see it; a size of nothing for the constraints' own.
   viewport: Viewport = Viewport {},
   /// What each element moving a property that changes sizes shows now (`ui.motion`), by
@@ -1082,21 +1092,33 @@ let carry<e> = (cache: mut LayoutCache<e>, laid: Laid<e>) -> void => {
 /// `laid`, laid out from a node equal to `node` in all but its events, with each element's kind
 /// — which says what it raises — taken from `node` and its children's.
 let refreshed<e> = pure (laid: Laid<e>, node: Node<e>) -> Laid<e> => {
+  let kids = laid_children(node)
   var children: []Placed<e> = []
   for k, p in laid.children {
     var mine = p.laid
     // Most kinds lay their children out in order, so the child at the same index is the one;
     // else (a slider's own parts) it is looked for.
-    if k < node.children.len() && child_id(laid.id, node.children[k], k) == p.laid.id {
-      mine = refreshed(p.laid, node.children[k])
+    if k < kids.len() && child_id(laid.id, kids[k], k) == p.laid.id {
+      mine = refreshed(p.laid, kids[k])
     } else {
-      for i, child in node.children {
+      for i, child in kids {
         if child_id(laid.id, child, i) == p.laid.id { mine = refreshed(p.laid, child) }
       }
     }
     children.push(Placed { p | laid: mine })
   }
   Laid { laid | kind: node.kind, children: children }
+}
+
+/// The nodes a layout of `node` holds as its children: its own, but for what floats from a
+/// popup or an opener — the framework's holder around a popup's content, a menu's list made
+/// from its entries — so a layout from the cache is refreshed through them too.
+let laid_children<e> = pure (node: Node<e>) -> []Node<e> => match node.kind {
+  PopsUp(_, _, _) =>
+    if node.children.len() > 1 { [node.children[0], popup_holder(node.children[1])] } else { node.children },
+  Opens(spec) =>
+    if node.children.len() > 0 { [node.children[0], menu_list::<e>(spec.entries)] } else { node.children },
+  _ => node.children,
 }
 
 /// The framework's state that reaches the element identified as `id` and those inside it:
@@ -1106,6 +1128,9 @@ let state_under = pure (ui: Interaction, id: string) -> string => {
   var out = ""
   for holder in [ui.focus, ui.hover, ui.pressed, ui.open] {
     out = "${out}|${if inside(holder) { holder } else { "" }}"
+  }
+  for opened in ui.menus {
+    if inside(opened) { out = "${out}|menu ${opened}" }
   }
   for (key, w) in ui.widgets.entries() {
     if inside(key) {
@@ -1205,6 +1230,9 @@ let same_kind<e> = (a: Kind<e>, b: Kind<e>, theme: Theme) -> bool => match (a, b
     f1.value == f2.value && f1.placeholder == f2.placeholder,
   (Choosing(s1), Choosing(s2)) => s1.selected == s2.selected && s1.options == s2.options,
   (PopsUp(open1, side1, _), PopsUp(open2, side2, _)) => open1 == open2 && side1 == side2,
+  (Opens(m1), Opens(m2)) =>
+    m1.side == m2.side && m1.in_bar == m2.in_bar && same_entries(m1.entries, m2.entries),
+  (Spelled(c1), Spelled(c2)) => c1 == c2,
   (Flexbox, Flexbox) => true,
   (Gridbox, Gridbox) => true,
   // What a painter draws is asked at paint, not kept with the layout: its box lays out alike.
@@ -1226,6 +1254,7 @@ pub let focusable<e> = pure (kind: Kind<e>) -> bool => match kind {
   Ranged(_) => true,
   Editable(_) => true,
   Choosing(_) => true,
+  Opens(_) => true,
   Painted(painter) => painter.input.is_some(),
   _ => false,
 }
@@ -1326,6 +1355,18 @@ let lay_fresh<e> = (
     Choosing(spec) => lay_select(node.children, spec, inner, space, ctx, fonts, cache),
     PopsUp(open, side, _) =>
       lay_popup(node.children, open, side, inner, ctx, fonts, cache),
+    Opens(spec) => lay_opens(node.children, spec, inner, ctx, fonts, cache),
+    Spelled(chord) => {
+      let block = fonts.lay_out(
+        chord_text(chord, ui.viewport.apple),
+        style.font,
+        inner.max_w
+      )
+      Body::<e> {
+        size: inner.constrain(Size { w: block.width, h: block.height }),
+        content: Prose(block),
+      }
+    },
     Flexbox => lay_flex(node.children, style, inner, ctx, fonts, cache),
     Gridbox => lay_grid(node.children, style, inner, ctx, fonts, cache),
     // All the room it is given, on each axis that has a limit; nothing on one that has none.
@@ -1403,7 +1444,11 @@ let lay_fresh<e> = (
     class: node.class,
     kind: node.kind,
     role: role,
-    label: label_of(node, children),
+    // A shortcut's text is the layout's, spelled for the platform.
+    label: match node.kind {
+      Spelled(chord) => chord_text(chord, ui.viewport.apple),
+      _ => label_of(node, children),
+    },
     size: size,
     // The style the cascade asks for — what a transition moves towards — not what was laid
     // out with while one moves; a frame blends what is shown in (`ui.interact`).
@@ -1701,6 +1746,7 @@ let with_state = pure (classes: string, id: string, ui: Interaction) -> string =
     (":focus", ui.focus == id),
     (":focus-visible", ui.focus == id && ui.keyboard_focus),
     (":focus-within", inside(ui.focus)),
+    (":open", ui.menus.contains(id)),
   ] {
     if holds { out = if out.len() == 0 { state } else { "${out} ${state}" } }
   }
@@ -1726,6 +1772,8 @@ let role_of<e> = pure (kind: Kind<e>) -> Role => match kind {
   Editable(_) => TextFieldRole,
   Choosing(_) => ComboBoxRole,
   Words(_) => TextRole,
+  Spelled(_) => TextRole,
+  Opens(_) => ButtonRole,
   Texels(_, _, _) => ImageRole,
   Scrolls(_, _) => ScrollRole,
   Flow(_, _, _) => GroupRole,
@@ -1744,6 +1792,8 @@ let label_of<e> = pure (node: Node<e>, children: []Placed<e>) -> string => {
   match node.kind {
     Words(content) => content,
     Pressable(_) => text_inside(children),
+    // Its face's: what it floats is its menu.
+    Opens(_) => if children.len() > 0 { text_inside([children[0]]) } else { "" },
     Checkable(_, _) => text_inside(children),
     _ => "",
   }
@@ -1853,27 +1903,55 @@ let lay_popup<e> = (
     size: anchor.size,
     children: [laid_anchor]
   } }
-  let most = float_room(ctx.ui.viewport.size)
+  let floating = lay_floating(
+    popup_holder(children[1]),
+    1,
+    side,
+    anchor.size,
+    ctx,
+    fonts,
+    cache
+  )
+  Body { size: anchor.size, children: [laid_anchor, floating] }
+}
+
+/// The framework's holder around a popup's `content`: a scroller (`Popup::content`), so a
+/// long one scrolls.
+let popup_holder<e> = pure (content: Node<e>) -> Node<e> => {
   let wrapping: Kind<e> = Inset(Insets {})
-  let holder: Node<e> = Node {
+  Node {
     kind: wrapping,
     tag: "Popup",
     part: "content",
     style: Style { overflow_y: Some(OverflowAuto) },
-    children: [children[1]],
+    children: [content],
     key: "content",
   }
-  // As wide as it needs — CSS's shrink-to-fit, a floating box's width — and no wider than the
-  // window: laid out first with no width to learn it, then at that width, so what stretches
-  // across it (a menu's rows) spans it rather than the window.
-  let holder_id = child_id(ctx.id, holder, 1)
+}
+
+/// `holder` — child `index` of the element being laid out, what floats from it — laid out
+/// floating on `side` of an anchor `anchor` large: as wide as it needs — CSS's shrink-to-fit,
+/// a floating box's width — and no larger than the window has room for. It is laid out first
+/// with no width to learn its own, then at that width, so what stretches across it (a menu's
+/// rows) spans it rather than the window.
+let lay_floating<e> = (
+  holder: Node<e>,
+  index: i64,
+  side: FloatSide,
+  anchor: Size,
+  ctx: Ctx,
+  fonts: mut Fonts,
+  cache: mut LayoutCache<e>
+) -> Placed<e> => {
+  let most = float_room(ctx.ui.viewport.size)
+  let id = child_id(ctx.id, holder, index)
   let natural = lay(
     holder,
     Constraints { max_h: most.h },
     ctx.cascade,
     fonts,
     ctx.ui,
-    holder_id,
+    id,
     cache
   )
   let wide = natural.size.w.min(most.w)
@@ -1883,17 +1961,14 @@ let lay_popup<e> = (
     ctx.cascade,
     fonts,
     ctx.ui,
-    holder_id,
+    id,
     cache
   )
-  let at = if side == FloatBeside { Point { x: anchor.size.w + FLOAT_GAP } } else {
-    Point { y: anchor.size.h + FLOAT_GAP }
-  }
-  let floating = Placed {
+  let at = if side == FloatBeside { Point { x: anchor.w + FLOAT_GAP } } else { Point { y: anchor.h + FLOAT_GAP } }
+  Placed {
     at: at,
     laid: Laid { content | floats: true, anchor: Some(Anchor { side: side }) }
   }
-  Body { size: anchor.size, children: [laid_anchor, floating] }
 }
 
 /// The most a floating element may take of a window `window` large: all of it but a margin

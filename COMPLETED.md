@@ -9,6 +9,31 @@ Newest first.
 
 ## Dated log
 
+### 10/23/26 — `ui`: menus drawn
+
+- **Menus are data** (`Menu`, `MenuEntry`, `MenuItem`, `Chord`; `ui/layout/menu.lyra`), drawn by
+  `menu_bar` and `menu_button` as openers (`Opens`) whose lists float as a popup's content
+  does (`lay_floating`, split out of `lay_popup`), a submenu's beside its item (`ui/WINDOW.md`
+  step 2). Which are open is the framework's (`Interaction.menus`, a chain from the first to the
+  deepest submenu), unlike a popup's: no program's behaviour depends on it.
+- **A list made at layout must refresh through the cache.** A cache hit refreshes a layout's
+  children by matching the node's children by identity, and a popup's content sits in a holder
+  the framework makes, so a cached popup raised last frame's events — a bug in step 1 the menus
+  test found. `laid_children` gives `refreshed` the holder and a menu's list made from its
+  entries. That is why **a shortcut's text is a kind of its own** (`Spelled`, spelled at layout
+  by `Viewport.apple`): a list made with the platform's spelling would not be the same node the
+  cache refreshes through.
+- **The platform says whether it is Apple's** (`Platform.apple`; `ui.sdl3` asks SDL, a script
+  says `apple_keys`): Lyra has no compile-time target yet, and the layout must not ask SDL.
+- **The app takes every drawn menu's shortcuts** (`menu_shortcuts` over the last frame, after
+  `App.shortcuts`), so a shortcut is written once, on its item; a greyed item's is left out.
+- **Tab from an open menu moves on from its title**, among the controls outside the menus: from
+  the focused item it reached the next item, which closing the menu then removed, and the focus
+  went nowhere.
+- **A submenu's list sets its own text colour** (`Menu`'s rule): it is inside its item, which
+  is lit — white text — while it is open, and colour inherits.
+- `index_of` on `[]t`, beside `contains`: the menus find an opener in the open chain.
+
 ### 10/23/26 — `ui`: popups, and the select's list placed on them
 
 - **`popup(anchor, open, content, on_dismiss, side)`** (`ui/WINDOW.md` step 1): the select's

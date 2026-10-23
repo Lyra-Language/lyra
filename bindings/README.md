@@ -544,8 +544,8 @@ The example's interface is `examples/imgui/components_view.lui`.
   Checkbox::box, .card { … }`) is a rule for each, each selector checked — `Tag`, `.class`,
   `Tag.class`, `Comp::part`, `Comp.class::part`, each with pseudo-classes (below); a
   descendant selector is an error at its own line. **States are CSS's pseudo-classes**:
-  `:hover`, `:active`, `:focus`, `:focus-visible`, `:focus-within`, `:checked`,
-  `:read-only`, `:read-write`, `:disabled` and `:enabled`, on a compound (`Button.primary:hover`, `:focus-within`) or a part — the
+  `:hover`, `:active`, `:focus`, `:focus-visible`, `:focus-within`, `:checked`, `:open` (a
+  menu's opener while its menu is), `:read-only`, `:read-write`, `:disabled` and `:enabled`, on a compound (`Button.primary:hover`, `:focus-within`) or a part — the
   component's before `::` (`Slider:hover::thumb`), the part's after it (`Slider::thumb:active`,
   which takes no classes). Another pseudo-class, a class after a part, and a class named for a
   state (`.hover`, `.pressed`, `.focus` — `:hover`, `:active`, `:focus` now) are errors at their

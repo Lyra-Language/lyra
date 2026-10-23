@@ -89,6 +89,19 @@ impl []t {
     false
   }
 
+  /// Where `x` first is among the elements, compared as [contains] compares, or `None` where
+  /// it is not one of them.
+  ///
+  /// ```
+  /// let shown = tabs.index_of(chosen) ?? 0
+  /// ```
+  pub let index_of<t> = pure noalloc (self, x: t) -> Maybe<i64> => {
+    for i, e in self {
+      if e == x { return Some(i) }
+    }
+    None
+  }
+
   /// Whether `predicate` holds for at least one element, asked in order and stopping at
   /// the first that answers `true`. An empty array has none.
   ///

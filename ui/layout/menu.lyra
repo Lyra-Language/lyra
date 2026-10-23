@@ -1,0 +1,328 @@
+module ui.layout
+//! Menus, drawn (`ui/WINDOW.md` §2). A menu is data — [Menu], [MenuEntry], [MenuItem] — not a
+//! node, since one tree is shown more than one way (the Mac's own bar draws it without `ui`).
+//! Here it is a bar of titles ([menu_bar]) or a button opening one ([menu_button]), each opening
+//! its entries as a list floating from it ([place_floats], as a popup's content does), a
+//! submenu's beside its item.
+//!
+//! **Which menus are open is the framework's** (`Interaction.menus`: the chain from the menu
+//! opened first to the deepest submenu), and so is the item under the keys (`ui.interact`) —
+//! nothing a program does depends on them. An item shows its shortcut at its right, spelled as
+//! the platform spells it ([chord_text]), and **the app takes the shortcuts of every menu drawn**
+//! ([menu_shortcuts], `ui.app`), so a shortcut is written once, on its item.
+//!
+//! **The list is made from the entries at layout** ([menu_list]), the same on every platform —
+//! a shortcut is a [Spelled] element, its text the layout's — so a layout from the cache is
+//! refreshed through it and raises this frame's events.
+
+import ui.backend.{
+  Key,
+  Modifiers,
+  Enter,
+  Escape,
+  Tab,
+  Backspace,
+  Delete,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ArrowDown,
+  Home,
+  End,
+  PageUp,
+  PageDown,
+  Insert,
+  FunctionKey,
+  Character,
+  Unnamed,
+}
+
+/// A menu: its title, and what it holds.
+pub struct Menu<e> {
+  label: string,
+  entries: []MenuEntry<e>,
+}
+
+/// What a menu holds: an item; a submenu, its label and what it holds; or a rule between
+/// groups of items.
+pub data MenuEntry<e> = MenuItemEntry(MenuItem<e>) | Submenu(
+  string,
+  []MenuEntry<e>
+) | MenuSeparator
+
+/// An item: its label, the event choosing it raises, the shortcut that chooses it too (shown
+/// at its right, and taken by the app), whether it can be chosen, and whether it is checked.
+pub struct MenuItem<e> {
+  label: string,
+  on_select: e,
+  shortcut: Maybe<Chord> = None,
+  enabled: bool = true,
+  checked: bool = false,
+}
+
+/// A key and the modifiers held with it — `primary` the shortcut modifier, Command on a Mac
+/// and Control elsewhere, as [Modifiers] has it.
+pub struct Chord {
+  key: Key,
+  mods: Modifiers = Modifiers {},
+}
+
+/// What an opener opens: its entries, the side they open on, and whether it is a title in a
+/// menu bar — where, while one is open, the pointer over another opens that one instead.
+pub struct MenuSpec<e> {
+  entries: []MenuEntry<e>,
+  side: FloatSide,
+  in_bar: bool,
+}
+
+/// A menu bar: each menu's title in a row (`MenuBar`, each `MenuTitle`, `:open` while its menu
+/// is). A press on a title opens its menu below it, and another closes it; while one is open,
+/// the pointer over another title opens that one; the arrows walk the items and across the
+/// titles, Enter chooses, Escape closes.
+pub let menu_bar<e> = pure (menus: []Menu<e>) -> Node<e> => {
+  let kind: Kind<e> = Flow(Horizontal, MainStart, CrossCenter)
+  Node {
+    kind: kind,
+    tag: "MenuBar",
+    children: [m in menus | opener::<e>(text::<e>(m.label), m.entries, FloatBelow, true, "MenuTitle")],
+  }
+}
+
+/// `face` — a ☰, a word, any node — opening `entries` below it when pressed (`MenuButton`,
+/// `:open` while they are).
+pub let menu_button<e> = pure (face: Node<e>, entries: []MenuEntry<e>) -> Node<e> =>
+  opener(face, entries, FloatBelow, false, "MenuButton")
+
+/// A node opening `entries` on `side` of `face`.
+let opener<e> = pure (
+  face: Node<e>,
+  entries: []MenuEntry<e>,
+  side: FloatSide,
+  in_bar: bool,
+  tag: string
+) -> Node<e> => {
+  let kind: Kind<e> = Opens(MenuSpec { entries: entries, side: side, in_bar: in_bar })
+  Node { kind: kind, tag: tag, children: [face] }
+}
+
+/// The list `entries` open as (`Menu`): a column of items each as wide as the widest, keyed by
+/// place, scrolling where it is longer than the window has room for. An item (`MenuItem`) is
+/// a check's room (`MenuItem::check`), its label and its shortcut (`MenuItem::shortcut`); a
+/// submenu's item (`MenuItem.submenu`) an arrow (`MenuItem::arrow`) where the shortcut goes; a
+/// rule a `MenuSeparator`.
+pub let menu_list<e> = pure (entries: []MenuEntry<e>) -> Node<e> => {
+  let kind: Kind<e> = Flow(Vertical, MainStart, CrossStretch)
+  Node {
+    kind: kind,
+    tag: "Menu",
+    style: Style { overflow_y: Some(OverflowAuto) },
+    children: [i in 0..<entries.len() | entry_node(entries[i]).keyed("${i}")],
+    key: "menu",
+  }
+}
+
+/// One entry's node in its menu's list.
+let entry_node<e> = pure (entry: MenuEntry<e>) -> Node<e> => match entry {
+  MenuItemEntry(item) => {
+    let trailing: Node<e> = match item.shortcut {
+      Some(chord) => spelled::<e>(chord).with_part("shortcut"),
+      None => sized::<e>(None, None),
+    }
+    let kind: Kind<e> = Pressable(item.on_select)
+    Node {
+      kind: kind,
+      tag: "MenuItem",
+      disabled: !item.enabled,
+      children: [item_row::<e>(item.label, item.checked, trailing)],
+    }
+  },
+  Submenu(label, entries) =>
+    opener(
+      item_row::<e>(label, false, submenu_arrow::<e>()),
+      entries,
+      FloatBeside,
+      false,
+      "MenuItem"
+    )
+    .with_class("submenu"),
+  MenuSeparator => padding::<e>(
+    Insets { top: 4.0, bottom: 4.0 },
+    Node { kind: Measured(None, Some(1.0)), tag: "MenuSeparator" }
+  ),
+}
+
+/// An item's row: the check's room (a check in it when `checked`), the label taking what is
+/// left, and `trailing`.
+let item_row<e> = pure (label: string, checked: bool, trailing: Node<e>) -> Node<e> => {
+  let check = sized::<e>(
+    Some(14.0),
+    None,
+    [text::<e>(if checked { "✓" } else { "" })]
+  ).with_part("check")
+  row::<e>([
+    check,
+    expanded::<e>(text::<e>(label)),
+    trailing
+  ]).with_style(Style { gap: Some(10.0) })
+}
+
+/// A submenu's arrow, pointing right: bars shortening to its tip — the display list has no
+/// paths, and the font may have no ▸. Each bar is the `MenuItem::arrow` part, coloured by its
+/// `background`.
+let submenu_arrow<e> = pure () -> Node<e> => {
+  let heights: []f32 = [8.0, 6.0, 4.0, 2.0]
+  row::<e>([h in heights | sized::<e>(Some(1.2), Some(h)).with_part("arrow")])
+    .aligned(MainStart, CrossCenter)
+}
+
+/// A shortcut's text (`Shortcut`), spelled at layout as the platform spells it ([chord_text]).
+pub let spelled<e> = pure (chord: Chord) -> Node<e> => {
+  let kind: Kind<e> = Spelled(chord)
+  Node { kind: kind, tag: "Shortcut" }
+}
+
+/// `chord` as a menu shows it: on Apple's systems its modifiers' symbols in their order —
+/// ⌃ ⌥ ⇧ ⌘ — then the key (`⇧⌘T`); elsewhere the modifiers' names and the key, `+` between
+/// (`Ctrl+Shift+T`). A letter is its capital.
+pub let chord_text = pure (chord: Chord, apple: bool) -> string => {
+  let m = chord.mods
+  let name = key_text(chord.key, apple)
+  if apple {
+    let control = m.control
+    let command = m.primary || m.command
+    "${if control { "⌃" } else { "" }}${if m.alt { "⌥" } else { "" }}${if m.shift { "⇧" } else { "" }}${if command { "⌘" } else { "" }}${name}"
+  } else {
+    var parts: []string = []
+    if m.primary || m.control { parts.push("Ctrl") }
+    if m.alt { parts.push("Alt") }
+    if m.shift { parts.push("Shift") }
+    if m.command { parts.push("Super") }
+    parts.push(name)
+    parts.join("+")
+  }
+}
+
+/// A key's name in a shortcut: its symbol on Apple's systems where it has one, else its name.
+let key_text = pure (key: Key, apple: bool) -> string => match key {
+  Character(' ') => "Space",
+  Character(c) => "${c.to_ascii_upper()}",
+  FunctionKey(n) => "F${n}",
+  Enter => if apple { "↩" } else { "Enter" },
+  Escape => if apple { "⎋" } else { "Esc" },
+  Tab => if apple { "⇥" } else { "Tab" },
+  Backspace => if apple { "⌫" } else { "Backspace" },
+  Delete => if apple { "⌦" } else { "Delete" },
+  ArrowLeft => "←",
+  ArrowRight => "→",
+  ArrowUp => "↑",
+  ArrowDown => "↓",
+  Home => if apple { "↖" } else { "Home" },
+  End => if apple { "↘" } else { "End" },
+  PageUp => if apple { "⇞" } else { "PgUp" },
+  PageDown => if apple { "⇟" } else { "PgDn" },
+  Insert => "Insert",
+  Unnamed(code) => "#${code}",
+}
+
+/// Every enabled item's shortcut in the menus `laid` draws, open or not — submenus' included —
+/// and the event it chooses: what the app takes before any element hears a key.
+pub let menu_shortcuts<e> = pure (laid: Laid<e>) -> [](Chord, e) => {
+  var out: [](Chord, e) = []
+  gather_shortcuts(laid, out)
+  out
+}
+
+let gather_shortcuts<e> = (laid: Laid<e>, out: mut [](Chord, e)) -> void => {
+  if let Opens(spec) = laid.kind {
+    entry_shortcuts(spec.entries, out)
+    // What the opener floats is its own entries, already gathered.
+    if laid.children.len() > 0 { gather_shortcuts(laid.children[0].laid, out) }
+    return
+  }
+  for child in laid.children { gather_shortcuts(child.laid, out) }
+}
+
+let entry_shortcuts<e> = (entries: []MenuEntry<e>, out: mut [](Chord, e)) -> void => {
+  for entry in entries {
+    match entry {
+      MenuItemEntry(item) => if item.enabled {
+        if let Some(chord) = item.shortcut { out.push((chord, item.on_select)) }
+      },
+      Submenu(_, inner) => entry_shortcuts(inner, out),
+      MenuSeparator => {},
+    }
+  }
+}
+
+/// `entries` with their events passed through `f`.
+let mapped_entries<a, b> = pure (
+  entries: []MenuEntry<a>,
+  f: pure (a) -> b
+) -> []MenuEntry<b> => [
+  entry in entries |
+    match entry {
+      MenuItemEntry(item) => MenuItemEntry(MenuItem {
+        label: item.label,
+        on_select: f(item.on_select),
+        shortcut: item.shortcut,
+        enabled: item.enabled,
+        checked: item.checked,
+      }),
+      Submenu(label, inner) => Submenu(label, mapped_entries(inner, f)),
+      MenuSeparator => MenuSeparator,
+    }
+]
+
+/// Whether two menus' entries lay out alike — their labels, shortcuts, greying and checks,
+/// whatever their events.
+let same_entries<e> = pure (a: []MenuEntry<e>, b: []MenuEntry<e>) -> bool => {
+  if a.len() != b.len() { return false }
+  for i in 0..<a.len() {
+    let same = match (a[i], b[i]) {
+      (MenuItemEntry(x), MenuItemEntry(y)) =>
+        x.label == y.label && x.shortcut == y.shortcut && x.enabled == y.enabled && x.checked == y.checked,
+      (Submenu(l1, e1), Submenu(l2, e2)) => l1 == l2 && same_entries(e1, e2),
+      (MenuSeparator, MenuSeparator) => true,
+      _ => false,
+    }
+    if !same { return false }
+  }
+  true
+}
+
+/// An opener's face, as a wrapper lays its child out, and — while it is open
+/// (`Interaction.menus`) — its list ([menu_list]) floating on its spec's side of it.
+let lay_opens<e> = (
+  children: []Node<e>,
+  spec: MenuSpec<e>,
+  c: Constraints,
+  ctx: Ctx,
+  fonts: mut Fonts,
+  cache: mut LayoutCache<e>
+) -> Body<e> => {
+  if children.len() == 0 { return Body::<e> { size: c.constrain(Size {}) } }
+  let face = lay(
+    children[0],
+    c,
+    ctx.cascade,
+    fonts,
+    ctx.ui,
+    child_id(ctx.id, children[0], 0),
+    cache
+  )
+  let laid_face = Placed { at: Point {}, laid: face }
+  if !ctx.ui.menus.contains(ctx.id) { return Body {
+    size: face.size,
+    children: [laid_face]
+  } }
+  let list = lay_floating(
+    menu_list::<e>(spec.entries),
+    1,
+    spec.side,
+    face.size,
+    ctx,
+    fonts,
+    cache
+  )
+  Body { size: face.size, children: [laid_face, list] }
+}
