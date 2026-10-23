@@ -182,6 +182,10 @@ pub data Kind<e> =
   /// One of the window's own buttons ([window_buttons]): pressed, the framework minimizes,
   /// maximizes or restores, or closes the window.
   | WindowControl(WindowButton)
+  /// A colour picker's square or strip ([color_picker]): pressed or dragged, a colour.
+  | ColorAxis(AxisSpec<e>)
+  /// A colour on a checkerboard, filling its room ([swatch]'s face).
+  | ColorPatch(Color)
   /// A one-line text field.
   | Editable(FieldSpec<e>)
   /// A flex container (CSS's flexbox), laid out by its computed style: direction, wrap,
@@ -299,6 +303,10 @@ pub struct FieldSpec<e> {
   placeholder: string = "",
   read_only: bool = false,
   on_edit: (string) -> e,
+  /// Whether the framework keeps the text as it is typed while the field has the focus
+  /// (`Interaction.drafts`), whatever `value` says — a colour picker's, whose value is the
+  /// colour as `#rrggbb` and whose user may be halfway through `oklch(`.
+  draft: bool = false,
 }
 
 /// The event type of a tree that raises none: `Node<NoEvent>`. (Not `Node<void>`, which does
@@ -707,7 +715,14 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
     placeholder: spec.placeholder,
     read_only: spec.read_only,
     on_edit: (text: string) -> b => f((spec.on_edit)(text)),
+    draft: spec.draft,
   }),
+  ColorAxis(spec) => ColorAxis(AxisSpec {
+    channel: spec.channel,
+    color: spec.color,
+    on_change: (c: Color) -> b => f((spec.on_change)(c)),
+  }),
+  ColorPatch(color) => ColorPatch(color),
   Flexbox => Flexbox,
   Gridbox => Gridbox,
   Painted(painter) => {
@@ -814,6 +829,11 @@ pub struct Interaction {
   /// What each element moving a property that changes sizes shows now (`ui.motion`), by
   /// identity: laid out with those properties until they arrive.
   shown: HashMap<string, Computed>,
+  /// The text typed in a field that keeps a draft ([FieldSpec.draft]) while it has the focus,
+  /// by the field's identity; and the hue a colour picker holds while its colour is grey and
+  /// says none, by the picker's (`ui/layout/swatch.lyra`).
+  drafts: HashMap<string, string>,
+  hues: HashMap<string, f32>,
 }
 
 /// What the framework keeps for one element: a scroll's offset once the user has scrolled
@@ -843,7 +863,12 @@ pub struct Edit {
 
 /// No focus, nothing under the pointer, no element's state.
 pub let interaction_new = pure () -> Interaction =>
-  Interaction { widgets: hashmap_new(), shown: hashmap_new() }
+  Interaction {
+    widgets: hashmap_new(),
+    shown: hashmap_new(),
+    drafts: hashmap_new(),
+    hues: hashmap_new(),
+  }
 
 // ── The laid-out tree ────────────────────────────────────────────────────────
 
@@ -882,6 +907,9 @@ pub struct Laid<e> {
   floating: bool = false,
   /// Whether a press on it moves the window ([Node.window_drag]).
   drags_window: bool = false,
+  /// A colour picker's square's or strip's hue as it is drawn: the colour's own, or the one the
+  /// picker holds while the colour is grey (`Interaction.hues`).
+  hue: f32 = 0.0,
   /// The media queries this node's sheets, and those below it, asked of the viewport, and
   /// their answers: while they answer the same, so does its layout.
   media: []MediaAnswer = [],
@@ -1137,7 +1165,34 @@ let refreshed<e> = pure (laid: Laid<e>, node: Node<e>) -> Laid<e> => {
     }
     children.push(Placed { p | laid: mine })
   }
-  Laid { laid | kind: node.kind, children: children }
+  Laid { laid | kind: kept_draft(node.kind, laid.kind), children: children }
+}
+
+/// `node` as a field keeping a draft shows it: its value the text typed, while there is one
+/// ([FieldSpec.draft]) — what layout, editing and every caret position then read. Any other
+/// node is itself, not a copy: this is asked of every node laid out.
+let drafted<e> = pure (node: Node<e>, ui: Interaction, id: string) -> Node<e> => {
+  if ui.drafts.len() == 0 { return node }
+  match node.kind {
+    Editable(spec) => if spec.draft {
+      match ui.drafts.get(id) {
+        Some(typed) => Node { node | kind: Editable(FieldSpec { spec | value: typed }) },
+        None => node,
+      }
+    } else { node },
+    _ => node,
+  }
+}
+
+/// `kind` refreshed from the cache with a draft `laid` showed kept (the cache was keyed on it).
+let kept_draft<e> = pure (kind: Kind<e>, laid: Kind<e>) -> Kind<e> => match kind {
+  Editable(fresh) => if fresh.draft {
+    match laid {
+      Editable(old) => Editable(FieldSpec { fresh | value: old.value }),
+      _ => kind,
+    }
+  } else { kind },
+  _ => kind,
 }
 
 /// The nodes a layout of `node` holds as its children: its own, but for what floats from a
@@ -1165,6 +1220,16 @@ let state_under = pure (ui: Interaction, id: string) -> string => {
   }
   for opened in ui.menus {
     if inside(opened) { out = "${out}|menu ${opened}" }
+  }
+  if ui.drafts.len() > 0 {
+    for (key, typed) in ui.drafts.entries() {
+      if inside(key) { out = "${out}|draft ${key}:${typed}" }
+    }
+  }
+  if ui.hues.len() > 0 {
+    for (key, hue) in ui.hues.entries() {
+      if inside(key) { out = "${out}|hue ${key}:${hue}" }
+    }
   }
   for (key, w) in ui.widgets.entries() {
     if inside(key) {
@@ -1261,7 +1326,7 @@ let same_kind<e> = (a: Kind<e>, b: Kind<e>, theme: Theme) -> bool => match (a, b
     ) && same_f32(r1.min, r2.min) && same_f32(r1.max, r2.max) &&
     same_f32(r1.step, r2.step),
   (Editable(f1), Editable(f2)) =>
-    f1.value == f2.value && f1.placeholder == f2.placeholder,
+    f1.value == f2.value && f1.placeholder == f2.placeholder && f1.draft == f2.draft,
   (Choosing(s1), Choosing(s2)) => s1.selected == s2.selected && s1.options == s2.options,
   (PopsUp(open1, side1, _), PopsUp(open2, side2, _)) => open1 == open2 && side1 == side2,
   (Opens(m1), Opens(m2)) =>
@@ -1269,6 +1334,8 @@ let same_kind<e> = (a: Kind<e>, b: Kind<e>, theme: Theme) -> bool => match (a, b
   (Spelled(c1), Spelled(c2)) => c1 == c2,
   (TabStrip, TabStrip) => true,
   (WindowControl(b1), WindowControl(b2)) => b1 == b2,
+  (ColorAxis(a1), ColorAxis(a2)) => a1.channel == a2.channel && a1.color == a2.color,
+  (ColorPatch(c1), ColorPatch(c2)) => c1 == c2,
   (Tabbed(t1), Tabbed(t2)) =>
     t1.index == t2.index && t1.selected == t2.selected && t1.closable == t2.closable && t1.movable == t2.movable,
   (Flexbox, Flexbox) => true,
@@ -1294,6 +1361,7 @@ pub let focusable<e> = pure (kind: Kind<e>) -> bool => match kind {
   Choosing(_) => true,
   Opens(_) => true,
   Tabbed(_) => true,
+  ColorAxis(_) => true,
   Painted(painter) => painter.input.is_some(),
   _ => false,
 }
@@ -1306,7 +1374,7 @@ let is_painted<e> = pure (kind: Kind<e>) -> bool => match kind {
 
 /// One node within `c`, styled at `cascade`, identified as `id`, laid out afresh.
 let lay_fresh<e> = (
-  node: Node<e>,
+  written: Node<e>,
   given: Constraints,
   cascade: Cascade,
   fonts: mut Fonts,
@@ -1314,6 +1382,8 @@ let lay_fresh<e> = (
   id: string,
   cache: mut LayoutCache<e>
 ) -> Laid<e> => {
+  // A field keeping a draft lays it out, the draft its value.
+  let node = drafted(written, ui, id)
   let styled = styled_at(node, cascade, ui, id)
   let own = styled.own
   let style = styled.style
@@ -1397,6 +1467,11 @@ let lay_fresh<e> = (
     Opens(spec) => lay_opens(node.children, spec, inner, ctx, fonts, cache),
     TabStrip => lay_tab_strip(node.children, inner, ctx, fonts, cache),
     WindowControl(button) => lay_window_control(button, inner, ctx, fonts, cache),
+    ColorAxis(spec) => Body::<e> { size: inner.constrain(axis_size(spec.channel)) },
+    // All the room it is given, as a painter's.
+    ColorPatch(_) => Body::<e> {
+      size: inner.constrain(Size { w: if inner.bounded_w() { inner.max_w } else { 0.0 }, h: if inner.bounded_h() { inner.max_h } else { 0.0 } }),
+    },
     Spelled(chord) => {
       let block = fonts.lay_out(
         chord_text(chord, ui.viewport.apple),
@@ -1510,6 +1585,10 @@ let lay_fresh<e> = (
     floating: children.any((p) => p.laid.floats || p.laid.floating),
     disabled: node.disabled,
     drags_window: node.drags_window,
+    hue: match node.kind {
+      ColorAxis(spec) => axis_hue(spec.color, ui, id),
+      _ => 0.0,
+    },
     media: asked_below(styled.media, children),
   }
 }
@@ -1823,6 +1902,7 @@ let role_of<e> = pure (kind: Kind<e>) -> Role => match kind {
   Opens(_) => ButtonRole,
   TabStrip => TabListRole,
   WindowControl(_) => ButtonRole,
+  ColorAxis(_) => SliderRole,
   Tabbed(_) => TabRole,
   Texels(_, _, _) => ImageRole,
   Scrolls(_, _) => ScrollRole,
@@ -2559,6 +2639,11 @@ let paint_into<e, r> where r: Renderer = (
   }
   if let Painted(painter) = laid.kind {
     paint_painter(ops, painter, box, corners, scale, fonts, atlas, renderer, clip)
+  }
+  match laid.kind {
+    ColorAxis(spec) => paint_axis(ops, spec, laid.hue, box),
+    ColorPatch(color) => paint_patch(ops, color, box, corners),
+    _ => {},
   }
   if laid.clips && laid.field.is_none() { ops.push(PushClip(box, corners)) }
   let inside = if laid.clips { clip.intersect(box) } else { clip }

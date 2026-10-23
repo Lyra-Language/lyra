@@ -9,6 +9,33 @@ Newest first.
 
 ## Dated log
 
+### 10/23/26 — `ui`: colour — a swatch, its picker, and CSS's colour syntax
+
+- **`ui.color`** (`ui/WINDOW.md` step 7) reads CSS Color 4's text — hex, `rgb(…)`, `oklab(…)`,
+  `oklch(…)` — for the picker's field and for lui's sheets on both targets, which read only hex
+  before. An OKLCH colour outside sRGB is brought in as CSS does, by lowering its chroma until a
+  clip moves it less than a just-noticeable difference: clipping alone turns a vivid green
+  yellower. It is its own module rather than part of `ui.draw`, which stays the display list.
+- **A linear gradient is cut into bands at its stops' lines**, a band's corners coloured from
+  the gradient. The fan from the middle that drew every gradient blended across the stops a
+  triangle spanned: the hue strip's thirteen stops came out as a bow tie of mixed colours.
+  Radial gradients keep the fan.
+- **A field may keep what is typed** (`FieldSpec.draft`): the picker's field raises a colour
+  whenever its text reads as one, and the program hands back that colour's text — which would
+  replace `oklch(70%` with `#…` mid-word. `Ui.drafts` keeps the text by identity while the
+  field is focused, and `frame_within` drops it when the focus leaves.
+- **The picker holds its hue while the colour is grey**, by the picker's identity: a press on
+  white loses the hue, and the next press on the square would otherwise make red.
+- **An OKLCH mode was built and taken out**: lightness, chroma and hue strips behind a
+  toggle. It did not work well as an interface — the chroma strip's end is arbitrary (OKLCH's
+  chroma has no fixed top) and much of each strip was out of sRGB, drawn faded — so OKLCH is
+  the field's syntax only (`ui/WINDOW.md`'s open question 6).
+- **The cascade rejects a rule naming another tag before parsing its selector.** The picker's
+  seven theme rules (four once its mode switch went) made every layout a tenth slower and `TestRun_UiResizeSettles` missed its
+  minute: each element was matched against each rule by splitting its selector list and
+  building its compound a character at a time. With `may_name` asked first (and no split
+  without a comma) the test takes 24 s where it took 37 s before the picker.
+
 ### 10/23/26 — `ui`: a file dialog
 
 - **`Command.ChooseFile(FileDialog { filters, start, save }, make)`** (`ui/WINDOW.md` step 6):

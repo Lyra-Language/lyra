@@ -112,6 +112,11 @@ import ui.layout.{
   TabStrip,
   WindowControl,
   WindowButton,
+  ColorAxis,
+  AxisSpec,
+  axis_color,
+  axis_spot,
+  picker_of,
   Painted,
   RawInput,
   KeyInput,
@@ -327,6 +332,10 @@ impl Ui {
     }
     self.popups_followed(laid)
     self.menus_followed(laid, present)
+    // A draft lasts while its field has the focus.
+    for id in self.state.drafts.keys() {
+      if id != self.state.focus { let _ = self.state.drafts.remove(id) }
+    }
     if !present.contains_key(self.state.focus) { self.state.focus = "" }
     if !present.contains_key(self.state.open) { self.state.open = "" }
     // A control disabled since it took the focus or the press gives them up.
@@ -612,6 +621,51 @@ impl Ui {
         Some(events)
       },
     }
+  }
+
+  /// The pointer at `at` on (or holding) the colour axis `axis`: the colour there, its picker's
+  /// hue held, and the colour raised where it changed.
+  let axis_moved<e> = (
+    self: mut,
+    axis: Found<e>,
+    spec: AxisSpec<e>,
+    at: Point
+  ) -> []e => {
+    let w = axis.laid.size.w.max(1.0)
+    let h = axis.laid.size.h.max(1.0)
+    let x = ((at.x - axis.origin.x) / w).clamp(0.0, 1.0)
+    let y = ((at.y - axis.origin.y) / h).clamp(0.0, 1.0)
+    self.axis_to(axis, spec, x, y)
+  }
+
+  /// The colour axis `axis` set to the fractions `x` across and `y` down.
+  let axis_to<e> = (
+    self: mut,
+    axis: Found<e>,
+    spec: AxisSpec<e>,
+    x: f32,
+    y: f32
+  ) -> []e => {
+    let (color, hue) = axis_color(spec, axis.laid.hue, x, y)
+    self.state.hues.insert(picker_of(axis.laid.id), hue)
+    if color == spec.color { [] } else { [(spec.on_change)(color)] }
+  }
+
+  /// A key for the focused colour axis `axis`: Left and Right move its thumb across a fiftieth,
+  /// Up and Down the square's down, Home and End to its ends.
+  let axis_key<e> = (self: mut, axis: Found<e>, spec: AxisSpec<e>, key: Key) -> []e => {
+    let (x, y) = axis_spot(spec, axis.laid.hue)
+    let step: f32 = 1.0 / 50.0
+    let (nx, ny) = match key {
+      ArrowLeft => (x - step, y),
+      ArrowRight => (x + step, y),
+      ArrowUp => (x, y - step),
+      ArrowDown => (x, y + step),
+      Home => (0.0, y),
+      End => (1.0, y),
+      _ => return [],
+    }
+    self.axis_to(axis, spec, nx.clamp(0.0, 1.0), ny.clamp(0.0, 1.0))
   }
 
   /// A key for the focused tab `tab`: Enter or Space selects it; Left and Right the tab before
@@ -924,6 +978,7 @@ impl Ui {
           let state = self.widget(id)
           let end = text.len()
           self.state.widgets.insert(id, WidgetState { state | caret: end, anchor: end })
+          if spec.draft && !spec.read_only { self.state.drafts.insert(id, text) }
           if text == spec.value || spec.read_only { [] } else { [(spec.on_edit)(text)] }
         },
         Ranged(spec) => match text.trim().parse_f64() {
@@ -1024,6 +1079,7 @@ impl Ui {
     match held.laid.kind {
       Ranged(spec) => slide_to(held, spec, at),
       Tabbed(spot) => tab_dragged(laid, held, spot, at),
+      ColorAxis(spec) => self.axis_moved(held, spec, at),
       Editable(_) => {
         // A drag extends what the press picked by the same unit: a rune, a word, or (after a
         // triple click) nothing more than the whole.
@@ -1087,6 +1143,7 @@ impl Ui {
     match target.laid.kind {
       Ranged(spec) => slide_to(target, spec, at),
       Tabbed(spot) => tab_pressed(spot),
+      ColorAxis(spec) => self.axis_moved(target, spec, at),
       Choosing(spec) => {
         self.open_select(target.laid.id, spec)
         []
@@ -1401,6 +1458,7 @@ impl Ui {
         Choosing(_) => true,
         Opens(_) => true,
         Tabbed(_) => true,
+        ColorAxis(_) => true,
         _ => false,
       },
       None => false,
@@ -1416,6 +1474,7 @@ impl Ui {
       Editable(_) => self.field_key(focused, key, mods, platform),
       Choosing(spec) => self.select_key(focused.laid.id, spec, key, mods),
       Tabbed(spot) => self.tab_key(laid, focused, spot, key),
+      ColorAxis(spec) => self.axis_key(focused, spec, key),
       // A focused opener: Enter, Space or Down opens its menu, the focus to its first item.
       Opens(_) => {
         if key == Enter || key == Character(' ') || key == ArrowDown {
@@ -1541,6 +1600,8 @@ impl Ui {
     }
     // A read-only field moves its caret and selection, and changes nothing.
     if spec.read_only { return [] }
+    // What is typed is kept, whatever the program makes of it, while the field has the focus.
+    if spec.draft { self.state.drafts.insert(field.laid.id, result) }
     let history = [...state.undo, Edit { value: spec.value, caret: before.caret }]
     self.state.widgets.insert(field.laid.id, WidgetState {
       state |

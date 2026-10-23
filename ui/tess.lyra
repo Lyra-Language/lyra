@@ -23,7 +23,7 @@ module ui.tess
 //! edge), so the points of neighbouring contours pair off and a band between two is a
 //! strip of quads.
 
-import ui.draw.{ Rect, Radii, Color, Point, Gradient }
+import ui.draw.{ Rect, Radii, Color, Point, Gradient, LinearGradient, RadialGradient }
 import std.math.{ PI, HALF_PI }
 
 /// A triangle's corner, as the renderer hands it on: where it is, its colour (`0.0`–`1.0` a
@@ -158,10 +158,87 @@ pub let fill_gradient = (
     gradient.at(gradient.along(rect, p)),
     0.0
   )) }
-  mesh.vertices.push(vertex(middle, gradient.at(gradient.along(rect, middle)), 1.0))
-  let centre = first + 2 * n
-  for i in 0..<n { triangle(mesh, centre, first + i, first + (i + 1) % n) }
+  match gradient.kind {
+    // A linear gradient's colour changes along one direction only: cut into slabs at each stop's
+    // line, the colour within a slab is a straight blend of two stops, which a triangle's own
+    // blending draws exactly. A fan from the middle blended each long, thin triangle straight
+    // past the stops between the middle and the edge — a hue strip drew as wedges.
+    LinearGradient(_) => slabs(mesh, inside, rect, gradient),
+    // A radial one's colour changes out from the middle: a fan from it.
+    RadialGradient(_) => {
+      mesh.vertices.push(vertex(middle, gradient.at(gradient.along(rect, middle)), 1.0))
+      let centre = first + 2 * n
+      for i in 0..<n { triangle(mesh, centre, first + i, first + (i + 1) % n) }
+    },
+  }
   band(mesh, first, first + n, n)
+}
+
+/// The convex shape `points` filled with linear `gradient` across `rect`: cut at each stop's line
+/// into slabs, each fanned from its first point, every vertex the gradient's colour where it is.
+let slabs = (mesh: mut Mesh, points: []Point, rect: Rect, gradient: Gradient) -> void => {
+  if points.len() < 3 { return }
+  var low = gradient.along(rect, points[0])
+  var high = low
+  for p in points {
+    let t = gradient.along(rect, p)
+    low = low.min(t)
+    high = high.max(t)
+  }
+  var cuts: []f32 = [low]
+  for mark in gradient.places() {
+    if mark > cuts[cuts.len() - 1] + 0.00001 && mark < high - 0.00001 { cuts.push(mark) }
+  }
+  cuts.push(high)
+  for i in 0..<(cuts.len() - 1) {
+    let piece = clipped_at(
+      clipped_at(points, rect, gradient, cuts[i], true),
+      rect,
+      gradient,
+      cuts[i + 1],
+      false
+    )
+    if piece.len() < 3 { continue }
+    let base = i32(mesh.vertices.len())
+    for p in piece { mesh.vertices.push(vertex(
+      p,
+      gradient.at(gradient.along(rect, p)),
+      1.0
+    )) }
+    for k in 1..<(piece.len() - 1) { triangle(
+      mesh,
+      base,
+      base + i32(k),
+      base + i32(k) + 1
+    ) }
+  }
+}
+
+/// The convex shape `points` cut at the line where `gradient` across `rect` is at `t`: the part
+/// at or past it (`after`), or at or before it — Sutherland and Hodgman's clip against one line.
+let clipped_at = pure (
+  points: []Point,
+  rect: Rect,
+  gradient: Gradient,
+  t: f32,
+  after: bool
+) -> []Point => {
+  var out: []Point = []
+  let n = points.len()
+  for i in 0..<n {
+    let a = points[i]
+    let b = points[(i + 1) % n]
+    let ta = gradient.along(rect, a)
+    let tb = gradient.along(rect, b)
+    let a_in = if after { ta >= t } else { ta <= t }
+    let b_in = if after { tb >= t } else { tb <= t }
+    if a_in { out.push(a) }
+    if a_in != b_in && (tb - ta).abs() > 0.0000001 {
+      let f = (t - ta) / (tb - ta)
+      out.push(Point { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f })
+    }
+  }
+  out
 }
 
 /// A rounded rectangle in `color` whose edge fades out over `feather` pixels, half inside and

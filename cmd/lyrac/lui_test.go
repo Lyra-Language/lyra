@@ -1088,6 +1088,59 @@ func TestLui_UiTargetPopup(t *testing.T) {
 	}
 }
 
+// Colours in a ui-target sheet as CSS Color 4 writes them (ui.color's parse_color): oklch(),
+// oklab() and rgb() with a slash's alpha, in a colour, a gradient's stops and a shadow — words
+// split outside parentheses — each written as its sRGB; and a word that is none refused at its
+// line.
+func TestLui_UiTargetColourSyntax(t *testing.T) {
+	t.Parallel()
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script target="ui">
+  pub data Ev = Go
+</script>
+<component name="view" event={Ev}>
+  <style>
+    .a { color: oklch(62.8% 0.2577 29.23); background: linear-gradient(to right, oklab(0.628 0.2249 0.1258), #fff 80%); box-shadow: 0 2 8 rgb(0 0 0 / 50%) }
+  </style>
+  <Column class="a"/>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`color: Some(rgb(0xFF0000))`,
+		`stops: [ColorStop { color: rgb(0xFF0000) }, ColorStop { color: rgb(0xFFFFFF), at: Some(80.0 / 100.0) }]`,
+		`color: rgba(0x00000080)`,
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	bad := filepath.Join(dir, "bad.lui")
+	if err := os.WriteFile(bad, []byte(strings.Replace(source, "oklch(62.8% 0.2577 29.23)", "oklch(red)", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := command(t, lui, bad).CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "bad.lui:6") || !strings.Contains(string(out), "oklch(red) is not a colour") {
+		t.Errorf("a word that is no colour: %v\n%s", err, out)
+	}
+}
+
 // `<window>` makes window_spec, a function answering a ui.app.WindowSpec for ui.gpu.open_app
 // (a function, so a reload reaches the open window): `title`, `width` and
 // `height` (the size it opens at), the limits, and `resize`, `resize_x` and `resize_y`, a

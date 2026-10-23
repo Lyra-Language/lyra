@@ -4878,6 +4878,289 @@ let main = () -> void => {
 	}
 }
 
+// ui.color (WINDOW.md §6): CSS Color 4's text read and written — hex at every length, rgb() with
+// commas or spaces and a slash's alpha, oklab() and oklch() with percentages and degrees — CSS's
+// red the same each way it is written; an OKLCH green too vivid for sRGB mapped in by its chroma,
+// its hue kept within a few degrees (clipping alone turns it yellower); HSV both ways; and
+// refusals.
+func TestRun_UiColor(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.color.{ parse_color, color_text, oklch, to_oklch, in_gamut, hsv, to_hsv }
+
+let main = () -> void => {
+  for text in [
+    "#fff",
+    "#1234",
+    "#11223380",
+    "rgb(255 0 0)",
+    "rgba(0, 128, 255, 50%)",
+    "rgb(100% 50% 0% / 0.25)",
+    "oklch(62.8% 0.2577 29.23)",
+    "oklab(0.628 0.2249 0.1258)",
+    "OKLCH(0.5 0.1 250deg / 50%)",
+    "oklch(100% 0 0)",
+    "oklch(0% 0.2 40)",
+    "oklch(0.7 0.4 150)",
+    "red",
+    "#12",
+    "oklch(0.5 0.1)",
+    "rgb(1 2 3 4 5)",
+  ] {
+    let shown = match parse_color(text) {
+      Some(c) => color_text(c),
+      None => "not a colour",
+    }
+    println("${text}: ${shown}")
+  }
+  let green = to_oklch(oklch(0.7, 0.4, 150.0))
+  println("the vivid green mapped: in gamut ${in_gamut(green)}, hue within 4 degrees ${(green.h - 150.0).abs() < 4.0}, chroma lowered ${green.c < 0.4}")
+  let back = to_hsv(hsv(210.0, 0.5, 0.8))
+  println("hsv(210, 0.5, 0.8): ${color_text(hsv(210.0, 0.5, 0.8))}, back ${back.h} ${back.s} ${back.v}")
+}
+`)
+	want := `#fff: #ffffff
+#1234: #11223344
+#11223380: #11223380
+rgb(255 0 0): #ff0000
+rgba(0, 128, 255, 50%): #0080ff80
+rgb(100% 50% 0% / 0.25): #ff800040
+oklch(62.8% 0.2577 29.23): #ff0000
+oklab(0.628 0.2249 0.1258): #ff0000
+OKLCH(0.5 0.1 250deg / 50%): #32669a80
+oklch(100% 0 0): #ffffff
+oklch(0% 0.2 40): #000000
+oklch(0.7 0.4 150): #00c248
+red: not a colour
+#12: not a colour
+oklch(0.5 0.1): not a colour
+rgb(1 2 3 4 5): not a colour
+the vivid green mapped: in gamut true, hue within 4 degrees true, chroma lowered true
+hsv(210, 0.5, 0.8): #6699cc, back 210 0.5 0.8
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// examples/ui/colors.lyra (WINDOW.md step 7) headless: its three colours as CSS writes them; the
+// Accent's picker opened and its square pressed; and the colour typed into its field as oklch( and
+// taken as the focus leaves.
+func TestRun_UiColorsExample(t *testing.T) {
+	t.Parallel()
+	skipWithoutText(t)
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "colors")
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, filepath.Join(repoRoot(t), "examples", "ui", "colors.lyra")); code != 0 {
+		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
+	}
+	for _, c := range []struct{ script, want string }{
+		{"", "Accent #1d84f5\nBackground #1e1e24\nSelection #3c78dc59\n"},
+		{"click:157,33 click:200,120", "Accent #738192\nBackground #1e1e24\nSelection #3c78dc59\n"},
+		{"click:157,33 click:260,266 Primary+a 'oklch(70% 0.15 30)' click:400,380", "Accent #ed7665\nBackground #1e1e24\nSelection #3c78dc59\n"},
+	} {
+		shot := filepath.Join(dir, "end.png")
+		cmd := command(t, bin, "--script", c.script, "--png", shot)
+		cmd.Dir = dir
+		cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+		out, err := cmd.CombinedOutput()
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 &&
+			strings.Contains(string(out), "SDL could not") {
+			t.Skipf("SDL could not open a dummy window here: %s", out)
+		} else if ok && exitErr.ExitCode() == 1 && strings.HasPrefix(string(out), "no font") {
+			t.Skipf("no font here: %s", out)
+		} else if err != nil {
+			t.Fatalf("running: %v\n%s", err, out)
+		}
+		if string(out) != c.want {
+			t.Errorf("%q: got\n%s\nwant\n%s", c.script, out, c.want)
+		}
+		if _, err := os.Stat(shot); err != nil {
+			t.Errorf("no last frame: %v", err)
+		}
+	}
+}
+
+// A swatch and its colour picker (WINDOW.md §6): a press on the swatch opens it and another
+// closes it; the square makes saturation and value at the hue, the hue strip a hue, the opacity
+// strip an opacity, the arrows step the hue; the hue is held through white, which has none; the
+// field keeps a half-typed oklch( while the colour stays, takes it whole, and drops the draft as
+// the focus leaves.
+func TestRun_UiColorPicker(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new, find, Found }
+import ui.script.{ script_platform, ScriptPlatform }
+import ui.backend.{ InputEvent, PointerMoved, PointerDown, PointerUp, Primary, KeyPressed, TextTyped, Key, Modifiers, ArrowRight, Enter, Character }
+import ui.draw.{ Size, Point, Color }
+import ui.text.{ Fonts, fonts_new }
+import ui.style.{ light_theme, Sheet }
+import ui.color.{ color_text, hsv, to_hsv }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, button, swatch, themed, tight, ColorAxis, ColorChannel, SatValue, HueChannel, AlphaChannel, Pressable, Editable }
+
+data Ev = Open | Close | Changed(Color) | Away
+
+struct Run {
+  ui: Ui,
+  cache: LayoutCache<Ev>,
+  platform: ScriptPlatform,
+  color: Color,
+  open: bool = false,
+  events: []string = [],
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var run = Run { ui: ui_new(), cache: layout_cache(), platform: script_platform([], Size { w: 400.0, h: 500.0 }), color: hsv(240.0, 0.8, 0.8) }
+  play(run, fonts, click(swatch_face(run, fonts)))
+  say(run, fonts, "press the swatch")
+  play(run, fonts, click(swatch_face(run, fonts)))
+  say(run, fonts, "press it again")
+  run.open = true
+  play(run, fonts, click(on_axis(run, fonts, SatValue, 1.0, 0.0)))
+  say(run, fonts, "the square's top right")
+  play(run, fonts, click(on_axis(run, fonts, SatValue, 0.0, 0.0)))
+  say(run, fonts, "its top left, white")
+  play(run, fonts, click(on_axis(run, fonts, SatValue, 0.5, 0.5)))
+  say(run, fonts, "its middle: the hue held through white")
+  play(run, fonts, click(on_axis(run, fonts, HueChannel, 0.5, 0.5)))
+  say(run, fonts, "the hue strip's middle")
+  play(run, fonts, key(ArrowRight))
+  say(run, fonts, "Right on it")
+  play(run, fonts, click(on_axis(run, fonts, AlphaChannel, 0.0, 0.5)))
+  say(run, fonts, "the opacity strip's start")
+
+  play(run, fonts, [...click(field_middle(run, fonts)), KeyPressed(Character('a'), Modifiers { primary: true }), TextTyped("oklch(62.8% 0.2577 ")])
+  say(run, fonts, "typing oklch( half-way")
+  play(run, fonts, [TextTyped("29.23)")])
+  say(run, fonts, "and to its end")
+  play(run, fonts, click(on_axis(run, fonts, HueChannel, 0.0, 0.5)))
+  say(run, fonts, "the focus away, on the hue strip")
+  0
+}
+
+let play = (run: mut Run, fonts: mut Fonts, inputs: []InputEvent) -> void => {
+  for input in inputs {
+    let laid = laid_out(run, fonts)
+    for e in run.ui.handle(laid, input, run.platform) {
+      match e {
+        Open => {
+          run.open = true
+          run.events.push("Open")
+        },
+        Close => {
+          run.open = false
+          run.events.push("Close")
+        },
+        Changed(c) => {
+          run.color = c
+          run.events.push("Changed")
+        },
+        Away => run.events.push("Away"),
+      }
+    }
+  }
+}
+
+/// A line: the events, the colour (its hue too), whether open, the field's text, and which strips
+/// are shown.
+let say = (run: mut Run, fonts: mut Fonts, name: string) -> void => {
+  let laid = laid_out(run, fonts)
+  let changes = run.events.len()
+  let h = to_hsv(run.color)
+  println("${name}: ${if changes > 0 { run.events[changes - 1] } else { "-" }} ${color_text(run.color)} hue ${h.h.round()}, open ${run.open}, field '${field_text(laid)}', strips ${strips(laid)}")
+  run.events = []
+}
+
+let laid_out = (run: mut Run, fonts: mut Fonts) -> Laid<Ev> =>
+  run.ui.frame_within(view(run), tight(Size { w: 400.0, h: 500.0 }), fonts, run.cache)
+
+let view = pure (run: Run) -> Node<Ev> => themed::<Ev>(light_theme(), Sheet {}, [
+  column([swatch(run.color, run.open, Open, Changed, Close), button("Away", Away)]),
+])
+
+let where_is = pure (laid: Laid<Ev>, origin: Point, wanted: (Laid<Ev>) -> bool) -> Maybe<Found<Ev>> => {
+  if wanted(laid) { return Some(Found { laid: laid, origin: origin }) }
+  for child in laid.children {
+    if let Some(f) = where_is(child.laid, Point { x: origin.x + child.at.x, y: origin.y + child.at.y }, wanted) { return Some(f) }
+  }
+  None
+}
+
+let middle = pure (f: Maybe<Found<Ev>>) -> Point => match f {
+  Some(found) => Point { x: found.origin.x + found.laid.size.w / 2.0, y: found.origin.y + found.laid.size.h / 2.0 },
+  None => Point { x: -1.0, y: -1.0 },
+}
+
+let swatch_face = (run: mut Run, fonts: mut Fonts) -> Point =>
+  middle(where_is(laid_out(run, fonts), Point {}, (l: Laid<Ev>) -> bool => l.tag == "Swatch"))
+
+/// The point x across and y down the axis moving channel.
+let on_axis = (run: mut Run, fonts: mut Fonts, channel: ColorChannel, x: f32, y: f32) -> Point => {
+  let found = where_is(laid_out(run, fonts), Point {}, (l: Laid<Ev>) -> bool => match l.kind {
+    ColorAxis(spec) => spec.channel == channel,
+    _ => false,
+  })
+  match found {
+    Some(f) => Point { x: f.origin.x + x.clamp(0.0, 0.99) * f.laid.size.w, y: f.origin.y + y.clamp(0.0, 0.99) * f.laid.size.h },
+    None => Point { x: -1.0, y: -1.0 },
+  }
+}
+
+let field_middle = (run: mut Run, fonts: mut Fonts) -> Point =>
+  middle(where_is(laid_out(run, fonts), Point {}, (l: Laid<Ev>) -> bool => match l.kind {
+    Editable(_) => true,
+    _ => false,
+  }))
+
+let field_text = pure (laid: Laid<Ev>) -> string => match where_is(laid, Point {}, (l: Laid<Ev>) -> bool => match l.kind {
+  Editable(_) => true,
+  _ => false,
+}) {
+  Some(f) => match f.laid.kind {
+    Editable(spec) => spec.value,
+    _ => "",
+  },
+  None => "",
+}
+
+/// The strips shown, by name.
+let strips = pure (laid: Laid<Ev>) -> string => {
+  var out: []string = []
+  gather(laid, out)
+  out.join(",")
+}
+
+let gather = (laid: Laid<Ev>, out: mut []string) -> void => {
+  if let ColorAxis(spec) = laid.kind { out.push(laid.label) }
+  for child in laid.children { gather(child.laid, out) }
+}
+
+let click = pure (at: Point) -> []InputEvent =>
+  [PointerMoved(at), PointerDown(Primary, at, 1), PointerUp(Primary, at)]
+
+let key = pure (k: Key) -> []InputEvent => [KeyPressed(k, Modifiers {})]
+`)
+	want := `press the swatch: Open #2929cc hue 240, open true, field '#2929cc', strips Saturation and value,Hue,Opacity
+press it again: Close #2929cc hue 240, open false, field '', strips 
+the square's top right: Changed #0303ff hue 240, open true, field '#0303ff', strips Saturation and value,Hue,Opacity
+its top left, white: Changed #ffffff hue 0, open true, field '#ffffff', strips Saturation and value,Hue,Opacity
+its middle: the hue held through white: Changed #404080 hue 240, open true, field '#404080', strips Saturation and value,Hue,Opacity
+the hue strip's middle: Changed #408080 hue 180, open true, field '#408080', strips Saturation and value,Hue,Opacity
+Right on it: Changed #407880 hue 188, open true, field '#407880', strips Saturation and value,Hue,Opacity
+the opacity strip's start: Changed #40788000 hue 188, open true, field '#40788000', strips Saturation and value,Hue,Opacity
+typing oklch( half-way: Changed #40788000 hue 188, open true, field 'oklch(62.8% 0.2577 ', strips Saturation and value,Hue,Opacity
+and to its end: Changed #ff0000 hue 0, open true, field 'oklch(62.8% 0.2577 29.23)', strips Saturation and value,Hue,Opacity
+the focus away, on the hue strip: - #ff0000 hue 0, open true, field '#ff0000', strips Saturation and value,Hue,Opacity
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // A control disabled or enabled again with nothing else changed is laid out anew: its
 // `:disabled` look and its refusal of input follow at once. The layout cache gave the last
 // frame's layout back for a node the same in every field but `disabled` until 10/22, so 7GUIs'

@@ -1,0 +1,238 @@
+module ui.layout
+//! Colour (`ui/WINDOW.md` §6): a [swatch] — the colour on a square, a checkerboard under it when
+//! it is translucent — opening a [color_picker] in a popup: a saturation-and-value square over
+//! the hue, a hue strip, an opacity strip, and the colour as CSS writes it in a field that takes
+//! any of `ui.color`'s syntax (`#rrggbb`, `rgb(…)`, `oklab(…)`, `oklch(…)`) and keeps what is
+//! typed while it is edited ([FieldSpec.draft]).
+//!
+//! **The square and strips are [ColorAxis] elements** the framework draws (their gradients and
+//! thumb, `paint_axis`) and moves: a press, a drag or the arrow keys make a colour, raised through
+//! the spec's `on_change` (`ui.interact`). **The hue is held while the colour is grey**, which
+//! says none: by the picker (`Interaction.hues`, keyed by the picker its axes are in), so
+//! dragging the square to white and back keeps the hue it had.
+
+import ui.color.{ hsv, to_hsv, color_text, parse_color }
+import ui.draw.{ LinearGradient }
+import ui.style.{ insets }
+
+/// What a colour axis moves: the square's saturation (across) and value (down), the hue, or the
+/// opacity.
+pub data ColorChannel = SatValue | HueChannel | AlphaChannel
+
+/// A colour axis: what it moves, the colour as it is, and the event a new colour raises —
+/// called by the framework as it is pressed or dragged, since a builder, pure, may call none.
+pub struct AxisSpec<e> {
+  channel: ColorChannel,
+  color: Color,
+  on_change: (Color) -> e,
+}
+
+/// A swatch (`Swatch`): `color` on a square, opening, while `open` — the program's to say —
+/// a [color_picker] below it (`ColorPicker`, in a popup). A press on it raises `on_open`, or
+/// `on_dismiss` while it is open, so the swatch closes its own picker; a press outside it,
+/// Escape or the window losing the focus raises `on_dismiss`. Each colour picked raises
+/// `on_change`, dragging included, so the program shows it at once.
+pub let swatch<e> = pure (
+  color: Color,
+  open: bool,
+  on_open: e,
+  on_change: (Color) -> e,
+  on_dismiss: e
+) -> Node<e> => {
+  let kind: Kind<e> = Pressable(if open { on_dismiss } else { on_open })
+  let patch: Kind<e> = ColorPatch(color)
+  let face = Node {
+    kind: kind,
+    tag: "Swatch",
+    label: color_text(color),
+    children: [sized::<e>(Some(22.0), Some(22.0), [Node { kind: patch, tag: "ColorPatch" }])],
+  }
+  popup(face, open, color_picker(color, on_change), on_dismiss)
+}
+
+/// A colour picker (`ColorPicker`) for `color`: the saturation-and-value square, the hue strip
+/// and the opacity strip — each a `ColorAxis` — and the colour's text, each change raising
+/// `on_change`. A swatch opens one; a program may show one on its own.
+pub let color_picker<e> = pure (color: Color, on_change: (Color) -> e) -> Node<e> => {
+  let field = text_input::<e>(FieldSpec {
+    value: color_text(color),
+    draft: true,
+    // A text that is no colour yet raises the colour as it was: the draft keeps what was typed.
+    on_edit: (text: string) -> e => on_change(parse_color(text) ?? color),
+  })
+  let kind: Kind<e> = Flow(Vertical, MainStart, CrossStretch)
+  Node {
+    kind: kind,
+    tag: "ColorPicker",
+    style: Style { gap: Some(8.0), padding: Some(insets(10.0)) },
+    children: [
+      axis_node(SatValue, color, on_change).keyed("plane"),
+      axis_node(HueChannel, color, on_change).keyed("hue"),
+      axis_node(AlphaChannel, color, on_change).keyed("alpha"),
+      field.keyed("text"),
+    ],
+  }
+}
+
+/// A colour axis moving `channel` of `color`.
+let axis_node<e> = pure (
+  channel: ColorChannel,
+  color: Color,
+  on_change: (Color) -> e
+) -> Node<e> => {
+  let kind: Kind<e> = ColorAxis(AxisSpec {
+    channel: channel,
+    color: color,
+    on_change: on_change
+  })
+  let label = match channel {
+    SatValue => "Saturation and value",
+    HueChannel => "Hue",
+    AlphaChannel => "Opacity",
+  }
+  Node { kind: kind, tag: "ColorAxis", label: label }
+}
+
+/// How large an axis of `channel` is: the square, or a strip.
+let axis_size = pure (channel: ColorChannel) -> Size => match channel {
+  SatValue => Size { w: 200.0, h: 140.0 },
+  _ => Size { w: 200.0, h: 14.0 },
+}
+
+/// The hue an axis of `color` identified as `id` draws and moves along: the colour's own, or —
+/// while it is grey, and says none — the one its picker holds.
+let axis_hue = pure (color: Color, ui: Interaction, id: string) -> f32 => {
+  let h = to_hsv(color)
+  if h.s > 0.0001 && h.v > 0.0001 { return f32(h.h) }
+  ui.hues.get(picker_of(id)) ?? f32(h.h)
+}
+
+/// The identity a picker holds its hue by, from an axis's `id`: the picker's.
+pub let picker_of = pure (id: string) -> string => {
+  let parts = id.split("/")
+  parts.slice(0, parts.len() - 1).join("/")
+}
+
+/// The colour an axis of `spec`, drawn at `hue`, makes at the fraction `x` across it and `y`
+/// down it (each 0 to 1), and the hue it leaves held: the square sets saturation and value, the
+/// hue strip the hue, the opacity strip the opacity.
+pub let axis_color = pure (
+  spec: AxisSpec<e>,
+  hue: f32,
+  x: f32,
+  y: f32
+) -> (Color, f32) => {
+  let h = to_hsv(spec.color)
+  let alpha = f64(spec.color.a) / 255.0
+  match spec.channel {
+    SatValue => (hsv(f64(hue), f64(x), f64(1.0 - y), alpha), hue),
+    HueChannel => (hsv(f64(x) * 360.0, h.s, h.v, alpha), x * 360.0),
+    AlphaChannel =>
+      (Color { spec.color | a: u8((x.clamp(0.0, 1.0) * 255.0).round()) }, hue),
+  }
+}
+
+/// Where an axis of `spec` drawn at `hue` has its thumb, as fractions across and down.
+pub let axis_spot = pure (spec: AxisSpec<e>, hue: f32) -> (f32, f32) => {
+  let h = to_hsv(spec.color)
+  match spec.channel {
+    SatValue => (f32(h.s), f32(1.0 - h.v)),
+    HueChannel => (hue / 360.0, 0.5),
+    AlphaChannel => (f32(spec.color.a) / 255.0, 0.5),
+  }
+}
+
+/// An axis of `spec` drawn in `box` at `hue`: the square its hue whitened across and darkened
+/// down, the hue strip the hues round, the opacity strip the colour from clear to opaque over a
+/// checkerboard; and its thumb — a ring on the square, a bar on a strip.
+let paint_axis = (ops: mut []DrawOp, spec: AxisSpec<e>, hue: f32, box: Rect) -> void => {
+  let corners = radius(if spec.channel == SatValue { 6.0 } else { 7.0 })
+  let white = Color { r: 255, g: 255, b: 255 }
+  let black = Color { r: 0, g: 0, b: 0 }
+  match spec.channel {
+    SatValue => {
+      ops.push(Fill(box, corners, hsv(f64(hue), 1.0, 1.0)))
+      ops.push(GradientFill(box, corners, Gradient {
+        kind: LinearGradient(90.0),
+        stops: [ColorStop { color: white }, ColorStop { color: Color { white | a: 0 } }],
+      }))
+      ops.push(GradientFill(box, corners, Gradient {
+        kind: LinearGradient(180.0),
+        stops: [ColorStop { color: Color { black | a: 0 } }, ColorStop { color: black }],
+      }))
+    },
+    HueChannel => {
+      ops.push(GradientFill(box, corners, Gradient {
+        kind: LinearGradient(90.0),
+        stops: [k in 0..<=12 | ColorStop { color: hsv(f64(k) * 30.0, 1.0, 1.0) }],
+      }))
+    },
+    AlphaChannel => {
+      checkerboard(ops, box)
+      ops.push(GradientFill(box, corners, Gradient {
+        kind: LinearGradient(90.0),
+        stops: [ColorStop { color: Color { spec.color | a: 0 } }, ColorStop { color: Color { spec.color | a: 255 } }],
+      }))
+    },
+  }
+  let (fx, fy) = axis_spot(spec, hue)
+  let x = box.x + fx.clamp(0.0, 1.0) * box.w
+  let y = box.y + fy.clamp(0.0, 1.0) * box.h
+  if spec.channel == SatValue {
+    ops.push(Border(
+      Rect { x: x - 7.0, y: y - 7.0, w: 14.0, h: 14.0 },
+      radius(7.0),
+      1.0,
+      Color { black | a: 90 }
+    ))
+    ops.push(Border(
+      Rect { x: x - 6.0, y: y - 6.0, w: 12.0, h: 12.0 },
+      radius(6.0),
+      2.0,
+      white
+    ))
+  } else {
+    let bar = Rect { x: x - 3.0, y: box.y - 2.0, w: 6.0, h: box.h + 4.0 }
+    ops.push(Fill(bar, radius(3.0), white))
+    ops.push(Border(bar, radius(3.0), 1.0, Color { black | a: 90 }))
+  }
+}
+
+/// `color` in `box`, over a checkerboard where it is translucent.
+let paint_patch = (
+  ops: mut []DrawOp,
+  color: Color,
+  box: Rect,
+  corners: Radii
+) -> void => {
+  if color.a < 255 { checkerboard(ops, box) }
+  ops.push(Fill(box, corners, color))
+}
+
+/// A light and dark checkerboard of 6-unit squares filling `box`: what a translucent colour is
+/// seen over.
+let checkerboard = (ops: mut []DrawOp, box: Rect) -> void => {
+  ops.push(Fill(box, radius(0.0), Color { r: 0xFF, g: 0xFF, b: 0xFF }))
+  let side: f32 = 6.0
+  var line = 0
+  var y = box.y
+  while y < box.y + box.h {
+    var col = 0
+    var x = box.x
+    while x < box.x + box.w {
+      if (line + col) %% 2 == 1 {
+        let w = side.min(box.x + box.w - x)
+        let h = side.min(box.y + box.h - y)
+        ops.push(Fill(
+          Rect { x: x, y: y, w: w, h: h },
+          radius(0.0),
+          Color { r: 0xCC, g: 0xCC, b: 0xCC }
+        ))
+      }
+      x += side
+      col += 1
+    }
+    y += side
+    line += 1
+  }
+}

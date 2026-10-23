@@ -646,6 +646,30 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
   Rule { selector: "WindowButton.close:hover", style: Style { background: Some(rgb(0xE81123)), color: Some(rgb(0xFFFFFF)) } },
   Rule { selector: "WindowButton::glyph", style: Style { background: Some(c.text) } },
   Rule { selector: "WindowButton::frame", style: Style { border_color: Some(c.text), border_width: Some(1.0) } },
+  // A swatch: its colour framed as a field is; its picker a raised panel, as a menu is.
+  Rule {
+    selector: "Swatch",
+    style: Style {
+      padding: Some(insets(3.0)),
+      radius: Some(6.0),
+      background: Some(c.surface),
+      border_color: Some(c.border),
+      border_width: Some(1.0),
+    },
+  },
+  Rule { selector: "Swatch:hover, Swatch:focus", style: Style { border_color: Some(c.accent) } },
+  Rule { selector: "ColorPatch", style: Style { radius: Some(3.0) } },
+  Rule {
+    selector: "ColorPicker",
+    style: Style {
+      color: Some(c.text),
+      background: Some(c.surface),
+      border_color: Some(c.border),
+      border_width: Some(1.0),
+      radius: Some(8.0),
+      box_shadow: Some([BoxShadow { x: 0.0, y: 4.0, blur: 12.0, spread: 0.0, color: faded(c.text, 0.18) }]),
+    },
+  },
 ]
 
 /// A scroller's bars, drawn over its content's edge: a faint track and a thumb the text's
@@ -896,8 +920,13 @@ let applied = pure (
 ) -> Style => {
   var ranked: [](i64, i64) = []
   for k, rule in rules {
-    for one in rule.selector.split(",") {
-      let rank = specificity(one.trim(), tag, classes)
+    if rule.selector.contains(",") {
+      for one in rule.selector.split(",") {
+        let rank = specificity(one.trim(), tag, classes)
+        if rank > 0 { ranked.push((rank, k)) }
+      }
+    } else {
+      let rank = specificity(rule.selector.trim(), tag, classes)
       if rank > 0 { ranked.push((rank, k)) }
     }
   }
@@ -950,11 +979,25 @@ pub let part_specificity = pure (
 /// or pseudo-class it asks for (`Button.primary:hover` is 21), every one of which the element
 /// must have; 0 when it does not match (a part selector never does).
 pub let specificity = pure (selector: string, tag: string, classes: string) -> i64 => {
-  if selector.contains("::") || selector.len() == 0 { return 0 }
+  if selector.len() == 0 || !may_name(
+    selector,
+    tag
+  ) || selector.contains("::") { return 0 }
   let (want, asks) = compound(selector)
   if want.len() > 0 && want != tag { return 0 }
   if !holds(asks, classes) { return 0 }
   (if want.len() > 0 { 1 } else { 0 }) + 10 * asks.len()
+}
+
+/// Whether `selector` can be about an element of `tag`: it names no tag, or that one. Asked
+/// before [compound] takes it apart — every element is matched against every rule of its
+/// sheets, and most rules name another tag.
+let may_name = pure (selector: string, tag: string) -> bool => {
+  if selector.starts_with(".") || selector.starts_with(":") { return true }
+  match selector.strip_prefix(tag) {
+    Some(rest) => rest.len() == 0 || rest.starts_with(".") || rest.starts_with(":"),
+    None => false,
+  }
 }
 
 /// The states an element can be in, as CSS's pseudo-classes: the pointer over it or inside it,

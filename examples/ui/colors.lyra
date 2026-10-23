@@ -1,0 +1,165 @@
+// Colours: `ui.layout`'s `swatch` — a colour on a square opening a picker (a saturation-and-value
+// square, hue and opacity strips, and the colour as CSS writes it in a field taking `#rrggbb`,
+// `rgb(…)`, `oklab(…)` or `oklch(…)`) — for three colours of a theme, one of them translucent,
+// each shown as `ui.color` writes it and in OKLCH.
+//
+//     lyrac run examples/ui/colors.lyra
+//     lyrac run examples/ui/colors.lyra -- --script "click:157,33 click:200,120" [--png FILE]
+//
+// **The second form** plays a script (`ui.script`) headless, prints the colours as they were
+// left and with `--png FILE` writes the last frame.
+
+import ui.sdl3
+import ui.sdl3.{ SdlRenderer, capture }
+import ui.gpu
+import ui.app.{ App, run, running, step_running, Command, Subscription }
+import ui.script.{ timed_platform, parse_steps }
+import ui.draw.{ Point, Size, Color }
+import ui.text.{ Fonts, fonts_new, glyph_atlas }
+import ui.style.{ Style, insets, OverflowVisible }
+import ui.color.{ color_text, to_oklch, parse_color }
+import ui.layout.{
+  Node,
+  Laid,
+  row,
+  column,
+  text,
+  swatch,
+  padding,
+  paint,
+  sized,
+  MainStart,
+  CrossCenter
+}
+import std.collections.{ parse_args }
+import std.png.{ write_png }
+import std.io.{ write_bytes }
+
+const WIDTH: f32 = 520.0
+const HEIGHT: f32 = 420.0
+const BACKGROUND: Color = Color { r: 0xF4, g: 0xF4, b: 0xF6 }
+
+let main = () -> u8 => {
+  let args = parse_args(["--script", "--png"])
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let app = App {
+    view: view,
+    update: update,
+    subscriptions: (_: State) -> []Subscription<Event> => [],
+    background: BACKGROUND,
+    window_overflow: OverflowVisible,
+  }
+  let start = State {
+    colors: [
+      ("Accent", parse_color("oklch(62% 0.19 255)") ?? BACKGROUND),
+      ("Background", parse_color("#1e1e24") ?? BACKGROUND),
+      ("Selection", parse_color("rgb(60 120 220 / 35%)") ?? BACKGROUND),
+    ],
+  }
+  if let Some(script) = args.value("--script") {
+    let Ok(steps) = parse_steps(script) else {
+      println("the script does not parse")
+      return 1
+    }
+    let window = match sdl3.open("Colours", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    let played = running(
+      app,
+      start,
+      timed_platform(steps, Size { w: WIDTH, h: HEIGHT }),
+      window.renderer,
+      fonts
+    )
+    while step_running(played) {}
+    for (name, c) in played.host.state.colors { println("${name} ${color_text(c)}") }
+    var status: u8 = 0
+    if let Some(path) = args.value("--png") {
+      if !save(played.renderer, played.fonts, played.host.shown[0], path) { status = 1 }
+    }
+    sdl3.close(window.platform, played.renderer)
+    fonts.close()
+    return status
+  }
+  let window = match gpu.open("Colours", WIDTH, HEIGHT) {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      fonts.close()
+      return 2
+    },
+  }
+  var system = window.platform
+  var renderer = window.renderer
+  let _ = run(app, start, system, renderer, fonts)
+  gpu.close(system, renderer)
+  fonts.close()
+  0
+}
+
+/// The colours, each by name, and which one's picker is open (`-1` for none).
+struct State {
+  colors: [](string, Color),
+  open: i64 = -1,
+}
+
+data Event = Opened(i64) | Closed | Changed(i64, Color)
+
+let update = pure (s: State, e: Event) -> (State, []Command<Event>) => match e {
+  Opened(k) => (State { s | open: k }, []),
+  Closed => (State { s | open: -1 }, []),
+  Changed(k, c) => (State { s | colors: [i in 0..<s.colors.len() | if i == k { (s.colors[i].0, c) } else { s.colors[i] }] }, []),
+}
+
+/// A row a colour: its name, its swatch, and it as `ui.color` writes it and in OKLCH.
+let view = pure (s: State) -> Node<Event> => padding(insets(20.0), column([
+  k in 0..<s.colors.len() |
+    row([
+      sized(Some(110.0), None, [text(s.colors[k].0)]),
+      swatch(s.colors[k].1, s.open == k, Opened(k), (c: Color) -> Event => Changed(k, c), Closed),
+      text("${color_text(s.colors[k].1)}   ${oklch_text(s.colors[k].1)}"),
+    ]).aligned(MainStart, CrossCenter).with_style(Style { gap: Some(14.0) })
+]).with_style(Style { gap: Some(12.0) }))
+
+/// A colour in OKLCH, to two places.
+let oklch_text = pure (c: Color) -> string => {
+  let lch = to_oklch(c)
+  "oklch(${places(lch.l * 100.0)}% ${places(lch.c)} ${places(lch.h)})"
+}
+
+let places = pure (x: f64) -> string => "${f64((x * 100.0).round()) / 100.0}"
+
+/// `laid` — the window as the host last laid it out — drawn without showing it, and written to
+/// `path` as a PNG.
+let save = (
+  renderer: SdlRenderer,
+  fonts: Fonts,
+  laid: Laid<Event>,
+  path: string
+) -> bool => {
+  var r = renderer
+  var f = fonts
+  var atlas = glyph_atlas()
+  let ops = paint(laid, Point {}, 1.0, f, atlas, r)
+  let Some(frame) = capture(r, BACKGROUND, ops) else { return false }
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(u8((p >> 24) & 0xFF))
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(png) => write_bytes(path, png),
+    Err(_) => false,
+  }
+}

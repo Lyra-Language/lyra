@@ -485,7 +485,8 @@ The example's interface is `examples/imgui/components_view.lui`.
   followed by an optional `<else>`, and `<for each={x in xs}>` (a comprehension; several
   children make a `Fragment`).
 - **`<style>` is the component's scoped sheet**: `Tag`, `.class` and `Tag.class` selectors
-  (comma lists), `color`/`background` as `#rgb`, `#rrggbb` or `#rrggbbaa`, `padding` one
+  (comma lists), `color`/`background` as CSS Color 4 writes them — `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb(…)`,
+  `oklab(…)`, `oklch(…)`, read by `ui.color`'s `parse_color` for both targets — `padding` one
   or two numbers, `rounding`, `opacity`, `width` (in pixels, or `6em`), `height`, `gap`;
   `/* … */` comments.
 - **The generated module is not formatted** (`.lyrafmtignore` lists it) — one element to a

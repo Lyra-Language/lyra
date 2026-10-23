@@ -1,0 +1,324 @@
+module ui.color
+//! Colour as people write and pick it (`ui/WINDOW.md` §6): CSS Color 4's text — `#rgb`,
+//! `#rrggbb`, `#rrggbbaa`, `rgb(…)`, `oklab(…)` and `oklch(…)` — read by [parse_color] and written
+//! by [color_text]; Oklab and OKLCH ([oklab], [oklch], [to_oklab], [to_oklch]), the spaces CSS
+//! picks perceptually even colours in; HSV ([hsv], [to_hsv]) for a picker's square.
+//!
+//! **A colour is still 8-bit sRGB** (`ui.draw`'s `Color`): what the framework draws with. A colour
+//! made in Oklab or OKLCH is converted as CSS converts it — Björn Ottosson's matrices to linear
+//! sRGB, then sRGB's transfer function — and **one outside sRGB's gamut is mapped in as CSS
+//! does** (CSS Color 4 §13.2): its chroma lowered at the same lightness and hue, by binary search,
+//! until clipping it moves it less than a just-noticeable difference (`ΔE OK` 0.02). Clipping each
+//! channel alone instead shifts the hue: an OKLCH green too vivid for sRGB turns yellow.
+
+import ui.draw.{ Color }
+import std.math
+
+/// A colour in Oklab: its lightness, 0 to 1, and its two axes, green–red (`a`) and blue–yellow
+/// (`b`), each about ±0.4 within sRGB.
+pub struct Lab {
+  l: f64,
+  a: f64,
+  b: f64,
+}
+
+/// A colour in OKLCH — Oklab's polar form: its lightness, 0 to 1; its chroma, from 0 (grey) to
+/// about 0.37 at sRGB's most vivid; and its hue, in degrees.
+pub struct Lch {
+  l: f64,
+  c: f64,
+  h: f64,
+}
+
+/// A colour in HSV: its hue in degrees, its saturation and value from 0 to 1.
+pub struct Hsv {
+  h: f64,
+  s: f64,
+  v: f64,
+}
+
+/// The colour `text` writes, as CSS Color 4 writes it, or `None`: `#rgb`, `#rgba`, `#rrggbb`,
+/// `#rrggbbaa`; `rgb(r g b [/ alpha])` (or `rgba(…)`, commas between allowed), each channel 0–255
+/// or a percentage; `oklab(L a b [/ alpha])`, `L` 0–1 or a percentage, `a` and `b` numbers or
+/// percentages of 0.4; `oklch(L C H [/ alpha])`, `C` a number or a percentage of 0.4, `H` degrees
+/// (`deg` allowed). An alpha is 0–1 or a percentage. Case and spaces round the text are ignored.
+pub let parse_color = pure (text: string) -> Maybe<Color> => {
+  let t = text.trim().to_ascii_lower()
+  if t.starts_with("#") { return hex_color(t.slice(1, t.len())) }
+  let Some(open) = t.index("(") else { return None }
+  if !t.ends_with(")") { return None }
+  let name = t.slice(0, open).trim()
+  let inside = t.slice(open + 1, t.len() - 1)
+  // The alpha after a slash; the rest a channel a word, commas between allowed.
+  let halves = inside.split("/")
+  if halves.len() > 2 { return None }
+  let words = [w in halves[0].replace(",", " ").split(" ") | w.len() > 0 | w]
+  var alpha = 1.0
+  if halves.len() == 2 {
+    let Some(a) = number_or_percent(halves[1].trim(), 1.0) else { return None }
+    alpha = a
+  } else if words.len() == 4 && (name == "rgba" || name == "rgb") {
+    let Some(a) = number_or_percent(words[3], 1.0) else { return None }
+    alpha = a
+  }
+  if words.len() < 3 || (words.len() > 3 && !(words.len() == 4 && halves.len() == 1)) { return None }
+  match name {
+    "rgb" | "rgba" => {
+      let Some(r) = number_or_percent(words[0], 255.0) else { return None }
+      let Some(g) = number_or_percent(words[1], 255.0) else { return None }
+      let Some(b) = number_or_percent(words[2], 255.0) else { return None }
+      Some(Color {
+        r: byte(r / 255.0),
+        g: byte(g / 255.0),
+        b: byte(b / 255.0),
+        a: byte(alpha)
+      })
+    },
+    "oklab" => {
+      if words.len() != 3 { return None }
+      let Some(l) = number_or_percent(words[0], 1.0) else { return None }
+      let Some(a) = number_or_percent(words[1], 0.4) else { return None }
+      let Some(b) = number_or_percent(words[2], 0.4) else { return None }
+      Some(oklab(l, a, b, alpha))
+    },
+    "oklch" => {
+      if words.len() != 3 { return None }
+      let Some(l) = number_or_percent(words[0], 1.0) else { return None }
+      let Some(c) = number_or_percent(words[1], 0.4) else { return None }
+      let Some(h) = degrees(words[2]) else { return None }
+      Some(oklch(l, c, h, alpha))
+    },
+    _ => None,
+  }
+}
+
+/// `color` as CSS writes it: `#rrggbb`, or `#rrggbbaa` when it is translucent.
+pub let color_text = pure (color: Color) -> string => {
+  let rgb = "#${hex2(color.r)}${hex2(color.g)}${hex2(color.b)}"
+  if color.a == 255 { rgb } else { "${rgb}${hex2(color.a)}" }
+}
+
+/// The colour at Oklab's `l`, `a`, `b` and opacity `alpha` (0–1), mapped into sRGB's gamut.
+pub let oklab = pure (l: f64, a: f64, b: f64, alpha: f64 = 1.0) -> Color =>
+  oklch_mapped(lch_of(Lab { l: l, a: a, b: b }), alpha)
+
+/// The colour at OKLCH's `l`, `c`, `h` (degrees) and opacity `alpha` (0–1), mapped into sRGB's
+/// gamut by lowering its chroma ([in_gamut] says whether it had to be).
+pub let oklch = pure (l: f64, c: f64, h: f64, alpha: f64 = 1.0) -> Color =>
+  oklch_mapped(Lch { l: l, c: c.max(0.0), h: h }, alpha)
+
+/// `color` in Oklab.
+pub let to_oklab = pure (color: Color) -> Lab =>
+  lab_of_linear(linear(color.r), linear(color.g), linear(color.b))
+
+/// `color` in OKLCH. A grey's hue is 0: it has none, and a picker keeps the last one.
+pub let to_oklch = pure (color: Color) -> Lch => lch_of(to_oklab(color))
+
+/// Whether OKLCH's `lch` is inside sRGB's gamut, as it is.
+pub let in_gamut = pure (lch: Lch) -> bool => {
+  let (r, g, b) = linear_of_lab(lab_of(lch))
+  let lo = -0.000001
+  let hi = 1.000001
+  r >= lo && r <= hi && g >= lo && g <= hi && b >= lo && b <= hi
+}
+
+/// The colour at HSV's hue `h` (degrees), saturation `s` and value `v` (each 0–1), and opacity
+/// `alpha` (0–1).
+pub let hsv = pure (h: f64, s: f64, v: f64, alpha: f64 = 1.0) -> Color => {
+  let hue = ((h %% 360.0) + 360.0) %% 360.0 / 60.0
+  let sat = s.clamp(0.0, 1.0)
+  let val = v.clamp(0.0, 1.0)
+  let c = val * sat
+  let x = c * (1.0 - ((hue %% 2.0) - 1.0).abs())
+  let m = val - c
+  let (
+    r,
+    g,
+    b
+  ) = if hue < 1.0 { (c, x, 0.0) } else if hue < 2.0 { (x, c, 0.0) } else if hue < 3.0 {
+    (0.0, c, x)
+  } else if hue < 4.0 { (
+    0.0,
+    x,
+    c
+  ) } else if hue < 5.0 { (x, 0.0, c) } else { (c, 0.0, x) }
+  Color { r: byte(r + m), g: byte(g + m), b: byte(b + m), a: byte(alpha) }
+}
+
+/// `color` in HSV. A grey's hue is 0, and black's saturation: a picker keeps the last of each.
+pub let to_hsv = pure (color: Color) -> Hsv => {
+  let r = f64(color.r) / 255.0
+  let g = f64(color.g) / 255.0
+  let b = f64(color.b) / 255.0
+  let most = r.max(g).max(b)
+  let least = r.min(g).min(b)
+  let d = most - least
+  // By which channel is largest, asked by order rather than a float's `==`.
+  let h = if d <= 0.0 { 0.0 } else if r >= g && r >= b { 60.0 * (((g - b) / d) %% 6.0) } else if g >= b {
+    60.0 * ((b - r) / d + 2.0)
+  } else { 60.0 * ((r - g) / d + 4.0) }
+  Hsv { h: (h + 360.0) %% 360.0, s: if most <= 0.0 { 0.0 } else { d / most }, v: most }
+}
+
+// ── Conversions ──────────────────────────────────────────────────────────────
+
+/// The just-noticeable difference in Oklab, and how close the binary search comes (CSS Color 4).
+const JND: f64 = 0.02
+const EPSILON: f64 = 0.0001
+
+/// `lch` mapped into sRGB's gamut as CSS maps it, at opacity `alpha`: past white or black, those;
+/// in the gamut, itself; else its chroma lowered by binary search until clipping it moves it less
+/// than [JND], and that clipped colour.
+let oklch_mapped = pure (lch: Lch, alpha: f64) -> Color => {
+  if lch.l >= 1.0 { return Color { r: 255, g: 255, b: 255, a: byte(alpha) } }
+  if lch.l <= 0.0 { return Color { r: 0, g: 0, b: 0, a: byte(alpha) } }
+  if in_gamut(lch) { return clipped(lch, alpha) }
+  if distance(clipped_lab(lch), lab_of(lch)) < JND { return clipped(lch, alpha) }
+  var low = 0.0
+  var high = lch.c
+  var low_inside = true
+  var current = lch
+  while high - low > EPSILON {
+    let chroma = (low + high) / 2.0
+    current = Lch { lch | c: chroma }
+    if low_inside && in_gamut(current) {
+      low = chroma
+      continue
+    }
+    let e = distance(clipped_lab(current), lab_of(current))
+    if e < JND {
+      if JND - e < EPSILON { return clipped(current, alpha) }
+      low_inside = false
+      low = chroma
+    } else {
+      high = chroma
+    }
+  }
+  clipped(current, alpha)
+}
+
+/// `lch` with each linear channel clipped to sRGB's, as a colour at opacity `alpha`.
+let clipped = pure (lch: Lch, alpha: f64) -> Color => {
+  let (r, g, b) = linear_of_lab(lab_of(lch))
+  Color { r: byte(encoded(r)), g: byte(encoded(g)), b: byte(encoded(b)), a: byte(alpha) }
+}
+
+/// `lch` clipped to sRGB's gamut, in Oklab.
+let clipped_lab = pure (lch: Lch) -> Lab => {
+  let (r, g, b) = linear_of_lab(lab_of(lch))
+  lab_of_linear(r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0))
+}
+
+/// `ΔE OK`: how far apart two Oklab colours are.
+let distance = pure (p: Lab, q: Lab) -> f64 =>
+  ((p.l - q.l) * (p.l - q.l) + (p.a - q.a) * (p.a - q.a) + (p.b - q.b) * (p.b - q.b)).sqrt()
+
+let lch_of = pure (lab: Lab) -> Lch => {
+  let c = (lab.a * lab.a + lab.b * lab.b).sqrt()
+  let h = if c < 0.000001 { 0.0 } else { lab.b.atan2(lab.a).to_degrees() }
+  Lch { l: lab.l, c: c, h: (h + 360.0) %% 360.0 }
+}
+
+let lab_of = pure (lch: Lch) -> Lab => {
+  let h = lch.h.to_radians()
+  Lab { l: lch.l, a: lch.c * h.cos(), b: lch.c * h.sin() }
+}
+
+/// Linear sRGB to Oklab (Ottosson's matrices, by way of the cone responses).
+let lab_of_linear = pure (r: f64, g: f64, b: f64) -> Lab => {
+  let l = (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b).cbrt()
+  let m = (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b).cbrt()
+  let s = (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b).cbrt()
+  Lab {
+    l: 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+    a: 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+    b: 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s,
+  }
+}
+
+/// Oklab to linear sRGB, unclipped.
+let linear_of_lab = pure (lab: Lab) -> (f64, f64, f64) => {
+  let l0 = lab.l + 0.3963377774 * lab.a + 0.2158037573 * lab.b
+  let m0 = lab.l - 0.1055613458 * lab.a - 0.0638541728 * lab.b
+  let s0 = lab.l - 0.0894841775 * lab.a - 1.2914855480 * lab.b
+  let l = l0 * l0 * l0
+  let m = m0 * m0 * m0
+  let s = s0 * s0 * s0
+  (
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+  )
+}
+
+/// An sRGB channel, 0–255, as linear light.
+let linear = pure (channel: u8) -> f64 => {
+  let c = f64(channel) / 255.0
+  if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).pow(2.4) }
+}
+
+/// Linear light as an sRGB channel's 0–1, clipped.
+let encoded = pure (light: f64) -> f64 => {
+  let x = light.clamp(0.0, 1.0)
+  if x <= 0.0031308 { 12.92 * x } else { 1.055 * x.pow(1.0 / 2.4) - 0.055 }
+}
+
+/// A 0–1 channel as a byte, rounded.
+let byte = pure (x: f64) -> u8 => u8((x.clamp(0.0, 1.0) * 255.0).round())
+
+// ── Reading the text ─────────────────────────────────────────────────────────
+
+/// `#`'s digits as a colour: three or four of them a digit a channel, six or eight two.
+let hex_color = pure (digits: string) -> Maybe<Color> => {
+  var values: []u8 = []
+  let n = digits.len()
+  if n == 3 || n == 4 {
+    for r in digits.to_runes() {
+      let Some(v) = hex_digit(r) else { return None }
+      values.push(v * 17)
+    }
+  } else if n == 6 || n == 8 {
+    let runes = digits.to_runes()
+    var i = 0
+    while i < n {
+      let Some(hi) = hex_digit(runes[i]) else { return None }
+      let Some(lo) = hex_digit(runes[i + 1]) else { return None }
+      values.push(hi * 16 + lo)
+      i += 2
+    }
+  } else {
+    return None
+  }
+  Some(Color {
+    r: values[0],
+    g: values[1],
+    b: values[2],
+    a: if values.len() == 4 { values[3] } else { 255 }
+  })
+}
+
+let hex_digit = pure (r: rune) -> Maybe<u8> => {
+  let n = i64(i32(r))
+  if n >= 48 && n <= 57 { return Some(u8(n - 48)) }
+  if n >= 97 && n <= 102 { return Some(u8(n - 87)) }
+  None
+}
+
+/// A number, or a percentage of `whole`.
+let number_or_percent = pure (word: string, whole: f64) -> Maybe<f64> => {
+  if word.ends_with("%") {
+    let Some(p) = word.slice(0, word.len() - 1).parse_f64() else { return None }
+    return Some(p / 100.0 * whole)
+  }
+  word.parse_f64()
+}
+
+/// An angle in degrees, its `deg` written or not.
+let degrees = pure (word: string) -> Maybe<f64> =>
+  (if word.ends_with("deg") { word.slice(0, word.len() - 3) } else { word }).parse_f64()
+
+/// A byte as two lower-case hex digits.
+let hex2 = pure (n: u8) -> string => {
+  let digits = "0123456789abcdef".to_runes()
+  "${digits[i64(n) / 16]}${digits[i64(n) %% 16]}"
+}

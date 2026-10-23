@@ -69,6 +69,7 @@
 import std.collections.{ parse_args }
 import std.io.{ read_file, write_file, read_stdin, sleep_ms, read_dir, is_symlink }
 import std.path
+import ui.color.{ parse_color, color_text }
 
 let main = () -> u8 => {
   let args = parse_args(["--name", "--target"])
@@ -2429,10 +2430,10 @@ let shadow_list = pure (value: string) -> Result<string, string> => {
     var lengths: []string = []
     var color = ""
     var inset = false
-    for word in one.split_when((c) => c == ' ') {
+    for word in top_level(one, ' ')? {
       if word == "inset" {
         inset = true
-      } else if word.starts_with("#") || word.starts_with("$") {
+      } else if word.starts_with("#") || word.starts_with("$") || word.contains("(") {
         if color.len() > 0 { return Err("a box-shadow has one colour, not ${one}") }
         color = ui_color(word)?
       } else {
@@ -2481,7 +2482,8 @@ let gradient_of = pure (value: string) -> Result<string, string> => {
   if parts.len() < 2 { return Err("a gradient needs two colour stops or more: ${value}") }
   var stops: []string = []
   for part in parts {
-    let words = part.trim().split_when((c) => c == ' ')
+    // Words outside parentheses: an `oklch(…)` is one.
+    let words = top_level(part.trim(), ' ')?
     if words.len() == 0 || words.len() > 2 { return Err("a colour stop is #colour [N%], not ${part.trim()}") }
     let color = ui_color(words[0])?
     if words.len() == 1 {
@@ -2548,19 +2550,17 @@ let token = pure (value: string) -> Maybe<Result<string, string>> => {
   Some(Ok("t.${path}"))
 }
 
-/// `#rgb`, `#rrggbb`, `#rrggbbaa` or a `$token` as a `Color`.
+/// A colour as CSS Color 4 writes it — `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb(…)`, `oklab(…)`,
+/// `oklch(…)` (`ui.color`'s `parse_color`, which maps one outside sRGB into it) — or a `$token`,
+/// as a `Color`: read here, written as its sRGB (`rgb(0x…)`, `rgba(0x…)` when translucent).
 let ui_color = pure (value: string) -> Result<string, string> => {
   if let Some(read) = token(value) { return read }
-  let Some(hex) = value.strip_prefix("#") else { return Err("${value} is not a #colour or a $token") }
-  let digits = if hex.len() == 3 { "${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}" } else { hex }
-  if digits.len() != 6 && digits.len() != 8 { return Err("${value} is not #rgb, #rrggbb or #rrggbbaa") }
-  for k in 0..<(digits.len() / 2) {
-    if hex_byte(digits.slice(
-      k * 2,
-      k * 2 + 2
-    )).is_none() { return Err("${value} is not hexadecimal") }
+  let Some(c) = parse_color(value) else {
+    return Err("${value} is not a colour: #rgb, #rrggbb, #rrggbbaa, rgb(…), oklab(…), oklch(…) or a $token")
   }
-  Ok(if digits.len() == 6 { "rgb(0x${digits.to_ascii_upper()})" } else { "rgba(0x${digits.to_ascii_upper()})" })
+  let text = color_text(c)
+  let hex = text.slice(1, text.len()).to_ascii_upper()
+  Ok(if c.a == 255 { "rgb(0x${hex})" } else { "rgba(0x${hex})" })
 }
 
 /// A number or a `$token`, an `f32`.
@@ -3186,26 +3186,13 @@ let declarations = pure (text: string, line: i64) -> Result<[]string, string> =>
   Ok(fields)
 }
 
-/// `#rgb`, `#rrggbb` or `#rrggbbaa` as `col32(…)`.
+/// A colour as CSS Color 4 writes it (as [ui_color] reads it) as `col32(…)`: its sRGB bytes, the
+/// opacity among them where it is translucent.
 let color = pure (value: string) -> Result<string, string> => {
-  let Some(hex) = value.strip_prefix("#") else { return Err("${value} is not a #colour") }
-  let digits = if hex.len() == 3 {
-    "${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}"
-  } else {
-    hex
+  let Some(c) = parse_color(value) else {
+    return Err("${value} is not a colour: #rgb, #rrggbb, #rrggbbaa, rgb(…), oklab(…) or oklch(…)")
   }
-  if digits.len() != 6 && digits.len() != 8 { return Err("${value} is not #rgb, #rrggbb or #rrggbbaa") }
-  var channels: []string = []
-  var k = 0
-  while k < digits.len() {
-    let Some(v) = hex_byte(digits.slice(
-      k,
-      k + 2
-    )) else { return Err("${value} is not hexadecimal") }
-    channels.push("${v}")
-    k += 2
-  }
-  Ok("col32(${channels.join(", ")})")
+  Ok(if c.a == 255 { "col32(${c.r}, ${c.g}, ${c.b})" } else { "col32(${c.r}, ${c.g}, ${c.b}, ${c.a})" })
 }
 
 /// One number, both ways, or two: `4`, `14 4`.
@@ -3488,21 +3475,6 @@ let strip_comments = pure (text: string) -> string => {
     out = "${out.slice(0, open)}${out.slice(close + 2, out.len())}"
   }
   out
-}
-
-let hex_byte = pure (two: string) -> Maybe<i64> => {
-  var v = 0
-  for c in two.to_ascii_lower() {
-    let d = if c >= '0' && c <= '9' {
-      i64(c) - i64('0')
-    } else if c >= 'a' && c <= 'f' {
-      i64(c) - i64('a') + 10
-    } else {
-      return None
-    }
-    v = v * 16 + d
-  }
-  Some(v)
 }
 
 // ── The parser ───────────────────────────────────────────────────────────────

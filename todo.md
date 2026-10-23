@@ -703,7 +703,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   Mac), a tab bar, the window's controls and a drawn title bar, a file dialog, colour; designed
   in `ui/WINDOW.md` (10/23), the rest of Termina's move off ImGui. Steps 1 (popups, the
   select's list on them), 2 (menus drawn), 3 (menus native on a Mac), 4 (the tab bar), 5 (the
-  window's controls, a drawn title bar) and 6 (a file dialog) built 10/23; next colour (step 7).
+  window's controls, a drawn title bar), 6 (a file dialog) and 7 (colour) built 10/23; next
+  lui's elements and `Fragment` (step 8).
 - **[OPEN] `ui`: a drawn title bar wants trying on a Linux desktop** — SDL's hit test calling
   `bindings.hittest` for a borderless window (moving it, its edges resizing it) is untested:
   the dummy driver refuses a hit test. And its double click: SDL starts a move at the press, so
@@ -852,6 +853,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   `<Select>`) — its list floats over the page (`Laid.floats`) (COMPLETED.md, 10/22).
 - **[DONE 10/23] `ui`: a select's list scrolls and flips** — placed as a popup's content is
   (`ui/WINDOW.md` step 1, COMPLETED.md 10/23).
+- **[OPEN] `ui`: a swatch is heard as a button** labelled with its colour's text; AccessKit's
+  colour well role (and its value) would say what it is. `AccessRole` has no such role yet.
 - **[OPEN] `ui`: AccessKit is not told a select is expanded, nor what a popup or a menu is** —
   an open popup's content is heard as its elements, with no dialog role around them, and a
   menu bar, its menus and items as buttons, not AccessKit's menu roles; a tab list's selected

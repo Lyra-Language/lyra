@@ -194,7 +194,7 @@ pub let swatch<e> = pure (color: Color, open: bool, on_open: e, on_change: (Colo
   is let go.
 - **The colour's text is CSS Color 4's** — `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb(…)`, and
   `oklab(L a b [/ alpha])` and `oklch(L C H [/ alpha])`, the lightness as `N%` or 0–1, the hue
-  in degrees (`deg` allowed) — read by one parser in `ui.draw` (`parse_color`), which lui's
+  in degrees (`deg` allowed) — read by one parser in `ui.color` (`parse_color`), which lui's
   style sheets use too (`color: oklch(70% 0.12 250)`). Oklab is converted to sRGB as CSS does
   (Björn Ottosson's matrices, then the sRGB transfer function); a colour outside sRGB's gamut
   is brought in by CSS's gamut mapping, its chroma lowered in OKLCH at the same lightness and
@@ -202,15 +202,15 @@ pub let swatch<e> = pure (color: Color, open: bool, on_open: e, on_change: (Colo
   shows a colour as it was typed while it is edited, and as `#rrggbb` (`#rrggbbaa` when
   translucent) once it is set; `Color` stays 8-bit sRGB, so a colour read from `oklch(…)` is
   stored as the nearest sRGB one.
-- **An OKLCH mode for the picker**, beside the saturation-and-value square: lightness, chroma
-  and hue sliders, perceptually even where HSV's are not — a hue strip in OKLCH keeps its
-  lightness — the out-of-gamut part of each strip drawn faded. Proposed as a toggle on the
-  picker, HSV first; the open question below says why it is not the default.
+- **The field keeps what is typed** (`FieldSpec.draft`): while it is focused it shows the text
+  as typed, a colour raised whenever the text reads as one, and the colour's own text once the
+  focus leaves — a half-typed `oklch(70%` is not replaced by the colour it is not yet.
 - **Open is the program's** (§1), so a program can keep one picker open while it shows the
   colour elsewhere; most will keep "which swatch is open" in their state as one key.
 - The picker holds its hue while the colour is grey (saturation or value 0), where the colour
   itself no longer says it — the framework's state, by identity.
-- Heard as a colour well; its fields are ordinary controls.
+- Heard as a button labelled with its colour (AccessKit's colour well is a later want, todo.md);
+  its strips are sliders and its field an ordinary one.
 
 ## 7. The smaller pieces, and lui
 
@@ -247,7 +247,8 @@ Termina moves at the end.
    for a real borderless window is untested here (the dummy driver refuses a hit test).
 6. **`ChooseFile`** and its shim; a script's `choose:`. **Built 10/23**; a real dialog is not
    shown by any test (a dialog needs a user), only the queue it answers through.
-7. **Colour**: `swatch` and the picker.
+7. **Colour**: `swatch` and the picker, `ui.color` (CSS Color 4's text, Oklab, OKLCH, HSV),
+   lui's colours through it. **Built 10/23**; its lui element waits for step 8.
 8. **lui's elements** for all of it, and `Fragment`.
 9. **Termina**: termina-ui gains the tab bar, its menus (native on a Mac, a GNOME header bar
    with ☰ on Linux, a menu bar elsewhere), the Settings tab as `ui`-target markup, and
@@ -271,8 +272,8 @@ Termina moves at the end.
    the Mac's Window menu is macOS's and lists the window, not its tabs.
 5. **Colour as `ui.draw.Color` or a packed integer?** Proposed: `Color` (what the framework
    draws with); Termina converts its ABGR at the edge, as it already does to paint.
-6. **The picker's first mode: HSV's square or OKLCH's sliders?** OKLCH is the better space to
-   choose in — even steps of lightness and hue look even — but every other picker a user knows
-   is HSV's square, and OKLCH's chroma has no fixed top (it depends on the lightness and hue),
-   so its slider's end moves under the thumb. Proposed: HSV first, OKLCH a toggle away, the
-   text field taking either syntax whichever is shown.
+6. **An OKLCH mode for the picker?** Built and taken out (10/23): lightness, chroma and hue
+   strips a toggle from HSV's square did not work well as an interface — OKLCH's chroma has no
+   fixed top, so its strip's end is arbitrary, and the strips' faded out-of-gamut parts left
+   little to pick from. OKLCH is the field's: `oklch(…)` typed is taken, whichever square is
+   shown.
