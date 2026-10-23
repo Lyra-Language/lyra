@@ -112,7 +112,9 @@ func (l *lowerer) retainFuncFor(t types.Type) (*ir.Func, error) {
 		return nil, nil
 	}
 	t = l.stripNewtype(t) // one glue per base, as in dropFuncFor
-	key := t.String()
+	// Identity, as dropFuncFor's: keyed on `t.String()`, two modules' `Theme`s shared one
+	// glue and the second was retained as the first (10/23).
+	key := l.dropKey(t)
 	if fn, ok := l.retainFns[key]; ok {
 		return fn, nil
 	}

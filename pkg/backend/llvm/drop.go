@@ -206,16 +206,19 @@ func (l *lowerer) dropKey(t types.Type) string {
 	switch v := t.(type) {
 	case types.UnresolvedType:
 		return l.namedDropKey(v.Key, v.Name)
+	// A resolved type carries its declaration's key too: in a module that cannot see the
+	// name — `main` holding two libraries' `Theme`s it never imported — the bare name
+	// passes through, and the two shared one glue (10/23).
 	case types.NamedStructType:
-		return l.namedDropKey("", v.Name)
+		return l.namedDropKey(v.Key, v.Name)
 	case types.DataType:
-		return l.namedDropKey("", v.Name)
+		return l.namedDropKey(v.Key, v.Name)
 	case types.UnionType:
-		return l.namedDropKey("", v.Name)
+		return l.namedDropKey(v.Key, v.Name)
 	case types.TupleType:
 		// A *declared* tuple is a named type; an anonymous one is its elements.
 		if v.Name != "" && !types.IsAnonymousTupleName(v.Name) {
-			return l.namedDropKey("", v.Name)
+			return l.namedDropKey(v.Key, v.Name)
 		}
 		return v.String()
 	case types.DynamicArrayType:
@@ -256,7 +259,14 @@ func (l *lowerer) elementDropKey(elem types.Type) string {
 // resolves to, by its stamped key where it has one and as the module being lowered sees it
 // otherwise. A name that denotes no declaration — a generic instantiation's mangled symbol —
 // is its own identity already.
+//
+// **A key names a declaration, not an instantiation**: a generic struct's `Box$i64` and
+// `Box$string` carry `Box`'s one key, and asked by it they shared one glue. A key is asked
+// only of the name its declaration has.
 func (l *lowerer) namedDropKey(key, name string) string {
+	if decl, ok := l.lookupTypeDeclKeyed(key, name); ok && decl != nil && decl.Name != name {
+		key = ""
+	}
 	if decl, ok := l.lookupTypeDeclKeyed(key, name); ok && decl != nil && l.res != nil && l.res.SymbolTable != nil {
 		return l.res.SymbolTable.DeclKey(decl)
 	}

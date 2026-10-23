@@ -555,6 +555,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] A panic in the standard library names its caller.** `m.unwrap()` on a `None`
   traps `at …/std/prelude/…`, the `panic`'s own line, which says nothing about which
   `unwrap`. A function marked to take its caller's place (Rust's `#[track_caller]`) would fix it.
+- **[OPEN] `parse_args` cannot stop at a command.** Every `-`-argument is a flag, so a
+  program running a command after its own flags (`termina-ui --print ls -la`, xterm's `-e`)
+  hand-rolls the loop. A stop at the first positional, or at `--`, would do.
 - **[OPEN] A deflate compressor.** `std.compress` inflates only, so `std.png.write_png` stores
   its pixels uncompressed: an MCP image from Vega is ~1.8 MB of base64 for a 768×432 frame
   that compresses to a tenth of it. Fixed-Huffman deflate with a small hash-chain matcher
@@ -694,8 +697,15 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   fallback, raw keys and pointer; designed in `ui/TERMINAL.md` (10/22), for Termina's move
   off ImGui. Steps 1 (`painted`, `PaintDraw`/`PaintText`, `on_size`), 2 (the atlas's pages)
   and 3 (faces, metrics, hinting), 4 (fallback) and 5 (`PaintCells`, `PaintWave`) are built
-  (10/22), 6 (raw input) and 7 (`Readable`, `scroll_follow`, `ScrollTo`) 10/23; next Termina
-  itself (step 8).
+  (10/22), 6 (raw input) and 7 (`Readable`, `scroll_follow`, `ScrollTo`) 10/23, and step 8's
+  first half 10/23: `termina-ui` beside the ImGui app. Next the next note's widgets — a tab
+  bar, menus off macOS, the Settings tab's controls, a title bar the program draws.
+- **[OPEN] `ui` focuses nothing at start, and `App` has no first command.** termina-ui asks
+  `FocusKeyed` from its painter's first `on_size`; an `App.start: []Command<e>`, or an
+  `autofocus` on an element, would say it directly.
+- **[OPEN] A script's key is a press with no release, and its text no key before it**
+  (`ui.script`). A program keeping the modifiers as the last key left them sees Ctrl held
+  after `Ctrl+r 'echo'`, which no keyboard does. A key token could press and release.
 - **[OPEN] What raw input left out** (`ui/TERMINAL.md` §3): a key's repeat flag and physical
   code, the keypad's keys (they type through text), a `cursor` style property (a painter's
   I-beam over its command line), and AccessKit's Terminal role (a painter is a group).

@@ -1,6 +1,9 @@
 package llvm
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Two modules may each declare a private type of the same name, and the backend must
 // emit **two** LLVM struct types for them.
@@ -176,5 +179,45 @@ let main = () -> u8 => match make() { Yep(xs) => u8(xs[0].n + xs[0].kids[0].n), 
 				t.Errorf("exit %d, want %d", got, c.want)
 			}
 		})
+	}
+}
+
+// **Retain glue is keyed by declaration, as drop glue is.** Two modules' exported `Theme`s
+// of different layouts shared one retain function, keyed on the bare name, so whichever was
+// generated first retained the other's fields: Termina's `term.Theme`, copied into a struct,
+// was retained as `ui.style`'s — a string and an array where it held colors — and crashed
+// at start-up (10/23). Each library stores the parameter it is given into a struct of its
+// own, which retains it, and both are used afterwards. `main` imports neither `Theme` nor
+// `Held`, so it releases them by names it cannot resolve — and the drop glue, keyed on the
+// bare name there, was shared too until the types' own keys were asked.
+func TestExec_SameNamedTypesInTwoModulesGetTheirOwnRetainGlue(t *testing.T) {
+	t.Parallel()
+	out := runModules(t, map[string]string{
+		"lib/a.lyra": `module lib.a
+pub struct Theme { name: string, sizes: []i64 }
+pub struct Held { theme: Theme, n: i64 }
+pub let make_a = () -> Theme => Theme { name: "a${1}", sizes: [1, 2, 3] }
+pub let hold_a = (t: Theme) -> Held => Held { theme: t, n: 1 }
+`,
+		"lib/b.lyra": `module lib.b
+pub struct Theme { fg: u32, bg: u32, cursor: u32, palette: []u32, bright: bool }
+pub struct Held { tabs: []string, theme: Theme }
+pub let make_b = () -> Theme => Theme { fg: 7, bg: 9, cursor: 11, palette: [1, 2], bright: true }
+pub let hold_b = (t: Theme) -> Held => Held { tabs: ["x"], theme: t }
+`,
+		"main.lyra": `module main
+import lib.a.{ make_a, hold_a }
+import lib.b.{ make_b, hold_b }
+let main = () -> void => {
+  let a = make_a()
+  let ha = hold_a(a)
+  let b = make_b()
+  let hb = hold_b(b)
+  println("${ha.theme.name} ${ha.theme.sizes.len()} ${hb.theme.fg + hb.theme.bg} ${hb.theme.palette.len()} ${a.name} ${b.palette.len()}")
+}
+`,
+	})
+	if got := strings.TrimSpace(out); got != "a1 3 16 2 a1 2" {
+		t.Errorf("output = %q; want \"a1 3 16 2 a1 2\"", got)
 	}
 }

@@ -1,6 +1,6 @@
 # What a terminal needs of `ui` — design
 
-**Status: proposed 10/22; steps 1–5 built 10/22, steps 6 and 7 10/23** (`painted`, `PaintDraw`, `PaintText`,
+**Status: proposed 10/22; steps 1–5 built 10/22, steps 6 and 7 10/23, step 8's first half 10/23** (`painted`, `PaintDraw`, `PaintText`,
 `on_size`, `PaintArea.visible`, `examples/ui/painted.lyra`; the atlas's pages; faces, made
 faces, metrics and hinting — `Fonts.hinting` light unless the program says, as `ui.text` asks
 no platform which it is on; `MeasureFont` answered once, not again as fonts change;
@@ -357,7 +357,16 @@ the end.
    composition, `PointerInput` with capture, `App.shortcuts`, `OnFocus`, `Focus`.
 7. **`Readable`** and **`scroll_follow`**/`ScrollTo`. **Built 10/23.**
 8. **Termina**: the grid, the box and the cards as one painter over a following scroller;
-   then the tab bar, menus and Settings (the next note).
+   then the tab bar, menus and Settings (the next note). **The first half built 10/23**,
+   beside the ImGui app rather than replacing it: Termina's session and command line made
+   framework-free (`session`, `term`), ImGui's drawing moved to `gui`, and `face` painting
+   them on `ui` as `build/termina-ui` — the tabs as buttons, the Mac's menus not yet, the
+   settings read but not edited; played headless by `--script` and checked by
+   `termina/tools/termina-ui-check.sh`. **The painter scrolls itself** (question 3): its
+   columns and rows are the view's, which a scroller's content never learns, and the box
+   sits at the view's foot wherever it is scrolled. It found that two modules' same-named
+   types shared one retain glue (and, where the holder could see neither name, one drop
+   glue): Termina's `Theme` was retained as `ui.style`'s (COMPLETED.md 10/23).
 
 ## 6. Open questions
 
@@ -370,7 +379,8 @@ the end.
    group). Proposed as runs, matching how Termina batches; worth measuring.
 3. **Is the terminal's scrollback a `ui` scroller at all?** The alternative is a painter fixed to
    the window that scrolls itself, drawing its own scrollbar — fewer framework additions, a
-   scrollbar unlike every other. Proposed: the scroller.
+   scrollbar unlike every other. Proposed: the scroller. **Built: the painter** (step 8) —
+   the grid's size is the view's, and the box is drawn at its foot wherever it is scrolled.
 4. **Shortcuts as data, or menus?** `App.shortcuts` is a flat chord table; when the drawn menu
    bar comes, its items' accelerators could produce it. Proposed: the table now, the menus
    built on it.

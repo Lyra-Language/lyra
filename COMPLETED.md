@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 10/23/26 — Glue keyed by declaration: retain, and drop where the name is not visible
+
+- **Found by Termina on `ui`** (`ui/TERMINAL.md` step 8): `termina-ui` crashed at start-up
+  in `face.term_of`, first a bus error, then (with the code shuffled) a loop that never
+  ended, then a null dereference in `lyra_rc_retain`. lldb's caller was
+  `lyra_retain_12_Theme`, whose body loaded a `%ui_style__Theme`, reading a `FontSpec`'s
+  string and a `Sheet` where Termina's `term.Theme` keeps fourteen colors.
+- **`retainFuncFor` keyed its cache on `t.String()`**, the bare name, which `dropFuncFor`
+  stopped doing when two modules' private `Inner`s shared a drop glue. So the second
+  `Theme` in a program got the first one's retain glue. It keys on `dropKey` now, the same
+  identity.
+- **`dropKey` passed no key for a resolved type** (`NamedStructType`, `DataType`,
+  `UnionType`, a declared tuple), so it asked the module being lowered what the name meant.
+  In a module that can see neither name — `main` holding two libraries' `Theme`s it never
+  imported — the name passed through bare, and the two shared one drop glue. The resolved
+  type's own `Key` is asked first now.
+- **A key names a declaration, not an instantiation.** Asked by key, `Box$i64` and
+  `Box$string` both found `Box`'s one declaration and shared one glue
+  (`TestExec_RecordUpdateOfAGenericStruct` failed). So a key is used only when its
+  declaration's name is the name being asked about (`namedDropKey`).
+- `TestExec_SameNamedTypesInTwoModulesGetTheirOwnRetainGlue`: two libraries' `Theme`s of
+  different layouts, each stored into a struct of its library's (a retain), released in a
+  `main` that imports neither. It fails with either half of the fix alone.
+
 ### 10/23/26 — `ui`: a descriptor that wakes the loop, and a scroller that follows its end
 
 - **`Subscription.Readable(fd, e)`** (`ui/TERMINAL.md` §4, step 7): each pass the host

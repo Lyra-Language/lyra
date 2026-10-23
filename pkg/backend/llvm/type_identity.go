@@ -34,8 +34,9 @@ import (
 // that one and lowered `Outer` against the wrong layout. The typechecker stamps those
 // nested names with the declaration they resolve to (stampDeclaredNames), and every lookup
 // here prefers it: `lookupNamedTypeKeyed`, `lookupTypeDeclKeyed`, `declLocOfKeyed`, and
-// `dropKey` for the drop-glue cache, whose key was the bare name and so gave two modules'
-// same-named structs one glue function. A name written *outside* a declaration carries no
+// `dropKey` for the drop- and retain-glue caches, whose key was the bare name and so gave two
+// modules' same-named structs one glue function (the retain glue's until 10/23, with a
+// resolved type's own `Key` asked first). A name written *outside* a declaration carries no
 // key and still means what the module being lowered says it means.
 
 // enterModuleOf sets the location lookups are made *from* — a position inside the item
