@@ -565,6 +565,11 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"window width alone", ui + "<window width=\"300\"/>", "x.lui:2: <window> takes width and height together"},
 		{"window size", ui + "<window size=\"300\"/>", "x.lui:2: <window> has no attribute size"},
 		{"window title bare", ui + "<window title/>", "x.lui:2: title of <window> needs a value"},
+		{"select bare", ui + "<script target=\"ui\">\n  pub data Ev = Chose(i64)\n</script>\n<component name=\"a\" event={Ev}>\n  <Select selected={0} on_change={Chose}/>\n</component>", "x.lui:6: <Select> needs options={…} or <Option>s"},
+		{"select both", ui + "<script target=\"ui\">\n  pub data Ev = Chose(i64)\n</script>\n<component name=\"a\" event={Ev}>\n  <Select options={[\"a\"]} selected={0} on_change={Chose}><Option>b</Option></Select>\n</component>", "x.lui:6: <Select> takes options={…} or <Option>s, not both"},
+		{"select holds", ui + "<script target=\"ui\">\n  pub data Ev = Chose(i64)\n</script>\n<component name=\"a\" event={Ev}>\n  <Select selected={0} on_change={Chose}><Text>b</Text></Select>\n</component>", "x.lui:6: <Select> holds <Option>s, not <Text>"},
+		{"select options text", ui + "<script target=\"ui\">\n  pub data Ev = Chose(i64)\n</script>\n<component name=\"a\" event={Ev}>\n  <Select options=\"a\" selected={0} on_change={Chose}/>\n</component>", "x.lui:6: options of <Select> takes {…}, a []string"},
+		{"option outside", ui + "<script target=\"ui\">\n  pub data Ev = Chose(i64)\n</script>\n<component name=\"a\" event={Ev}>\n  <Option>b</Option>\n</component>", "x.lui:6: <Option> is not an element of ui"},
 		{"window resize text", ui + "<window resize_x=\"false\"/>", "x.lui:2: resize_x is bare or {condition}, not text"},
 	}
 	for _, c := range cases {
@@ -968,6 +973,59 @@ func TestLui_UiTargetOverflow(t *testing.T) {
 	}
 	if strings.Contains(string(generated), "overflow: Overflow") {
 		t.Errorf("a window without overflow set window_spec's:\n%s", generated)
+	}
+}
+
+// `<Select>` in the ui target: its options as `<Option>`s — each its text, `{…}` interpolated
+// — or `options={…}`, `selected`, and `on_change` with a bare constructor taking the index; a
+// sheet styles its parts (`Select::option:hover`). The module checks clean.
+func TestLui_UiTargetSelect(t *testing.T) {
+	t.Parallel()
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script target="ui">
+  pub data Ev = Chose(i64) | Picked(i64)
+  pub struct State { kind: i64 = 0, city: i64 = 1, cities: []string = ["Oslo", "Lima"] }
+  let name = "flight"
+</script>
+<component name="view" props={{ s: State }} event={Ev}>
+  <style>
+    Select::option:hover { background: #224488 }
+  </style>
+  <Column>
+    <Select selected={s.kind} on_change={Chose}>
+      <Option>One-way {name}</Option>
+      <Option>Return {name}</Option>
+    </Select>
+    <Select options={s.cities} selected={s.city} on_change={Picked} />
+  </Column>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`select(SelectSpec { options: ["One-way ${name}", "Return ${name}"], selected: s.kind, on_change: (value: i64) -> Ev => Chose(value) })`,
+		`select(SelectSpec { options: s.cities, selected: s.city, on_change: (value: i64) -> Ev => Picked(value) })`,
+		`selector: "Select::option:hover"`,
+		"SelectSpec",
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
 }
 

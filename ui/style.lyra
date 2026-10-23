@@ -485,6 +485,7 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
   },
   Rule { selector: "Button:hover", style: Style { background: Some(shade(c.accent, 0.88)) } },
   Rule { selector: "Button:active", style: Style { background: Some(shade(c.accent, 0.75)) } },
+  Rule { selector: "Button:disabled", style: Style { background: Some(faded(c.muted, 0.25)) } },
   Rule {
     selector: "Checkbox::box",
     style: Style {
@@ -541,6 +542,42 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
   Rule { selector: "TextInput::placeholder", style: Style { color: Some(c.muted) } },
   Rule { selector: "TextInput::selection", style: Style { background: Some(faded(c.accent, 0.3)) } },
   Rule { selector: "TextInput::caret", style: Style { background: Some(c.text) } },
+  Rule { selector: "TextInput:disabled", style: Style { background: Some(faded(c.muted, 0.25)), color: Some(faded(c.muted, 0.8)) } },
+  Rule {
+    selector: "Select",
+    style: Style {
+      background: Some(c.surface),
+      border_color: Some(c.border),
+      border_width: Some(1.0),
+      radius: Some(6.0),
+      padding: Some(insets_xy(8.0, 6.0)),
+    },
+  },
+  Rule { selector: "Select:focus", style: Style { border_color: Some(c.accent) } },
+  Rule { selector: "Select::arrow", style: Style { background: Some(c.muted) } },
+  // The open list: a raised panel over what is below the select.
+  Rule {
+    selector: "Select::list",
+    style: Style {
+      background: Some(c.surface),
+      border_color: Some(c.border),
+      border_width: Some(1.0),
+      radius: Some(6.0),
+      padding: Some(insets(4.0)),
+      box_shadow: Some([
+        BoxShadow { x: 0.0, y: 4.0, blur: 12.0, spread: 0.0, color: faded(c.text, 0.18) },
+      ]),
+    },
+  },
+  Rule {
+    selector: "Select::option",
+    style: Style { padding: Some(insets_xy(8.0, 4.0)), radius: Some(4.0) },
+  },
+  Rule { selector: "Select::option:checked", style: Style { background: Some(faded(c.accent, 0.15)) } },
+  Rule {
+    selector: "Select::option:hover",
+    style: Style { background: Some(c.accent), color: Some(rgb(0xFFFFFF)) },
+  },
 ]
 
 /// A scroller's bars, drawn over its content's edge: a faint track and a thumb the text's

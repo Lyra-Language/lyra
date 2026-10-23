@@ -115,6 +115,9 @@ pub data AccessRole =
   | AxSlider
   | AxTextInput
   | AxScroll
+  | AxComboBox
+  | AxListBox
+  | AxOption
   | AxContainer
 
 /// What assistive technology asks of an element.

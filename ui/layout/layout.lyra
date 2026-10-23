@@ -157,6 +157,9 @@ pub data Kind<e> =
   | Checkable(bool, e)
   /// A slider.
   | Ranged(SliderSpec<e>)
+  /// A select (HTML's `<select>`): one of a list of options, chosen from a list that opens
+  /// over everything below it.
+  | Choosing(SelectSpec<e>)
   /// A one-line text field.
   | Editable(FieldSpec<e>)
   /// A flex container (CSS's flexbox), laid out by its computed style: direction, wrap,
@@ -174,6 +177,14 @@ pub struct SliderSpec<e> {
   max: f32 = 1.0,
   step: f32 = 0.0,
   on_change: (f32) -> e,
+}
+
+/// A select's options, by their text; the one chosen, by index (`-1` for none); and the event
+/// for a choice, carrying the index chosen.
+pub struct SelectSpec<e> {
+  options: []string,
+  selected: i64 = -1,
+  on_change: (i64) -> e,
 }
 
 /// A text field's value — the program's, set from its state each frame — the text shown while
@@ -202,6 +213,9 @@ pub data Role =
   | SliderRole
   | TextFieldRole
   | ScrollRole
+  | ComboBoxRole
+  | ListBoxRole
+  | OptionRole
 
 /// A row's axis or a column's.
 pub data Axis = Horizontal | Vertical
@@ -392,6 +406,47 @@ pub let checkbox<e> = pure (label: string, checked: bool, on_toggle: e) -> Node<
 pub let slider<e> = pure (spec: SliderSpec<e>) -> Node<e> =>
   Node { kind: Ranged(spec), tag: "Slider" }
 
+/// A select (HTML's `<select>`) showing its chosen option and an arrow (the `Select::arrow`
+/// part), as wide as its widest option. A click, or Space, Enter or Alt-Down while it has the
+/// focus, opens its list (`Select::list`) of options (`Select::option` — `:checked` the chosen
+/// one, `:hover` the one under the pointer or the arrow keys), drawn over everything below it;
+/// a click on one, or Enter, chooses it, and Escape or a click elsewhere closes the list.
+/// Closed, Up and Down choose the option before or after. `spec.on_change` with the index.
+pub let select<e> = pure (spec: SelectSpec<e>) -> Node<e> => {
+  // Every option's text in one place, only the chosen one seen: the select is as wide as its
+  // widest option, as HTML's is, whichever is chosen.
+  let texts = stack::<e>([
+    i in 0..<spec.options.len() |
+      text::<e>(spec.options[i]).with_style(Style {
+        opacity: Some(if i == spec.selected { 1.0 } else { 0.0 })
+      })
+  ])
+  let face = row::<e>([expanded::<e>(texts), select_arrow::<e>()])
+    .with_style(Style { gap: Some(10.0) })
+    .aligned(MainStart, CrossCenter)
+  Node { kind: Choosing(spec), tag: "Select", children: [face] }
+}
+
+/// A select's arrow: a small triangle pointing down, drawn as bars narrowing to its tip — the
+/// display list has no paths, and the system font no arrow worth the name. Each bar is the
+/// `Select::arrow` part, so a sheet colours it with `background`.
+let select_arrow<e> = pure () -> Node<e> => {
+  let widths: []f32 = [10.0, 8.0, 6.0, 4.0, 2.0]
+  column::<e>([w in widths | sized::<e>(Some(w), Some(1.2)).with_part("arrow")])
+    .aligned(MainStart, CrossCenter)
+}
+
+/// The identity of option `index` in the list of the select identified as `select`.
+pub let option_id = pure (select: string, index: i64) -> string =>
+  "${select}/:list/:${index}"
+
+/// The option of the select identified as `select` that `id` — an element's — is or is in, by
+/// index; `None` outside its list.
+pub let option_of = pure (select: string, id: string) -> Maybe<i64> => {
+  let Some(rest) = id.strip_prefix("${select}/:list/:") else { return None }
+  rest.split("/")[0].parse_i64()
+}
+
 /// A one-line text field showing `spec.value`, as wide as it is given: `spec.on_edit` with the
 /// value each edit leaves. The caret, the selection and an edit's undo are the framework's.
 pub let text_input<e> = pure (spec: FieldSpec<e>) -> Node<e> =>
@@ -478,6 +533,11 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
     step: spec.step,
     on_change: (v: f32) -> b => f((spec.on_change)(v)),
   }),
+  Choosing(spec) => Choosing(SelectSpec {
+    options: spec.options,
+    selected: spec.selected,
+    on_change: (i: i64) -> b => f((spec.on_change)(i)),
+  }),
   Editable(spec) => Editable(FieldSpec {
     value: spec.value,
     placeholder: spec.placeholder,
@@ -555,6 +615,8 @@ pub struct Interaction {
   /// Whether the focus came from the keyboard (Tab, or assistive technology) rather than the
   /// pointer: `:focus-visible`.
   keyboard_focus: bool = false,
+  /// The select whose list is open, by identity — one at a time, as a browser has it.
+  open: string = "",
   /// The window as media queries see it; a size of nothing for the constraints' own.
   viewport: Viewport = Viewport {},
   /// What each element moving a property that changes sizes shows now (`ui.motion`), by
@@ -616,6 +678,9 @@ pub struct Laid<e> {
   moves: bool = false,
   /// Whether it takes no input ([Node.disabled]).
   disabled: bool = false,
+  /// Whether it floats over everything (an open select's list): painted after the whole tree,
+  /// outside every clip, and hit before anything else (`ui.interact`'s `hit`).
+  floats: bool = false,
   /// The media queries this node's sheets, and those below it, asked of the viewport, and
   /// their answers: while they answer the same, so does its layout.
   media: []MediaAnswer = [],
@@ -796,7 +861,7 @@ let refreshed<e> = pure (laid: Laid<e>, node: Node<e>) -> Laid<e> => {
 let state_under = pure (ui: Interaction, id: string) -> string => {
   let inside = (other: string) -> bool => other == id || other.starts_with("${id}/")
   var out = ""
-  for holder in [ui.focus, ui.hover, ui.pressed] {
+  for holder in [ui.focus, ui.hover, ui.pressed, ui.open] {
     out = "${out}|${if inside(holder) { holder } else { "" }}"
   }
   for (key, w) in ui.widgets.entries() {
@@ -862,6 +927,9 @@ let same_node<e> = (a: Node<e>, b: Node<e>, theme: Theme) -> bool => {
   if a.label != b.label || a.style != b.style || a.children.len() != b.children.len() {
     return false
   }
+  // A control disabled or enabled is styled anew (`:disabled`, `:enabled`) and takes input or
+  // none: not the same layout, though nothing else about it changed.
+  if a.disabled != b.disabled { return false }
   if !same_kind(a.kind, b.kind, theme) { return false }
   for i in 0..<a.children.len() {
     if !same_node(a.children[i], b.children[i], theme) { return false }
@@ -892,6 +960,7 @@ let same_kind<e> = (a: Kind<e>, b: Kind<e>, theme: Theme) -> bool => match (a, b
     same_f32(r1.step, r2.step),
   (Editable(f1), Editable(f2)) =>
     f1.value == f2.value && f1.placeholder == f2.placeholder,
+  (Choosing(s1), Choosing(s2)) => s1.selected == s2.selected && s1.options == s2.options,
   (Flexbox, Flexbox) => true,
   (Gridbox, Gridbox) => true,
   _ => false,
@@ -910,6 +979,7 @@ pub let focusable<e> = pure (kind: Kind<e>) -> bool => match kind {
   Checkable(_, _) => true,
   Ranged(_) => true,
   Editable(_) => true,
+  Choosing(_) => true,
   _ => false,
 }
 
@@ -1000,6 +1070,7 @@ let lay_fresh<e> = (
     },
     Ranged(spec) => lay_slider(spec, inner, ctx, fonts, cache),
     Editable(spec) => lay_field(spec, inner, style, ctx, fonts),
+    Choosing(spec) => lay_select(node.children, spec, inner, space, ctx, fonts, cache),
     Flexbox => lay_flex(node.children, style, inner, ctx, fonts, cache),
     Gridbox => lay_grid(node.children, style, inner, ctx, fonts, cache),
     // A wrapper of its children: Grow, Pin, Inset, Theming, Scope, Pressable and Checkable.
@@ -1381,6 +1452,7 @@ let role_of<e> = pure (kind: Kind<e>) -> Role => match kind {
   Checkable(_, _) => CheckboxRole,
   Ranged(_) => SliderRole,
   Editable(_) => TextFieldRole,
+  Choosing(_) => ComboBoxRole,
   Words(_) => TextRole,
   Texels(_, _, _) => ImageRole,
   Scrolls(_, _) => ScrollRole,
@@ -1419,6 +1491,59 @@ let text_inside<e> = pure (children: []Placed<e>) -> string => {
 
 /// A wrapper's children within `c`: one laid out with `c` as it stands — a wrapper hands its
 /// child its own constraints, as Flutter's do — and several as a column lays them out.
+/// A select: its face, as a wrapper lays its child out, and — while it is open
+/// (`Interaction.open`) — its list, a column of its options as wide as the select,
+/// floating just below its border (`Laid.floats`) and taking none of its size.
+let lay_select<e> = (
+  children: []Node<e>,
+  spec: SelectSpec<e>,
+  c: Constraints,
+  space: Insets,
+  ctx: Ctx,
+  fonts: mut Fonts,
+  cache: mut LayoutCache<e>
+) -> Body<e> => {
+  let face = lay_wrapped(children, c, ctx, fonts, cache)
+  if ctx.ui.open != ctx.id { return Body { size: face.size, children: face.children } }
+  let options: []Node<e> = [
+    i in 0..<spec.options.len() |
+      Node {
+        kind: Checkable(i == spec.selected, (spec.on_change)(i)),
+        tag: "Option",
+        part: "option",
+        key: "${i}",
+        children: [text::<e>(spec.options[i])],
+      }
+  ]
+  let list = column::<e>(options)
+    .aligned(MainStart, CrossStretch)
+    .with_part("list")
+    .keyed("list")
+  // As wide as the select — which is as wide as its widest option — so each option's row
+  // spans the list.
+  let wide = face.size.w + space.horizontal()
+  let limits = Constraints { min_w: wide, max_w: wide }
+  let laid = lay(
+    list,
+    limits,
+    ctx.cascade,
+    fonts,
+    ctx.ui,
+    child_id(ctx.id, list, children.len()),
+    cache
+  )
+  let floating = Placed {
+    at: Point { x: -space.left, y: face.size.h + space.bottom + 2.0 },
+    laid: Laid {
+      laid |
+      role: ListBoxRole,
+      floats: true,
+      children: [p in laid.children | Placed { p | laid: Laid { p.laid | role: OptionRole } }],
+    },
+  }
+  Body { size: face.size, children: [...face.children, floating] }
+}
+
 let lay_wrapped<e> = (
   children: []Node<e>,
   c: Constraints,
@@ -1800,7 +1925,16 @@ pub let paint<e, r> where r: Renderer = (
   renderer: mut r
 ) -> []DrawOp => {
   var ops: []DrawOp = []
-  paint_into(ops, laid, origin, scale, fonts, atlas, renderer)
+  // What floats (an open select's list) is drawn after the whole tree, over it and outside
+  // every clip — and what floats in that, after it.
+  var floating: []Placed<e> = []
+  paint_into(ops, laid, origin, scale, fonts, atlas, renderer, floating)
+  var k = 0
+  while k < floating.len() {
+    let f = floating[k]
+    paint_into(ops, f.laid, f.at, scale, fonts, atlas, renderer, floating)
+    k += 1
+  }
   ops
 }
 
@@ -1811,7 +1945,8 @@ let paint_into<e, r> where r: Renderer = (
   scale: f32,
   fonts: Fonts,
   atlas: mut GlyphAtlas,
-  renderer: mut r
+  renderer: mut r,
+  floating: mut []Placed<e>
 ) -> void => {
   let s = laid.style
   let box = Rect { x: origin.x, y: origin.y, w: laid.size.w, h: laid.size.h }
@@ -1928,7 +2063,11 @@ let paint_into<e, r> where r: Renderer = (
   if laid.clips && laid.field.is_none() { ops.push(PushClip(box, corners)) }
   for child in laid.children {
     let corner = Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
-    paint_into(ops, child.laid, corner, scale, fonts, atlas, renderer)
+    if child.laid.floats {
+      floating.push(Placed { at: corner, laid: child.laid })
+      continue
+    }
+    paint_into(ops, child.laid, corner, scale, fonts, atlas, renderer, floating)
   }
   if laid.clips && laid.field.is_none() { ops.push(PopClip) }
   // A scroller's bars, over its content.

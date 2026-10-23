@@ -64,6 +64,9 @@ static accesskit_role role_of(int role) {
     case 7: return ACCESSKIT_ROLE_SLIDER;
     case 8: return ACCESSKIT_ROLE_TEXT_INPUT;
     case 9: return ACCESSKIT_ROLE_SCROLL_VIEW;
+    case 10: return ACCESSKIT_ROLE_COMBO_BOX;
+    case 11: return ACCESSKIT_ROLE_LIST_BOX;
+    case 12: return ACCESSKIT_ROLE_LIST_BOX_OPTION;
     default: return ACCESSKIT_ROLE_GENERIC_CONTAINER;
   }
 }

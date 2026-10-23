@@ -19,7 +19,7 @@ A root of its own beside `std/` and `bindings/` (`build.sh` links it into `build
 | `ui.sdl3` | Both traits over `bindings.sdl3`: `open` → `SdlWindow { platform, renderer }` (and its pieces, `open_window`, `renderer_for`, `platform_for`, which `ui.gpu` opens with), `close`, and `capture` (a frame read back, for tests). Draws through `SDL_RenderGeometry`, a call a run of ops on one texture (`geometry_calls` counts them); on macOS tells VoiceOver through `bindings.accesskit`. | SDL3, AccessKit |
 | `ui.text` | `Fonts` (font files by family; `add_system_font` tries `SYSTEM_FONTS`), `FontSpec` (family, size, `line_height`), `lay_out` → `TextBlock` (lines of placed glyphs, cached by text, font and width), and `GlyphAtlas`, which renders glyphs into one texture through `Renderer.update` and answers a `Glyphs` op. | HarfBuzz, FreeType |
 | `ui.style` | `Style` (all `Maybe`), `Insets`, `Rule`/`Sheet`, `Theme` (`Palette`, `Spacing`, radius, font, `elements` sheet; `light_theme`, `dark_theme`), its layout properties (sizes, flex's and grid's — `FlexDirection`, `LineWrap`, `Justify`, `ItemAlign`, `Basis`, tracks built by `px`, `fr`, `auto_track`, `min_content`, `max_content`, `minmax`, `repeat_tracks`, `GridSpan`, `GridFlow`), its effects (`box_shadow`, `background_gradient`, `filter_blur`, `backdrop_blur`), and the cascade: `Cascade` settles an element's tag, classes, part and inline style into `Computed`. | no |
-| `ui.layout` | `Node<e>` (kind, tag, class, part, style, children, key, label; `e` the program's event type, `NoEvent` for none) built by `row`, `column`, `flex`, `grid`, `expanded`, `stack`, `positioned`, `padding`, `align`, `sized`, `scroll`, `text`, `image`, `themed`, `component` and the controls `button`, `checkbox`, `slider`, `text_input`, and `.with_class`/`.with_style`/`.with_part`/`.keyed`/`.labelled`/`.aligned`; `layout`/`layout_with(node, Constraints, fonts, Interaction) -> Laid<e>` (each with its identity, role, label, focus ring and a field's caret) and `paint(laid, origin, scale, fonts, atlas, renderer) -> []DrawOp`. Flex and grid are in `ui/layout/flex.lyra` and `grid.lyra` (one module, a directory). | no (text through `ui.text`) |
+| `ui.layout` | `Node<e>` (kind, tag, class, part, style, children, key, label; `e` the program's event type, `NoEvent` for none) built by `row`, `column`, `flex`, `grid`, `expanded`, `stack`, `positioned`, `padding`, `align`, `sized`, `scroll`, `text`, `image`, `themed`, `component` and the controls `button`, `checkbox`, `slider`, `select`, `text_input`, and `.with_class`/`.with_style`/`.with_part`/`.keyed`/`.labelled`/`.aligned`; `layout`/`layout_with(node, Constraints, fonts, Interaction) -> Laid<e>` (each with its identity, role, label, focus ring and a field's caret) and `paint(laid, origin, scale, fonts, atlas, renderer) -> []DrawOp`. Flex and grid are in `ui/layout/flex.lyra` and `grid.lyra` (one module, a directory). | no (text through `ui.text`) |
 | `ui.motion` | Transitions' values: `progress` (CSS's timing functions), `blended`/`differs` (each property that animates), `mix_color` (premultiplied), and an element's `Motion` — its target and what is `Moving` towards it — moved on by `advance`; `with_layout`/`layout_key` for the sizes a layout lays out while they move. | no |
 | `ui.interact` | `Ui`: the framework's state by identity (focus, hover, press, scroll offsets, carets, selections, undo), transitions (`motions`, shown at `now`; `animating`), `frame` (lay out and drop what left the tree), `handle(laid, input, platform) -> []e`, `place_text_input`; `hit`, `control_at`, `find`, `focus_order`; `Editing`, a field's editing operations. | no |
 | `ui.app` | `App { view, update: (s, e) -> (s, []Command<e>), subscriptions: (s) -> []Subscription<e>, background }` (`sandbox(view, update, bg)` for a plain update); `Command` (`WriteFile`, `ReadFile`, `After`, `CopyText`, `PasteText`, `OpenUrl`, `QuitApp`), `Subscription` (`EveryFrame`, `Every`, `OnResize`, `OnAppearance`); `run`, and `Host` (`host_of`, `step`) for a loop of `main`'s own — which `lyrac run --live` needs. | no |
@@ -184,6 +184,18 @@ layer — implements the two traits; the display list is the whole contract.
   HTML's `readonly`: focused, its caret moved, selected and copied, but typing, deleting,
   cutting, pasting, undo and an assistive technology's new value raise no edit, and it needs
   no `on_edit` (`read_only_input` gives it one that is never called).
+- **A select** (`select(SelectSpec { options, selected, on_change })`, lui's `<Select>`) is
+  HTML's `<select>`: its chosen option and an arrow (`Select::arrow`, bars narrowing to a
+  point — the display list has no paths), as wide as its widest option. A click, or Space,
+  Enter or Alt-Down, opens its list (`Select::list` of `Select::option`s, `:checked` the
+  chosen, `:hover` the one under the pointer or the arrow keys); a click or Enter chooses,
+  Escape, Tab or a click elsewhere closes; closed, the arrows choose outright. Choosing the
+  chosen option raises nothing. Which select is open is the framework's
+  (`Interaction.open`, one at a time). **The list floats** (`Laid.floats`): laid out under
+  the select taking none of its size, painted after the whole tree outside every clip, and
+  hit before anything else (`hit` looks for floating elements first) — so it covers what is
+  below it, inside a scroller too. Heard as a combo box (its value the chosen option) with
+  a list box of options while open. It does not yet scroll or open upwards (todo.md).
 - **The keyboard**: Tab/Shift-Tab through the controls in the tree's order, wrapping; Space
   and Enter press; the arrows, Page Up/Down, Home and End move a slider; a field edits by rune
   (not yet grapheme cluster), by word with Alt (Control off a Mac), to the ends with Command or
@@ -196,7 +208,8 @@ layer — implements the two traits; the display list is the whole contract.
   one kind — letters and digits (`_` and non-ASCII too), punctuation, or spaces — so `34`
   alone in `12.34`. (Alt-arrow still moves by spaces only.)
 - **The pointer's shape follows it**: an I-beam over a text field (and while a selection is
-  dragged in one), the arrow elsewhere, set through `Platform.set_cursor` as it moves —
+  dragged in one), the pointing hand over a button that can be pressed, the arrow elsewhere,
+  set through `Platform.set_cursor` as it moves —
   `ui.sdl3` makes SDL's system cursor and changes it only when the shape does.
 - **Commands and subscriptions**: `update` is pure and answers the next state and the
   `Command`s to carry out, each naming the event its result comes back as; the host performs
@@ -307,6 +320,8 @@ layer — implements the two traits; the display list is the whole contract.
   idle on arrival; `TestRun_UiTransitionsDrawOnlyWhileMoving` the host's frames;
   `TestLui_UiTargetTransitions` the markup's.
   `TestRun_UiPseudoClasses` the states; `TestRun_UiReadOnlyField` a read-only field;
+  `TestRun_UiSelect` a select by pointer and keys, its list over a button, and what is heard;
+  `TestRun_UiDisabledIsLaidOutAtOnce` a control disabled with nothing else changed;
   `TestLui_UiTargetReadOnlyField` the markup's `readonly`.
   `TestRun_UiFlex` and `TestRun_UiGrid` hold flex and grid to hand-worked CSS results, child
   rect by child rect; `TestLui_UiTargetFlexAndGrid` the markup's layout properties.

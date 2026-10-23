@@ -637,7 +637,7 @@ int main(void) {
 // clipboard's copy, cut and paste, undo twice, deleting a word either way, the selection
 // extended a rune at a time — and text input asked for while the field has the focus. **The
 // pointer's shape**: an I-beam over a text field and while a selection is dragged out of one,
-// the arrow anywhere else. **A checkbox**: its box bordered ticked or not, and when ticked
+// the pointing hand over a button, the arrow anywhere else. **A checkbox**: its box bordered ticked or not, and when ticked
 // holding the accent a gap inside the border, its corners less round by the inset. **Roles and labels**: each control's role, and its
 // label its visible text unless it was given one.
 func TestRun_UiInteraction(t *testing.T) {
@@ -645,7 +645,7 @@ func TestRun_UiInteraction(t *testing.T) {
 	got := runUiProgram(t, `import ui.app.{ sandbox, run }
 import ui.script.{ ScriptPlatform, script_platform, parse_script }
 import ui.interact.{ ui_new, find }
-import ui.backend.{ Renderer, Arrow, IBeam }
+import ui.backend.{ Renderer, Arrow, IBeam, Hand }
 import ui.draw.{ Point, Size, Color, TextureId }
 import std.collections
 import ui.text.{ fonts_new, Fonts }
@@ -662,6 +662,9 @@ import ui.layout.{
   SliderRole,
   TextFieldRole,
   ScrollRole,
+  ComboBoxRole,
+  ListBoxRole,
+  OptionRole,
   FieldSpec,
   SliderSpec,
   Vertical,
@@ -816,7 +819,7 @@ let editing = (fonts: mut Fonts) -> void => {
 }
 
 /// The pointer's shape: an I-beam over a text field and while dragging a selection out of one,
-/// the arrow over anything else.
+/// the pointing hand over a button, the arrow over anything else.
 let cursors = (fonts: mut Fonts) -> void => {
   let view = (s: State) -> Node<Ev> => column([
     sized(Some(100.0), Some(30.0), [text_input(FieldSpec { value: s.value, on_edit: Typed })]),
@@ -825,7 +828,7 @@ let cursors = (fonts: mut Fonts) -> void => {
   var shapes: []string = []
   for script in ["move:10,10", "move:10,10 move:10,40", "move:10,40 move:10,10 move:10,100", "move:10,10 down:10,10 move:10,40"] {
     let (_, platform) = play(view, script, fonts)
-    shapes.push(if platform.shape == IBeam { "ibeam" } else if platform.shape == Arrow { "arrow" } else { "other" })
+    shapes.push(if platform.shape == IBeam { "ibeam" } else if platform.shape == Hand { "hand" } else if platform.shape == Arrow { "arrow" } else { "other" })
   }
   println("cursors ${shapes.join(",")}")
 }
@@ -880,6 +883,9 @@ let role_name = pure (role: Role) -> string => match role {
   SliderRole => "slider",
   TextFieldRole => "field",
   ScrollRole => "scroll",
+  ComboBoxRole => "combo box",
+  ListBoxRole => "list box",
+  OptionRole => "option",
 }
 `)
 	want := `hits a,c,b,c
@@ -896,7 +902,7 @@ edit [Alt+Backspace] 'world ' clipboard 'world wide' typing true
 edit [Home Delete Right Shift+Right Shift+Right Primary+x] 'od ' clipboard 'rl' typing true
 edit [Primary+z Primary+z] 'world ' clipboard 'rl' typing true
 edit [Left Left Ctrl+Delete] ' ' clipboard 'rl' typing true
-cursors ibeam,arrow,arrow,ibeam
+cursors ibeam,hand,arrow,ibeam
 check true 18x18 face 255,255,255 border 1.5; fill at 3.5,3.5 11x11 10,132,255 radius 1.5
 check false 18x18 face 255,255,255 border 1.5
 roles group '' | text 'Title' | button 'Save' | text 'Save' | checkbox 'Loud' | group '' | text 'Loud' | slider 'Volume' | group '' | field 'Name' | scroll ''
@@ -1423,7 +1429,7 @@ func TestRun_UiAccessibilityTree(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ sandbox, host_of }
 import ui.script.{ script_platform, ScriptPlatform }
-import ui.backend.{ AxWindow, AxGroup, AxLabel, AxImage, AxButton, AxCheckbox, AxSlider, AxTextInput, AxScroll, AxContainer, Renderer, InputEvent, AccessAction, AccessTree, AccessNode, AxSetValue, AxClick, AxIncrement, AxFocus, AxSetNumber }
+import ui.backend.{ AxWindow, AxGroup, AxLabel, AxImage, AxButton, AxCheckbox, AxSlider, AxTextInput, AxScroll, AxComboBox, AxListBox, AxOption, AxContainer, Renderer, InputEvent, AccessAction, AccessTree, AccessNode, AxSetValue, AxClick, AxIncrement, AxFocus, AxSetNumber }
 import ui.access.{ access_node }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new, Fonts }
@@ -1538,6 +1544,9 @@ let role_name = pure (node: AccessNode) -> string => match node.role {
   AxSlider => "slider",
   AxTextInput => "text input",
   AxScroll => "scroll",
+  AxComboBox => "combo box",
+  AxListBox => "list box",
+  AxOption => "option",
   AxContainer => "container",
 }
 `)
@@ -3280,6 +3289,224 @@ double on brave, dragged to world: 'brave  world' (anchor 6, caret 18)
 double on brave, dragged to hello: 'hello brave' (anchor 11, caret 0)
 triple, dragged: 'hello brave  world 12.34' (anchor 0, caret 24)
 script double:X,Y in world: 'world' (anchor 13, caret 18)
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A select (HTML's <select>): a click opens its list over what is below it — a click where
+// the list covers a button chooses the option there, not the button — and a click on an
+// option chooses it, closes the list and leaves the focus on the select; a click elsewhere
+// only closes it; closed, Down and Up choose outright; open, Space opens it, Down moves the
+// option under the keys and Enter chooses it, and Escape closes it without a choice. Choosing
+// the chosen option raises nothing. Assistive technology hears a combo box whose value is
+// the chosen option, and, while it is open, a list box of options.
+func TestRun_UiSelect(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new, find, control_at }
+import ui.script.{ script_platform, ScriptPlatform }
+import ui.backend.{ InputEvent, PointerMoved, PointerDown, PointerUp, Primary, KeyPressed, Key, Modifiers, Enter, Escape, ArrowDown, ArrowUp, Character, AxComboBox, AxListBox, AxOption }
+import ui.access.{ access_tree }
+import ui.draw.{ Size, Point }
+import ui.text.{ Fonts, fonts_new }
+import ui.style.{ light_theme, Sheet }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, button, select, SelectSpec, themed, tight, Choosing, option_id, option_of }
+
+data Ev = Chose(i64) | Pressed
+
+const OPTIONS: []string = ["one-way flight", "return flight", "round the world"]
+
+/// The framework's state, the program's — the option chosen, the button's presses — and the
+/// events since the last line said.
+struct Run {
+  ui: Ui,
+  cache: LayoutCache<Ev>,
+  platform: ScriptPlatform,
+  chosen: i64 = 0,
+  pressed: i64 = 0,
+  events: []string = [],
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var run = Run { ui: ui_new(), cache: layout_cache(), platform: script_platform([], Size { w: 400.0, h: 300.0 }) }
+  let first = laid_out(run, fonts)
+  let sel = select_id(first)
+  let the_select = middle(first, sel)
+  let the_button = middle(first, button_id(first))
+
+  play(run, fonts, click(the_select))
+  say(run, fonts, "click the select")
+  play(run, fonts, click(middle(laid_out(run, fonts), option_id(sel, 2))))
+  say(run, fonts, "click option 2")
+  play(run, fonts, click(the_select))
+  let under = control_at(laid_out(run, fonts), the_button).map((f) => option_of(sel, f.laid.id) ?? -1) ?? -1
+  println("  under the button's place while open: option ${under}")
+  play(run, fonts, click(the_button))
+  say(run, fonts, "click where the list covers the button")
+  play(run, fonts, click(the_select))
+  play(run, fonts, click(Point { x: 390.0, y: 290.0 }))
+  say(run, fonts, "click elsewhere")
+  play(run, fonts, click(the_select))
+  play(run, fonts, click(middle(laid_out(run, fonts), option_id(sel, run.chosen))))
+  say(run, fonts, "click the chosen option")
+  play(run, fonts, [...key(Escape), ...key(ArrowDown)])
+  say(run, fonts, "Down, closed")
+  play(run, fonts, key(ArrowUp))
+  say(run, fonts, "Up, closed")
+  play(run, fonts, [...key(Character(' ')), ...key(ArrowDown), ...key(ArrowDown)])
+  say(run, fonts, "Space, Down, Down")
+  play(run, fonts, key(Enter))
+  say(run, fonts, "Enter")
+  play(run, fonts, [...key(Character(' ')), ...key(ArrowUp), ...key(Escape)])
+  say(run, fonts, "Space, Up, Escape")
+  play(run, fonts, key(Character(' ')))
+  let heard = access_tree(laid_out(run, fonts), run.ui.state.focus)
+  for n in heard.nodes {
+    match n.role {
+      AxComboBox => println("  heard: combo box '${n.value}', ${n.children.len()} child"),
+      AxListBox => println("  heard: list box of ${n.children.len()}"),
+      AxOption => println("  heard: option '${n.label}'"),
+      _ => {},
+    }
+  }
+  0
+}
+
+/// Each input played against a fresh layout, its events applied.
+let play = (run: mut Run, fonts: mut Fonts, inputs: []InputEvent) -> void => {
+  for input in inputs {
+    let laid = laid_out(run, fonts)
+    for e in run.ui.handle(laid, input, run.platform) {
+      match e {
+        Chose(i) => {
+          run.chosen = i
+          run.events.push("Chose(${i})")
+        },
+        Pressed => {
+          run.pressed += 1
+          run.events.push("Pressed")
+        },
+      }
+    }
+  }
+}
+
+/// A line for the step just played: its events, the option chosen, and the select's state.
+let say = (run: mut Run, fonts: mut Fonts, name: string) -> void => {
+  let id = select_id(laid_out(run, fonts))
+  println("${name}: [${run.events.join(", ")}] chosen ${run.chosen}, open ${run.ui.state.open == id}, focus on it ${run.ui.state.focus == id}")
+  run.events = []
+}
+
+let laid_out = (run: mut Run, fonts: mut Fonts) -> Laid<Ev> =>
+  run.ui.frame_within(view(run.chosen), tight(Size { w: 400.0, h: 300.0 }), fonts, run.cache)
+
+let click = pure (at: Point) -> []InputEvent =>
+  [PointerMoved(at), PointerDown(Primary, at, 1), PointerUp(Primary, at)]
+
+let key = pure (k: Key) -> []InputEvent => [KeyPressed(k, Modifiers {})]
+
+/// The middle of the element identified as id.
+let middle = pure (laid: Laid<Ev>, id: string) -> Point => {
+  let Some(f) = find(laid, id, Point {}) else { return Point { x: -1.0, y: -1.0 } }
+  Point { x: f.origin.x + f.laid.size.w / 2.0, y: f.origin.y + f.laid.size.h / 2.0 }
+}
+
+let view = pure (chosen: i64) -> Node<Ev> => themed::<Ev>(light_theme(), Sheet {}, [
+  column([
+    select(SelectSpec { options: OPTIONS, selected: chosen, on_change: Chose }),
+    button("Book", Pressed),
+  ]),
+])
+
+/// The select's identity, and the button's.
+let select_id = pure (laid: Laid<Ev>) -> string => first_of(laid, true)
+let button_id = pure (laid: Laid<Ev>) -> string => first_of(laid, false)
+
+let first_of = pure (laid: Laid<Ev>, choosing: bool) -> string => {
+  let found = match laid.kind {
+    Choosing(_) => choosing,
+    _ => !choosing && laid.tag == "Button",
+  }
+  if found { return laid.id }
+  for child in laid.children {
+    let id = first_of(child.laid, choosing)
+    if id.len() > 0 { return id }
+  }
+  ""
+}
+`)
+	under := ""
+	for line := range strings.SplitSeq(got, "\n") {
+		if rest, ok := strings.CutPrefix(line, "  under the button's place while open: option "); ok {
+			under = rest
+		}
+	}
+	if under == "" || under == "-1" {
+		t.Fatalf("the open list did not cover the button:\n%s", got)
+	}
+	want := `click the select: [] chosen 0, open true, focus on it true
+click option 2: [Chose(2)] chosen 2, open false, focus on it true
+  under the button's place while open: option ` + under + `
+click where the list covers the button: [Chose(` + under + `)] chosen ` + under + `, open false, focus on it true
+click elsewhere: [] chosen ` + under + `, open false, focus on it false
+click the chosen option: [] chosen ` + under + `, open false, focus on it true
+Down, closed: [Chose(1)] chosen 1, open false, focus on it true
+Up, closed: [Chose(0)] chosen 0, open false, focus on it true
+Space, Down, Down: [] chosen 0, open true, focus on it true
+Enter: [Chose(2)] chosen 2, open false, focus on it true
+Space, Up, Escape: [] chosen 2, open false, focus on it true
+  heard: option 'one-way flight'
+  heard: option 'return flight'
+  heard: option 'round the world'
+  heard: list box of 3
+  heard: combo box 'round the world', 1 child
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A control disabled or enabled again with nothing else changed is laid out anew: its
+// `:disabled` look and its refusal of input follow at once. The layout cache gave the last
+// frame's layout back for a node the same in every field but `disabled` until 10/22, so 7GUIs'
+// flight booker showed its Book button's state only once a hover or a focus change asked for a
+// fresh layout.
+func TestRun_UiDisabledIsLaidOutAtOnce(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new }
+import ui.draw.{ Size, Color }
+import ui.text.{ fonts_new }
+import ui.style.{ Style, Rule, Sheet, light_theme }
+import ui.layout.{ Node, NoEvent, LayoutCache, layout_cache, column, button, themed, tight }
+
+let main = () -> u8 => {
+  var ui = ui_new()
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var cache: LayoutCache<NoEvent> = layout_cache()
+  let states: []bool = [false, true, false]
+  for off in states {
+    let laid = ui.frame_within(view(off), tight(Size { w: 200.0, h: 100.0 }), fonts, cache)
+    let go = laid.children[0].laid.children[0].laid
+    println("disabled ${off}: laid out disabled ${go.disabled}, looks it ${go.style.background == Some(Color { r: 1, g: 2, b: 3 })}")
+  }
+  0
+}
+
+let view = pure (off: bool) -> Node<NoEvent> =>
+  themed::<NoEvent>(light_theme(), sheet, [column([button("Go", NoEvent).disabled_if(off)])])
+
+let sheet = Sheet { rules: [
+  Rule { selector: "Button:disabled", style: Style { background: Some(Color { r: 1, g: 2, b: 3 }) } },
+] }
+`)
+	want := `disabled false: laid out disabled false, looks it false
+disabled true: laid out disabled true, looks it true
+disabled false: laid out disabled false, looks it false
 `
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)

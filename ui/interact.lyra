@@ -24,7 +24,8 @@ module ui.interact
 //! and undo. [Ui.frame] drops what belongs to an identity no longer in the tree.
 //!
 //! **The pointer's shape** follows it: an I-beam over a text field (and while a selection is
-//! dragged in one), the arrow elsewhere — said to the platform as the pointer moves.
+//! dragged in one), the pointing hand over a button, the arrow elsewhere — said to the
+//! platform as the pointer moves.
 //!
 //! **A field's clicks**: one places the caret, two select the word under the pointer, three
 //! the whole text; a drag goes on by the unit the press picked ([Picking]).
@@ -54,6 +55,7 @@ import ui.backend.{
   Key,
   Modifiers,
   Enter,
+  Escape,
   Tab,
   Backspace,
   Delete,
@@ -69,6 +71,7 @@ import ui.backend.{
   Cursor,
   Arrow,
   IBeam,
+  Hand,
   AccessAction,
   AccessRequest,
   AxFocus,
@@ -92,10 +95,14 @@ import ui.layout.{
   WidgetState,
   Edit,
   SliderSpec,
+  SelectSpec,
   Pressable,
   Checkable,
   Ranged,
   Editable,
+  Choosing,
+  option_id,
+  option_of,
   Horizontal,
   Vertical,
   Prose,
@@ -215,6 +222,7 @@ impl Ui {
       )
     }
     if !present.contains_key(self.state.focus) { self.state.focus = "" }
+    if !present.contains_key(self.state.open) { self.state.open = "" }
     // A control disabled since it took the focus or the press gives them up.
     if let Some(found) = find(
       laid,
@@ -344,7 +352,21 @@ impl Ui {
         }
         []
       },
-      AxClick => activated(found.laid),
+      AxClick => match found.laid.kind {
+        Choosing(spec) => {
+          if self.state.open == id {
+            self.state.open = ""
+          } else {
+            self.open_select(id, spec)
+          }
+          []
+        },
+        _ => if self.state.open.len() > 0 && option_of(self.state.open, id).is_some() {
+          self.choose_option(found.laid)
+        } else {
+          activated(found.laid)
+        },
+      },
       AxIncrement => match found.laid.kind {
         Ranged(spec) => step_slider(spec, ArrowRight),
         _ => [],
@@ -406,12 +428,18 @@ impl Ui {
   }
 
   /// The pointer's shape at `at`: an I-beam over a text field, or while a selection is being
-  /// dragged in one, else the arrow.
+  /// dragged in one; the pointing hand over a button that can be pressed (a disabled one is no
+  /// control under the pointer); else the arrow.
   let cursor_at<e> = pure (self, laid: Laid<e>, at: Point) -> Cursor => {
     let held = find(laid, self.state.pressed, Point {})
     let over = if held.is_some() { held } else { control_at(laid, at) }
     match over {
-      Some(f) => if f.laid.field.is_some() { IBeam } else { Arrow },
+      Some(f) => if f.laid.field.is_some() { IBeam } else {
+        match f.laid.kind {
+          Pressable(_) => Hand,
+          _ => Arrow,
+        }
+      },
       None => Arrow,
     }
   }
@@ -468,6 +496,20 @@ impl Ui {
   let pointer_down<e> = (self: mut, laid: Laid<e>, at: Point, clicks: i64) -> []e => {
     self.pointer = at
     if self.bar_press(laid, at) { return [] }
+    // An open select's list takes a press on one of its options; any other press closes it —
+    // on the select itself, only that.
+    let open = self.state.open
+    if open.len() > 0 {
+      self.state.open = ""
+      if let Some(on) = control_at(laid, at) {
+        if option_of(open, on.laid.id).is_some() {
+          self.state.open = open
+          self.state.pressed = on.laid.id
+          return []
+        }
+        if on.laid.id == open { return [] }
+      }
+    }
     let Some(target) = control_at(laid, at) else {
       self.state.focus = ""
       self.state.pressed = ""
@@ -478,6 +520,10 @@ impl Ui {
     self.state.keyboard_focus = false
     match target.laid.kind {
       Ranged(spec) => slide_to(target, spec, at),
+      Choosing(spec) => {
+        self.open_select(target.laid.id, spec)
+        []
+      },
       Editable(_) => {
         // A click puts the caret there; a double click selects the word under the pointer
         // (or the run of spaces), a triple the whole text — as every platform's fields do.
@@ -508,7 +554,69 @@ impl Ui {
     self.state.pressed = ""
     let Some(target) = control_at(laid, at) else { return [] }
     if target.laid.id != held { return [] }
+    if self.state.open.len() > 0 && option_of(self.state.open, held).is_some() {
+      return self.choose_option(target.laid)
+    }
     activated(target.laid)
+  }
+
+  /// The select identified as `id` opened, the option under the keys its chosen one.
+  let open_select<e> = (self: mut, id: string, spec: SelectSpec<e>) -> void => {
+    self.state.open = id
+    self.state.hover = option_id(id, spec.selected.max(0))
+  }
+
+  /// An option of the open list chosen: the list closed, the focus back on its select, and
+  /// the select's event — none when it was the chosen option already, as HTML's `change`.
+  let choose_option<e> = (self: mut, option: Laid<e>) -> []e => {
+    let open = self.state.open
+    self.state.open = ""
+    self.state.focus = open
+    match option.kind {
+      Checkable(false, event) => [event],
+      _ => [],
+    }
+  }
+
+  /// A key for the focused select identified as `id`. Closed, Space, Enter or Alt-Down opens
+  /// it, and Up, Down, Home and End choose another option outright; open, they move the
+  /// option under the keys (the list's `:hover`), and Space or Enter chooses it.
+  let select_key<e> = (
+    self: mut,
+    id: string,
+    spec: SelectSpec<e>,
+    key: Key,
+    mods: Modifiers
+  ) -> []e => {
+    let last = spec.options.len() - 1
+    if last < 0 { return [] }
+    let chooses = key == Enter || key == Character(' ')
+    let from = if self.state.open == id {
+      option_of(id, self.state.hover) ?? spec.selected.max(0)
+    } else {
+      spec.selected
+    }
+    if self.state.open != id && (chooses || (mods.alt && key == ArrowDown)) {
+      self.open_select(id, spec)
+      return []
+    }
+    if self.state.open == id && chooses {
+      self.state.open = ""
+      return if from == spec.selected { [] } else { [(spec.on_change)(from)] }
+    }
+    let stepped = match key {
+      ArrowUp => from - 1,
+      ArrowDown => from + 1,
+      Home => 0,
+      End => last,
+      _ => from,
+    }
+    let to = stepped.clamp(0, last)
+    if self.state.open == id {
+      self.state.hover = option_id(id, to)
+      return []
+    }
+    if to == spec.selected { [] } else { [(spec.on_change)(to)] }
   }
 
   /// A wheel or trackpad scrolled by `across` and `down` lines: the innermost scroll under the
@@ -684,6 +792,11 @@ impl Ui {
     mods: Modifiers,
     platform: mut p
   ) -> []e => {
+    // An open select's list: Escape closes it, and Tab closes it and moves on.
+    if self.state.open.len() > 0 && (key == Escape || key == Tab) {
+      self.state.open = ""
+      if key == Escape { return [] }
+    }
     if key == Tab {
       self.move_focus(laid, mods.shift)
       self.reveal(laid, self.state.focus)
@@ -694,6 +807,7 @@ impl Ui {
       Some(f) => match f.laid.kind {
         Ranged(_) => true,
         Editable(_) => true,
+        Choosing(_) => true,
         _ => false,
       },
       None => false,
@@ -707,6 +821,7 @@ impl Ui {
         if key == Enter || key == Character(' ') { activated(focused.laid) } else { [] },
       Ranged(spec) => step_slider(spec, key),
       Editable(_) => self.field_key(focused, key, mods, platform),
+      Choosing(spec) => self.select_key(focused.laid.id, spec, key, mods),
       _ => [],
     }
   }
@@ -987,9 +1102,34 @@ let rune_kind = pure (c: rune) -> i64 =>
 /// The elements under `at`, outermost first: each one whose box holds it, through children
 /// placed at their offsets, but nothing outside an element that clips.
 pub let hit<e> = pure (laid: Laid<e>, at: Point) -> []Found<e> => {
+  // What floats (an open select's list) is over everything, so it is hit first: the path to
+  // it, then what is under the pointer in it.
+  let floating = floating_in(laid, Point {})
+  for i in (floating.len() - 1)..>=0 {
+    let f = floating[i]
+    let area = Rect { x: f.origin.x, y: f.origin.y, w: f.laid.size.w, h: f.laid.size.h }
+    if area.contains(at) {
+      let to = along_path(laid, f.laid.id)
+      var path = to.slice(0, to.len() - 1)
+      hit_into(f.laid, f.origin, at, path)
+      return path
+    }
+  }
   var path: []Found<e> = []
   hit_into(laid, Point {}, at, path)
   path
+}
+
+/// The floating elements in `laid` (its top-left corner at `origin`), each where it is, in
+/// the order they are drawn.
+let floating_in<e> = pure (laid: Laid<e>, origin: Point) -> []Found<e> => {
+  var out: []Found<e> = []
+  for child in laid.children {
+    let corner = Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
+    if child.laid.floats { out.push(Found { laid: child.laid, origin: corner }) }
+    out = [...out, ...floating_in(child.laid, corner)]
+  }
+  out
 }
 
 let hit_into<e> = (
@@ -1009,6 +1149,8 @@ let hit_into<e> = (
   // The last child drawn is the one on top, so the deepest path through the latest child wins.
   for i in (laid.children.len() - 1)..>=0 {
     let child = laid.children[i]
+    // Floating elements are hit first, by `hit`.
+    if child.laid.floats { continue }
     let corner = Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
     let before = path.len()
     hit_into(child.laid, corner, at, path)

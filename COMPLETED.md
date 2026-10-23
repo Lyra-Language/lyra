@@ -9,6 +9,52 @@ Newest first.
 
 ## Dated log
 
+### 10/22/26 — `ui`: a control disabled is laid out at once
+
+- 7GUIs' flight booker's Book button looked disabled only after a hover or a focus change.
+  The layout cache gives back last frame's layout for a node the same as before
+  (`same_node`), and `Node.disabled` was the one field it did not compare: a button whose
+  only change was `disabled` kept its old `:enabled` look and took input. A hover or focus
+  inside it is in the cache's key, so either one laid it out afresh.
+  `TestRun_UiDisabledIsLaidOutAtOnce`.
+
+### 10/22/26 — A struct literal's `name: ident` field survives a `(`-led tuple
+
+- **`(State { kind: i }, [])` was a lambda's parameter list** wherever it began a value —
+  a match arm, a `let` — and failed at the `)` with no `=>` after it. `kind: i` reads three
+  ways there: a literal's field, a struct pattern's rename (`i` the new name), a nested
+  pattern (`i` a binding). `struct_field_rename` carried a *static* precedence, which settled
+  the reduce/reduce at generation time toward the rename and dropped the literal's reading
+  before the `=>` could decide. `(State { kind: i }, 0)` failed the same way; what kept it
+  hidden was that a field value other than a bare name (`kind: 1`, `kind: i + 1`, an update)
+  has no pattern reading, so the bug needed exactly `name: ident`.
+- **The rename's precedence is now dynamic**, with conflicts `[struct_field_rename, pattern,
+  _primary_expr]` and `[struct_field_rename, pattern]`: GLR carries all three to the `)`, and
+  where only a pattern parses the dynamic precedence still picks the rename over the nested
+  pattern, so pattern trees are unchanged. No state was added (8,369). Pinned by `An arm
+  value that is a tuple of a struct literal and an empty array` (match.txt), which also keeps
+  the same tokens followed by `=>` a lambda.
+
+### 10/22/26 — `ui`: a select, and elements that float
+
+- **A select is HTML's `<select>`** (`select`, `SelectSpec`, `Choosing`; lui's `<Select>`
+  with `<Option>`s or `options={…}`), for 7GUIs' flight booker. Index-based, as `ui`'s
+  events carry no generic value. Its options are `Checkable`s built by the layout — `:checked`
+  and activation come with them, their role is set to an option's — and it is as wide as its
+  widest option because every option's text is stacked in its face, the others at opacity 0.
+- **The open list floats** (`Laid.floats`). It had to cover a later sibling and escape a
+  scroller's clip, which neither painting in tree order nor hit-testing the last child first
+  allows: a floating element takes none of its parent's size, is set aside while painting and
+  drawn after the whole tree (no clip is in force then), and `hit` looks for floating elements
+  before walking the tree. Turning that off sends a click on the list to the button it covers
+  (`TestRun_UiSelect`'s mutation). Assistive technology gathers what floats from a control,
+  whose insides it otherwise skips.
+- **Open is the framework's** (`Interaction.open`, one select at a time), in the layout
+  cache's key, dropped when the select leaves the tree. The options under the keys are the
+  `:hover` state, so the pointer and the keys share one highlight, as macOS's do.
+- **The arrow is bars**, 10 to 2 units wide: Helvetica has no arrow but a raised `˅`, and the
+  display list has no paths.
+
 ### 10/22/26 — `--live`: an edit to a ui app's window reaches the open window
 
 - **Applied, and nothing happened**: a changed `<window width>` was a new `WINDOW` constant

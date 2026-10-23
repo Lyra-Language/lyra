@@ -52,7 +52,8 @@
 //   `<Positioned left top right bottom width height>`, `<Padding all | x y | top …>`,
 //   `<Align at="center">`, `<Scroll axis offset>`, `<SizedBox width height>`, `<Text>`,
 //   `<Button on_click>`, `<Checkbox checked on_toggle>`, `<Slider value min max step
-//   on_change>`, `<TextInput value placeholder readonly on_edit>`, `<Image texture texels width height>`
+//   on_change>`, `<Select options selected on_change>` (or `<Option>`s inside), `<TextInput value
+//   placeholder readonly on_edit>`, `<Image texture texels width height>`
 //   and `<Themed theme sheet>`; any of them takes `class`, `part`, `key`, `label` and `style`.
 //   A component is named for its parts' rules and its sheet is a function of the theme
 //   (`component_of`). The default target is `bindings.imgui.ui`, as before.
@@ -713,6 +714,7 @@ impl Writer {
     match name {
       "Checkbox" => Some(["box", "checked", "fill"]),
       "Slider" => Some(["track", "fill", "thumb"]),
+      "Select" => Some(["arrow", "list", "option"]),
       "TextInput" => Some(["placeholder", "selection", "caret"]),
       _ => None,
     }
@@ -1127,6 +1129,7 @@ const UI_MODULES = [
       "Alignment",
       "SliderSpec",
       "FieldSpec",
+      "SelectSpec",
       "Horizontal",
       "Vertical",
       "MainStart",
@@ -1156,6 +1159,7 @@ const UI_MODULES = [
       "button",
       "checkbox",
       "slider",
+      "select",
       "text_input",
       "flex",
       "grid",
@@ -1379,6 +1383,7 @@ impl Writer {
       },
       ShapeBare(builder) => {
         self.use(builder)
+        if builder == "select" { return Ok(self.select_of(t)?) }
         if words_of(t.children).trim().len() > 0 || t.children.any((c) => match c {
           Element(_) => true,
           _ => false,
@@ -1530,6 +1535,51 @@ impl Writer {
     }
   }
 
+  /// A `<Select selected={…} on_change={…}>` and its options: `options={…}`, a Lyra
+  /// `[]string`, or `<Option>`s inside it, each its text (`{…}` interpolated, as a button's
+  /// label is) — one or the other. `on_change` takes the index chosen, an `i64`.
+  let select_of = (self: mut, t: Tag) -> Result<string, string> => {
+    self.use("SelectSpec")
+    var texts: []string = []
+    for child in t.children {
+      match child {
+        Element(o) => {
+          if o.name != "Option" {
+            return Err("${o.line}: <Select> holds <Option>s, not <${o.name}>")
+          }
+          if o.attrs.len() > 0 { return Err("${o.attrs[0].line}: <Option> takes no attributes") }
+          texts.push(label_of(o)?)
+        },
+        Words(w, _) => {
+          let blank = w.trim().len() == 0
+          if !blank { return Err("${t.line}: <Select> holds <Option>s, not text") }
+        },
+        Code(_, _) => { return Err("${t.line}: <Select> holds <Option>s, not {…}; or write options={…}") },
+      }
+    }
+    let options = match attr_named(t.attrs, "options") {
+      Some(a) => match a.value {
+        Braced(code) => {
+          if texts.len() > 0 {
+            return Err("${a.line}: <Select> takes options={…} or <Option>s, not both")
+          }
+          code
+        },
+        _ => return Err("${a.line}: options of <Select> takes {…}, a []string"),
+      },
+      None => {
+        if texts.len() == 0 { return Err("${t.line}: <Select> needs options={…} or <Option>s") }
+        "[${texts.join(", ")}]"
+      },
+    }
+    let fields = [
+      "options: ${options}",
+      "selected: ${required(t, "selected")?}",
+      "on_change: ${self.changes(t, "on_change", "i64")?}",
+    ]
+    Ok("select(SelectSpec { ${fields.join(", ")} })")
+  }
+
   /// A `<Padding>`'s space: `all`, else `x` and `y`, else `top`, `right`, `bottom`, `left`.
   let insets_attr = (self: mut, t: Tag) -> Result<string, string> => {
     let all = number_attr(t, "all")?
@@ -1617,6 +1667,7 @@ let ui_kind = pure (tag: string) -> Maybe<(UiShape, []string)> => match tag {
   "Button" => Some((ShapeLabelled("button"), ["on_click"])),
   "Checkbox" => Some((ShapeLabelled("checkbox"), ["checked", "on_toggle"])),
   "Slider" => Some((ShapeBare("slider"), ["value", "min", "max", "step", "on_change"])),
+  "Select" => Some((ShapeBare("select"), ["options", "selected", "on_change"])),
   "TextInput" =>
     Some((ShapeBare("text_input"), ["value", "placeholder", "readonly", "on_edit"])),
   "Image" => Some((ShapeBare("image"), ["texture", "texels", "width", "height"])),

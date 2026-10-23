@@ -809,6 +809,10 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   (_: string) => panic("…")` lowers with no return type, and with `-> e` written it is not
   specialized ("cannot assign (string) -> e to (string) -> Ev"). The `[]` case was fixed 10/21;
   a lambda needs the default instantiated (or elaborated) per literal.
+- **[DONE 10/22] `ui`: a select** (HTML's `<select>`, `select`/`SelectSpec`, lui's
+  `<Select>`) — its list floats over the page (`Laid.floats`) (COMPLETED.md, 10/22).
+- **[OPEN] `ui`: a select's list does not scroll or flip** — a long list runs off the window's
+  bottom, and one near the bottom does not open upwards; nor is AccessKit told it is expanded.
 - **[OPEN] `ui`: a disabled control is not told to assistive technology** (AccessKit's
   `disabled` flag), nor disabled through its ancestors (CSS's disabled `fieldset`).
 - **[OPEN] `ui.interact`: a caret moves by rune, not grapheme cluster.** `é` written as `e`

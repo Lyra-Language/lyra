@@ -178,6 +178,9 @@ import ui.backend.{
   AxSlider,
   AxTextInput,
   AxScroll,
+  AxComboBox,
+  AxListBox,
+  AxOption,
   AxContainer,
   AxFocus,
   AxClick,
@@ -455,6 +458,9 @@ let role_code = pure (role: AccessRole) -> i32 => match role {
   AxSlider => 7,
   AxTextInput => 8,
   AxScroll => 9,
+  AxComboBox => 10,
+  AxListBox => 11,
+  AxOption => 12,
   AxContainer => 0,
 }
 

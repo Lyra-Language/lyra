@@ -31,6 +31,9 @@ import ui.backend.{
   AxSlider,
   AxTextInput,
   AxScroll,
+  AxComboBox,
+  AxListBox,
+  AxOption,
   ACCESS_FOCUS,
   ACCESS_CLICK,
   ACCESS_SET_VALUE,
@@ -49,9 +52,13 @@ import ui.layout.{
   SliderRole,
   TextFieldRole,
   ScrollRole,
+  ComboBoxRole,
+  ListBoxRole,
+  OptionRole,
   Checkable,
   Ranged,
   Editable,
+  Choosing,
   focusable,
 }
 import std.collections.{ Hash }
@@ -97,11 +104,12 @@ let gather<e> = (laid: Laid<e>, origin: Point, nodes: mut []AccessNode) -> []u64
   let heard = heard_as(laid)
   // A control's insides are its label, not nodes; a node's children are its own.
   var children: []u64 = []
-  if !focusable(laid.kind) {
-    for child in laid.children {
-      let corner = Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
-      for id in gather(child.laid, corner, nodes) { children.push(id) }
-    }
+  // A control's insides are its own, but what floats from it — an open select's list — is
+  // heard as its child.
+  for child in laid.children {
+    if focusable(laid.kind) && !child.laid.floats { continue }
+    let corner = Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
+    for id in gather(child.laid, corner, nodes) { children.push(id) }
   }
   let Some(role) = heard else { return children }
   let id = access_id(laid.id)
@@ -120,6 +128,9 @@ let heard_as<e> = pure (laid: Laid<e>) -> Maybe<AccessRole> => match laid.role {
   SliderRole => Some(AxSlider),
   TextFieldRole => Some(AxTextInput),
   ScrollRole => Some(AxScroll),
+  ComboBoxRole => Some(AxComboBox),
+  ListBoxRole => Some(AxListBox),
+  OptionRole => Some(AxOption),
 }
 
 /// The node for `laid`, heard as `role`.
@@ -143,6 +154,18 @@ let node_for<e> = pure (
   match laid.kind {
     // A paragraph's text is its value, as AccessKit has it for a label.
     _ if role == AxLabel => AccessNode { node | label: "", value: laid.label },
+    // An option is chosen by a click; a select's value is its chosen option, and a click
+    // opens it.
+    _ if role == AxOption => AccessNode { node | actions: node.actions | ACCESS_CLICK },
+    Choosing(spec) => AccessNode {
+      node |
+      value: if spec.selected >= 0 && spec.selected < spec.options.len() {
+        spec.options[spec.selected]
+      } else {
+        ""
+      },
+      actions: node.actions | ACCESS_CLICK,
+    },
     Checkable(ticked, _) =>
       AccessNode { node | toggled: Some(ticked), actions: node.actions | ACCESS_CLICK },
     Ranged(spec) => AccessNode {
