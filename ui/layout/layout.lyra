@@ -59,11 +59,14 @@ import ui.draw.{
   Point,
   Size,
   Rect,
+  Radii,
   Color,
   TextureId,
   DrawOp,
   Fill,
   Border,
+  Glyphs,
+  GlyphQuad,
   Picture,
   PushClip,
   PopClip,
@@ -79,7 +82,7 @@ import ui.draw.{
   radius,
 }
 import ui.backend.{ Renderer }
-import ui.text.{ Fonts, TextBlock, GlyphAtlas, caret_x }
+import ui.text.{ Fonts, FontSpec, TextBlock, GlyphAtlas, caret_x }
 import ui.style.{
   Style,
   scrollbar_rules,
@@ -168,6 +171,35 @@ pub data Kind<e> =
   /// A grid (CSS's grid layout), laid out by its computed style: column and row tracks, gaps,
   /// placement and alignment.
   | Gridbox
+  /// Drawn by the program: its size the layout's, its insides what the painter answers.
+  | Painted(Painter<e>)
+
+/// An element the program draws ([painted]): `paint` answers what to draw in the size it was
+/// laid out at, in its own coordinates — `(0, 0)` its top-left corner — and is asked every
+/// time the window is painted, so it draws from the newest state; `on_size` is the event for
+/// a new size, raised after the layout that gave it and before that layout is painted.
+pub struct Painter<e> {
+  paint: (PaintArea) -> []PaintOp,
+  on_size: Maybe<(Size) -> e>,
+}
+
+/// What a painter is asked to fill: its size; the part of it inside every clip around it, in
+/// its own coordinates — what a scroller shows of a tall one, which is all that need be
+/// drawn; and the device pixels a logical unit, to put a line on a whole pixel.
+pub struct PaintArea {
+  size: Size,
+  visible: Rect,
+  scale: f32,
+}
+
+/// What a painter draws, in its own coordinates, each over the ones before and clipped to its
+/// box.
+pub data PaintOp =
+  /// An op of the display list as it is, moved to the element's place.
+  PaintDraw(DrawOp)
+  /// Text shaped and laid out as a `text` element's is, a line at each `\n` and nowhere else,
+  /// its first line's baseline at the point.
+  | PaintText(Point, string, FontSpec, Color)
 
 /// A slider's value between `min` and `max`, moved in steps of `step` (`0.0` for none) from
 /// the keyboard, and the event for a new value.
@@ -344,6 +376,17 @@ pub let text<e> = pure (content: string) -> Node<e> => {
 pub let image<e> = pure (texture: TextureId, texels: Rect, size: Size) -> Node<e> => {
   let kind: Kind<e> = Texels(texture, texels, size)
   Node { kind: kind, tag: "Image" }
+}
+
+/// An element drawn by `paint` ([Painter]) at the size it is given — its style's `width` and
+/// `height`, else all of the room its parent allows (a tall one in a scroller needs a
+/// `height`) — and `on_size`'s event each time that size changes.
+pub let painted<e> = pure (
+  paint: (PaintArea) -> []PaintOp,
+  on_size: Maybe<(Size) -> e> = None
+) -> Node<e> => {
+  let kind: Kind<e> = Painted(Painter { paint: paint, on_size: on_size })
+  Node { kind: kind, tag: "Painted" }
 }
 
 /// `children` drawn in `theme`, with `sheet` as their innermost global sheet.
@@ -546,6 +589,13 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
   }),
   Flexbox => Flexbox,
   Gridbox => Gridbox,
+  Painted(painter) => {
+    let on_size: Maybe<(Size) -> b> = match painter.on_size {
+      Some(sized) => Some((size: Size) -> b => f(sized(size))),
+      None => None,
+    }
+    Painted(Painter { paint: painter.paint, on_size: on_size })
+  },
 }
 
 // ── Constraints ──────────────────────────────────────────────────────────────
@@ -963,6 +1013,8 @@ let same_kind<e> = (a: Kind<e>, b: Kind<e>, theme: Theme) -> bool => match (a, b
   (Choosing(s1), Choosing(s2)) => s1.selected == s2.selected && s1.options == s2.options,
   (Flexbox, Flexbox) => true,
   (Gridbox, Gridbox) => true,
+  // What a painter draws is asked at paint, not kept with the layout: its box lays out alike.
+  (Painted(_), Painted(_)) => true,
   _ => false,
 }
 
@@ -1073,6 +1125,12 @@ let lay_fresh<e> = (
     Choosing(spec) => lay_select(node.children, spec, inner, space, ctx, fonts, cache),
     Flexbox => lay_flex(node.children, style, inner, ctx, fonts, cache),
     Gridbox => lay_grid(node.children, style, inner, ctx, fonts, cache),
+    // All the room it is given, on each axis that has a limit; nothing on one that has none.
+    Painted(_) => {
+      let w = if inner.bounded_w() { inner.max_w } else { 0.0 }
+      let h = if inner.bounded_h() { inner.max_h } else { 0.0 }
+      Body::<e> { size: inner.constrain(Size { w: w, h: h }) }
+    },
     // A wrapper of its children: Grow, Pin, Inset, Theming, Scope, Pressable and Checkable.
     _ => {
       let content = lay_wrapped(node.children, inner, ctx, fonts, cache)
@@ -1461,6 +1519,7 @@ let role_of<e> = pure (kind: Kind<e>) -> Role => match kind {
   Gridbox => GroupRole,
   Layers => GroupRole,
   Scope(_) => GroupRole,
+  Painted(_) => GroupRole,
   _ => NoRole,
 }
 
@@ -1915,12 +1974,12 @@ let moved<e> = pure (placed: []Placed<e>, by: Point) -> []Placed<e> =>
 /// `laid` as a display list, its top-left corner at `origin`: each node's background, border
 /// and content, then its children, clipped where the node clips, and a focus ring last. Text
 /// is drawn from `atlas`, which renders the glyphs it lacks through `renderer` at `scale`
-/// pixels a unit.
+/// pixels a unit, and a painter's text is laid out in `fonts`.
 pub let paint<e, r> where r: Renderer = (
   laid: Laid<e>,
   origin: Point,
   scale: f32,
-  fonts: Fonts,
+  fonts: mut Fonts,
   atlas: mut GlyphAtlas,
   renderer: mut r
 ) -> []DrawOp => {
@@ -1928,25 +1987,36 @@ pub let paint<e, r> where r: Renderer = (
   // What floats (an open select's list) is drawn after the whole tree, over it and outside
   // every clip — and what floats in that, after it.
   var floating: []Placed<e> = []
-  paint_into(ops, laid, origin, scale, fonts, atlas, renderer, floating)
+  paint_into(ops, laid, origin, scale, fonts, atlas, renderer, floating, EVERYWHERE)
   var k = 0
   while k < floating.len() {
     let f = floating[k]
-    paint_into(ops, f.laid, f.at, scale, fonts, atlas, renderer, floating)
+    paint_into(ops, f.laid, f.at, scale, fonts, atlas, renderer, floating, EVERYWHERE)
     k += 1
   }
   ops
 }
 
+/// The clip around what nothing clips: everywhere a display could show.
+const EVERYWHERE: Rect = Rect {
+  x: -UNBOUNDED,
+  y: -UNBOUNDED,
+  w: 2.0 * UNBOUNDED,
+  h: 2.0 * UNBOUNDED
+}
+
+/// `laid` painted into `ops` at `origin`, inside `clip` — the part of the display the clips
+/// around it leave, which a painter is told of.
 let paint_into<e, r> where r: Renderer = (
   ops: mut []DrawOp,
   laid: Laid<e>,
   origin: Point,
   scale: f32,
-  fonts: Fonts,
+  fonts: mut Fonts,
   atlas: mut GlyphAtlas,
   renderer: mut r,
-  floating: mut []Placed<e>
+  floating: mut []Placed<e>,
+  clip: Rect
 ) -> void => {
   let s = laid.style
   let box = Rect { x: origin.x, y: origin.y, w: laid.size.w, h: laid.size.h }
@@ -2060,14 +2130,18 @@ let paint_into<e, r> where r: Renderer = (
       Blank => {},
     }
   }
+  if let Painted(painter) = laid.kind {
+    paint_painter(ops, painter, box, corners, scale, fonts, atlas, renderer, clip)
+  }
   if laid.clips && laid.field.is_none() { ops.push(PushClip(box, corners)) }
+  let inside = if laid.clips { clip.intersect(box) } else { clip }
   for child in laid.children {
     let corner = Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
     if child.laid.floats {
       floating.push(Placed { at: corner, laid: child.laid })
       continue
     }
-    paint_into(ops, child.laid, corner, scale, fonts, atlas, renderer, floating)
+    paint_into(ops, child.laid, corner, scale, fonts, atlas, renderer, floating, inside)
   }
   if laid.clips && laid.field.is_none() { ops.push(PopClip) }
   // A scroller's bars, over its content.
@@ -2094,4 +2168,61 @@ let paint_into<e, r> where r: Renderer = (
     ops.push(Border(box.inset(-3.0), radius(s.radius + 3.0), 2.5, ring))
   }
   if s.filter_blur > 0.0 { ops.push(PopLayer) }
+}
+
+/// What `painter` answers for its element's `box`, inside `clip`, moved to the box and
+/// clipped to it (and its corners).
+let paint_painter<e, r> where r: Renderer = (
+  ops: mut []DrawOp,
+  painter: Painter<e>,
+  box: Rect,
+  corners: Radii,
+  scale: f32,
+  fonts: mut Fonts,
+  atlas: mut GlyphAtlas,
+  renderer: mut r,
+  clip: Rect
+) -> void => {
+  let shown = clip.intersect(box)
+  let area = PaintArea {
+    size: Size { w: box.w, h: box.h },
+    visible: Rect { shown | x: shown.x - box.x, y: shown.y - box.y },
+    scale: scale,
+  }
+  let at = Point { x: box.x, y: box.y }
+  ops.push(PushClip(box, corners))
+  for op in (painter.paint)(area) {
+    match op {
+      PaintDraw(drawn) => ops.push(moved_op(drawn, at)),
+      PaintText(baseline, text, font, color) => {
+        let block = fonts.lay_out(text, font, UNBOUNDED)
+        if block.lines.len() == 0 { continue }
+        let top = Point {
+          x: at.x + baseline.x,
+          y: at.y + baseline.y - block.lines[0].baseline
+        }
+        if let Some(drawn) = atlas.glyphs(fonts, renderer, block, top, scale, color) {
+          ops.push(drawn)
+        }
+      },
+    }
+  }
+  ops.push(PopClip)
+}
+
+/// `op` moved by `by`.
+let moved_op = pure (op: DrawOp, by: Point) -> DrawOp => match op {
+  Fill(r, corners, color) => Fill(moved_rect(r, by), corners, color),
+  Border(r, corners, width, color) => Border(moved_rect(r, by), corners, width, color),
+  Glyphs(texture, quads, color) =>
+    Glyphs(texture, [q in quads | GlyphQuad { q | at: moved_rect(q.at, by) }], color),
+  Picture(texture, texels, r) => Picture(texture, texels, moved_rect(r, by)),
+  PushClip(r, corners) => PushClip(moved_rect(r, by), corners),
+  PopClip => PopClip,
+  Shadow(r, corners, shadow) => Shadow(moved_rect(r, by), corners, shadow),
+  GradientFill(r, corners, gradient) =>
+    GradientFill(moved_rect(r, by), corners, gradient),
+  Backdrop(r, corners, blur) => Backdrop(moved_rect(r, by), corners, blur),
+  PushLayer(r, effect) => PushLayer(moved_rect(r, by), effect),
+  PopLayer => PopLayer,
 }

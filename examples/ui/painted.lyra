@@ -1,0 +1,229 @@
+// Painted: elements the program draws itself (`ui.layout`'s `painted`) — a chessboard filling
+// the window, as many squares as fit, its count heard through `on_size`; and beside it a long
+// list in a scroller, whose painter draws only the rows the scroller shows.
+//
+//     lyrac run examples/ui/painted.lyra
+//     lyrac run examples/ui/painted.lyra -- --script "resize:520,400 move:600,200 scroll:5" --png FILE
+//
+// Resize the window and the board gains and loses squares; scroll the list. **The second
+// form** plays a script (`ui.script`) headless, prints the board's size as the program heard
+// it, and with `--png FILE` writes the last frame.
+
+import ui.sdl3
+import ui.sdl3.{ SdlRenderer, capture }
+import ui.gpu
+import ui.app.{ App, sandbox, run, running, follow_resizes, step_running }
+import ui.script.{ timed_platform, parse_steps }
+import ui.draw.{ Point, Size, Rect, Color, Fill, radius }
+import ui.text.{ Fonts, FontSpec, fonts_new, glyph_atlas }
+import ui.style.{ Style, insets, light_theme, OverflowVisible }
+import ui.layout.{
+  Node,
+  Laid,
+  PaintArea,
+  PaintOp,
+  PaintDraw,
+  PaintText,
+  Vertical,
+  MainStart,
+  CrossStretch,
+  column,
+  row,
+  expanded,
+  sized,
+  scroll,
+  text,
+  painted,
+  paint,
+}
+import std.collections.{ parse_args }
+import std.png.{ write_png }
+import std.io.{ write_bytes }
+
+const WIDTH: f32 = 760.0
+const HEIGHT: f32 = 520.0
+
+let main = () -> u8 => {
+  let args = parse_args(["--script", "--png"])
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let background = light_theme().colors.background
+  // The window itself does not scroll — its view fills it, the board taking what is left.
+  let app = App { sandbox(view, update, background) | window_overflow: OverflowVisible }
+  var status: u8 = 0
+  if let Some(script) = args.value("--script") {
+    // Played headless through SDL's 2D renderer, whose frame `--png` reads back.
+    let window = match sdl3.open("Painted", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    var renderer = window.renderer
+    match parse_steps(script) {
+      Ok(steps) => {
+        let played = running(
+          app,
+          State {},
+          timed_platform(steps, Size { w: WIDTH, h: HEIGHT }),
+          renderer,
+          fonts
+        )
+        follow_resizes(played)
+        while step_running(played) {}
+        let heard = played.host.state.board
+        println("board: ${heard.w}x${heard.h}, ${squares(heard.w)} by ${squares(heard.h)} squares")
+        if let Some(path) = args.value("--png") {
+          if !save(
+            played.renderer,
+            played.fonts,
+            played.host.shown[0],
+            background,
+            path
+          ) {
+            status = 1
+          }
+        }
+        renderer = played.renderer
+        fonts = played.fonts
+      },
+      Err(why) => {
+        println("the script: ${why}")
+        status = 1
+      },
+    }
+    sdl3.close(window.platform, renderer)
+  } else {
+    // On the GPU where there is one.
+    let window = match gpu.open("Painted", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    var platform = window.platform
+    var renderer = window.renderer
+    let _ = run(app, State {}, platform, renderer, fonts)
+    gpu.close(platform, renderer)
+  }
+  fonts.close()
+  status
+}
+
+/// The board's size, as its `on_size` last said.
+struct State {
+  board: Size = Size {},
+}
+
+data Event = BoardSized(Size)
+
+let update = pure (_: State, event: Event) -> State => match event {
+  BoardSized(size) => State { board: size },
+}
+
+/// A heading saying how many squares the board has — which only `on_size` can tell the
+/// program — over the board and the list.
+let view = pure (state: State) -> Node<Event> => column([
+  text("${squares(state.board.w)} by ${squares(state.board.h)} squares")
+    .with_style(Style { padding: Some(insets(12.0)) }),
+  expanded(row([
+    expanded(painted(board, Some(BoardSized))),
+    sized(Some(LIST_WIDTH), None, [scroll(Vertical, 0.0, list())]),
+  ]).aligned(MainStart, CrossStretch)),
+])
+
+const SQUARE: f32 = 48.0
+const LIST_WIDTH: f32 = 180.0
+const ROW: f32 = 28.0
+const ROWS: i64 = 200
+
+/// How many whole squares fit in `length`.
+let squares = pure (length: f32) -> i64 => i64((length / SQUARE).floor())
+
+/// The board: whole squares from the top left, each named as a chessboard's are — files by
+/// letter, ranks counted up from the bottom.
+let board = pure (area: PaintArea) -> []PaintOp => {
+  let files = squares(area.size.w)
+  let ranks = squares(area.size.h)
+  var ops: []PaintOp = []
+  for rank in 0..<ranks {
+    for file in 0..<files {
+      let at = Rect { x: f32(file) * SQUARE, y: f32(rank) * SQUARE, w: SQUARE, h: SQUARE }
+      let dark = (rank + file) % 2 == 1
+      ops.push(PaintDraw(Fill(at, radius(0.0), if dark { DARK } else { LIGHT })))
+      let name = "${rune(i32(97 + file % 26))}${ranks - rank}"
+      ops.push(PaintText(
+        Point { x: at.x + 4.0, y: at.y + SQUARE - 6.0 },
+        name,
+        FontSpec { size: 11.0 },
+        if dark { LIGHT } else { DARK }
+      ))
+    }
+  }
+  ops
+}
+
+/// The list: ROWS rows, far taller than its scroller, each painted only when the scroller
+/// shows some of it.
+let list = pure () -> Node<Event> =>
+  painted::<Event>((area: PaintArea) -> []PaintOp => {
+    let first = i64((area.visible.y / ROW).floor()).max(0)
+    let last = i64(((area.visible.y + area.visible.h) / ROW).ceil()).min(ROWS)
+    var ops: []PaintOp = []
+    for i in first..<last {
+      let y = f32(i) * ROW
+      if i % 2 == 0 {
+        ops.push(PaintDraw(Fill(
+          Rect { x: 0.0, y: y, w: area.size.w, h: ROW },
+          radius(0.0),
+          STRIPE
+        )))
+      }
+      ops.push(PaintText(
+        Point { x: 10.0, y: y + 19.0 },
+        "row ${i + 1}",
+        FontSpec { size: 13.0 },
+        INK
+      ))
+    }
+    ops
+  }).with_style(Style { height: Some(f32(ROWS) * ROW) })
+
+const LIGHT: Color = Color { r: 0xEE, g: 0xD8, b: 0xB4 }
+const DARK: Color = Color { r: 0x8C, g: 0x5E, b: 0x3C }
+const STRIPE: Color = Color { r: 0xE4, g: 0xE8, b: 0xF0 }
+const INK: Color = Color { r: 0x30, g: 0x34, b: 0x3C }
+
+/// `laid` — the window as the host last laid it out — drawn without showing it, and written to
+/// `path` as a PNG.
+let save = (
+  renderer: SdlRenderer,
+  fonts: Fonts,
+  laid: Laid<Event>,
+  background: Color,
+  path: string
+) -> bool => {
+  var r = renderer
+  var f = fonts
+  var atlas = glyph_atlas()
+  let ops = paint(laid, Point {}, 1.0, f, atlas, r)
+  let Some(frame) = capture(r, background, ops) else { return false }
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(u8((p >> 24) & 0xFF))
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(png) => write_bytes(path, png),
+    Err(_) => false,
+  }
+}

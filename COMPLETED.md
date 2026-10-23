@@ -9,6 +9,38 @@ Newest first.
 
 ## Dated log
 
+### 10/22/26 — `ui`: an element the program paints
+
+- **`painted(paint, on_size)`** (`Painted(Painter<e>)`, `ui/TERMINAL.md` §1, step 1): laid out
+  as a box — its style's size, else all the room it is given — and **asked what to draw at
+  paint**, every redraw, for its size (`PaintArea`: the size, the part every clip around it
+  leaves, the scale), answering `PaintOp`s — `PaintDraw` (a display-list op, moved to its
+  place) and `PaintText` (shaped as a `text` element's, placed by its first baseline) —
+  clipped to its box. **A function at paint rather than ops in `view`** because the ops
+  depend on the size, which only layout knows; and **it survives the layout cache** because
+  the cache keeps layout, not paint: `same_kind` compares nothing of a painter, and
+  `refreshed` puts the newest closure on a reused element as it does a button's event.
+  `paint` takes `fonts` as `mut` now, to lay a painter's text out.
+- **`on_size` is heard before the frame is painted**: the host lays the view out, raises
+  each painted element's new size (by identity, against the last layout's), and lays it
+  out again (`Host.lay_out_view`, at most `SIZE_ROUNDS` times) — so a terminal's columns are
+  never a frame behind its window. A resize to the same size raises nothing.
+- **The names are `Paint`-prefixed** (`PaintDraw`, `PaintText`, not the note's `Draw`,
+  `Text`): constructors match program-wide by name, and `bindings.imgui.ui` has a
+  `Text`.
+- **Found a backend bug**: `Maybe<(i64) -> Event>` in a program where another module also
+  declares an `Event` — `bindings.sdl3` does — crashed lyrac in llir, the instantiation
+  named `Maybe$_i64_____entry_Event` from one path and `Maybe$_i64_____Event` from another.
+  `identityForm` (`type_identity.go`) renders a type argument's names keyed, through every
+  composite a type is spelled from — and had no case for a function type, so a name in a
+  parameter or result stayed bare. The 09/18 `Maybe<[]Entry>` crash, one composite over.
+  Cases added to `TestExec_SameNamedTypeInsideAnArrayInsideAGeneric`.
+- **A full-window painter needs `window_overflow: OverflowVisible`**: the window scrolls by
+  default, and any axis that is not visible lays its content out unbounded, so an
+  `expanded` painter under it got no height. `examples/ui/painted.lyra` (a chessboard whose
+  squares follow the window, a list painting only its visible rows);
+  `TestRun_UiPaintedElement`, `TestRun_UiPaintedExample`.
+
 ### 10/22/26 — `ui`: a control disabled is laid out at once
 
 - 7GUIs' flight booker's Book button looked disabled only after a hover or a focus change.

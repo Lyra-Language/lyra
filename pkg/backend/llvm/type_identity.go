@@ -239,6 +239,22 @@ func (l *lowerer) identityForm(t types.Type) types.Type {
 		}
 		v.TypeArguments = args
 		return v
+	case *types.LambdaType:
+		// A function type is spelled from its parameters and result, so a name in either
+		// renders keyed too: `Maybe<(i64) -> Event>`, with `Event` declared in the program
+		// and in `bindings.sdl3`, named `Maybe$_i64_____entry_Event` from one path and
+		// `Maybe$_i64_____Event` from another until this case (10/22).
+		// A copy: the type is shared with the tables it came from.
+		fn := *v
+		fn.Parameters = make([]types.ParameterType, len(v.Parameters))
+		for i, p := range v.Parameters {
+			p.Type = l.identityForm(p.Type)
+			fn.Parameters[i] = p
+		}
+		if fn.ReturnType.Type != nil {
+			fn.ReturnType.Type = l.identityForm(fn.ReturnType.Type)
+		}
+		return &fn
 	}
 	return t
 }

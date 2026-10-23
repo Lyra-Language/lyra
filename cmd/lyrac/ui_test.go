@@ -3570,3 +3570,251 @@ Home Shift+End: 0 events, caret 2 anchor 0, clipboard '42', focused true, read-o
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
 }
+
+// A painted element (`ui.layout`'s `painted`): asked for its whole size and told what its
+// scroller shows of it, at the display's scale; its fills moved to its place and its text set
+// in the fonts, inside a clip of its box (and of the scroller around it); given back by the
+// layout cache with the newest function, so a cached layout paints the newest state; and its
+// size heard through `on_size` before the frame that size is painted in — every frame's red
+// fill (the size the program heard) is its blue one (the size painted), resizes and a resize
+// to the same size alike, which raises nothing.
+func TestRun_UiPaintedElement(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, sandbox, host_of }
+import ui.script.{ timed_platform, Played, Step }
+import ui.backend.{ Renderer, Resized }
+import ui.draw.{ Point, Size, Rect, Color, TextureId, DrawOp, Fill, PushClip, PopClip, Glyphs, radius }
+import ui.text.{ FontSpec, fonts_new, glyph_atlas }
+import ui.style.{ Style, OverflowVisible }
+import ui.layout.{
+  Node,
+  PaintArea,
+  PaintOp,
+  PaintDraw,
+  PaintText,
+  Vertical,
+  column,
+  sized,
+  scroll,
+  expanded,
+  painted,
+  layout,
+  layout_cached,
+  layout_cache,
+  interaction_new,
+  tight,
+  paint,
+}
+
+/// A renderer that draws nothing, and says what a frame's fills were.
+struct Recorder {
+  textures: i64 = 0,
+}
+
+impl Renderer for Recorder {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => {
+    println("  frame: ${[op in ops | is_fill(op) | described(op)].join(", ")}")
+  }
+}
+
+let is_fill = pure (op: DrawOp) -> bool => match op { Fill(_, _, _) => true, _ => false }
+
+let described = pure (op: DrawOp) -> string => match op {
+  Fill(r, _, c) => "fill ${c.r},${c.g},${c.b} at ${r.x},${r.y} ${r.w}x${r.h}",
+  PushClip(r, _) => "clip ${r.x},${r.y} ${r.w}x${r.h}",
+  PopClip => "unclip",
+  Glyphs(_, quads, c) => "${quads.len()} glyphs in ${c.r},${c.g},${c.b} from ${i64(quads[0].at.x.round())},${i64(quads[0].at.y.round())}",
+  _ => "other",
+}
+
+data Ev = Sized(Size)
+
+const RED: Color = Color { r: 255, g: 0, b: 0 }
+const BLUE: Color = Color { r: 0, g: 0, b: 255 }
+
+/// The sizes the board was heard at, in order.
+struct State {
+  heard: []Size = [],
+}
+
+let update = pure (s: State, e: Ev) -> State => match e {
+  Sized(size) => State { heard: [...s.heard, size] },
+}
+
+/// Under a 40-high strip, a board filling the rest: a red fill as large as the program last
+/// heard it was, under a blue one as large as it is painted.
+let view = pure (s: State) -> Node<Ev> => {
+  let heard = if s.heard.len() > 0 { s.heard[s.heard.len() - 1] } else { Size {} }
+  column([
+    sized::<Ev>(None, Some(40.0)),
+    expanded(painted((area: PaintArea) -> []PaintOp => [
+      PaintDraw(Fill(Rect { x: 0.0, y: 0.0, w: heard.w, h: heard.h }, radius(0.0), RED)),
+      PaintDraw(Fill(Rect { x: 0.0, y: 0.0, w: area.size.w, h: area.size.h }, radius(0.0), BLUE)),
+    ], Some(Sized))),
+  ])
+}
+
+/// A painter that says, by its tag, when it is painted.
+let tagged = pure (tag: string) -> Node<Ev> => sized::<Ev>(Some(50.0), Some(50.0), [
+  painted::<Ev>((area: PaintArea) -> []PaintOp => {
+    println("  painted ${tag} at ${area.size.w}x${area.size.h}")
+    []
+  }),
+])
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var renderer = Recorder {}
+  var atlas = glyph_atlas()
+
+  println("a painter in a scroller, scrolled 300 down a page of 1000, at 10,20, twice the pixels:")
+  let page = painted::<Ev>((area: PaintArea) -> []PaintOp => {
+    println("  asked for ${area.size.w}x${area.size.h}, showing ${area.visible.x},${area.visible.y} ${area.visible.w}x${area.visible.h}, ${area.scale} pixels a unit")
+    [
+      PaintDraw(Fill(Rect { x: 0.0, y: 300.0, w: 200.0, h: 20.0 }, radius(0.0), RED)),
+      PaintText(Point { x: 4.0, y: 316.0 }, "row", FontSpec { size: 14.0 }, BLUE),
+    ]
+  }).with_style(Style { height: Some(1000.0) })
+  let window = sized::<Ev>(Some(200.0), Some(100.0), [scroll(Vertical, 300.0, page)])
+  let laid = layout(window, tight(Size { w: 200.0, h: 100.0 }), fonts)
+  for op in paint(laid, Point { x: 10.0, y: 20.0 }, 2.0, fonts, atlas, renderer) {
+    if !is_fill(op) || described(op).starts_with("fill 255") { println("  ${described(op)}") }
+  }
+
+  println("a painter given back by the layout cache paints with its new function:")
+  var cache = layout_cache::<Ev>()
+  let _ = layout_cached(tagged("first"), tight(Size { w: 50.0, h: 50.0 }), fonts, interaction_new(), cache)
+  let again = layout_cached(tagged("second"), tight(Size { w: 50.0, h: 50.0 }), fonts, interaction_new(), cache)
+  println("  ${cache.reused} reused")
+  let _ = paint(again, Point {}, 1.0, fonts, atlas, renderer)
+
+  println("a board's size heard before it is painted, at 400x300, 500x200, the same again, 300x300:")
+  var steps: []Step = []
+  for size in [Size { w: 500.0, h: 200.0 }, Size { w: 500.0, h: 200.0 }, Size { w: 300.0, h: 300.0 }] {
+    steps.push(Played(Resized(size)))
+  }
+  var platform = timed_platform(steps, Size { w: 400.0, h: 300.0 })
+  let app = App { sandbox(view, update, Color { r: 0, g: 0, b: 0 }) | window_overflow: OverflowVisible }
+  var host = host_of(app, State {}, platform)
+  while host.step(platform, renderer, fonts) {}
+  println("  heard: ${[s in host.state.heard | "${s.w}x${s.h}"].join(" ")}")
+  fonts.close()
+  0
+}
+`)
+	// The glyphs' first quad is the "r"'s bitmap, placed from its pen at 14 across and its
+	// baseline at 36 down; its exact corner is the font's, so only its row is pinned loosely.
+	glyphs := regexp.MustCompile(`3 glyphs in 0,0,255 from (\d+),(\d+)`)
+	m := glyphs.FindStringSubmatch(got)
+	if m == nil {
+		t.Fatalf("no glyphs painted:\n%s", got)
+	}
+	if x, _ := strconv.Atoi(m[1]); x < 14 || x > 17 {
+		t.Errorf("the text's first glyph starts at x %d, not just right of the pen at 14", x)
+	}
+	if y, _ := strconv.Atoi(m[2]); y < 24 || y > 33 {
+		t.Errorf("the text's first glyph's top is at y %d, not a little above its baseline at 36", y)
+	}
+	got = glyphs.ReplaceAllString(got, "3 glyphs in 0,0,255")
+	want := `a painter in a scroller, scrolled 300 down a page of 1000, at 10,20, twice the pixels:
+  asked for 200x1000, showing 0,300 200x100, 2 pixels a unit
+  clip 10,20 200x100
+  clip 10,-280 200x1000
+  fill 255,0,0 at 10,20 200x20
+  3 glyphs in 0,0,255
+  unclip
+  unclip
+a painter given back by the layout cache paints with its new function:
+  1 reused
+  painted second at 50x50
+a board's size heard before it is painted, at 400x300, 500x200, the same again, 300x300:
+  frame: fill 255,0,0 at 0,40 400x260, fill 0,0,255 at 0,40 400x260
+  frame: fill 255,0,0 at 0,40 500x160, fill 0,0,255 at 0,40 500x160
+  frame: fill 255,0,0 at 0,40 500x160, fill 0,0,255 at 0,40 500x160
+  frame: fill 255,0,0 at 0,40 300x260, fill 0,0,255 at 0,40 300x260
+  heard: 400x260 500x160 300x260
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// examples/ui/painted.lyra played headless: resized to 520 × 400, the board beside the
+// 180-wide list is 340 wide and has 7 squares a side, which the heading — made from what
+// on_size told the program — says in the same frame; the squares alternate from the board's
+// top left, light then dark, and stop at its edge, where the list begins.
+func TestRun_UiPaintedExample(t *testing.T) {
+	t.Parallel()
+	skipWithoutText(t)
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "painted")
+	if _, stderr, code := captureRun(t, "build", "-o", bin, filepath.Join(root, "examples", "ui", "painted.lyra")); code != 0 {
+		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
+	}
+	shot := filepath.Join(dir, "frame.png")
+	cmd := command(t, bin, "--script", "resize:520,400 move:450,200 scroll:5", "--png", shot)
+	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+	out, err := cmd.CombinedOutput()
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
+		t.Skipf("SDL could not open a dummy window here: %s", out)
+	} else if ok && exitErr.ExitCode() == 1 && strings.HasPrefix(string(out), "no font") {
+		t.Skipf("no font here: %s", out)
+	} else if err != nil {
+		t.Fatalf("playing: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "board: 340x") || !strings.Contains(string(out), ", 7 by 7 squares") {
+		t.Errorf("the board as the program heard it: %s", out)
+	}
+	f, err := os.Open(shot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	frame, err := png.Decode(f)
+	if err != nil {
+		t.Fatalf("the frame is not a PNG: %v", err)
+	}
+	light, dark := [3]int{0xEE, 0xD8, 0xB4}, [3]int{0x8C, 0x5E, 0x3C}
+	// The board's top: below the heading, whose height is its font's.
+	top := -1
+	for y := 0; y < 120; y++ {
+		if near(rgbAt(frame, 24, y), light, 2) {
+			top = y
+			break
+		}
+	}
+	if top < 0 {
+		t.Fatal("no light square at the board's top left")
+	}
+	y := top + 12
+	for _, c := range []struct {
+		x    int
+		want [3]int
+		what string
+	}{
+		{24, light, "a7, the top left square"},
+		{72, dark, "b7, the next"},
+		{312, light, "g7, the last of the row"},
+	} {
+		if got := rgbAt(frame, c.x, y); !near(got, c.want, 2) {
+			t.Errorf("%s at %d,%d is %v, not %v", c.what, c.x, y, got, c.want)
+		}
+	}
+	if got := rgbAt(frame, 24, top+48+12); !near(got, dark, 2) {
+		t.Errorf("a6, below a7, is %v, not dark", got)
+	}
+	if got := rgbAt(frame, 350, y); near(got, light, 8) || near(got, dark, 8) {
+		t.Errorf("the list beside the board, at 350,%d, is a square's colour %v", y, got)
+	}
+}

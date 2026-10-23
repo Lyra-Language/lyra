@@ -690,6 +690,10 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 10/21] Phase 2, text and layout** — `ui.text` (HarfBuzz, a FreeType atlas),
   `ui.style` (themes, the five-layer cascade), `ui.layout` (constraints, `paint`); gate
   `examples/ui/settings.lyra` (COMPLETED.md, 10/21).
+- **[OPEN] What a terminal needs of `ui`** — an element the program paints, font faces and
+  fallback, raw keys and pointer; designed in `ui/TERMINAL.md` (10/22), for Termina's move
+  off ImGui. Step 1, `painted` with `PaintDraw`/`PaintText` and `on_size`, is built (10/22);
+  next the atlas's pages.
 - **[OPEN] `ui.text`: one font, left to right.** No fallback for a character the font lacks,
   no itemizing by script and no bidi; a paragraph is one HarfBuzz run. Also no text
   alignment (a line starts at its box's left) and no ellipsis.

@@ -62,10 +62,11 @@ import ui.backend.{
 import ui.draw.{ Point, Size, Color }
 import ui.text.{ Fonts, GlyphAtlas, glyph_atlas }
 import ui.style.{ Viewport, Style, Overflow, OverflowAuto, light_theme }
-import ui.layout.{ Node, Laid, LayoutCache, layout_cache, paint, tight }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, paint, tight, Painted }
 import ui.interact.{ Ui, ui_new }
 import ui.access.{ access_tree }
 import std.io.{ read_file, write_file }
+import std.collections.{ HashMap, hashmap_new }
 import std.env.{ lookup, process_id }
 
 /// A program: its view of its state `s`; the next state, and the work to carry out, for each
@@ -266,6 +267,9 @@ pub struct Host<s, e> {
   shown: []Laid<e> = [],
   /// The window's size at the last frame drawn.
   drawn_at: Size = Size {},
+  /// Each painted element with an `on_size`, by identity, at the size it was last laid out
+  /// at — to tell a new size from the same.
+  painted_sizes: HashMap<string, Size>,
 }
 
 /// `view` as the window's root: filling it, and overflowing it as `overflow` says on each
@@ -307,6 +311,7 @@ pub let host_of<s, e, p> where p: Platform = (
     ui: ui_new(),
     atlas: glyph_atlas(),
     cache: layout_cache::<e>(),
+    painted_sizes: hashmap_new::<string, Size>(),
     last_frame: platform.now_ms(),
     live: lookup("LYRA_LIVE_PID") == Some("${process_id()}"),
   }
@@ -315,6 +320,10 @@ pub let host_of<s, e, p> where p: Platform = (
 /// while an animation runs, in milliseconds.
 pub const LIVE_WAIT_MS: i64 = 100
 pub const FRAME_MS: i64 = 16
+
+/// How many times a layout is done again for painted elements' new sizes before it is shown
+/// as it is.
+pub const SIZE_ROUNDS: i64 = 3
 
 impl Host<s, e> {
   /// One pass of the loop: what is due, delivered; the view drawn; input waited for and
@@ -371,15 +380,7 @@ impl Host<s, e> {
       ) { self.dispatch(event, at, platform) }
       self.deliver_due(at, platform)
       if !self.running { return false }
-      self.ui.state.viewport = viewport_of(platform)
-      self.ui.now = platform.now_ms()
-      laid = self.ui.frame_within(
-        in_window((self.app.view)(self.state), self.app.window_overflow),
-        tight(platform.window_size()),
-        fonts,
-        self.cache
-      )
-      self.layouts += 1
+      laid = self.lay_out_view(platform, fonts)
       self.shown = [laid]
     }
     self.running
@@ -395,15 +396,7 @@ impl Host<s, e> {
     renderer: mut r,
     fonts: mut Fonts
   ) -> void => {
-    self.ui.state.viewport = viewport_of(platform)
-    self.ui.now = platform.now_ms()
-    let fresh = self.ui.frame_within(
-      in_window((self.app.view)(self.state), self.app.window_overflow),
-      tight(platform.window_size()),
-      fonts,
-      self.cache
-    )
-    self.layouts += 1
+    let fresh = self.lay_out_view(platform, fonts)
     self.ui.place_text_input(fresh, platform)
     let ops = paint(fresh, Point {}, platform.scale(), fonts, self.atlas, renderer)
     renderer.draw(self.app.background, ops)
@@ -412,6 +405,37 @@ impl Host<s, e> {
     self.shown = [fresh]
     self.drawn_at = platform.window_size()
     self.dirty = false
+  }
+
+  /// The view of the state laid out at the window's size, with the framework's state — and
+  /// laid out again after the events of painted elements whose size it changed, so a frame
+  /// never shows what a painter drew for its last size (at most [SIZE_ROUNDS] times, so a
+  /// size that changes with every event cannot hold the loop).
+  let lay_out_view<p> where p: Platform = (
+    self: mut,
+    platform: mut p,
+    fonts: mut Fonts
+  ) -> Laid<e> => {
+    var rounds = 0
+    loop {
+      self.ui.state.viewport = viewport_of(platform)
+      self.ui.now = platform.now_ms()
+      let laid = self.ui.frame_within(
+        in_window((self.app.view)(self.state), self.app.window_overflow),
+        tight(platform.window_size()),
+        fonts,
+        self.cache
+      )
+      self.layouts += 1
+      var sizes = hashmap_new::<string, Size>()
+      var events: []e = []
+      sized_events(laid, self.painted_sizes, sizes, events)
+      self.painted_sizes = sizes
+      if events.len() == 0 || rounds >= SIZE_ROUNDS { return laid }
+      let now = platform.now_ms()
+      for event in events { self.dispatch(event, now, platform) }
+      rounds += 1
+    }
   }
 
   /// `App`'s least and greatest size handed to the platform — the first pass's — with a side
@@ -561,4 +585,21 @@ impl Host<s, e> {
   let fire = (self: mut, period: i64, now: i64) -> void => {
     self.fired = [...[f in self.fired | f.0 != period | f], (period, now)]
   }
+}
+
+/// Below `laid`: each painted element with an `on_size`, its size put in `sizes`, and its
+/// event in `events` where `seen` had it at another size or not at all.
+let sized_events<e> = (
+  laid: Laid<e>,
+  seen: HashMap<string, Size>,
+  sizes: mut HashMap<string, Size>,
+  events: mut []e
+) -> void => {
+  if let Painted(painter) = laid.kind {
+    if let Some(sized) = painter.on_size {
+      sizes.insert(laid.id, laid.size)
+      if seen.get(laid.id) != Some(laid.size) { events.push(sized(laid.size)) }
+    }
+  }
+  for child in laid.children { sized_events(child.laid, seen, sizes, events) }
 }

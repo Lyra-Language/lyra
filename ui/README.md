@@ -19,7 +19,7 @@ A root of its own beside `std/` and `bindings/` (`build.sh` links it into `build
 | `ui.sdl3` | Both traits over `bindings.sdl3`: `open` → `SdlWindow { platform, renderer }` (and its pieces, `open_window`, `renderer_for`, `platform_for`, which `ui.gpu` opens with), `close`, and `capture` (a frame read back, for tests). Draws through `SDL_RenderGeometry`, a call a run of ops on one texture (`geometry_calls` counts them); on macOS tells VoiceOver through `bindings.accesskit`. | SDL3, AccessKit |
 | `ui.text` | `Fonts` (font files by family; `add_system_font` tries `SYSTEM_FONTS`), `FontSpec` (family, size, `line_height`), `lay_out` → `TextBlock` (lines of placed glyphs, cached by text, font and width), and `GlyphAtlas`, which renders glyphs into one texture through `Renderer.update` and answers a `Glyphs` op. | HarfBuzz, FreeType |
 | `ui.style` | `Style` (all `Maybe`), `Insets`, `Rule`/`Sheet`, `Theme` (`Palette`, `Spacing`, radius, font, `elements` sheet; `light_theme`, `dark_theme`), its layout properties (sizes, flex's and grid's — `FlexDirection`, `LineWrap`, `Justify`, `ItemAlign`, `Basis`, tracks built by `px`, `fr`, `auto_track`, `min_content`, `max_content`, `minmax`, `repeat_tracks`, `GridSpan`, `GridFlow`), its effects (`box_shadow`, `background_gradient`, `filter_blur`, `backdrop_blur`), and the cascade: `Cascade` settles an element's tag, classes, part and inline style into `Computed`. | no |
-| `ui.layout` | `Node<e>` (kind, tag, class, part, style, children, key, label; `e` the program's event type, `NoEvent` for none) built by `row`, `column`, `flex`, `grid`, `expanded`, `stack`, `positioned`, `padding`, `align`, `sized`, `scroll`, `text`, `image`, `themed`, `component` and the controls `button`, `checkbox`, `slider`, `select`, `text_input`, and `.with_class`/`.with_style`/`.with_part`/`.keyed`/`.labelled`/`.aligned`; `layout`/`layout_with(node, Constraints, fonts, Interaction) -> Laid<e>` (each with its identity, role, label, focus ring and a field's caret) and `paint(laid, origin, scale, fonts, atlas, renderer) -> []DrawOp`. Flex and grid are in `ui/layout/flex.lyra` and `grid.lyra` (one module, a directory). | no (text through `ui.text`) |
+| `ui.layout` | `Node<e>` (kind, tag, class, part, style, children, key, label; `e` the program's event type, `NoEvent` for none) built by `row`, `column`, `flex`, `grid`, `expanded`, `stack`, `positioned`, `padding`, `align`, `sized`, `scroll`, `text`, `image`, `themed`, `component`, `painted` (an element the program draws: a `Painter` asked for `PaintOp`s — `PaintDraw`, `PaintText` — for a `PaintArea`) and the controls `button`, `checkbox`, `slider`, `select`, `text_input`, and `.with_class`/`.with_style`/`.with_part`/`.keyed`/`.labelled`/`.aligned`; `layout`/`layout_with(node, Constraints, fonts, Interaction) -> Laid<e>` (each with its identity, role, label, focus ring and a field's caret) and `paint(laid, origin, scale, fonts, atlas, renderer) -> []DrawOp` (`fonts` `mut`: a painter's text is laid out as it is painted). Flex and grid are in `ui/layout/flex.lyra` and `grid.lyra` (one module, a directory). | no (text through `ui.text`) |
 | `ui.motion` | Transitions' values: `progress` (CSS's timing functions), `blended`/`differs` (each property that animates), `mix_color` (premultiplied), and an element's `Motion` — its target and what is `Moving` towards it — moved on by `advance`; `with_layout`/`layout_key` for the sizes a layout lays out while they move. | no |
 | `ui.interact` | `Ui`: the framework's state by identity (focus, hover, press, scroll offsets, carets, selections, undo), transitions (`motions`, shown at `now`; `animating`), `frame` (lay out and drop what left the tree), `handle(laid, input, platform) -> []e`, `place_text_input`; `hit`, `control_at`, `find`, `focus_order`; `Editing`, a field's editing operations. | no |
 | `ui.app` | `App { view, update: (s, e) -> (s, []Command<e>), subscriptions: (s) -> []Subscription<e>, background }` (`sandbox(view, update, bg)` for a plain update); `Command` (`WriteFile`, `ReadFile`, `After`, `CopyText`, `PasteText`, `OpenUrl`, `QuitApp`), `Subscription` (`EveryFrame`, `Every`, `OnResize`, `OnAppearance`); `run`, and `Host` (`host_of`, `step`) for a loop of `main`'s own — which `lyrac run --live` needs. | no |
@@ -159,6 +159,17 @@ layer — implements the two traits; the display list is the whole contract.
   opportunities (spaces, a hyphen inside a word, ideographs; a newline is a paragraph), with
   trailing spaces hanging. One font, left to right: no fallback and no bidi yet (todo.md).
   A glyph is rasterized at the size times the scale and drawn from a whole pixel.
+- **A painted element is drawn by the program** (`painted(paint, on_size)`, `ui/TERMINAL.md`
+  §1): laid out as a box — its style's size, else all the room it is given, so a tall one in a
+  scroller needs a `height` and a full-window one a window that does not scroll
+  (`window_overflow: OverflowVisible`) — and asked at **paint**, every redraw, for its ops in
+  its own coordinates: its size, the part every clip around it leaves (`PaintArea.visible`,
+  what a scroller shows, all it need draw) and the scale. Its ops are moved to its place and
+  clipped to its box; `PaintText` is shaped as a `text` element's, placed by its first
+  baseline. **The layout cache keeps its box, never its paint**: a reused element carries the
+  newest function, so it draws the newest state. **`on_size` is heard before the size is
+  painted**: the host raises it after a layout that changed the element's size (by identity)
+  and lays out again (`Host.lay_out_view`, at most `SIZE_ROUNDS` times).
 - **Events are data.** A control names the event its use stands for, of the program's type
   `e`; `ui.interact` answers the events an input raised and the program's pure `update` makes
   the next state. A control's value is the program's: the next frame shows what it kept.
@@ -284,6 +295,9 @@ layer — implements the two traits; the display list is the whole contract.
   both ways with bars always, a hidden box, a scroller inside another, in a page taller than
   its window, which scrolls; run by `examples/ui/overflow.lyra` (`--script "…" --png FILE`
   headless).
+- `examples/ui/painted.lyra` — elements the program paints: a chessboard filling the window,
+  as many squares as fit, its count heard through `on_size`, beside a list of 200 rows in a
+  scroller whose painter draws only the rows in view (`--script "…" --png FILE` headless).
 - `examples/ui/form.lyra` — phase 3's gate, a form that works from the keyboard: two
   fields, a checkbox, a slider and Submit, run by `ui.app`. `--script "…"` plays input
   instead of waiting for a user and prints the state it left; `--png FILE` the last frame.
@@ -323,5 +337,8 @@ layer — implements the two traits; the display list is the whole contract.
   `TestRun_UiSelect` a select by pointer and keys, its list over a button, and what is heard;
   `TestRun_UiDisabledIsLaidOutAtOnce` a control disabled with nothing else changed;
   `TestLui_UiTargetReadOnlyField` the markup's `readonly`.
+  `TestRun_UiPaintedElement` a painter's area, its ops moved and clipped, its text, the newest
+  function on a cached layout, and `on_size` heard before each frame; `TestRun_UiPaintedExample`
+  the example's board, a pixel at a time.
   `TestRun_UiFlex` and `TestRun_UiGrid` hold flex and grid to hand-worked CSS results, child
   rect by child rect; `TestLui_UiTargetFlexAndGrid` the markup's layout properties.

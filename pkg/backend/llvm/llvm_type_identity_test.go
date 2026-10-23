@@ -129,8 +129,10 @@ let main = () -> u8 => u8(one.getOne() + two.getTwo())`,
 // The generic is the test's own `Opt<t>`, because this harness has no prelude and because
 // the bug is any generic `data` type's, not `Maybe`'s. Every composite a type argument is
 // spelled from is here, since the missing case was one of them: a dynamic array, a fixed
-// array, a tuple holding one, a nested generic, and a type recursive through `[]`, which
-// must still terminate.
+// array, a tuple holding one, a function type's parameter and result (`Opt<(i64) -> Entry>`,
+// missed until 10/22, when `ui`'s painter held a `Maybe<(Size) -> Event>` in a program that
+// also had `bindings.sdl3`'s `Event`), a nested generic, and a type recursive through `[]`,
+// which must still terminate.
 func TestExec_SameNamedTypeInsideAnArrayInsideAGeneric(t *testing.T) {
 	other := `module other
 pub struct Entry { k: i64 }
@@ -151,6 +153,15 @@ let main = () -> u8 => match make() { Yep(xs) => u8(xs[1].n), Nope => 1 }`, 4},
 		{"a tuple holding an array", `
 let make = () -> Opt<(i64, []Entry)> => Yep((5, [Entry { n: 2, kids: [] }]))
 let main = () -> u8 => match make() { Yep((a, xs)) => u8(a + xs[0].n), Nope => 1 }`, 7},
+		{"a function's result", `
+let make = () -> Opt<(i64) -> Entry> => Yep((k: i64) -> Entry => Entry { n: k, kids: [] })
+let main = () -> u8 => match make() { Yep(f) => u8(f(3).n), Nope => 1 }`, 3},
+		{"a function's parameter", `
+let make = () -> Opt<(Entry) -> i64> => Yep((e: Entry) -> i64 => e.n + 1)
+let main = () -> u8 => match make() { Yep(f) => u8(f(Entry { n: 8, kids: [] })), Nope => 1 }`, 9},
+		{"an annotated local holding a function", `
+let main = () -> u8 => { let r: Opt<(i64) -> Entry> = Yep((k: i64) -> Entry => Entry { n: k, kids: [] })
+  match r { Yep(f) => u8(f(4).n), Nope => 1 } }`, 4},
 		{"a nested generic", `
 let make = () -> Opt<[]Opt<Entry>> => Yep([Yep(Entry { n: 6, kids: [] })])
 let main = () -> u8 => match make() { Yep(xs) => match xs[0] { Yep(e) => u8(e.n), Nope => 1 }, Nope => 2 }`, 6},
