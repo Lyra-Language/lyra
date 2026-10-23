@@ -235,6 +235,9 @@ an unrelated lambda.
   unsafe.
 - **C callbacks registered before the reload** (a function pointer handed to C) — the same.
 - **A global's value** when its initializer changes — it is state.
+- **What a program read once and kept** — a window's size, opened with — is a value, not
+  code. `ui.app` keeps the *function* describing its window instead (`App.window`, lui's
+  `window_spec`) and calls it each pass under `--live`, so an edit reaches the open window.
 
 ## Pieces
 

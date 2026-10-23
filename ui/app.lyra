@@ -88,9 +88,14 @@ pub struct App<s, e> {
   /// scrolled, with bars while it does not fit, by default. Set on the view's root unless its
   /// own style says otherwise.
   window_overflow: Overflow = OverflowAuto,
+  /// The window as the program's code describes it now — lui's `window_spec` — which the
+  /// host follows under `lyrac run --live`: a reload swaps this function's body, and a change
+  /// to the title, size, limits, resizing or overflow is made to the open window. `None` for
+  /// a window that never changes after it opens.
+  window: Maybe<() -> WindowSpec> = None,
 }
 
-/// A window as markup describes it — lui's `<window>`, generated as `WINDOW`: its title, the
+/// A window as markup describes it — lui's `<window>`, generated as `window_spec`: its title, the
 /// size it opens at, the least and greatest size the user may make it (nothing for no limit),
 /// which ways it resizes, and what it does with a view that does not fit.
 pub struct WindowSpec {
@@ -245,6 +250,8 @@ pub struct Host<s, e> {
   last_frame: i64 = -1,
   running: bool = true,
   live: bool = false,
+  /// The window as `App.window` last described it, to tell a reload's change from none.
+  window_seen: Maybe<WindowSpec> = None,
   /// Each element's last layout, for the next pass to give back what has not changed.
   cache: LayoutCache<e>,
   /// Whether something has happened since the last frame was drawn, so the next pass draws.
@@ -330,7 +337,8 @@ impl Host<s, e> {
     if !self.running { return false }
     // Drawn only when something may have changed — an input, an event, the first pass — or
     // every pass under `--live`, where the code itself may have.
-    if self.shown.len() == 0 { self.limit_size(platform) }
+    if self.shown.len() == 0 { self.limit_size(platform, platform.window_size()) }
+    if self.live { self.follow_window(platform) }
     // A transition moving draws every frame too, until it arrives.
     if self.dirty || self.live || self.shown.len() == 0 || self.ui.animating() { self.redraw(
       platform,
@@ -408,8 +416,8 @@ impl Host<s, e> {
 
   /// `App`'s least and greatest size handed to the platform — the first pass's — with a side
   /// that may not resize held at both to the size the window has, within them.
-  let limit_size<p> where p: Platform = (self, platform: mut p) -> void => {
-    let held = platform.window_size().held(self.app.min_size, self.app.max_size)
+  let limit_size<p> where p: Platform = (self, platform: mut p, size: Size) -> void => {
+    let held = size.held(self.app.min_size, self.app.max_size)
     let least = Size {
       w: if self.app.resize_x { self.app.min_size.w } else { held.w },
       h: if self.app.resize_y { self.app.min_size.h } else { held.h },
@@ -419,6 +427,37 @@ impl Host<s, e> {
       h: if self.app.resize_y { self.app.max_size.h } else { held.h },
     }
     platform.set_size_limits(least, most)
+  }
+
+  /// Under `--live`, the window as the program's newest code describes it (`App.window`): a
+  /// change since the last pass — a reload — made to the open window. The limits are lifted
+  /// first, so a new size is not held to the old ones, and set again at the new size.
+  let follow_window<p> where p: Platform = (self: mut, platform: mut p) -> void => {
+    let Some(describe) = self.app.window else { return }
+    let spec = describe()
+    let Some(was) = self.window_seen else {
+      self.window_seen = Some(spec)
+      return
+    }
+    if spec == was { return }
+    self.window_seen = Some(spec)
+    if spec.title != was.title { platform.set_title(spec.title) }
+    self.app = App {
+      self.app |
+      min_size: spec.min_size,
+      max_size: spec.max_size,
+      resize_x: spec.resize_x,
+      resize_y: spec.resize_y,
+      window_overflow: spec.overflow,
+    }
+    var size = platform.window_size()
+    if spec.size != was.size {
+      platform.set_size_limits(Size {}, Size {})
+      size = spec.size.held(spec.min_size, spec.max_size)
+      platform.set_window_size(size)
+    }
+    self.limit_size(platform, size)
+    self.dirty = true
   }
 
   /// How long the pass may wait for input from `now`: not at all while events wait, a frame

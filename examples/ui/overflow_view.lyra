@@ -91,7 +91,7 @@ pub let overflow_sheet = pure (t: Theme) -> Sheet => Sheet {
 
 /// From overflow_view.lui, line 9: the window, for `ui.gpu.open_app` — or an `App`'s
 /// `min_size`, `max_size`, `resize_x`, `resize_y` and `window_overflow`.
-pub const WINDOW: WindowSpec = WindowSpec {
+pub let window_spec = pure () -> WindowSpec => WindowSpec {
   min_size: Size { w: 420.0, h: 360.0 },
   overflow: OverflowAuto,
 }

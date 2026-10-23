@@ -378,12 +378,13 @@ pub let generate_with = pure (
 }
 
 /// A `<window title="Counter" width="520" height="640" min-width="420" min-height="480"
-/// max-width max-height resize resize_x resize_y overflow/>` as `WINDOW`, a `ui.app.WindowSpec`
-/// for `ui.gpu.open_app` (or an `App`'s fields): its title, the size it opens at (`width` and
-/// `height` together), the least and greatest size the user may make it (a side not given is
-/// no limit), which ways it resizes — `resize={false}` neither, `resize_x`/`resize_y` one
-/// side, overriding `resize` for theirs — and its overflow. What is not given keeps
-/// `WindowSpec`'s default.
+/// max-width max-height resize resize_x resize_y overflow/>` as `window_spec`, a function
+/// answering a `ui.app.WindowSpec` — a function, not a constant, so that under `lyrac run
+/// --live` an edit reaches the open window (`ui.gpu.open_app` keeps it, `App.window`): its
+/// title, the size it opens at (`width` and `height` together), the least and greatest size
+/// the user may make it (a side not given is no limit), which ways it resizes —
+/// `resize={false}` neither, `resize_x`/`resize_y` one side, overriding `resize` for theirs —
+/// and its overflow. What is not given keeps `WindowSpec`'s default.
 let window_spec = pure (t: Tag, file: string) -> Result<string, string> => {
   for a in t.attrs {
     if ![
@@ -450,7 +451,7 @@ let window_spec = pure (t: Tag, file: string) -> Result<string, string> => {
   let body = if fields.len() == 0 { "WindowSpec {}" } else {
     "WindowSpec {\n  ${fields.join(",\n  ")},\n}"
   }
-  Ok("/// From ${file}, line ${t.line}: the window, for `ui.gpu.open_app` — or an `App`'s\n/// `min_size`, `max_size`, `resize_x`, `resize_y` and `window_overflow`.\npub const WINDOW: WindowSpec = ${body}")
+  Ok("/// From ${file}, line ${t.line}: the window, for `ui.gpu.open_app` — or an `App`'s\n/// `min_size`, `max_size`, `resize_x`, `resize_y` and `window_overflow`.\npub let window_spec = pure () -> WindowSpec => ${body}")
 }
 
 /// Another file's components, for this one's to call: the module they are in and their

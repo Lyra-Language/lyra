@@ -549,10 +549,11 @@ The example's interface is `examples/imgui/components_view.lui`.
   line. Any element takes **`disabled`**, bare or `disabled={condition}`. **`<TextInput
   readonly>`** is a read-only field, needing no `on_edit`; `readonly={condition}` keeps its
   `on_edit` for while the condition does not hold. **`<window title width height min-width min-height max-width max-height resize resize_x
-  resize_y overflow/>`** at the top of a ui file writes `WINDOW`, a `ui.app.WindowSpec` with
-  the fields given (the rest its defaults), for `ui.gpu.open_app` — which opens the window,
-  builds the `App` and leaves `main` its loop — or for an `App`'s fields
-  (`WINDOW.min_size`). `width` and `height` go together; `resize`, `resize_x` and `resize_y`
+  resize_y overflow/>`** at the top of a ui file writes `window_spec`, a function answering a
+  `ui.app.WindowSpec` with the fields given (the rest its defaults), for `ui.gpu.open_app` —
+  which opens the window, builds the `App`, leaves `main` its loop, and under `--live` makes an
+  edit to the description to the open window — or for an `App`'s fields
+  (`window_spec().min_size`). `width` and `height` go together; `resize`, `resize_x` and `resize_y`
   are bare or `{condition}`: `resize={false}` holds the window to its size, and a side's own
   attribute overrides `resize` for that side (`resize={false} resize_x` resizes only across). **Effects, as CSS writes them**: `box-shadow` (`none`, or shadows a comma apart,
   each `[inset] x y [blur [spread]] #colour`, `px` allowed), `background` or `background-image`
@@ -561,7 +562,7 @@ The example's interface is `examples/imgui/components_view.lui`.
   `backdrop-filter` as `blur(N)` or `none` — each checked, an error at its line.
   **`overflow`** takes one value for both axes or two (x, then y), and `overflow-x`/`overflow-y`
   one: `visible`, `hidden`, `clip`, `scroll` or `auto`; `<window overflow="…">` sets
-  `WINDOW.overflow`. **Transitions, as CSS writes them**: `transition` is a comma list, each
+  `window_spec().overflow`. **Transitions, as CSS writes them**: `transition` is a comma list, each
   `[property] duration [timing-function] [delay]` in any order (the property `all` when
   omitted; `none` for none), and `transition-property`, `-duration`, `-timing-function` and
   `-delay` are its longhands, their lists paired by place and a shorter one repeated. Times

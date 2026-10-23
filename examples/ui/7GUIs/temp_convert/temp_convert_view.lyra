@@ -107,7 +107,7 @@ let view_sheet = pure (t: Theme) -> Sheet => Sheet { // temp_convert_view.lui:81
 
 /// From temp_convert_view.lui, line 1: the window, for `ui.gpu.open_app` — or an `App`'s
 /// `min_size`, `max_size`, `resize_x`, `resize_y` and `window_overflow`.
-pub const WINDOW: WindowSpec = WindowSpec {
+pub let window_spec = pure () -> WindowSpec => WindowSpec {
   title: "Temperature Converter",
   size: Size { w: 400.0, h: 64.0 },
   resize_x: false,

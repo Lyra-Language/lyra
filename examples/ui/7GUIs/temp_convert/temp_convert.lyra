@@ -1,9 +1,9 @@
 import ui.gpu
 import ui.app.{ step_running }
-import temp_convert_view.{ BLANK_STATE, view, update, subscriptions, WINDOW }
+import temp_convert_view.{ BLANK_STATE, view, update, subscriptions, window_spec }
 
 let main = () -> u8 => {
-  let window = match gpu.open_app(WINDOW, view, update, subscriptions, BLANK_STATE) {
+  let window = match gpu.open_app(window_spec, view, update, subscriptions, BLANK_STATE) {
     Ok(w) => w,
     Err(why) => {
       println(why)

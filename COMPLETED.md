@@ -9,6 +9,21 @@ Newest first.
 
 ## Dated log
 
+### 10/22/26 — `--live`: an edit to a ui app's window reaches the open window
+
+- **Applied, and nothing happened**: a changed `<window width>` was a new `WINDOW` constant
+  in new code, but the window had been opened, and its limits set, from the old one, and
+  nothing read it again — a reload swaps code, never the values a program copied.
+- **lui writes a function, `window_spec`**, not a constant, and `open_app` keeps it
+  (`App.window`). A function value reaches its newest body, as `view` and `update` do, so
+  under `--live` the host calls it each pass (`follow_window`) and makes a change to the open
+  window: the title, the size (`Platform.set_title`, `set_window_size`, new in both
+  platforms), the limits — lifted first, or SDL holds the new size to the old ones — the
+  resizing and the overflow. Outside `--live` it is read once, at the open.
+- `TestRun_UiWindowFollowsItsDescription` (the scripted platform; fails with the following
+  turned off); by hand, the counter widened from 200 to 320 and retitled in the same process,
+  its field growing with it.
+
 ### 10/22/26 — `ui`: a lui app's `main` in fifteen lines
 
 7GUIs' three drivers were the same 51 lines but for a title, a module and a start state.

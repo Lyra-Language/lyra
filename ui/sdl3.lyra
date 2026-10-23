@@ -48,6 +48,7 @@ import bindings.sdl3.{
   set_window_minimum_size,
   set_window_maximum_size,
   set_window_resizable,
+  set_window_title,
   add_event_watch,
   live_resize,
   window_size,
@@ -392,6 +393,14 @@ impl Platform for SdlPlatform {
     // edges, no zoom button.
     let fixed = least_w > 0 && least_w == most_w && least_h > 0 && least_h == most_h
     let _ = set_window_resizable(self.window, !fixed)
+  }
+  set_window_size = (self, size) => {
+    let per_point = units_per_point(self.window)
+    let points = (units: f32) -> i32 => i32((units / per_point).round())
+    let _ = set_window_size(self.window, points(size.w), points(size.h))
+  }
+  set_title = (self, title) => {
+    let _ = set_window_title(self.window, title)
   }
   on_live_resize = (self, hook) => {
     live_hook = Some(hook)

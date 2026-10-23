@@ -88,6 +88,8 @@ pub struct ScriptPlatform {
   /// resize is held to, as a window's would be.
   least: Size = Size {},
   most: Size = Size {},
+  /// The window's title, as the program last set it.
+  title: string = "",
   /// The live-resize hook, and how many times a drag step called it.
   hook: Maybe<() -> void> = None,
   dragged: i64 = 0,
@@ -166,6 +168,10 @@ impl Platform for ScriptPlatform {
     self.most = most
     self.size = self.size.held(least, most)
   }
+  set_window_size = (self, size) => {
+    self.size = size.held(self.least, self.most)
+  }
+  set_title = (self, title) => { self.title = title }
 }
 
 /// The inputs `script` writes down, or what is wrong with it — a script of inputs alone,

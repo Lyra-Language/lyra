@@ -98,6 +98,6 @@ pub let effects_sheet = pure (_: Theme) -> Sheet => Sheet {
 
 /// From effects_view.lui, line 10: the window, for `ui.gpu.open_app` — or an `App`'s
 /// `min_size`, `max_size`, `resize_x`, `resize_y` and `window_overflow`.
-pub const WINDOW: WindowSpec = WindowSpec {
+pub let window_spec = pure () -> WindowSpec => WindowSpec {
   min_size: Size { w: 420.0, h: 480.0 },
 }

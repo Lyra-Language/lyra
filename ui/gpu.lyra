@@ -15,11 +15,13 @@ module ui.gpu
 //! ```
 //!
 //! **[open_app]** is all of that for a program whose window markup describes (lui's
-//! `<window>`, a `WindowSpec`): the font, the window, the `App` and the host, leaving `main`
-//! only its loop — which stays `main`'s, for `lyrac run --live` — and [close_app]:
+//! `<window>`, a `window_spec` function answering a `WindowSpec`): the font, the window, the
+//! `App` and the host, leaving `main` only its loop — which stays `main`'s, for `lyrac run
+//! --live`, which also makes an edit to the window's description to the open window — and
+//! [close_app]:
 //!
 //! ```
-//! let window = match gpu.open_app(WINDOW, view, update, subscriptions, State {}) {
+//! let window = match gpu.open_app(window_spec, view, update, subscriptions, State {}) {
 //!   Ok(w) => w,
 //!   Err(why) => { println(why); return 1 },
 //! }
@@ -37,7 +39,7 @@ module ui.gpu
 //! at half size in two passes (σ half the blur radius, as CSS has it).
 
 import ui.backend.{ Renderer }
-import ui.app.{ WindowSpec, Running, Command, Subscription, running, app_in }
+import ui.app.{ App, WindowSpec, Running, Command, Subscription, running, app_in }
 import ui.text.{ fonts_new }
 import ui.layout.{ Node }
 import ui.draw.{
@@ -124,11 +126,13 @@ pub let close = (platform: SdlPlatform, renderer: AnyRenderer) -> void => {
   close_window(platform)
 }
 
-/// `view`, `update` and `subscriptions` at `state`, in a window opened as `window` says, with
-/// the system's font: ready for `main` to step (`ui.app.step_running`) until it answers
-/// false, then to [close_app]. Why it could not, as text — no font, or no window.
+/// `view`, `update` and `subscriptions` at `state`, in a window opened as `window` describes
+/// it, with the system's font: ready for `main` to step (`ui.app.step_running`) until it
+/// answers false, then to [close_app]. `window` is kept (`App.window`), so under `lyrac run
+/// --live` an edit to it reaches the open window. Why it could not, as text — no font, or no
+/// window.
 pub let open_app<s, e> = (
-  window: WindowSpec,
+  window: () -> WindowSpec,
   view: (s) -> Node<e>,
   update: (s, e) -> (s, []Command<e>),
   subscriptions: (s) -> []Subscription<e>,
@@ -138,14 +142,15 @@ pub let open_app<s, e> = (
   if !fonts.add_system_font() {
     return Err("no font: none of ui.text's SYSTEM_FONTS is here")
   }
-  let opened = match open(window.title, window.size.w, window.size.h) {
+  let spec = window()
+  let opened = match open(spec.title, spec.size.w, spec.size.h) {
     Ok(w) => w,
     Err(why) => {
       fonts.close()
       return Err(why)
     },
   }
-  let app = app_in(window, view, update, subscriptions)
+  let app = App { app_in(spec, view, update, subscriptions) | window: Some(window) }
   Ok(running(app, state, opened.platform, opened.renderer, fonts))
 }
 

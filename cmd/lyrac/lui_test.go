@@ -908,7 +908,7 @@ func TestLui_EffectsExampleIsCurrentAndChecks(t *testing.T) {
 
 // Overflow in the ui target: `overflow` with one value sets both axes and with two sets x
 // then y, `overflow-x` and `overflow-y` one each, in a sheet and inline; `<window
-// overflow>` sets WINDOW's overflow, and a window without it leaves the default.
+// overflow>` sets window_spec's overflow, and a window without it leaves the default.
 func TestLui_UiTargetOverflow(t *testing.T) {
 	t.Parallel()
 	lui := buildLui(t)
@@ -967,11 +967,12 @@ func TestLui_UiTargetOverflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(generated), "overflow: Overflow") {
-		t.Errorf("a window without overflow set WINDOW's:\n%s", generated)
+		t.Errorf("a window without overflow set window_spec's:\n%s", generated)
 	}
 }
 
-// `<window>` makes WINDOW, a ui.app.WindowSpec for ui.gpu.open_app: `title`, `width` and
+// `<window>` makes window_spec, a function answering a ui.app.WindowSpec for ui.gpu.open_app
+// (a function, so a reload reaches the open window): `title`, `width` and
 // `height` (the size it opens at), the limits, and `resize`, `resize_x` and `resize_y`, a
 // side's own before `resize`; a window without them leaves WindowSpec's defaults.
 func TestLui_UiTargetWindowSize(t *testing.T) {
@@ -998,7 +999,7 @@ func TestLui_UiTargetWindowSize(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"pub const WINDOW: WindowSpec = WindowSpec {",
+		"pub let window_spec = pure () -> WindowSpec => WindowSpec {",
 		"  title: \"Sized\",",
 		"  size: Size { w: 320.0, h: 240.0 / 2.0 },",
 		"  min_size: Size { w: 200.0, h: 0.0 },",
@@ -1026,7 +1027,7 @@ func TestLui_UiTargetWindowSize(t *testing.T) {
 	if generated, err = os.ReadFile(filepath.Join(dir, "view.lyra")); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(generated), "pub const WINDOW: WindowSpec = WindowSpec {\n  min_size: Size { w: 200.0, h: 0.0 },\n}") {
+	if !strings.Contains(string(generated), "pub let window_spec = pure () -> WindowSpec => WindowSpec {\n  min_size: Size { w: 200.0, h: 0.0 },\n}") {
 		t.Errorf("a window with only a least width should set only that:\n%s", generated)
 	}
 }

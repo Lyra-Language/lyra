@@ -124,11 +124,15 @@ layer — implements the two traits; the display list is the whole contract.
   host hands `Platform.set_size_limits` on its first pass (`ui.sdl3`: SDL's minimum and maximum
   window size; `ScriptPlatform` holds its resize steps to them). The size it opens at is
   `main`'s, given to `gpu.open`/`sdl3.open`. **A `WindowSpec`** (`ui.app`) holds a window's
-  title, opening size, limits, resizing and overflow — lui's `<window>` writes it as `WINDOW`
-  — and `ui.gpu.open_app(WINDOW, view, update, subscriptions, state)` opens it: the system's
-  font, the window on the GPU (or SDL's 2D renderer), the `App` (`app_in`) and its host,
-  leaving `main` its own `while step_running(window) {}` (where `--live` swaps code in) and
-  `close_app`. `examples/ui/7GUIs/` drive their markup so, in fifteen lines. **`App.resize_x` and `App.resize_y`** (both `true` unless set; lui's `resize`,
+  title, opening size, limits, resizing and overflow — lui's `<window>` writes a function
+  answering one, `window_spec` — and `ui.gpu.open_app(window_spec, view, update,
+  subscriptions, state)` opens it: the system's font, the window on the GPU (or SDL's 2D
+  renderer), the `App` (`app_in`) and its host, leaving `main` its own `while
+  step_running(window) {}` (where `--live` swaps code in) and `close_app`.
+  `examples/ui/7GUIs/` drive their markup so. **The function is kept** (`App.window`): under
+  `--live` the host calls it each pass and makes a change — a reload's — to the open window
+  (`follow_window`: `Platform.set_title`, `set_window_size`, the limits lifted, the window
+  resized, and set again). **`App.resize_x` and `App.resize_y`** (both `true` unless set; lui's `resize`,
   `resize_x`, `resize_y`) hold a side that may not resize to the size the window opened at,
   within those limits: the host hands that side's least and greatest as one size
   (`Host.limit_size`), and `ui.sdl3` makes a window held so both ways not resizable at all.

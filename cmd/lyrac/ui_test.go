@@ -1997,6 +1997,76 @@ let view = pure (_: i64) -> Node<NoEvent> => sized::<NoEvent>(None, None)
 
 // App's resize_x and resize_y hold a side that may not resize to the size the window opened
 // at (within min_size and max_size), through the same limits: one side, then both.
+// Under `--live` the host follows App.window — lui's `window_spec`, whose body a reload
+// replaces — onto the open window: a new title and width are made to it, then a window that
+// may no longer resize is held at its size. (Here the description reads top-level variables
+// the loop changes, in place of a reload; `live` is set by hand.) A window opened before a
+// reload kept its first description until 10/22.
+func TestRun_UiWindowFollowsItsDescription(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, WindowSpec, host_of, sandbox }
+import ui.script.{ timed_platform, Waited }
+import ui.backend.{ Renderer }
+import ui.draw.{ Size, Color, TextureId }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, NoEvent, sized }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => {}
+}
+
+var width: f32 = 200.0
+var named: string = "first"
+var fixed: bool = false
+
+let spec = () -> WindowSpec => WindowSpec {
+  title: named,
+  size: Size { w: width, h: 64.0 },
+  resize_x: !fixed,
+  resize_y: !fixed,
+}
+
+let main = () -> u8 => {
+  var platform = timed_platform([Waited(10), Waited(10), Waited(10)], Size { w: 200.0, h: 64.0 })
+  var renderer = Blank {}
+  var fonts = fonts_new()
+  let app = App { sandbox(view, (n: i64, _: NoEvent) => n, Color { r: 0, g: 0, b: 0 }) | window: Some(spec) }
+  var host = host_of(app, 0, platform)
+  host.live = true
+  var pass = 0
+  while pass < 3 && host.step(platform, renderer, fonts) {
+    let size = platform.window_size()
+    println("pass ${pass}: ${size.w}x${size.h} '${platform.title}', least ${platform.least.w}x${platform.least.h}, most ${platform.most.w}x${platform.most.h}")
+    pass += 1
+    if pass == 1 {
+      width = 320.0
+      named = "second"
+    }
+    if pass == 2 { fixed = true }
+  }
+  0
+}
+
+let view = pure (_: i64) -> Node<NoEvent> => sized::<NoEvent>(None, None)
+`)
+	want := `pass 0: 200x64 '', least 0x0, most 0x0
+pass 1: 320x64 'second', least 0x0, most 0x0
+pass 2: 320x64 'second', least 320x64, most 320x64
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 func TestRun_UiWindowResizeAxes(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ App, host_of, sandbox }

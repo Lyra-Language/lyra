@@ -61,6 +61,10 @@ pub trait Platform {
   /// nothing for no limit; the window resized into them if it is outside. A side whose least
   /// and greatest are one size does not resize, and a window held so both ways not at all.
   set_size_limits: (mut Self, Size, Size) -> void
+  /// Resize the window to this, in logical units, as the program asks (not the user).
+  set_window_size: (mut Self, Size) -> void
+  /// The window's title bar.
+  set_title: (mut Self, string) -> void
   /// Call `hook` each time the system asks for a frame while the window is resized by
   /// dragging and the program's own loop is held (macOS) — never from inside the hook's own
   /// frame. `ui.app`'s `follow_resizes` hands it a redraw; a platform whose loop is never held
