@@ -692,8 +692,11 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   `examples/ui/settings.lyra` (COMPLETED.md, 10/21).
 - **[OPEN] What a terminal needs of `ui`** — an element the program paints, font faces and
   fallback, raw keys and pointer; designed in `ui/TERMINAL.md` (10/22), for Termina's move
-  off ImGui. Steps 1 (`painted`, `PaintDraw`/`PaintText`, `on_size`) and 2 (the atlas's
-  pages) are built (10/22); next the faces (step 3).
+  off ImGui. Steps 1 (`painted`, `PaintDraw`/`PaintText`, `on_size`), 2 (the atlas's pages)
+  and 3 (faces, metrics, hinting) are built (10/22); next fallback (step 4).
+- **[OPEN] `ui.text`'s hinting is light everywhere unless a program says.** macOS draws
+  text unhinted; `ui.text` cannot ask which platform it is on (it calls no platform library),
+  so the default belongs to whatever opens the window (`ui.sdl3`, `ui.gpu`'s `open_app`).
 - **[OPEN] `ui.text`: one font, left to right.** No fallback for a character the font lacks,
   no itemizing by script and no bidi; a paragraph is one HarfBuzz run. Also no text
   alignment (a line starts at its box's left) and no ellipsis.

@@ -19,8 +19,14 @@ module ui.text
 //! reading of Unicode's line breaking (UAX #14): after a run of spaces, after a hyphen inside
 //! a word, either side of an ideograph, and a mandatory break at a newline — are byte offsets
 //! of its UTF-8, matched against each glyph's cluster. Lines are filled greedily; spaces at
-//! a line's end hang past its width, as a browser's do. One font and left to right: no
-//! fallback for a character the font lacks, and no bidirectional text yet.
+//! a line's end hang past its width, as a browser's do. One face a paragraph and left to
+//! right: no fallback for a character the face lacks, and no bidirectional text yet.
+//!
+//! **A family is faces by weight and style** ([Fonts.add]), and a [FontSpec] is drawn in the
+//! one CSS's font matching picks; what the family lacks is made — a variable font's instance at
+//! a weight, a bold emboldened, an italic slanted — once, when first asked for. [Fonts.metrics]
+//! answers a face's measurements for a grid's cell: its ascent, descent, advance, underline and
+//! strikeout, from its own tables.
 //!
 //! **Positions are logical units** and a glyph is rasterized at the pixel size the display
 //! needs (the size times the scale), its origin rounded to a whole pixel so its edges stay
@@ -32,25 +38,77 @@ import bindings.harfbuzz.{
   close_hb_font,
   shape,
   font_extents,
-  ShapedGlyph
+  ShapedGlyph,
+  VariationAxis,
+  Variation,
+  variation_axes,
+  set_variations,
+  font_metric,
+  advance_of,
+  METRIC_UNDERLINE_OFFSET,
+  METRIC_UNDERLINE_SIZE,
+  METRIC_STRIKEOUT_OFFSET,
+  METRIC_STRIKEOUT_SIZE,
 }
-import bindings.freetype.{ FtFont, open_ft_font, close_ft_font, render_glyph }
+import bindings.freetype.{
+  FtFont,
+  open_ft_font,
+  close_ft_font,
+  render_glyph,
+  set_design_coordinates,
+  Hinting,
+  HintNone,
+  HintLight,
+  HintFull,
+}
 import std.collections.{ HashMap, hashmap_new }
 import ui.draw.{ Point, Rect, Color, Image, TextureId, GlyphQuad, DrawOp, Glyphs }
 import ui.backend.{ Renderer }
 
 /// Which font, and how large: a `family` added to [Fonts] (`""` is the first added) at `size`
 /// logical units to the em, its lines `line_height` sizes apart — CSS's unitless
-/// `line-height`; `0.0` for the font's own spacing.
+/// `line-height`; `0.0` for the font's own spacing — at `weight` (CSS's: 400 regular, 700
+/// bold), italic or upright.
 pub struct FontSpec {
   family: string = "",
   size: f32 = 14.0,
   line_height: f32 = 0.0,
+  weight: i64 = 400,
+  italic: bool = false,
 }
 
-/// The fonts a program draws with, and the paragraphs already laid out in them.
+/// A font's measurements at a [FontSpec]'s size, for a grid's cell ([Fonts.metrics]), in
+/// logical units: how far it reaches above the baseline and below it, the gap it asks for
+/// between lines, how far an `M` moves the pen (every glyph, in a monospaced font), and where
+/// its underline (down from the baseline) and strikeout (up from it) go, and how thick.
+pub struct FontMetrics {
+  ascent: f32 = 0.0,
+  descent: f32 = 0.0,
+  line_gap: f32 = 0.0,
+  advance: f32 = 0.0,
+  underline_y: f32 = 0.0,
+  underline_thickness: f32 = 0.0,
+  strike_y: f32 = 0.0,
+  strike_thickness: f32 = 0.0,
+}
+
+/// The fonts a program draws with, and the paragraphs already laid out in them. **A family is
+/// the faces added under its name** ([Fonts.add]); a [FontSpec] is drawn in the one CSS's
+/// font matching picks — the italic or upright ones as asked, if there are any, then the
+/// nearest weight — and **what the family lacks is made**: a variable font's weight is its
+/// instance at that weight, a bold it has no face for is the regular emboldened, an italic
+/// the upright slanted. Each such face is opened once, when first asked for.
 pub struct Fonts {
+  /// The faces text is drawn in, as [TextBlock.face] numbers them: what was added, and what
+  /// was made from it.
   faces: []Face = [],
+  /// What was added, in order.
+  added: []Added = [],
+  /// The faces made, by what they were made as (`made_key`).
+  made: HashMap<string, i64>,
+  /// How glyphs are fitted to the pixel grid — light (vertically only) unless the program says
+  /// otherwise: macOS draws its own text unhinted.
+  hinting: Hinting = HintLight,
   laid: HashMap<string, TextBlock>,
   /// The paragraphs laid out before `laid` filled: kept one generation more, so a screen's
   /// text is found again however often the cache turns over, and the cache never holds more
@@ -121,7 +179,7 @@ pub let offset_at_x = pure (block: TextBlock, x: f32, length: i64) -> i64 => {
 
 /// Fonts with none added.
 pub let fonts_new = pure () -> Fonts =>
-  Fonts { laid: hashmap_new(), older: hashmap_new() }
+  Fonts { made: hashmap_new(), laid: hashmap_new(), older: hashmap_new() }
 
 /// The font files tried by [Fonts.add_system_font], in order: macOS's, then the common
 /// places Linux distributions keep DejaVu Sans.
@@ -134,23 +192,43 @@ pub const SYSTEM_FONTS: []string = [
 ]
 
 impl Fonts {
-  /// Add face `index` of the font file at `path` as `family`; `false` if it cannot be opened.
-  pub let add = (self: mut, family: string, path: string, index: i64 = 0) -> bool => {
-    let Some(hb) = open_hb_font(path, u32(index)) else { return false }
-    let Some(ft) = open_ft_font(path, index) else {
-      close_hb_font(hb)
-      return false
+  /// Add face `index` of the font file at `path` to `family`, as its face of `weight` (CSS's:
+  /// 400 regular, 700 bold) and italic or not — a variable font with a weight axis is every
+  /// weight it reaches, whatever `weight` says; `false` if it cannot be opened.
+  pub let add = (
+    self: mut,
+    family: string,
+    path: string,
+    index: i64 = 0,
+    weight: i64 = 400,
+    italic: bool = false
+  ) -> bool => {
+    let Some(face) = open_face(
+      family,
+      path,
+      index,
+      [],
+      false,
+      false
+    ) else { return false }
+    let axes = variation_axes(face.hb)
+    var heaviness: Maybe<VariationAxis> = None
+    for axis in axes {
+      if axis.tag == WEIGHT_AXIS { heaviness = Some(axis) }
     }
-    // Extents scale with the size, so they are kept for one unit to the em, read at a
-    // thousand so their 26.6 fixed point keeps its precision.
-    let at = font_extents(hb, 1000.0)
-    self.faces.push(Face {
+    self.faces.push(face)
+    self.added.push(Added {
       family: family,
-      hb: hb,
-      ft: ft,
-      ascender: at.ascender / 1000.0,
-      descender: at.descender / 1000.0,
-      line_gap: at.line_gap / 1000.0,
+      path: path,
+      index: index,
+      weight: match heaviness {
+        Some(axis) => i64(axis.default.round()),
+        None => weight,
+      },
+      italic: italic,
+      axes: axes,
+      weights: heaviness,
+      face: self.faces.len() - 1,
     })
     true
   }
@@ -176,7 +254,7 @@ impl Fonts {
     font: FontSpec,
     width: f32
   ) -> TextBlock => {
-    let face = self.face_for(font.family)
+    let face = self.face_for(font)
     if face < 0 { return TextBlock {} }
     let key = "${face}|${font.size}|${font.line_height}|${width}|${text}"
     if let Some(block) = self.laid.get(key) { return block }
@@ -206,13 +284,172 @@ impl Fonts {
     }
   }
 
-  /// The face added as `family`, else the first; `-1` with none added.
-  let face_for = pure (self, family: string) -> i64 => {
-    for i, face in self.faces {
-      if face.family == family { return i }
+  /// `font`'s measurements at its size ([FontMetrics]), for a display at `scale` pixels a unit:
+  /// its advance a whole number of pixels unless glyphs are drawn unhinted, as a hinted glyph's
+  /// pen is. All zero with no font added.
+  pub let metrics = (self: mut, font: FontSpec, scale: f32 = 1.0) -> FontMetrics => {
+    let index = self.face_for(font)
+    if index < 0 { return FontMetrics {} }
+    let face = self.faces[index]
+    let size = font.size
+    var advance = advance_of(face.hb, size, 'M') ?? 0.0
+    if self.hinting != HintNone && scale > 0.0 { advance = f32((advance * scale).round()) / scale }
+    FontMetrics {
+      ascent: face.ascender * size,
+      descent: -face.descender * size,
+      line_gap: face.line_gap * size,
+      advance: advance,
+      underline_y: -font_metric(face.hb, size, METRIC_UNDERLINE_OFFSET),
+      underline_thickness: font_metric(face.hb, size, METRIC_UNDERLINE_SIZE),
+      strike_y: font_metric(face.hb, size, METRIC_STRIKEOUT_OFFSET),
+      strike_thickness: font_metric(face.hb, size, METRIC_STRIKEOUT_SIZE),
     }
-    if self.faces.len() > 0 { 0 } else { -1 }
   }
+
+  /// The face `font` is drawn in — made and opened the first time it is asked for, where the
+  /// family has none as it is — or `-1` with none added (or one that cannot be opened again).
+  let face_for = (self: mut, font: FontSpec) -> i64 => {
+    let Some(picked) = self.matching(font) else { return -1 }
+    let added = self.added[picked]
+    let weight = nearest_weight(added, font.weight)
+    // CSS's synthesis: bold where 600 or heavier is asked of a face lighter than that, oblique
+    // where italic is asked of an upright one.
+    let embolden = font.weight >= BOLD && weight < BOLD
+    let oblique = font.italic && !added.italic
+    if weight == added.weight && !embolden && !oblique { return added.face }
+    let key = "${picked}|${weight}|${embolden}|${oblique}"
+    if let Some(made) = self.made.get(key) { return made }
+    var coordinates: []f32 = []
+    var variations: []Variation = []
+    if added.weights.is_some() && weight != added.weight {
+      coordinates = [a in added.axes | if a.tag == WEIGHT_AXIS { f32(weight) } else { a.default }]
+      variations = [Variation { tag: WEIGHT_AXIS, value: f32(weight) }]
+    }
+    let Some(face) = open_face(
+      added.family,
+      added.path,
+      added.index,
+      coordinates,
+      embolden,
+      oblique
+    ) else { return -1 }
+    if variations.len() > 0 { set_variations(face.hb, variations) }
+    // Its extents read again: a variable font's instance may reach further.
+    let at = font_extents(face.hb, 1000.0)
+    self.faces.push(Face {
+      face |
+      ascender: at.ascender / 1000.0,
+      descender: at.descender / 1000.0,
+      line_gap: at.line_gap / 1000.0,
+    })
+    let made = self.faces.len() - 1
+    self.made.insert(key, made)
+    made
+  }
+
+  /// Which added face CSS's font matching picks for `font`: among `font.family`'s (the first
+  /// added family's where it has none), the italic ones if it is italic and there are any —
+  /// else the upright, and the other way round — then the one nearest its weight as CSS orders
+  /// them (`weight_rank`); `None` with none added.
+  let matching = pure (self, font: FontSpec) -> Maybe<i64> => {
+    if self.added.len() == 0 { return None }
+    var family = font.family
+    if [a in self.added | a.family == family | a].len() == 0 { family = self.added[0].family }
+    let styled = [i in 0..<self.added.len() | self.added[i].family == family && self.added[i].italic == font.italic | i]
+    let pool = if styled.len() > 0 { styled } else {
+      [i in 0..<self.added.len() | self.added[i].family == family | i]
+    }
+    var best = pool[0]
+    var best_rank = weight_rank(
+      font.weight,
+      nearest_weight(self.added[best], font.weight)
+    )
+    for i in pool {
+      let rank = weight_rank(font.weight, nearest_weight(self.added[i], font.weight))
+      if rank.0 < best_rank.0 || (rank.0 == best_rank.0 && rank.1 < best_rank.1) {
+        best = i
+        best_rank = rank
+      }
+    }
+    Some(best)
+  }
+}
+
+/// The weight at which CSS synthesizes a bold, and a variable font's weight axis's tag.
+const BOLD: i64 = 600
+const WEIGHT_AXIS: u32 = 0x77676874
+
+/// The weight `added` comes nearest `wanted` at: its own, or for a variable font `wanted`
+/// within the axis's reach.
+let nearest_weight = pure (added: Added, wanted: i64) -> i64 => {
+  let Some(axis) = added.weights else { return added.weight }
+  i64(f32(wanted).clamp(axis.min, axis.max).round())
+}
+
+/// How good a face of weight `have` is for `want`, lower better, as CSS Fonts 4's §5.2
+/// orders them: for 400 to 500, the weights from `want` up to 500 nearest first, then those
+/// below it nearest first, then those above 500; below 400, those at or below it nearest
+/// first, then those above; above 500, those at or above it, then those below.
+let weight_rank = pure (want: i64, have: i64) -> (i64, i64) => {
+  let distance = (want - have).abs()
+  if want >= 400 && want <= 500 {
+    if have >= want && have <= 500 { (
+      0,
+      distance
+    ) } else if have < want { (1, distance) } else {
+      (2, distance)
+    }
+  } else if want < 400 {
+    if have <= want { (0, distance) } else { (1, distance) }
+  } else {
+    if have >= want { (0, distance) } else { (1, distance) }
+  }
+}
+
+/// A face as it was added: its family, file and face within it, its weight (a variable font's
+/// default) and style, its variation axes (none for a font that does not vary) and its weight
+/// axis among them, and the face it is drawn as in [Fonts.faces].
+struct Added {
+  family: string,
+  path: string,
+  index: i64,
+  weight: i64,
+  italic: bool,
+  axes: []VariationAxis,
+  weights: Maybe<VariationAxis>,
+  face: i64,
+}
+
+/// Face `index` of the font file at `path` opened for both libraries as one of `family`'s —
+/// at these design coordinates (none for its default), and emboldened or slanted as it is
+/// rendered — with its extents; `None` if it cannot be opened.
+let open_face = (
+  family: string,
+  path: string,
+  index: i64,
+  coordinates: []f32,
+  embolden: bool,
+  oblique: bool
+) -> Maybe<Face> => {
+  let Some(hb) = open_hb_font(path, u32(index)) else { return None }
+  let Some(ft) = open_ft_font(path, index) else {
+    close_hb_font(hb)
+    return None
+  }
+  if coordinates.len() > 0 { let _ = set_design_coordinates(ft, coordinates) }
+  // Extents scale with the size, so they are kept for one unit to the em, read at a
+  // thousand so their 26.6 fixed point keeps its precision.
+  let at = font_extents(hb, 1000.0)
+  Some(Face {
+    family: family,
+    hb: hb,
+    ft: ft,
+    ascender: at.ascender / 1000.0,
+    descender: at.descender / 1000.0,
+    line_gap: at.line_gap / 1000.0,
+    embolden: embolden,
+    oblique: oblique,
+  })
 }
 
 /// The glyphs a renderer has been given, packed into pages — a texture each — each glyph
@@ -282,7 +519,14 @@ impl GlyphAtlas {
     var quads: [][]GlyphQuad = []
     for line in block.lines {
       for g in line.glyphs {
-        let found = self.slot_for(renderer, face, block.face, g.glyph, pixels)
+        let found = self.slot_for(
+          renderer,
+          face,
+          block.face,
+          g.glyph,
+          pixels,
+          fonts.hinting
+        )
         let Some(slot) = found else { continue }
         if slot.texels.is_empty() { continue }
         // The pen rounded to a whole pixel, the bitmap placed from it as FreeType says.
@@ -323,9 +567,10 @@ impl GlyphAtlas {
     face: Face,
     index: i64,
     glyph: u32,
-    pixels: i64
+    pixels: i64,
+    hinting: Hinting
   ) -> Maybe<AtlasSlot> => {
-    let key = "${index}|${glyph}|${pixels}"
+    let key = "${index}|${glyph}|${pixels}|${hint_code(hinting)}"
     if let Some(slot) = self.slots.get(key) {
       // A slot on an emptied page is gone, and is rendered again below.
       if slot.texels.is_empty() { return Some(slot) }
@@ -334,7 +579,14 @@ impl GlyphAtlas {
         return Some(slot)
       }
     }
-    let Some(bitmap) = render_glyph(face.ft, glyph, u32(pixels)) else { return None }
+    let Some(bitmap) = render_glyph(
+      face.ft,
+      glyph,
+      u32(pixels),
+      hinting,
+      face.embolden,
+      face.oblique
+    ) else { return None }
     var slot = AtlasSlot { left: f32(bitmap.left), top: f32(bitmap.top) }
     if bitmap.width > 0 && bitmap.rows > 0 {
       let Some((page, at)) = self.place(
@@ -445,12 +697,21 @@ impl AtlasPage {
   }
 }
 
+/// `hinting` as one letter, for an atlas slot's key.
+let hint_code = pure (hinting: Hinting) -> string => match hinting {
+  HintNone => "n",
+  HintLight => "l",
+  HintFull => "f",
+}
+
 /// White, at `coverage` opacity: a glyph's texel, which [Glyphs] tints with its colour.
 let white_at = pure (coverage: u8) -> u32 => (u32(coverage) << 24) | 0x00FFFFFF
 
 // ── Faces ────────────────────────────────────────────────────────────────────
 
-/// A font file opened for both libraries, and its vertical metrics for one unit to the em.
+/// A font file opened for both libraries, its vertical metrics for one unit to the em, and
+/// whether its glyphs are emboldened or slanted as they are rendered (a bold or italic made for
+/// a family that lacks it).
 struct Face {
   family: string,
   hb: HbFont,
@@ -458,6 +719,8 @@ struct Face {
   ascender: f32,
   descender: f32,
   line_gap: f32,
+  embolden: bool = false,
+  oblique: bool = false,
 }
 
 /// Where a glyph is in the atlas — its `page`, and its `texels` there (empty for one with no

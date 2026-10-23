@@ -3897,3 +3897,167 @@ frame 4, MM: on 0×2; 3 pages, 2 emptied, 3 uploaded, 2 cleared, 5 rendered
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
 }
+
+// A family's faces (`ui.text`'s `Fonts`), with one font file added as a family's 300, 400, 700
+// and italic 400 — so any font will do: a weight drawn in the face CSS Fonts 4's matching
+// picks (500 the 400, 600 and 900 the 700, 100 and 350 the 300), the italic face for italic,
+// a family's only face whatever is asked, the first family's for an unknown one; what the
+// family lacks made once — a 700 italic the italic emboldened, a regular-only family's bold
+// and italic drawn wider than its regular; a glyph hinted another way rendered again; and a
+// font's metrics through `MeasureFont`, the advance whole while glyphs are hinted. Where the
+// machine has a variable font, its 700 is its own instance — wider, not emboldened — and a
+// weight past its axis its heaviest.
+func TestRun_UiFontFaces(t *testing.T) {
+	t.Parallel()
+	program := `import ui.app.{ App, sandbox, host_of, Command, MeasureFont }
+import ui.script.{ timed_platform, parse_steps }
+import ui.backend.{ Renderer }
+import ui.draw.{ Point, Size, Color, TextureId }
+import ui.text.{ Fonts, FontSpec, FontMetrics, GlyphAtlas, fonts_new, glyph_atlas, SYSTEM_FONTS }
+import ui.layout.{ Node, button, sized }
+import bindings.freetype.{ HintNone, HintLight }
+
+/// A renderer that draws nothing, and keeps the width of each glyph it is given.
+struct Widths {
+  textures: i64 = 0,
+  widths: []i64 = [],
+}
+
+impl Renderer for Widths {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = (self, id, at, image) => {
+    if image.width < 1024 { self.widths.push(image.width) }
+    true
+  }
+  draw = (self, background, ops) => {}
+}
+
+/// The face each spec is drawn in, by number: 0–3 as added, 4 and on made.
+let face_of = (fonts: mut Fonts, spec: FontSpec) -> i64 => fonts.lay_out("H", spec, 1000.0).face
+
+/// How wide an "H" in spec is, in pixels at 48 to the em.
+let ink_width = (fonts: mut Fonts, spec: FontSpec) -> i64 => {
+  var atlas = glyph_atlas()
+  var renderer = Widths {}
+  let block = fonts.lay_out("H", FontSpec { spec | size: 48.0 }, 1000.0)
+  let _ = atlas.glyphs(fonts, renderer, block, Point {}, 1.0, Color { r: 0, g: 0, b: 0 })
+  if renderer.widths.len() == 0 { -1 } else { renderer.widths[0] }
+}
+
+data Ev = Measure | Measured(FontMetrics)
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  var path = ""
+  for p in SYSTEM_FONTS {
+    if fonts.add("t", p, 0, 300) {
+      path = p
+      break
+    }
+  }
+  if path == "" { return 1 }
+  // The same file as four faces of one family — 300, 400, 700 and an italic 400 — and as the
+  // only, italic, face of another.
+  let _ = fonts.add("t", path, 0, 400)
+  let _ = fonts.add("t", path, 0, 700)
+  let _ = fonts.add("t", path, 0, 400, true)
+  let _ = fonts.add("slanted", path, 0, 400, true)
+  println("CSS's choice of face:")
+  for (weight, italic) in [(400, false), (500, false), (600, false), (900, false), (100, false), (350, false), (400, true)] {
+    println("  ${weight}${if italic { " italic" } else { "" }}: face ${face_of(fonts, FontSpec { family: "t", weight: weight, italic: italic })}")
+  }
+  println("  slanted, upright asked: face ${face_of(fonts, FontSpec { family: "slanted" })}")
+  println("  an unknown family is the first's: face ${face_of(fonts, FontSpec { family: "nope" })}")
+  println("what the family lacks, made once:")
+  let bold_italic = face_of(fonts, FontSpec { family: "t", weight: 700, italic: true })
+  println("  700 italic: face ${bold_italic}, again ${face_of(fonts, FontSpec { family: "t", weight: 700, italic: true })}, emboldened ${fonts.faces[bold_italic].embolden}, slanted ${fonts.faces[bold_italic].oblique}")
+  var plain = fonts_new()
+  let _ = plain.add("p", path)
+  let regular = ink_width(plain, FontSpec { family: "p" })
+  let bold = ink_width(plain, FontSpec { family: "p", weight: 700 })
+  let slanted = ink_width(plain, FontSpec { family: "p", italic: true })
+  println("  a made bold is wider: ${bold > regular}; a made italic is wider: ${slanted > regular}; a 500 is the regular: ${face_of(plain, FontSpec { family: "p", weight: 500 }) == 0}")
+  println("a glyph hinted another way is another glyph:")
+  var atlas = glyph_atlas()
+  var renderer = Widths {}
+  let block = plain.lay_out("H", FontSpec { family: "p" }, 1000.0)
+  let _ = atlas.glyphs(plain, renderer, block, Point {}, 1.0, Color { r: 0, g: 0, b: 0 })
+  let _ = atlas.glyphs(plain, renderer, block, Point {}, 1.0, Color { r: 0, g: 0, b: 0 })
+  plain.hinting = HintNone
+  let _ = atlas.glyphs(plain, renderer, block, Point {}, 1.0, Color { r: 0, g: 0, b: 0 })
+  println("  rendered ${renderer.widths.len()} times")
+  println("metrics, through MeasureFont:")
+  plain.hinting = HintLight
+  let app = App {
+    sandbox(view, update, Color { r: 0, g: 0, b: 0 }) |
+    update: (s: Maybe<FontMetrics>, e: Ev) -> (Maybe<FontMetrics>, []Command<Ev>) => match e {
+      Measure => (s, [MeasureFont(FontSpec { family: "p", size: 13.0 }, Measured)]),
+      Measured(m) => (Some(m), []),
+    },
+  }
+  let Ok(steps) = parse_steps("click:20,10") else { return 2 }
+  var platform = timed_platform(steps, Size { w: 200.0, h: 100.0 })
+  var host = host_of(app, None, platform)
+  var paint = Widths {}
+  while host.step(platform, paint, plain) {}
+  let Some(m) = host.state else {
+    println("  never measured")
+    return 0
+  }
+  println("  ascent ${m.ascent > 6.0 && m.ascent < 15.0}, descent ${m.descent > 1.0 && m.descent < 6.0}, advance ${m.advance > 6.0 && m.advance < 15.0} and whole ${m.advance == f32(m.advance.round())}, underline below ${m.underline_y > 0.0} and ${m.underline_thickness > 0.0} thick, strikeout above ${m.strike_y > 0.0} and ${m.strike_thickness > 0.0} thick")
+  VARIABLE
+  0
+}
+
+let view = pure (_: Maybe<FontMetrics>) -> Node<Ev> => sized(Some(100.0), Some(30.0), [button("measure", Measure)])
+
+let update = pure (s: Maybe<FontMetrics>, _: Ev) -> Maybe<FontMetrics> => s
+`
+	variable := `  var varied = fonts_new()
+  if varied.add("v", "VARIABLE_PATH") {
+    let regular = varied.lay_out("HHHH", FontSpec { family: "v", size: 40.0 }, 1000.0)
+    let bold = varied.lay_out("HHHH", FontSpec { family: "v", size: 40.0, weight: 700 }, 1000.0)
+    let heaviest = varied.lay_out("HHHH", FontSpec { family: "v", size: 40.0, weight: 2000 }, 1000.0)
+    let again = varied.lay_out("HHHH", FontSpec { family: "v", size: 40.0, weight: 2000 }, 1000.0)
+    println("a variable font's weights: 700 is another face ${bold.face != regular.face}, wider ${bold.width > regular.width}, not emboldened ${!varied.faces[bold.face].embolden}; past its axis is its heaviest ${heaviest.face == again.face && heaviest.width >= bold.width}")
+  }
+`
+	want := `CSS's choice of face:
+  400: face 1
+  500: face 1
+  600: face 2
+  900: face 2
+  100: face 0
+  350: face 0
+  400 italic: face 3
+  slanted, upright asked: face 4
+  an unknown family is the first's: face 1
+what the family lacks, made once:
+  700 italic: face 5, again 5, emboldened true, slanted false
+  a made bold is wider: true; a made italic is wider: true; a 500 is the regular: true
+a glyph hinted another way is another glyph:
+  rendered 2 times
+metrics, through MeasureFont:
+  ascent true, descent true, advance true and whole true, underline below true and true thick, strikeout above true and true thick
+`
+	// A variable font with a weight axis, where there is one.
+	found := ""
+	for _, path := range []string{"/System/Library/Fonts/SFNS.ttf", "/usr/share/fonts/truetype/noto/NotoSans[wdth,wght].ttf", "/usr/share/fonts/opentype/inter/InterVariable.ttf"} {
+		if _, err := os.Stat(path); err == nil {
+			found = path
+			break
+		}
+	}
+	if found != "" {
+		program = strings.Replace(program, "  VARIABLE\n", strings.Replace(variable, "VARIABLE_PATH", found, 1), 1)
+		want += "a variable font's weights: 700 is another face true, wider true, not emboldened true; past its axis is its heaviest true\n"
+	} else {
+		program = strings.Replace(program, "  VARIABLE\n", "", 1)
+	}
+	if got := runUiProgram(t, program); got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}

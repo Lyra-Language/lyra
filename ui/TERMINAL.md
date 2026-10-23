@@ -1,7 +1,9 @@
 # What a terminal needs of `ui` — design
 
-**Status: proposed 10/22; steps 1 and 2 built 10/22** (`painted`, `PaintDraw`, `PaintText`,
-`on_size`, `PaintArea.visible`, `examples/ui/painted.lyra`; the atlas's pages) — the ops `Paint`-prefixed, as
+**Status: proposed 10/22; steps 1–3 built 10/22** (`painted`, `PaintDraw`, `PaintText`,
+`on_size`, `PaintArea.visible`, `examples/ui/painted.lyra`; the atlas's pages; faces, made
+faces, metrics and hinting — `Fonts.hinting` light unless the program says, as `ui.text` asks
+no platform which it is on; `MeasureFont` answered once, not again as fonts change) — the ops `Paint`-prefixed, as
 constructors match program-wide by name and `bindings.imgui.ui` has a `Text`, and `Painter`
 without `input` until step 6. Three additions to the framework, each useful
 beyond Termina: an element the program paints itself (§1), font faces and fallback (§2),
@@ -336,7 +338,7 @@ the end.
    of 1024² (`ATLAS_PAGES`), the least recently drawn emptied, never under the frame drawing
    from it.
 3. **Faces**: weight and italic, variable fonts, synthesized bold and oblique,
-   `FontMetrics`/`MeasureFont`, hinting.
+   `FontMetrics`/`MeasureFont`, hinting. **Built 10/22.**
 4. **Fallback**: family lists, `Fonts.fallbacks`, itemized runs, every rune.
 5. **`PaintCells` and `PaintWave`**: an example drawing a coloured grid of mixed-width text against
    pixels read back (`read_frame`).

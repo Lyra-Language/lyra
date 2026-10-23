@@ -9,6 +9,36 @@ Newest first.
 
 ## Dated log
 
+### 10/22/26 — `ui`: a family's faces, and a font's metrics
+
+- **A family is faces by weight and style now** (`ui/TERMINAL.md` §2, step 3):
+  `Fonts.add(family, path, index, weight, italic)`, `FontSpec.weight`/`italic`, and a spec
+  drawn in the face CSS Fonts 4's matching picks — style first, then CSS's order of weights
+  (the 400–500 rule, down below 400, up above 500). **What a family lacks is made, once, when
+  asked for**: a variable font's instance at the weight, a bold (600 or more from a lighter
+  face) emboldened, an italic from an upright face slanted — each a face of its own in
+  `Fonts.faces`, opened again from the file, so the atlas keys its glyphs apart with no new
+  key. `Fonts.added` keeps what was added, `Fonts.made` the faces made by what they were made
+  as.
+- **A variable font needs its variation set twice**: HarfBuzz shapes with
+  `hb_font_set_variations`, FreeType renders with `FT_Set_Var_Design_Coordinates`, and either
+  alone shapes one weight and draws another. Its extents are read again for the instance.
+- **Synthesis is FreeType's own** (`FT_GlyphSlot_Embolden`, `FT_GlyphSlot_Oblique`), on the
+  outline between loading and rendering — `render_glyph` loads, synthesizes, then
+  `FT_Render_Glyph`s, where it loaded with `FT_LOAD_RENDER` before. The advance stays
+  HarfBuzz's, so a made bold keeps a monospaced font's cell.
+- **`Fonts.metrics(spec, scale)`** reads the face's own tables through HarfBuzz's
+  `hb_ot_metrics_get_position_with_fallback` — underline and strikeout, which Termina guessed
+  at fixed fractions of the size — and the `M`'s advance, whole pixels while glyphs are
+  hinted. **`MeasureFont`** asks it of a host: `dispatch` has no fonts, so a measurement is
+  queued and answered at the next pass, which does not wait for input while one is.
+- **Hinting is `Fonts.hinting`** (`HintNone`, `HintLight`, `HintFull`) and part of a glyph's
+  key in the atlas. It stays light by default everywhere, not the note's "none on macOS":
+  `ui.text` calls no platform library, so it cannot ask (todo.md).
+- `TestRun_UiFontFaces` adds one file as four faces of one family, so the matching is tested
+  on any font; its variable-font case runs where SF or Noto Sans' variable font is. Not yet
+  run on Linux: the VM was unreachable.
+
 ### 10/22/26 — `ui`: the glyph atlas's pages
 
 - **The atlas was one 1024² texture that never emptied**, a glyph that did not fit left out —

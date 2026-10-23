@@ -23,6 +23,8 @@ module bindings.freetype
 //! Link with `-lfreetype`; on macOS that is `brew install freetype`, on Debian
 //! `libfreetype-dev`. `pkg: "freetype2"` on the header has lyrac ask pkg-config where it is.
 
+import std.ffi
+
 /// One face of a font file, with the FreeType library it was opened by: opened by
 /// [open_ft_font], put away by [close_ft_font].
 @must_release(close_ft_font)
@@ -61,15 +63,37 @@ pub let close_ft_font = (font: FtFont) -> void => {
   unsafe { ft_done_freetype(font.library) }
 }
 
-/// Glyph number `glyph` rendered `pixels` pixels to the em, lightly hinted (vertically only,
-/// so its shape keeps its width and its advance), or `None` if the font has no such glyph or
-/// it cannot be rendered. A glyph with no ink — a space — is an empty bitmap.
-pub let render_glyph = (font: FtFont, glyph: u32, pixels: u32) -> Maybe<GlyphBitmap> => {
+/// How a glyph's outline is fitted to the pixel grid before it is rendered: not at all (its
+/// shape as designed, as macOS draws text), lightly (vertically only, so it keeps its width and
+/// its advance — FreeType's light target), or fully (both ways, by the font's own
+/// instructions where it has them).
+pub data Hinting = HintNone | HintLight | HintFull
+
+/// Glyph number `glyph` rendered `pixels` pixels to the em, hinted as `hinting` says — and,
+/// for a face that lacks them, `embolden`ed (its outline thickened by a 24th of the em, as
+/// FreeType's synthetic bold has it) or `oblique` (slanted about 12°) — or `None` if the font
+/// has no such glyph or it cannot be rendered. A glyph with no ink — a space — is an empty
+/// bitmap.
+pub let render_glyph = (
+  font: FtFont,
+  glyph: u32,
+  pixels: u32,
+  hinting: Hinting = HintLight,
+  embolden: bool = false,
+  oblique: bool = false
+) -> Maybe<GlyphBitmap> => {
   if unsafe { ft_set_pixel_sizes(font.face, 0, pixels) } != 0 { return None }
-  if unsafe { ft_load_glyph(font.face, glyph, LOAD_RENDER | LOAD_TARGET_LIGHT) } != 0 {
-    return None
+  let (load, mode) = match hinting {
+    HintNone => (LOAD_NO_HINTING, RENDER_MODE_NORMAL),
+    HintLight => (LOAD_TARGET_LIGHT, RENDER_MODE_LIGHT),
+    HintFull => (LOAD_TARGET_NORMAL, RENDER_MODE_NORMAL),
   }
+  if unsafe { ft_load_glyph(font.face, glyph, load) } != 0 { return None }
   let slot = read_pointer(font.face.address() + FACE_GLYPH)
+  // The outline thickened or slanted before it becomes pixels.
+  if embolden { unsafe { ft_glyphslot_embolden(slot) } }
+  if oblique { unsafe { ft_glyphslot_oblique(slot) } }
+  if unsafe { ft_render_glyph(slot, mode) } != 0 { return None }
   let bitmap = read_bitmap(slot.address() + SLOT_BITMAP)
   if bitmap.pixel_mode != PIXEL_MODE_GRAY && bitmap.rows > 0 { return None }
   let width = i64(bitmap.width)
@@ -87,6 +111,19 @@ pub let render_glyph = (font: FtFont, glyph: u32, pixels: u32) -> Maybe<GlyphBit
     top: i64(read_i32(slot.address() + SLOT_BITMAP_TOP)),
     coverage: coverage,
   })
+}
+
+/// Render a variable font as its instance at these design coordinates, one an axis in the
+/// font's order (`bindings.harfbuzz`'s `variation_axes` reads them): `wght` 700 for its
+/// bold. Whether the font took them — `false` for a font that does not vary.
+pub let set_design_coordinates = (font: FtFont, coordinates: []f32) -> bool => {
+  // FT_Fixed: 16.16 fixed point in a C `long`.
+  var fixed: []i64 = [c in coordinates | i64((c * 65536.0).round())]
+  unsafe { ft_set_var_design_coordinates(
+    font.face,
+    u32(fixed.len()),
+    fixed.data_mut()
+  ) } == 0
 }
 
 /// The pointer stored at `address` — an address inside a record FreeType holds.
@@ -114,10 +151,13 @@ const SLOT_BITMAP: u64 = 152
 const SLOT_BITMAP_LEFT: u64 = 192
 const SLOT_BITMAP_TOP: u64 = 196
 
-/// `FT_LOAD_RENDER` and `FT_LOAD_TARGET_LIGHT`, and `FT_PIXEL_MODE_GRAY` — C macros and
-/// enumerators, with no symbol.
-const LOAD_RENDER: i32 = 4
+/// `FT_LOAD_NO_HINTING`, `FT_LOAD_TARGET_NORMAL` and `FT_LOAD_TARGET_LIGHT`, the render modes
+/// they go with, and `FT_PIXEL_MODE_GRAY` — C macros and enumerators, with no symbol.
+const LOAD_NO_HINTING: i32 = 2
+const LOAD_TARGET_NORMAL: i32 = 0
 const LOAD_TARGET_LIGHT: i32 = 0x10000
+const RENDER_MODE_NORMAL: i32 = 0
+const RENDER_MODE_LIGHT: i32 = 1
 const PIXEL_MODE_GRAY: u8 = 2
 
 // ---------------------------------------------------------------------------------------
@@ -150,3 +190,15 @@ unsafe extern ft_done_face: (face: ^u8) -> i32
 unsafe extern ft_set_pixel_sizes: (face: ^u8, width: u32, height: u32) -> i32
 @symbol("FT_Load_Glyph")
 unsafe extern ft_load_glyph: (face: ^u8, glyph: u32, flags: i32) -> i32
+@symbol("FT_Render_Glyph")
+unsafe extern ft_render_glyph: (slot: ^u8, mode: i32) -> i32
+@symbol("FT_GlyphSlot_Embolden")
+unsafe extern ft_glyphslot_embolden: (slot: ^u8) -> void
+@symbol("FT_GlyphSlot_Oblique")
+unsafe extern ft_glyphslot_oblique: (slot: ^u8) -> void
+@symbol("FT_Set_Var_Design_Coordinates")
+unsafe extern ft_set_var_design_coordinates: (
+  face: ^u8,
+  count: u32,
+  coordinates: ^mut i64
+) -> i32

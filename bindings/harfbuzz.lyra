@@ -122,6 +122,84 @@ pub let shape = (font: HbFont, utf8: []u8, size: f32) -> []ShapedGlyph => {
   glyphs
 }
 
+/// One of a variable font's axes (OpenType's `fvar`): its four-letter tag as a number
+/// ([tag]: `wght` the weight), and the values it takes, its default among them.
+pub struct VariationAxis {
+  tag: u32,
+  min: f32,
+  default: f32,
+  max: f32,
+}
+
+/// A value for one of a variable font's axes.
+pub struct Variation {
+  tag: u32,
+  value: f32,
+}
+
+/// The four letters of an OpenType tag as the number HarfBuzz and the font's tables name it
+/// by: `tag("wght")`.
+pub let tag = pure (letters: string) -> u32 => {
+  var n: u32 = 0
+  for b in letters.encode_utf8() { n = (n << 8) | u32(b) }
+  n
+}
+
+/// The font's variation axes, in the font's order — none for a font that does not vary.
+pub let variation_axes = (font: HbFont) -> []VariationAxis => {
+  let face = unsafe { hb_font_get_face(font.handle) }
+  var count: u32 = 0
+  let total = unsafe { hb_ot_var_get_axis_infos(face, 0, &mut count, nullptr) }
+  if total == 0 { return [] }
+  var infos: []HbAxisInfo = [HbAxisInfo {}; i64(total)]
+  count = total
+  let _ = unsafe { hb_ot_var_get_axis_infos(face, 0, &mut count, infos.data_mut()) }
+  [i in infos | VariationAxis {
+    tag: i.tag,
+    min: i.min_value,
+    default: i.default_value,
+    max: i.max_value,
+  }]
+}
+
+/// Shape as the font's instance at these axis values; an axis not named keeps its default.
+pub let set_variations = (font: HbFont, values: []Variation) -> void => {
+  var raw: []HbVariation = [v in values | HbVariation { tag: v.tag, value: v.value }]
+  unsafe { hb_font_set_variations(font.handle, raw.data_mut(), u32(raw.len())) }
+}
+
+/// The font's metric named by an OpenType tag ([METRIC_UNDERLINE_OFFSET] and the rest) at
+/// `size`: its own value where its tables have one, else HarfBuzz's estimate. An offset is up
+/// from the baseline — an underline's is negative.
+pub let font_metric = (font: HbFont, size: f32, metric: u32) -> f32 => {
+  set_size(font, size)
+  var position: i32 = 0
+  unsafe { hb_ot_metrics_get_position_with_fallback(font.handle, metric, &mut position) }
+  f32(position) / FIXED
+}
+
+/// The underline's and strikeout's offsets up from the baseline and their thicknesses:
+/// `hb_ot_metrics_tag_t`'s tags.
+pub const METRIC_UNDERLINE_OFFSET: u32 = 0x756E646F
+pub const METRIC_UNDERLINE_SIZE: u32 = 0x756E6473
+pub const METRIC_STRIKEOUT_OFFSET: u32 = 0x7374726F
+pub const METRIC_STRIKEOUT_SIZE: u32 = 0x73747273
+
+/// How far the glyph the font draws `character` with moves the pen at `size`, or `None` if the
+/// font has none for it.
+pub let advance_of = (font: HbFont, size: f32, character: rune) -> Maybe<f32> => {
+  set_size(font, size)
+  var glyph: u32 = 0
+  if unsafe { hb_font_get_nominal_glyph(
+    font.handle,
+    u32(i32(character)),
+    &mut glyph
+  ) } == 0 {
+    return None
+  }
+  Some(f32(unsafe { hb_font_get_glyph_h_advance(font.handle, glyph) }) / FIXED)
+}
+
 /// Scale the font so a unit of its answers is a unit of `size`'s, in 26.6 fixed point: an em
 /// is `size` units, and a position has six bits of fraction.
 let set_size = (font: HbFont, size: f32) -> void => {
@@ -163,6 +241,24 @@ struct HbGlyphPosition {
   x_offset: i32,
   y_offset: i32,
   var: u32,
+}
+
+/// `hb_ot_var_axis_info_t`.
+struct HbAxisInfo {
+  axis_index: u32 = 0,
+  tag: u32 = 0,
+  name_id: u32 = 0,
+  flags: u32 = 0,
+  min_value: f32 = 0.0,
+  default_value: f32 = 0.0,
+  max_value: f32 = 0.0,
+  reserved: u32 = 0,
+}
+
+/// `hb_variation_t`.
+struct HbVariation {
+  tag: u32,
+  value: f32,
 }
 
 // Every HarfBuzz object crosses as an opaque `^u8`.
@@ -209,3 +305,21 @@ unsafe extern hb_buffer_get_glyph_infos: (buffer: ^u8, length: ^mut u32) -> ^HbG
 @symbol("hb_buffer_get_glyph_positions")
 unsafe extern hb_buffer_get_glyph_positions:
   (buffer: ^u8, length: ^mut u32) -> ^HbGlyphPosition
+@symbol("hb_font_get_face")
+unsafe extern hb_font_get_face: (font: ^u8) -> ^u8
+@symbol("hb_ot_var_get_axis_infos")
+unsafe extern hb_ot_var_get_axis_infos:
+  (face: ^u8, start_offset: u32, axes_count: ^mut u32, axes_array: ^mut HbAxisInfo) -> u32
+@symbol("hb_font_set_variations")
+unsafe extern hb_font_set_variations: (
+  font: ^u8,
+  variations: ^mut HbVariation,
+  length: u32
+) -> void
+@symbol("hb_ot_metrics_get_position_with_fallback")
+unsafe extern hb_ot_metrics_get_position_with_fallback:
+  (font: ^u8, metrics_tag: u32, position: ^mut i32) -> void
+@symbol("hb_font_get_nominal_glyph")
+unsafe extern hb_font_get_nominal_glyph: (font: ^u8, unicode: u32, glyph: ^mut u32) -> i32
+@symbol("hb_font_get_glyph_h_advance")
+unsafe extern hb_font_get_glyph_h_advance: (font: ^u8, glyph: u32) -> i32

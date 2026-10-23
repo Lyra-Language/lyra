@@ -669,9 +669,16 @@ install jpeg-turbo`, Debian `libturbojpeg0-dev`), found through `pkg: "libturboj
 `ui.text`'s shaping and rasterizing, one library each, both reading the same font file.
 `open_hb_font(path, index)` / `shape(font, utf8, size) -> []ShapedGlyph` / `font_extents`:
 HarfBuzz's 26.6 fixed point divided out, so a position is in the units of the size asked for,
-and a glyph's `cluster` is a **byte** offset into the UTF-8 given. `open_ft_font(path, index)`
-/ `render_glyph(font, glyph, pixels) -> Maybe<GlyphBitmap>`: 8-bit coverage, lightly hinted,
-with its bearing from the pen. Both fonts are `@must_release`. **FreeType's glyph slot and
+and a glyph's `cluster` is a **byte** offset into the UTF-8 given; a variable font's axes
+(`variation_axes`, `set_variations`), a metric by its OpenType tag with HarfBuzz's fallback
+(`font_metric`: `METRIC_UNDERLINE_OFFSET` and the rest) and a character's advance
+(`advance_of`). `open_ft_font(path, index)` / `render_glyph(font, glyph, pixels, hinting,
+embolden, oblique) -> Maybe<GlyphBitmap>`: 8-bit coverage with its bearing from the pen,
+hinted as `Hinting` says (`HintNone`, `HintLight` — the default — or `HintFull`), and for a
+face a family lacks emboldened or slanted by FreeType's synthesis (`FT_GlyphSlot_Embolden`,
+`FT_GlyphSlot_Oblique`) before it is rendered; `set_design_coordinates` for a variable
+font's instance. **The two libraries each hold the font's variation**: set both, or HarfBuzz
+shapes one weight while FreeType draws another. Both fonts are `@must_release`. **FreeType's glyph slot and
 its bitmap are read by offset** (`FT_FaceRec.glyph` and three `FT_GlyphSlotRec` fields: no
 function answers them), held to `offsetof` by `TestFreetypeOffsets`. `brew install harfbuzz
 freetype` (Debian `libharfbuzz-dev libfreetype-dev`), found through `pkg: "harfbuzz"` and

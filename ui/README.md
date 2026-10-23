@@ -17,7 +17,7 @@ A root of its own beside `std/` and `bindings/` (`build.sh` links it into `build
 | `ui.backend` | The two seams: `Platform` (window, events, scale, text input, clipboard, cursor) and `Renderer` (`upload`, `update`, `draw(background, ops)`), and `InputEvent`, `Key`, `Modifiers`, `PointerButton`, `Cursor`; `AccessTree`/`AccessNode`/`AccessRole`/`AccessRequest` and `ACCESS_*`, for `Platform.update_access` and the `AccessAction` input; and `NativeFields` (a phone's own text fields placed by identity, edits back as `FieldEdited`), declared and not yet implemented. | no |
 | `ui.gpu` | The `Renderer` on the GPU (`bindings.gpu`: SDL3's GPU API, Metal shaders), and `open` → `GpuWindow { platform, renderer: AnyRenderer }`, the GPU's renderer where there is one and `ui.sdl3`'s where not (or with `LYRA_UI_RENDERER=sdl`); `close`, `on_gpu`, `keep_frames`/`read_frame` (a frame read back), `prepare` (a frame's cost). | SDL3 (GPU) |
 | `ui.sdl3` | Both traits over `bindings.sdl3`: `open` → `SdlWindow { platform, renderer }` (and its pieces, `open_window`, `renderer_for`, `platform_for`, which `ui.gpu` opens with), `close`, and `capture` (a frame read back, for tests). Draws through `SDL_RenderGeometry`, a call a run of ops on one texture (`geometry_calls` counts them); on macOS tells VoiceOver through `bindings.accesskit`. | SDL3, AccessKit |
-| `ui.text` | `Fonts` (font files by family; `add_system_font` tries `SYSTEM_FONTS`), `FontSpec` (family, size, `line_height`), `lay_out` → `TextBlock` (lines of placed glyphs, cached by text, font and width), and `GlyphAtlas`, which renders glyphs into pages — a texture each, `ATLAS_SIZE` texels a side — through `Renderer.update` and answers a `Glyphs` op a page; `next_frame`, which `paint` calls, and `glyph_atlas_sized` for small pages. | HarfBuzz, FreeType |
+| `ui.text` | `Fonts` (a family's faces by weight and style, `add(family, path, index, weight, italic)`; `add_system_font` tries `SYSTEM_FONTS`; `hinting`), `FontSpec` (family, size, `line_height`, `weight`, `italic`), `metrics` → `FontMetrics` (ascent, descent, advance, underline and strikeout), `lay_out` → `TextBlock` (lines of placed glyphs, cached by text, font and width), and `GlyphAtlas`, which renders glyphs into pages — a texture each, `ATLAS_SIZE` texels a side — through `Renderer.update` and answers a `Glyphs` op a page; `next_frame`, which `paint` calls, and `glyph_atlas_sized` for small pages. | HarfBuzz, FreeType |
 | `ui.style` | `Style` (all `Maybe`), `Insets`, `Rule`/`Sheet`, `Theme` (`Palette`, `Spacing`, radius, font, `elements` sheet; `light_theme`, `dark_theme`), its layout properties (sizes, flex's and grid's — `FlexDirection`, `LineWrap`, `Justify`, `ItemAlign`, `Basis`, tracks built by `px`, `fr`, `auto_track`, `min_content`, `max_content`, `minmax`, `repeat_tracks`, `GridSpan`, `GridFlow`), its effects (`box_shadow`, `background_gradient`, `filter_blur`, `backdrop_blur`), and the cascade: `Cascade` settles an element's tag, classes, part and inline style into `Computed`. | no |
 | `ui.layout` | `Node<e>` (kind, tag, class, part, style, children, key, label; `e` the program's event type, `NoEvent` for none) built by `row`, `column`, `flex`, `grid`, `expanded`, `stack`, `positioned`, `padding`, `align`, `sized`, `scroll`, `text`, `image`, `themed`, `component`, `painted` (an element the program draws: a `Painter` asked for `PaintOp`s — `PaintDraw`, `PaintText` — for a `PaintArea`) and the controls `button`, `checkbox`, `slider`, `select`, `text_input`, and `.with_class`/`.with_style`/`.with_part`/`.keyed`/`.labelled`/`.aligned`; `layout`/`layout_with(node, Constraints, fonts, Interaction) -> Laid<e>` (each with its identity, role, label, focus ring and a field's caret) and `paint(laid, origin, scale, fonts, atlas, renderer) -> []DrawOp` (`fonts` `mut`: a painter's text is laid out as it is painted). Flex and grid are in `ui/layout/flex.lyra` and `grid.lyra` (one module, a directory). | no (text through `ui.text`) |
 | `ui.motion` | Transitions' values: `progress` (CSS's timing functions), `blended`/`differs` (each property that animates), `mix_color` (premultiplied), and an element's `Motion` — its target and what is `Moving` towards it — moved on by `advance`; `with_layout`/`layout_key` for the sizes a layout lays out while they move. | no |
@@ -170,6 +170,18 @@ layer — implements the two traits; the display list is the whole contract.
   newest function, so it draws the newest state. **`on_size` is heard before the size is
   painted**: the host raises it after a layout that changed the element's size (by identity)
   and lays out again (`Host.lay_out_view`, at most `SIZE_ROUNDS` times).
+- **Faces are CSS's**: a family is the faces added under its name, each a weight (400
+  regular, 700 bold) and italic or not, and a `FontSpec` is drawn in the one CSS Fonts 4's
+  matching picks — its italic or upright faces as asked if there are any, else the others; then
+  the nearest weight in CSS's order (from 400 to 500 up to 500 first, then down, then above;
+  below 400 down first; above 500 up first). **What the family lacks is made, once**: a
+  variable font with a `wght` axis is its instance at the weight (HarfBuzz's variations and
+  FreeType's design coordinates set together), a bold of 600 or more drawn from a lighter face
+  is emboldened, an italic from an upright one slanted (FreeType's synthesis; the advance
+  unchanged). `metrics(spec, scale)` reads a face's own tables (HarfBuzz's metrics, with its
+  fallbacks), its advance the `M`'s, whole pixels while glyphs are hinted; `MeasureFont` asks it
+  of a host. Glyphs are hinted lightly unless a program sets `Fonts.hinting` — ui.text asks no
+  platform which it is on, so macOS's unhinted look is the program's to choose.
 - **The glyph atlas is pages**: a glyph that fits on none opens one, and past `ATLAS_PAGES`
   the page drawn from least recently is cleared and filled again — never one the frame being
   painted has drawn from, since that frame's ops still show it (a frame needing more pages
@@ -346,6 +358,9 @@ layer — implements the two traits; the display list is the whole contract.
   `TestRun_UiPaintedElement` a painter's area, its ops moved and clipped, its text, the newest
   function on a cached layout, and `on_size` heard before each frame; `TestRun_UiPaintedExample`
   the example's board, a pixel at a time; `TestRun_UiAtlasPages` the atlas's pages opened,
-  emptied (never under the frame that drew from them) and grown, on pages of one glyph each.
+  emptied (never under the frame that drew from them) and grown, on pages of one glyph each;
+  `TestRun_UiFontFaces` CSS's face matching, faces made for what a family lacks, hinting as
+  part of a glyph, metrics through `MeasureFont`, and a variable font's weights where there is
+  one.
   `TestRun_UiFlex` and `TestRun_UiGrid` hold flex and grid to hand-worked CSS results, child
   rect by child rect; `TestLui_UiTargetFlexAndGrid` the markup's layout properties.
