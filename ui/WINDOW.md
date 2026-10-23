@@ -1,6 +1,6 @@
 # What a terminal's window needs of `ui` — design
 
-**Status: proposed 10/23; steps 1–3 built 10/23** (menus native — `App.menus` through `Platform.set_menus` as tagged `NativeMenu`s, reinstalled only on a change of shape, `MenuChosen`, the bar's keys left to it, `menubar.m` waking SDL's wait through `dlsym`; menus drawn — `menu_bar`, `menu_button`, `Spelled` shortcuts spelled by `Viewport.apple`, the app taking every drawn menu's shortcuts, Tab from an open menu moving on from its title; popups — `popup`, `place_floats`, the select's list on them; the content as wide as it needs, laid out twice, as CSS's shrink-to-fit; over the anchor where neither side has room; `examples/ui/popups.lyra`). The second half of `TERMINAL.md`'s step 8: what Termina's window
+**Status: proposed 10/23; steps 1–4 built 10/23** (a tab bar — `tab_bar`, a tab carrying the spec's functions since a builder may call none, the × no control of its own, `overflow-x: hidden` scrolled by the wheel and the selection, the focus kept by a × press; menus native — `App.menus` through `Platform.set_menus` as tagged `NativeMenu`s, reinstalled only on a change of shape, `MenuChosen`, the bar's keys left to it, `menubar.m` waking SDL's wait through `dlsym`; menus drawn — `menu_bar`, `menu_button`, `Spelled` shortcuts spelled by `Viewport.apple`, the app taking every drawn menu's shortcuts, Tab from an open menu moving on from its title; popups — `popup`, `place_floats`, the select's list on them; the content as wide as it needs, laid out twice, as CSS's shrink-to-fit; over the anchor where neither side has room; `examples/ui/popups.lyra`). The second half of `TERMINAL.md`'s step 8: what Termina's window
 still takes from Dear ImGui, now that its tabs run on `ui` (`termina/build/termina-ui`, beside
 the ImGui app). §1 is popups, which the rest stand on; §2 menus, §3 a tab bar, §4 the
 window's own controls and title bar, §5 a file dialog, §6 colour, §7 the smaller pieces and
@@ -226,7 +226,8 @@ Termina moves at the end.
 3. **Menus native**: `App.menus` installed through `bindings.menubar` on a Mac, synced,
    reinstalled on a change of shape; `menubar.m` pushing its event. Checked by a test that
    installs and reads back, as Termina's `menutest` does. **Built 10/23.**
-4. **The tab bar**: order by `on_move`, keys, closing, shrinking and scrolling.
+4. **The tab bar**: order by `on_move`, keys, closing, shrinking and scrolling. **Built
+   10/23**; its lui element waits for step 8.
 5. **The window**: the commands, `OnWindowState`, `DrawnTitleBar` with its hit-test shim and
    `window_buttons` (Linux; a Mac keeps the system's).
 6. **`ChooseFile`** and its shim; a script's `choose:`.

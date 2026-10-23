@@ -1,0 +1,182 @@
+module ui.layout
+//! A tab bar (`ui/WINDOW.md` §3): [tab_bar] over a [TabsSpec] — the tabs, the one selected, and
+//! what selecting, closing and dragging one raise.
+//!
+//! **The order is the program's.** A drag raises `on_move(from, to)` as the tab passes half of
+//! its neighbour, and the program reorders its own list, so the strip, its shortcuts and its
+//! menus never disagree about it. A tab is keyed by its [TabSpec.key], so a title that changes
+//! moves neither its framework state nor its place in the cache; a tab that is not `movable`
+//! neither moves nor is passed by one that is.
+//!
+//! **Widths**: each tab as wide as its label (and its ×), up to [TAB_MOST]; past the strip's
+//! width they shrink together, each to no less than [TAB_LEAST], and then the strip scrolls
+//! across — the selected tab scrolled into view when it changes, the wheel either way scrolling
+//! it (`ui.interact`), no bar shown. A label too long for its tab is clipped, not wrapped.
+
+import ui.style.{ OverflowHidden }
+
+/// What a tab bar shows and raises: its tabs in order; the one selected, by place; the events
+/// for selecting, closing and moving a tab (from its place to another); and what follows the
+/// tabs in the strip — a `+`, a menu button.
+pub struct TabsSpec<e> {
+  tabs: []TabSpec,
+  selected: i64,
+  on_select: (i64) -> e,
+  on_close: (i64) -> e,
+  on_move: (i64, i64) -> e,
+  after: []Node<e> = [],
+}
+
+/// A tab: its label, the key standing for it (its identity, whatever its place or label),
+/// whether it has a × to close it, and whether it may be dragged to another place.
+pub struct TabSpec {
+  label: string,
+  key: string,
+  closable: bool = true,
+  movable: bool = true,
+}
+
+/// What a tab of a strip is to the framework: its place, whether it is selected, closable and
+/// movable, and the strip's functions making the events selecting, closing and moving a tab
+/// raise — called with its place as it is pressed (`ui.interact`), since a builder, pure, may
+/// call none.
+pub struct TabSpot<e> {
+  index: i64,
+  selected: bool,
+  closable: bool,
+  movable: bool,
+  on_select: (i64) -> e,
+  on_close: (i64) -> e,
+  on_move: (i64, i64) -> e,
+}
+
+/// The narrowest a tab shrinks to, and the widest it grows to.
+pub const TAB_LEAST: f32 = 64.0
+pub const TAB_MOST: f32 = 220.0
+
+/// A tab bar (`TabBar`): each tab (`Tab`, `:checked` the selected) its label and, closable, a ×
+/// (`TabClose`), then `spec.after`. A press on a tab selects it, on its × closes it, and a
+/// middle click on it closes it; a drag moves it among the movable tabs; while a tab has the
+/// focus, Enter or Space selects it and Left, Right, Home and End select another.
+pub let tab_bar<e> = pure (spec: TabsSpec<e>) -> Node<e> => {
+  let kind: Kind<e> = TabStrip
+  Node {
+    kind: kind,
+    tag: "TabBar",
+    // Scrolled by the program (its selected tab kept in view) and the wheel (`ui.interact`), but
+    // showing no bar: CSS's `hidden`.
+    style: Style { overflow_x: Some(OverflowHidden) },
+    children: [...[i in 0..<spec.tabs.len() | tab_node(spec, i)], ...spec.after],
+  }
+}
+
+/// Tab `i` of `spec`: its label clipped to its width, and its ×.
+let tab_node<e> = pure (spec: TabsSpec<e>, i: i64) -> Node<e> => {
+  let t = spec.tabs[i]
+  // Laid out at its whole width and clipped there, never wrapped.
+  let label = scroll::<e>(Horizontal, 0.0, text::<e>(t.label))
+    .with_style(Style { overflow_x: Some(OverflowClip) })
+    .with_part("label")
+  // Not a control of its own: a press on it is the tab's, which closes it (`ui.interact`).
+  let mark = text::<e>("×")
+  let close: []Node<e> = if t.closable { [Node { mark | tag: "TabClose" }] } else { [] }
+  let kind: Kind<e> = Tabbed(TabSpot {
+    index: i,
+    selected: i == spec.selected,
+    closable: t.closable,
+    movable: t.movable,
+    on_select: spec.on_select,
+    on_close: spec.on_close,
+    on_move: spec.on_move,
+  })
+  Node {
+    kind: kind,
+    tag: "Tab",
+    key: t.key,
+    label: t.label,
+    children: [row::<e>([expanded::<e>(label), ...close]).with_style(Style { gap: Some(6.0) })],
+  }
+}
+
+/// A strip's children along it: its tabs as wide as they need up to [TAB_MOST], shrunk together
+/// toward [TAB_LEAST] where the strip is narrower than they and what follows them, each as tall
+/// as the tallest; then what follows, at its own width. Wider than the strip, it scrolls.
+let lay_tab_strip<e> = (
+  children: []Node<e>,
+  c: Constraints,
+  ctx: Ctx,
+  fonts: mut Fonts,
+  cache: mut LayoutCache<e>
+) -> Body<e> => {
+  let gap = ctx.gap
+  // Each as it would be with all the width it wants.
+  var natural: []Laid<e> = []
+  for i, child in children {
+    natural.push(lay(
+      child,
+      Constraints { max_h: c.max_h },
+      ctx.cascade,
+      fonts,
+      ctx.ui,
+      child_id(ctx.id, child, i),
+      cache
+    ))
+  }
+  var height: f32 = 0.0
+  var others: f32 = 0.0
+  var wants: []f32 = []
+  for i, child in children {
+    height = height.max(natural[i].size.h)
+    if is_tab(child.kind) { wants.push(natural[i].size.w.min(TAB_MOST)) } else { others += natural[i].size.w }
+  }
+  let gaps = gap * f32((children.len() - 1).max(0))
+  let left = if c.bounded_w() { c.max_w - others - gaps } else { UNBOUNDED }
+  let widths = shrunk(wants, left)
+  var placed: []Placed<e> = []
+  var x: f32 = 0.0
+  var k = 0
+  for i, child in children {
+    let laid = if is_tab(child.kind) {
+      let w = widths[k]
+      k += 1
+      lay(
+        child,
+        Constraints { min_w: w, max_w: w, min_h: height, max_h: height },
+        ctx.cascade,
+        fonts,
+        ctx.ui,
+        child_id(ctx.id, child, i),
+        cache
+      )
+    } else {
+      natural[i]
+    }
+    placed.push(Placed {
+      at: Point { x: x, y: (height - laid.size.h) / 2.0 },
+      laid: laid
+    })
+    x += laid.size.w + gap
+  }
+  Body { size: Size { w: (x - gap).max(0.0), h: height }, children: placed }
+}
+
+/// `wants` made to fit `room` where they do not: each shrunk by its share of what they are over,
+/// in proportion to how far it is above [TAB_LEAST], and none below it (or below what it wants,
+/// where that is less) — so they may still be wider than the room, and the strip scrolls.
+let shrunk = pure (wants: []f32, room: f32) -> []f32 => {
+  var total: f32 = 0.0
+  var spare: f32 = 0.0
+  for w in wants {
+    total += w
+    spare += (w - TAB_LEAST).max(0.0)
+  }
+  if total <= room || spare <= 0.0 { return wants }
+  let over = (total - room).min(spare)
+  [w in wants | w - over * (w - TAB_LEAST).max(0.0) / spare]
+}
+
+/// Whether a node of `kind` is a tab.
+let is_tab<e> = pure (kind: Kind<e>) -> bool => match kind {
+  Tabbed(_) => true,
+  _ => false,
+}

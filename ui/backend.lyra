@@ -163,6 +163,8 @@ pub data AccessRole =
   | AxComboBox
   | AxListBox
   | AxOption
+  | AxTabList
+  | AxTab
   | AxContainer
 
 /// What assistive technology asks of an element.

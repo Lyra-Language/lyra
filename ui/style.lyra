@@ -624,6 +624,20 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
   Rule { selector: "MenuItem::shortcut", style: Style { opacity: Some(0.6) } },
   Rule { selector: "MenuItem::arrow", style: Style { background: Some(faded(c.text, 0.6)) } },
   Rule { selector: "MenuSeparator", style: Style { background: Some(c.border) } },
+  // A tab bar: quiet tabs on the page, the selected one raised on the surface; each × faint
+  // until the pointer is over it.
+  Rule { selector: "TabBar", style: Style { gap: Some(2.0), padding: Some(insets(2.0)) } },
+  Rule {
+    selector: "Tab",
+    style: Style { padding: Some(insets_xy(10.0, 5.0)), radius: Some(6.0), color: Some(faded(c.text, 0.75)) },
+  },
+  Rule { selector: "Tab:hover", style: Style { background: Some(faded(c.text, 0.06)) } },
+  Rule {
+    selector: "Tab:checked",
+    style: Style { background: Some(c.surface), color: Some(c.text), border_color: Some(c.border), border_width: Some(1.0) },
+  },
+  Rule { selector: "TabClose", style: Style { padding: Some(insets_xy(4.0, 0.0)), radius: Some(3.0), opacity: Some(0.45) } },
+  Rule { selector: "TabClose:hover", style: Style { background: Some(faded(c.text, 0.12)), opacity: Some(1.0) } },
 ]
 
 /// A scroller's bars, drawn over its content's edge: a faint track and a thumb the text's

@@ -172,6 +172,10 @@ pub data Kind<e> =
   | Opens(MenuSpec<e>)
   /// A shortcut's text, spelled as the platform spells it ([chord_text]).
   | Spelled(Chord)
+  /// A tab bar's strip ([tab_bar]): its tabs, then what follows them, along it.
+  | TabStrip
+  /// A tab of a tab bar.
+  | Tabbed(TabSpot<e>)
   /// A one-line text field.
   | Editable(FieldSpec<e>)
   /// A flex container (CSS's flexbox), laid out by its computed style: direction, wrap,
@@ -309,6 +313,8 @@ pub data Role =
   | ComboBoxRole
   | ListBoxRole
   | OptionRole
+  | TabListRole
+  | TabRole
 
 /// A row's axis or a column's.
 pub data Axis = Horizontal | Vertical
@@ -674,6 +680,16 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
   PopsUp(open, side, dismissed) => PopsUp(open, side, f(dismissed)),
   Opens(spec) => Opens(MenuSpec { entries: mapped_entries(spec.entries, f), side: spec.side, in_bar: spec.in_bar }),
   Spelled(chord) => Spelled(chord),
+  TabStrip => TabStrip,
+  Tabbed(spot) => Tabbed(TabSpot {
+    index: spot.index,
+    selected: spot.selected,
+    closable: spot.closable,
+    movable: spot.movable,
+    on_select: (i: i64) -> b => f((spot.on_select)(i)),
+    on_close: (i: i64) -> b => f((spot.on_close)(i)),
+    on_move: (from: i64, to: i64) -> b => f((spot.on_move)(from, to)),
+  }),
   Editable(spec) => Editable(FieldSpec {
     value: spec.value,
     placeholder: spec.placeholder,
@@ -1233,6 +1249,9 @@ let same_kind<e> = (a: Kind<e>, b: Kind<e>, theme: Theme) -> bool => match (a, b
   (Opens(m1), Opens(m2)) =>
     m1.side == m2.side && m1.in_bar == m2.in_bar && same_entries(m1.entries, m2.entries),
   (Spelled(c1), Spelled(c2)) => c1 == c2,
+  (TabStrip, TabStrip) => true,
+  (Tabbed(t1), Tabbed(t2)) =>
+    t1.index == t2.index && t1.selected == t2.selected && t1.closable == t2.closable && t1.movable == t2.movable,
   (Flexbox, Flexbox) => true,
   (Gridbox, Gridbox) => true,
   // What a painter draws is asked at paint, not kept with the layout: its box lays out alike.
@@ -1255,6 +1274,7 @@ pub let focusable<e> = pure (kind: Kind<e>) -> bool => match kind {
   Editable(_) => true,
   Choosing(_) => true,
   Opens(_) => true,
+  Tabbed(_) => true,
   Painted(painter) => painter.input.is_some(),
   _ => false,
 }
@@ -1356,6 +1376,7 @@ let lay_fresh<e> = (
     PopsUp(open, side, _) =>
       lay_popup(node.children, open, side, inner, ctx, fonts, cache),
     Opens(spec) => lay_opens(node.children, spec, inner, ctx, fonts, cache),
+    TabStrip => lay_tab_strip(node.children, inner, ctx, fonts, cache),
     Spelled(chord) => {
       let block = fonts.lay_out(
         chord_text(chord, ui.viewport.apple),
@@ -1753,11 +1774,13 @@ let with_state = pure (classes: string, id: string, ui: Interaction) -> string =
   out
 }
 
-/// `classes` with the states `node` itself says it is in: `:checked` for a ticked checkbox, a
+/// `classes` with the states `node` itself says it is in: `:checked` for a ticked checkbox or the
+/// selected tab, a
 /// field `:read-only` or `:read-write`, and a control `:disabled` or `:enabled`.
 let with_own_state<e> = pure (classes: string, node: Node<e>) -> string => {
   var states: []string = []
   if let Checkable(true, _) = node.kind { states.push(":checked") }
+  if let Tabbed(spot) = node.kind { if spot.selected { states.push(":checked") } }
   if let Editable(spec) = node.kind { states.push(if spec.read_only { ":read-only" } else { ":read-write" }) }
   if node.disabled { states.push(":disabled") } else if focusable(node.kind) { states.push(":enabled") }
   if states.len() == 0 { return classes }
@@ -1774,6 +1797,8 @@ let role_of<e> = pure (kind: Kind<e>) -> Role => match kind {
   Words(_) => TextRole,
   Spelled(_) => TextRole,
   Opens(_) => ButtonRole,
+  TabStrip => TabListRole,
+  Tabbed(_) => TabRole,
   Texels(_, _, _) => ImageRole,
   Scrolls(_, _) => ScrollRole,
   Flow(_, _, _) => GroupRole,

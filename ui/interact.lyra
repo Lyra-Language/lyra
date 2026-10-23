@@ -55,6 +55,7 @@ import ui.backend.{
   TextComposing,
   WindowUnfocused,
   Primary,
+  Middle,
   Key,
   Modifiers,
   Enter,
@@ -106,6 +107,9 @@ import ui.layout.{
   Choosing,
   PopsUp,
   Opens,
+  Tabbed,
+  TabSpot,
+  TabStrip,
   Painted,
   RawInput,
   KeyInput,
@@ -170,6 +174,8 @@ pub struct Ui {
   /// Whether the deepest open menu's first item takes the focus once it is laid out — a menu
   /// opened from the keyboard.
   menu_first: bool = false,
+  /// The tabs selected at the last frame: one selected since is scrolled into view.
+  tabs_selected: []string = [],
 }
 
 /// A popup open at a frame, by its identity and its anchor's and content's.
@@ -291,6 +297,13 @@ impl Ui {
         false
       )
     }
+    // A tab selected since the last frame — by a press, a key or the program — into view in its
+    // strip.
+    let chosen_tabs = selected_tabs(laid)
+    for id in chosen_tabs {
+      if !self.tabs_selected.contains(id) && self.reveal_wanted.len() == 0 { self.reveal_wanted = id }
+    }
+    self.tabs_selected = chosen_tabs
     // An element asked to be in view, scrolled there — and the tree laid out again with it.
     if self.reveal_wanted.len() > 0 {
       let wanted = self.reveal_wanted
@@ -596,6 +609,32 @@ impl Ui {
     }
   }
 
+  /// A key for the focused tab `tab`: Enter or Space selects it; Left and Right the tab before
+  /// or after it in its strip, Home and End the first and last — the focus going with them.
+  let tab_key<e> = (
+    self: mut,
+    laid: Laid<e>,
+    tab: Found<e>,
+    spot: TabSpot<e>,
+    key: Key
+  ) -> []e => {
+    if key == Enter || key == Character(' ') { return if spot.selected { [] } else { [(spot.on_select)(spot.index)] } }
+    let tabs = strip_tabs(laid, tab.laid.id)
+    let Some(at) = [t in tabs | t.laid.id].index_of(tab.laid.id) else { return [] }
+    let to = match key {
+      ArrowLeft => at - 1,
+      ArrowRight => at + 1,
+      Home => 0,
+      End => tabs.len() - 1,
+      _ => at,
+    }
+    if to == at || to < 0 || to >= tabs.len() { return [] }
+    let Some(next) = tab_spot(tabs[to].laid) else { return [] }
+    self.state.focus = tabs[to].laid.id
+    self.state.keyboard_focus = true
+    if next.selected { [] } else { [(next.on_select)(next.index)] }
+  }
+
   /// The focus `by` items along the menu the opener identified as `opener` opens, wrapping;
   /// from outside it, to its first item (or last, going up). The item scrolls into view.
   let step_menu<e> = (self: mut, laid: Laid<e>, opener: string, by: i64) -> void => {
@@ -696,6 +735,8 @@ impl Ui {
       self.pointer_moved(laid, at)
     },
     PointerDown(Primary, at, clicks) => self.pointer_down(laid, at, clicks),
+    // A middle click on a tab closes it, as browsers have it.
+    PointerDown(Middle, at, _) => middle_on_tab(laid, at),
     PointerUp(Primary, at) => self.pointer_up(laid, at),
     Scrolled(across, down) => {
       self.scrolled(laid, across, down)
@@ -969,6 +1010,7 @@ impl Ui {
     let Some(held) = find(laid, self.state.pressed, Point {}) else { return [] }
     match held.laid.kind {
       Ranged(spec) => slide_to(held, spec, at),
+      Tabbed(spot) => tab_dragged(laid, held, spot, at),
       Editable(_) => {
         // A drag extends what the press picked by the same unit: a rune, a word, or (after a
         // triple click) nothing more than the whole.
@@ -1016,11 +1058,16 @@ impl Ui {
       self.state.pressed = ""
       return []
     }
+    // A tab's ×: the tab closes, the press and the focus left where they were.
+    if let Tabbed(spot) = target.laid.kind {
+      if on_tab_close(laid, target, at) { return [(spot.on_close)(spot.index)] }
+    }
     self.state.pressed = target.laid.id
     self.state.focus = target.laid.id
     self.state.keyboard_focus = false
     match target.laid.kind {
       Ranged(spec) => slide_to(target, spec, at),
+      Tabbed(spot) => tab_pressed(spot),
       Choosing(spec) => {
         self.open_select(target.laid.id, spec)
         []
@@ -1132,6 +1179,16 @@ impl Ui {
   /// cannot — as a browser does.
   let scrolled<e> = (self: mut, laid: Laid<e>, across: f32, down: f32) -> void => {
     let path = hit(laid, self.pointer)
+    // A tab strip, which shows no bar, scrolls across by the wheel either way: a mouse's wheel
+    // only turns down.
+    for f in path {
+      if let TabStrip = f.laid.kind {
+        if let Some(sc) = f.laid.scroller {
+          let _ = self.scroll_by(f.laid.id, sc, Horizontal, (across + down) * SCROLL_LINE)
+          return
+        }
+      }
+    }
     let moves: [](Axis, f32) = [(Horizontal, across), (Vertical, down)]
     for (axis, by) in moves {
       if by.abs() < 0.0001 { continue }
@@ -1318,6 +1375,7 @@ impl Ui {
         Editable(_) => true,
         Choosing(_) => true,
         Opens(_) => true,
+        Tabbed(_) => true,
         _ => false,
       },
       None => false,
@@ -1332,6 +1390,7 @@ impl Ui {
       Ranged(spec) => step_slider(spec, key),
       Editable(_) => self.field_key(focused, key, mods, platform),
       Choosing(spec) => self.select_key(focused.laid.id, spec, key, mods),
+      Tabbed(spot) => self.tab_key(laid, focused, spot, key),
       // A focused opener: Enter, Space or Down opens its menu, the focus to its first item.
       Opens(_) => {
         if key == Enter || key == Character(' ') || key == ArrowDown {
@@ -1795,6 +1854,94 @@ let first_control<e> = pure (laid: Laid<e>, id: string) -> Maybe<string> => {
   var order: []string = []
   focus_order(found.laid, order)
   if order.len() == 0 { None } else { Some(order[0]) }
+}
+
+/// A press on the tab `tab` (not its ×): its selection, unless it is selected already.
+let tab_pressed<e> = (spot: TabSpot<e>) -> []e =>
+  if spot.selected { [] } else { [(spot.on_select)(spot.index)] }
+
+/// Whether `at` is on the × (`TabClose`) of the tab `tab`.
+let on_tab_close<e> = pure (laid: Laid<e>, tab: Found<e>, at: Point) -> bool =>
+  hit(laid, at).any((f) => f.laid.tag == "TabClose" && within_id(f.laid.id, tab.laid.id))
+
+/// The pointer at `at` while the tab `tab` is held: past the middle of the movable tab after it
+/// or before it, the tab moves to that one's place. The program moves it; the press stays on it,
+/// its identity its key's.
+let tab_dragged<e> = (
+  laid: Laid<e>,
+  tab: Found<e>,
+  spot: TabSpot<e>,
+  at: Point
+) -> []e => {
+  if !spot.movable { return [] }
+  let tabs = strip_tabs(laid, tab.laid.id)
+  let Some(me) = [t in tabs | t.laid.id].index_of(tab.laid.id) else { return [] }
+  if me + 1 < tabs.len() {
+    let next = tabs[me + 1]
+    if let Some(other) = tab_spot(next.laid) {
+      if other.movable && at.x > next.origin.x + next.laid.size.w / 2.0 {
+        return [(spot.on_move)(spot.index, other.index)]
+      }
+    }
+  }
+  if me > 0 {
+    let before = tabs[me - 1]
+    if let Some(other) = tab_spot(before.laid) {
+      if other.movable && at.x < before.origin.x + before.laid.size.w / 2.0 {
+        return [(spot.on_move)(spot.index, other.index)]
+      }
+    }
+  }
+  []
+}
+
+/// A middle click at `at`: on a closable tab, its closing.
+let middle_on_tab<e> = (laid: Laid<e>, at: Point) -> []e => {
+  let path = hit(laid, at)
+  var i = path.len() - 1
+  while i >= 0 {
+    if let Some(spot) = tab_spot(path[i].laid) {
+      return if spot.closable { [(spot.on_close)(spot.index)] } else { [] }
+    }
+    i -= 1
+  }
+  []
+}
+
+/// The tabs of the strip holding the tab identified as `id`, in order, each where it is.
+let strip_tabs<e> = pure (laid: Laid<e>, id: string) -> []Found<e> => {
+  let Some(strip) = find(laid, parent_of(id), Point {}) else { return [] }
+  var out: []Found<e> = []
+  for child in strip.laid.children {
+    if tab_spot(child.laid).is_some() {
+      out.push(Found {
+        laid: child.laid,
+        origin: Point { x: strip.origin.x + child.at.x, y: strip.origin.y + child.at.y }
+      })
+    }
+  }
+  out
+}
+
+/// What `laid` is as a tab, if it is one.
+let tab_spot<e> = pure (laid: Laid<e>) -> Maybe<TabSpot<e>> => match laid.kind {
+  Tabbed(spot) => Some(spot),
+  _ => None,
+}
+
+/// The identities of the tabs selected in `laid`, each strip's.
+let selected_tabs<e> = pure (laid: Laid<e>) -> []string => {
+  var out: []string = []
+  gather_selected(laid, out)
+  out
+}
+
+let gather_selected<e> = (laid: Laid<e>, out: mut []string) -> void => {
+  if let Tabbed(spot) = laid.kind {
+    if spot.selected { out.push(laid.id) }
+    return
+  }
+  for child in laid.children { gather_selected(child.laid, out) }
 }
 
 /// The identities of the items, in order, of the menu the opener identified as `opener` opens

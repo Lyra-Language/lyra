@@ -9,6 +9,25 @@ Newest first.
 
 ## Dated log
 
+### 10/23/26 — `ui`: a tab bar
+
+- **`tab_bar(TabsSpec { … })`** (`ui/WINDOW.md` step 4): the order is the program's — a drag
+  past half of a movable neighbour raises `on_move(from, to)` and the program reorders its list
+  — which retires ImGui's way, where the bar kept the order and Termina read it back each frame.
+  A tab is keyed by its `TabSpec.key`, so the press stays on it as it moves and a changing title
+  keeps its place in the cache.
+- **A tab carries the spec's functions, not events** (`TabSpot`): a builder is pure, and a pure
+  function may call no stored function, so the events are made as a tab is pressed, with its
+  place. For the same reason the × is no control of its own (`TabClose`), looked up through the
+  press on its tab — which closes without moving the focus, where a press took it to the tab
+  being closed and then nowhere.
+- **Widths**: laid out once at their own widths, then shrunk together in proportion to what each
+  has above `TAB_LEAST` (`shrunk`); a label is clipped, not wrapped (a horizontal scroll with
+  `overflow-x: clip`). Past the least the strip scrolls with **`overflow-x: hidden`**: no bar —
+  which drew over the strip's foot — but the program's scrolling, which keeps a newly selected
+  tab in view (`Ui.tabs_selected`), and the wheel, either way, as a mouse's only turns down.
+- Tab and tab-list roles through to AccessKit (`AxTab`, `AxTabList`, codes 13 and 14).
+
 ### 10/23/26 — `ui`: menus in the Mac's own bar
 
 - **`App.menus`** (`ui/WINDOW.md` step 3): the host builds the state's menus each pass and

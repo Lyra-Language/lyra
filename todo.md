@@ -702,8 +702,11 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] What a terminal's window needs of `ui`** — popups, menus (drawn, and native on a
   Mac), a tab bar, the window's controls and a drawn title bar, a file dialog, colour; designed
   in `ui/WINDOW.md` (10/23), the rest of Termina's move off ImGui. Steps 1 (popups, the
-  select's list on them), 2 (menus drawn) and 3 (menus native on a Mac) built 10/23; next the
-  tab bar (step 4).
+  select's list on them), 2 (menus drawn), 3 (menus native on a Mac) and 4 (the tab bar) built
+  10/23; next the window's controls and a drawn title bar (step 5).
+- **[OPEN] `ui`: a tab's label is clipped bare**, its last letters cut where it shrinks
+  ("Docu"); an ellipsis, or a fade at the edge, would say there is more. Text has no
+  `text-overflow` yet.
 - **[OPEN] `ui` focuses nothing at start, and `App` has no first command.** termina-ui asks
   `FocusKeyed` from its painter's first `on_size`; an `App.start: []Command<e>`, or an
   `autofocus` on an element, would say it directly.
@@ -847,7 +850,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   (`ui/WINDOW.md` step 1, COMPLETED.md 10/23).
 - **[OPEN] `ui`: AccessKit is not told a select is expanded, nor what a popup or a menu is** —
   an open popup's content is heard as its elements, with no dialog role around them, and a
-  menu bar, its menus and items as buttons, not AccessKit's menu roles.
+  menu bar, its menus and items as buttons, not AccessKit's menu roles; a tab list's selected
+  tab is not said to be (AccessKit's `selected`, which `AccessNode` has no field for).
 - **[OPEN] `ui`: a disabled control is not told to assistive technology** (AccessKit's
   `disabled` flag), nor disabled through its ancestors (CSS's disabled `fieldset`).
 - **[OPEN] `ui.interact`: a caret moves by rune, not grapheme cluster.** `é` written as `e`

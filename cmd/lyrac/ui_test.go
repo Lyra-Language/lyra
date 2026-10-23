@@ -665,6 +665,8 @@ import ui.layout.{
   ComboBoxRole,
   ListBoxRole,
   OptionRole,
+  TabListRole,
+  TabRole,
   FieldSpec,
   SliderSpec,
   Vertical,
@@ -886,6 +888,8 @@ let role_name = pure (role: Role) -> string => match role {
   ComboBoxRole => "combo box",
   ListBoxRole => "list box",
   OptionRole => "option",
+  TabListRole => "tab list",
+  TabRole => "tab",
 }
 `)
 	want := `hits a,c,b,c
@@ -1429,7 +1433,7 @@ func TestRun_UiAccessibilityTree(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ sandbox, host_of }
 import ui.script.{ script_platform, ScriptPlatform }
-import ui.backend.{ AxWindow, AxGroup, AxLabel, AxImage, AxButton, AxCheckbox, AxSlider, AxTextInput, AxScroll, AxComboBox, AxListBox, AxOption, AxContainer, Renderer, InputEvent, AccessAction, AccessTree, AccessNode, AxSetValue, AxClick, AxIncrement, AxFocus, AxSetNumber }
+import ui.backend.{ AxWindow, AxGroup, AxLabel, AxImage, AxButton, AxCheckbox, AxSlider, AxTextInput, AxScroll, AxComboBox, AxListBox, AxOption, AxTabList, AxTab, AxContainer, Renderer, InputEvent, AccessAction, AccessTree, AccessNode, AxSetValue, AxClick, AxIncrement, AxFocus, AxSetNumber }
 import ui.access.{ access_node }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new, Fonts }
@@ -1547,6 +1551,8 @@ let role_name = pure (node: AccessNode) -> string => match node.role {
   AxComboBox => "combo box",
   AxListBox => "list box",
   AxOption => "option",
+  AxTabList => "tab list",
+  AxTab => "tab",
   AxContainer => "container",
 }
 `)
@@ -4254,6 +4260,290 @@ no menus: 0 handed over
 `
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A tab bar (WINDOW.md §3): tabs as wide as their labels where they fit; shrunk together, none
+// below TAB_LEAST, where they do not; past that the strip scrolls, the selected tab scrolled into
+// view as it changes, and the wheel (down, as a mouse's turns) scrolls it across — it shows no
+// bar. A press selects a tab, on its × closes it — the focus left where it was — a middle click closes one (not
+// Home, which is not closable); a drag past a neighbour's middle moves it, never past Home, which
+// is not movable, and the press stays on the tab through the move; the arrows, Home and End
+// select along the strip with the focus. Heard as a tab list of tabs.
+func TestRun_UiTabs(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new, find, Found }
+import ui.script.{ script_platform, ScriptPlatform }
+import ui.backend.{ InputEvent, PointerMoved, PointerDown, PointerUp, Primary, Middle, KeyPressed, Scrolled, Key, Modifiers, ArrowRight, Home, End, AxTabList, AxTab }
+import ui.access.{ access_tree }
+import ui.draw.{ Size, Point, Rect }
+import ui.text.{ Fonts, fonts_new }
+import ui.style.{ light_theme, Sheet }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, button, themed, tight, TabsSpec, TabSpec, tab_bar, Tabbed, TabStrip, TAB_LEAST, TAB_MOST }
+
+data Ev = Selected(i64) | Closed(i64) | Moved(i64, i64) | Added
+
+struct Run {
+  ui: Ui,
+  cache: LayoutCache<Ev>,
+  platform: ScriptPlatform,
+  names: []string = [],
+  selected: i64 = 0,
+  events: []string = [],
+}
+
+const W: f32 = 600.0
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var run = Run { ui: ui_new(), cache: layout_cache(), platform: script_platform([], Size { w: W, h: 200.0 }) }
+  var own: f32 = 0.0
+  for n in [4, 8, 16] {
+    run.names = ["Home", ...[i in 1..<n | "Document ${i}"]]
+    run.selected = 0
+    own = widths(run, fonts, "${n} tabs", own)
+  }
+  run.selected = 15
+  let _ = widths(run, fonts, "16 tabs, the last selected", own)
+  play(run, fonts, [PointerMoved(tab_middle(run, fonts, 15)), Scrolled(0.0, -40.0)])
+  let back = match strip_of(laid_out(run, fonts), Point {}) {
+    Some(f) => match f.laid.scroller {
+      Some(sc) => sc.offset.x < 0.5 && sc.content.w > sc.port.w,
+      None => false,
+    },
+    None => false,
+  }
+  println("the wheel turned up over the strip: scrolled back to its start ${back}")
+
+  run.names = ["Home", "One", "Two", "Three", "Four"]
+  run.selected = 0
+  play(run, fonts, click(tab_middle(run, fonts, 2)))
+  say(run, fonts, "press Two")
+  play(run, fonts, click(close_middle(run, fonts, 3)))
+  say(run, fonts, "press Three's ×")
+  play(run, fonts, [PointerDown(Middle, tab_middle(run, fonts, 1), 1), PointerUp(Middle, tab_middle(run, fonts, 1))])
+  say(run, fonts, "middle click One")
+  play(run, fonts, [PointerDown(Middle, tab_middle(run, fonts, 0), 1), PointerUp(Middle, tab_middle(run, fonts, 0))])
+  say(run, fonts, "middle click Home")
+
+  run.names = ["Home", "One", "Two", "Three"]
+  run.selected = 0
+  let one = tab_middle(run, fonts, 1)
+  let past_two = Point { x: box_of(run, fonts, 2).x + box_of(run, fonts, 2).w * 0.75, y: one.y }
+  let past_three = Point { x: box_of(run, fonts, 3).x + box_of(run, fonts, 3).w * 0.75, y: one.y }
+  play(run, fonts, [PointerMoved(one), PointerDown(Primary, one, 1), PointerMoved(past_two), PointerMoved(past_three), PointerUp(Primary, past_three)])
+  say(run, fonts, "drag One past Two and Three")
+  let three = tab_middle(run, fonts, 2)
+  let on_home = tab_middle(run, fonts, 0)
+  play(run, fonts, [PointerMoved(three), PointerDown(Primary, three, 1), PointerMoved(on_home), PointerUp(Primary, on_home)])
+  // Past Two's middle first, which it takes the place of; Home it never passes.
+  say(run, fonts, "drag Three onto Home")
+
+  play(run, fonts, click(tab_middle(run, fonts, 2)))
+  play(run, fonts, key(ArrowRight))
+  say(run, fonts, "press the third tab, Right")
+  play(run, fonts, key(Home))
+  say(run, fonts, "Home")
+  play(run, fonts, key(End))
+  say(run, fonts, "End")
+
+  let heard = access_tree(laid_out(run, fonts), run.ui.state.focus)
+  var tabs = 0
+  for n in heard.nodes {
+    match n.role {
+      AxTabList => println("heard: a tab list of ${n.children.len()} (the tabs and +)"),
+      AxTab => { tabs += 1 },
+      _ => {},
+    }
+  }
+  println("heard: ${tabs} tabs")
+  0
+}
+
+/// How the strip laid the tabs out — whether the documents' tabs (Home's label is shorter than
+/// TAB_LEAST, and never grows to it) are narrower than own, the widest they were with room,
+/// and none below TAB_LEAST; whether it scrolls; whether the selected tab is in view — and the
+/// widest document's tab.
+let widths = (run: mut Run, fonts: mut Fonts, name: string, own: f32) -> f32 => {
+  let laid = laid_out(run, fonts)
+  let Some(strip) = strip_of(laid, Point {}) else { return 0.0 }
+  var least = TAB_MOST
+  var widest: f32 = 0.0
+  var seen = false
+  for child in strip.laid.children {
+    if let Tabbed(spot) = child.laid.kind {
+      if spot.index > 0 {
+        least = least.min(child.laid.size.w)
+        widest = widest.max(child.laid.size.w)
+      }
+      if spot.selected {
+        let x = child.at.x
+        seen = x >= -0.5 && x + child.laid.size.w <= strip.laid.size.w + 0.5
+      }
+    }
+  }
+  let scrolls = match strip.laid.scroller {
+    Some(sc) => sc.content.w > sc.port.w + 0.5,
+    None => false,
+  }
+  let shrunk = own > 0.0 && widest < own - 0.5
+  println("${name}: narrowest ${if least >= TAB_LEAST - 0.5 { "at least TAB_LEAST" } else { "below TAB_LEAST" }}, shrunk ${shrunk}, scrolls ${scrolls}, the selected in view ${seen}")
+  if own > 0.0 { own } else { widest }
+}
+
+let play = (run: mut Run, fonts: mut Fonts, inputs: []InputEvent) -> void => {
+  for input in inputs {
+    let laid = laid_out(run, fonts)
+    for e in run.ui.handle(laid, input, run.platform) {
+      match e {
+        Selected(i) => {
+          run.events.push("Selected(${i})")
+          run.selected = i
+        },
+        Closed(i) => {
+          run.events.push("Closed(${i})")
+          run.names = [k in 0..<run.names.len() | k != i | run.names[k]]
+          if run.selected >= run.names.len() { run.selected = run.names.len() - 1 }
+        },
+        // The shown tab stays shown, by name.
+        Moved(from, to) => {
+          run.events.push("Moved(${from}, ${to})")
+          let shown = run.names[run.selected]
+          let moving = run.names[from]
+          let rest = [k in 0..<run.names.len() | k != from | run.names[k]]
+          run.names = [...rest.slice(0, to), moving, ...rest.slice(to, rest.len())]
+          run.selected = run.names.index_of(shown) ?? 0
+        },
+        Added => run.events.push("Added"),
+      }
+    }
+  }
+}
+
+let say = (run: mut Run, fonts: mut Fonts, name: string) -> void => {
+  let laid = laid_out(run, fonts)
+  let focus = match find(laid, run.ui.state.focus, Point {}) {
+    Some(f) => f.laid.label,
+    None => "nothing",
+  }
+  println("${name}: [${run.events.join(", ")}] ${run.names.join(" ")}, selected ${run.names[run.selected]}, focus ${focus}")
+  run.events = []
+}
+
+let laid_out = (run: mut Run, fonts: mut Fonts) -> Laid<Ev> =>
+  run.ui.frame_within(view(run), tight(Size { w: W, h: 200.0 }), fonts, run.cache)
+
+let view = pure (run: Run) -> Node<Ev> => themed::<Ev>(light_theme(), Sheet {}, [
+  column([
+    tab_bar(TabsSpec {
+      tabs: [i in 0..<run.names.len() | TabSpec { label: run.names[i], key: run.names[i], closable: i > 0 || run.names[i] != "Home", movable: run.names[i] != "Home" }],
+      selected: run.selected,
+      on_select: Selected,
+      on_close: Closed,
+      on_move: Moved,
+      after: [button("+", Added)],
+    }),
+  ]),
+])
+
+let strip_of = pure (laid: Laid<Ev>, origin: Point) -> Maybe<Found<Ev>> => {
+  if let TabStrip = laid.kind { return Some(Found { laid: laid, origin: origin }) }
+  for child in laid.children {
+    if let Some(f) = strip_of(child.laid, Point { x: origin.x + child.at.x, y: origin.y + child.at.y }) { return Some(f) }
+  }
+  None
+}
+
+/// Tab i's box in the window.
+let box_of = (run: mut Run, fonts: mut Fonts, i: i64) -> Rect => {
+  let Some(strip) = strip_of(laid_out(run, fonts), Point {}) else { return Rect {} }
+  var k = 0
+  for child in strip.laid.children {
+    if let Tabbed(_) = child.laid.kind {
+      if k == i { return Rect { x: strip.origin.x + child.at.x, y: strip.origin.y + child.at.y, w: child.laid.size.w, h: child.laid.size.h } }
+      k += 1
+    }
+  }
+  Rect {}
+}
+
+let tab_middle = (run: mut Run, fonts: mut Fonts, i: i64) -> Point => {
+  let b = box_of(run, fonts, i)
+  Point { x: b.x + b.w * 0.3, y: b.y + b.h / 2.0 }
+}
+
+/// The middle of tab i's ×: its last child's.
+let close_middle = (run: mut Run, fonts: mut Fonts, i: i64) -> Point => {
+  let b = box_of(run, fonts, i)
+  Point { x: b.x + b.w - 14.0, y: b.y + b.h / 2.0 }
+}
+
+let click = pure (at: Point) -> []InputEvent =>
+  [PointerMoved(at), PointerDown(Primary, at, 1), PointerUp(Primary, at)]
+
+let key = pure (k: Key) -> []InputEvent => [KeyPressed(k, Modifiers {})]
+`)
+	want := `4 tabs: narrowest at least TAB_LEAST, shrunk false, scrolls false, the selected in view true
+8 tabs: narrowest at least TAB_LEAST, shrunk true, scrolls false, the selected in view true
+16 tabs: narrowest at least TAB_LEAST, shrunk true, scrolls true, the selected in view true
+16 tabs, the last selected: narrowest at least TAB_LEAST, shrunk true, scrolls true, the selected in view true
+the wheel turned up over the strip: scrolled back to its start true
+press Two: [Selected(2)] Home One Two Three Four, selected Two, focus Two
+press Three's ×: [Closed(3)] Home One Two Four, selected Two, focus Two
+middle click One: [Closed(1)] Home Two Four, selected Four, focus Two
+middle click Home: [] Home Two Four, selected Four, focus Two
+drag One past Two and Three: [Selected(1), Moved(1, 2), Moved(2, 3)] Home Two Three One, selected One, focus One
+drag Three onto Home: [Selected(2), Moved(2, 1)] Home Three Two One, selected Three, focus Three
+press the third tab, Right: [Selected(2), Selected(3)] Home Three Two One, selected One, focus One
+Home: [Selected(0)] Home Three Two One, selected Home, focus Home
+End: [Selected(3)] Home Three Two One, selected One, focus One
+heard: a tab list of 5 (the tabs and +)
+heard: 4 tabs
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// examples/ui/tabs.lyra played: a press selects Document 2, a drag moves Document 1 past it,
+// and Document 3's × closes it; then, from the keyboard, + pressed nine times, the strip shrinking
+// and scrolling. The last frame is written.
+func TestRun_UiTabsExample(t *testing.T) {
+	t.Parallel()
+	skipWithoutText(t)
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "tabs")
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, filepath.Join(repoRoot(t), "examples", "ui", "tabs.lyra")); code != 0 {
+		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
+	}
+	for _, c := range []struct{ script, want string }{
+		{"click:230,16 down:110,16 move:180,16 move:250,16 up:250,16 click:400,16", "Home Document 2 [Document 1]\n"},
+		{"Tab Tab Tab Tab Tab Space Space Space Space Space Space Space Space Space", "Home Document 1 Document 2 Document 3 Document 4 Document 5 Document 6 Document 7 Document 8 Document 9 Document 10 Document 11 [Document 12]\n"},
+	} {
+		shot := filepath.Join(dir, "end.png")
+		cmd := command(t, bin, "--script", c.script, "--png", shot)
+		cmd.Dir = dir
+		cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+		out, err := cmd.CombinedOutput()
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 &&
+			strings.Contains(string(out), "SDL could not") {
+			t.Skipf("SDL could not open a dummy window here: %s", out)
+		} else if ok && exitErr.ExitCode() == 1 && strings.HasPrefix(string(out), "no font") {
+			t.Skipf("no font here: %s", out)
+		} else if err != nil {
+			t.Fatalf("running: %v\n%s", err, out)
+		}
+		if string(out) != c.want {
+			t.Errorf("%s: got\n%s\nwant\n%s", c.script, out, c.want)
+		}
+		if _, err := os.Stat(shot); err != nil {
+			t.Errorf("no last frame: %v", err)
+		}
 	}
 }
 

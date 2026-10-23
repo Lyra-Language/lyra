@@ -131,6 +131,8 @@ let heard_as<e> = pure (laid: Laid<e>) -> Maybe<AccessRole> => match laid.role {
   ComboBoxRole => Some(AxComboBox),
   ListBoxRole => Some(AxListBox),
   OptionRole => Some(AxOption),
+  TabListRole => Some(AxTabList),
+  TabRole => Some(AxTab),
 }
 
 /// The node for `laid`, heard as `role`.

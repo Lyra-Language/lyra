@@ -500,6 +500,8 @@ let role_code = pure (role: AccessRole) -> i32 => match role {
   AxComboBox => 10,
   AxListBox => 11,
   AxOption => 12,
+  AxTabList => 13,
+  AxTab => 14,
   AxContainer => 0,
 }
 

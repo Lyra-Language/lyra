@@ -1,0 +1,194 @@
+// Tabs: `ui.layout`'s `tab_bar` — a strip of tabs whose order is the program's: a press selects
+// one, its × or a middle click closes it, a drag moves it (Home, not movable, stays first), `+`
+// adds one; while a tab has the focus the arrows select its neighbours. Past the window's width
+// the tabs shrink together, then the strip scrolls with the selected tab kept in view.
+//
+//     lyrac run examples/ui/tabs.lyra
+//     lyrac run examples/ui/tabs.lyra -- --script "click:200,18 down:200,18 move:300,18 up:300,18" [--png FILE]
+//
+// **The second form** plays a script (`ui.script`) headless, prints the tabs as they were left
+// — the selected one marked — and with `--png FILE` writes the last frame.
+
+import ui.sdl3
+import ui.sdl3.{ SdlRenderer, capture }
+import ui.gpu
+import ui.app.{ App, run, running, step_running, Command, Subscription }
+import ui.script.{ timed_platform, parse_steps }
+import ui.draw.{ Point, Size, Color }
+import ui.text.{ Fonts, fonts_new, glyph_atlas }
+import ui.style.{ insets, OverflowVisible }
+import ui.layout.{
+  Node,
+  Laid,
+  TabsSpec,
+  TabSpec,
+  tab_bar,
+  button,
+  column,
+  text,
+  padding,
+  paint,
+}
+import std.collections.{ parse_args }
+import std.png.{ write_png }
+import std.io.{ write_bytes }
+
+const WIDTH: f32 = 640.0
+const HEIGHT: f32 = 300.0
+const BACKGROUND: Color = Color { r: 0xEC, g: 0xED, b: 0xF0 }
+
+let main = () -> u8 => {
+  let args = parse_args(["--script", "--png"])
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let app = App {
+    view: view,
+    update: update,
+    subscriptions: (_: State) -> []Subscription<Event> => [],
+    background: BACKGROUND,
+    window_overflow: OverflowVisible,
+  }
+  let start = State {
+    docs: [Doc { name: "Home", key: "home" }, ...[i in 1..<4 | Doc { name: "Document ${i}", key: "doc ${i}" }]],
+    made: 3
+  }
+  if let Some(script) = args.value("--script") {
+    let Ok(steps) = parse_steps(script) else {
+      println("the script does not parse")
+      return 1
+    }
+    let window = match sdl3.open("Tabs", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    let played = running(
+      app,
+      start,
+      timed_platform(steps, Size { w: WIDTH, h: HEIGHT }),
+      window.renderer,
+      fonts
+    )
+    while step_running(played) {}
+    let s = played.host.state
+    println([i in 0..<s.docs.len() | if i == s.selected { "[${s.docs[i].name}]" } else { s.docs[i].name }].join(" "))
+    var status: u8 = 0
+    if let Some(path) = args.value("--png") {
+      if !save(played.renderer, played.fonts, played.host.shown[0], path) { status = 1 }
+    }
+    sdl3.close(window.platform, played.renderer)
+    fonts.close()
+    return status
+  }
+  let window = match gpu.open("Tabs", WIDTH, HEIGHT) {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      fonts.close()
+      return 2
+    },
+  }
+  var system = window.platform
+  var renderer = window.renderer
+  let _ = run(app, start, system, renderer, fonts)
+  gpu.close(system, renderer)
+  fonts.close()
+  0
+}
+
+/// The documents open, in the strip's order; the one shown; how many have been made.
+struct State {
+  docs: []Doc,
+  selected: i64 = 0,
+  made: i64 = 0,
+}
+
+/// A document: its name, and the key its tab goes by whatever its place.
+struct Doc {
+  name: string,
+  key: string,
+}
+
+data Event = Selected(i64) | Closed(i64) | Moved(i64, i64) | Added
+
+let update = pure (s: State, event: Event) -> (State, []Command<Event>) => match event {
+  Selected(i) => (State { s | selected: i }, []),
+  Added => {
+    let made = s.made + 1
+    let docs = [...s.docs, Doc { name: "Document ${made}", key: "doc ${made}" }]
+    (State { s | docs: docs, made: made, selected: docs.len() - 1 }, [])
+  },
+  Closed(i) => {
+    let docs = [k in 0..<s.docs.len() | k != i | s.docs[k]]
+    let shown = if s.selected > i || s.selected >= docs.len() { s.selected - 1 } else { s.selected }
+    (State { s | docs: docs, selected: shown.max(0) }, [])
+  },
+  // The tab at `from` to `to`'s place; the shown document stays shown.
+  Moved(from, to) => {
+    let docs = [k in 0..<s.docs.len() | k != from | s.docs[k]]
+    var placed: []Doc = []
+    for k in 0..<docs.len() {
+      if k == to { placed.push(s.docs[from]) }
+      placed.push(docs[k])
+    }
+    if to >= docs.len() { placed.push(s.docs[from]) }
+    let shown = s.docs[s.selected].key
+    var selected = 0
+    for k, d in placed { if d.key == shown { selected = k } }
+    (State { s | docs: placed, selected: selected }, [])
+  },
+}
+
+/// The window: the strip, `+` after the tabs, and the shown document's name below.
+let view = pure (s: State) -> Node<Event> => column([
+  tab_bar(TabsSpec {
+    tabs: [
+      i in 0..<s.docs.len() |
+        TabSpec {
+          label: s.docs[i].name,
+          key: s.docs[i].key,
+          closable: i > 0,
+          movable: i > 0
+        }
+    ],
+    selected: s.selected,
+    on_select: Selected,
+    on_close: Closed,
+    on_move: Moved,
+    // Keyed: its place moves as tabs are added, and the focus stays on it.
+    after: [button("+", Added).keyed("add")],
+  }),
+  padding(insets(20.0), text(if s.docs.len() > 0 { s.docs[s.selected].name } else { "nothing open" })),
+])
+
+/// `laid` — the window as the host last laid it out — drawn without showing it, and written to
+/// `path` as a PNG.
+let save = (
+  renderer: SdlRenderer,
+  fonts: Fonts,
+  laid: Laid<Event>,
+  path: string
+) -> bool => {
+  var r = renderer
+  var f = fonts
+  var atlas = glyph_atlas()
+  let ops = paint(laid, Point {}, 1.0, f, atlas, r)
+  let Some(frame) = capture(r, BACKGROUND, ops) else { return false }
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(u8((p >> 24) & 0xFF))
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(png) => write_bytes(path, png),
+    Err(_) => false,
+  }
+}
