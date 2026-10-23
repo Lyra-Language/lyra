@@ -81,7 +81,7 @@ import ui.draw.{
   LayerEffect,
   radius,
 }
-import ui.backend.{ Renderer }
+import ui.backend.{ Renderer, Key, Modifiers, PointerButton }
 import ui.text.{ Fonts, FontSpec, Cell, TextBlock, GlyphAtlas, caret_x }
 import ui.style.{
   Style,
@@ -181,7 +181,51 @@ pub data Kind<e> =
 pub struct Painter<e> {
   paint: (PaintArea) -> []PaintOp,
   on_size: Maybe<(Size) -> e>,
+  /// What it is to the keyboard and pointer: nothing, or every key, typed text and pointer
+  /// event ([RawInput], [Node.takes_input]).
+  input: Maybe<RawInput<e>>,
 }
+
+/// An element that takes input raw — a terminal's: focusable, and handed **every key and the
+/// text it types while focused, and the pointer while it is over it or holds it** (a press on
+/// it holds the pointer until it is let go, wherever it goes), before the framework does
+/// anything with them — Tab included. Each function answers the event the input stands for,
+/// or `None` to hand it back to the framework, which goes on as it would have. `caret` is
+/// where typed text goes, in the element's coordinates — where an input method's window
+/// opens — `None` asking for no text.
+pub struct RawInput<e> {
+  on_key: (KeyInput) -> Maybe<e>,
+  on_text: (TextInput) -> Maybe<e>,
+  on_pointer: (PointerInput) -> Maybe<e>,
+  caret: Maybe<Rect>,
+}
+
+/// A key pressed or let go, and the modifiers held with it.
+pub struct KeyInput {
+  key: Key,
+  mods: Modifiers,
+  pressed: bool,
+}
+
+/// Text: typed (a key's character, or what an input method made), or an input method's
+/// composition in progress — its text, its caret and the length of the part selected, in runes
+/// (`-1` for none); an empty one ends it.
+pub data TextInput = TypedText(string) | ComposedText(string, i64, i64)
+
+/// The pointer, where it is in the element's coordinates, and the modifiers held.
+pub struct PointerInput {
+  at: Point,
+  kind: PointerKind,
+  mods: Modifiers,
+}
+
+/// What the pointer did: a button pressed (and the clicks in a row it makes) or let go, a
+/// move, or a wheel turned — across and down, in lines.
+pub data PointerKind =
+  PointerPress(PointerButton, i64)
+  | PointerRelease(PointerButton)
+  | PointerMove
+  | PointerWheel(f32, f32)
 
 /// What a painter is asked to fill: its size; the part of it inside every clip around it, in
 /// its own coordinates — what a scroller shows of a tall one, which is all that need be
@@ -393,7 +437,8 @@ pub let painted<e> = pure (
   paint: (PaintArea) -> []PaintOp,
   on_size: Maybe<(Size) -> e> = None
 ) -> Node<e> => {
-  let kind: Kind<e> = Painted(Painter { paint: paint, on_size: on_size })
+  let input: Maybe<RawInput<e>> = None
+  let kind: Kind<e> = Painted(Painter { paint: paint, on_size: on_size, input: input })
   Node { kind: kind, tag: "Painted" }
 }
 
@@ -549,6 +594,17 @@ impl Node<e> {
     disabled: self.disabled,
   }
 
+  /// A painted element ([painted]) taking input raw ([RawInput]): every key and the text it
+  /// types while focused, the pointer while it is over it or holds it. Any other node
+  /// unchanged.
+  pub let takes_input = pure (self, raw: RawInput<e>) -> Node<e> => match self.kind {
+    Painted(painter) => {
+      let kind: Kind<e> = Painted(Painter { painter | input: Some(raw) })
+      Node { self | kind: kind }
+    },
+    _ => self,
+  }
+
   /// A row or column with its children placed by `main` and `cross`; any other node unchanged.
   pub let aligned = pure (self, main: MainAlign, cross: CrossAlign) -> Node<e> =>
     match self.kind {
@@ -602,7 +658,25 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
       Some(sized) => Some((size: Size) -> b => f(sized(size))),
       None => None,
     }
-    Painted(Painter { paint: painter.paint, on_size: on_size })
+    let input: Maybe<RawInput<b>> = match painter.input {
+      Some(raw) => Some(RawInput {
+        on_key: (k: KeyInput) -> Maybe<b> => match (raw.on_key)(k) {
+          Some(x) => Some(f(x)),
+          None => None,
+        },
+        on_text: (t: TextInput) -> Maybe<b> => match (raw.on_text)(t) {
+          Some(x) => Some(f(x)),
+          None => None,
+        },
+        on_pointer: (p: PointerInput) -> Maybe<b> => match (raw.on_pointer)(p) {
+          Some(x) => Some(f(x)),
+          None => None,
+        },
+        caret: raw.caret,
+      }),
+      None => None,
+    }
+    Painted(Painter { paint: painter.paint, on_size: on_size, input: input })
   },
 }
 
@@ -1040,6 +1114,13 @@ pub let focusable<e> = pure (kind: Kind<e>) -> bool => match kind {
   Ranged(_) => true,
   Editable(_) => true,
   Choosing(_) => true,
+  Painted(painter) => painter.input.is_some(),
+  _ => false,
+}
+
+/// Whether `kind` is a painter's.
+let is_painted<e> = pure (kind: Kind<e>) -> bool => match kind {
+  Painted(_) => true,
   _ => false,
 }
 
@@ -1211,7 +1292,12 @@ let lay_fresh<e> = (
     content: body.content,
     content_at: Point { x: corner.x - body.scrolled, y: corner.y },
     clips: body.clips || scrolls,
-    ring: if ui.focus == id && focusable(node.kind) { Some(own.theme.colors.focus) } else { None },
+    // A painter taking input draws its own focus (a terminal's cursor), not a ring.
+    ring: if ui.focus == id && focusable(node.kind) && !is_painted(node.kind) {
+      Some(own.theme.colors.focus)
+    } else {
+      None
+    },
     field: body.field,
     children: children,
     scroller: scroller,

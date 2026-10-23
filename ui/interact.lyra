@@ -50,7 +50,9 @@ import ui.backend.{
   PointerUp,
   Scrolled,
   KeyPressed,
+  KeyReleased,
   TextTyped,
+  TextComposing,
   Primary,
   Key,
   Modifiers,
@@ -101,6 +103,18 @@ import ui.layout.{
   Ranged,
   Editable,
   Choosing,
+  Painted,
+  RawInput,
+  KeyInput,
+  TextInput,
+  TypedText,
+  ComposedText,
+  PointerInput,
+  PointerKind,
+  PointerPress,
+  PointerRelease,
+  PointerMove,
+  PointerWheel,
   option_id,
   option_of,
   Horizontal,
@@ -136,6 +150,11 @@ pub struct Ui {
   motions: HashMap<string, Motion>,
   now: i64 = 0,
   resized: bool = false,
+  /// The element taking input raw that a press on it gave the pointer to, until it is let go;
+  /// `""` for none.
+  captured: string = "",
+  /// The key of the element to focus once it is laid out ([Ui.focus_keyed]); `""` for none.
+  focus_wanted: string = "",
 }
 
 /// What a press in a text field selected: the clicks it made (1 by rune, 2 by word, 3 all)
@@ -194,6 +213,17 @@ impl Ui {
     var laid = layout_cached(view, c, fonts, self.state, cache)
     var present: HashMap<string, bool> = hashmap_new()
     note_ids(laid, present)
+    // A focus asked for by key, once the element is there.
+    if self.focus_wanted.len() > 0 {
+      for id in present.keys() {
+        if id.ends_with("/:${self.focus_wanted}") {
+          self.state.focus = id
+          self.state.keyboard_focus = false
+          self.focus_wanted = ""
+          break
+        }
+      }
+    }
     for id in self.state.widgets.keys() {
       if !present.contains_key(id) { let _ = self.state.widgets.remove(id) }
     }
@@ -312,6 +342,22 @@ impl Ui {
     laid: Laid<e>,
     input: InputEvent,
     platform: mut p
+  ) -> []e => {
+    // An element taking input raw hears it first; what it hands back goes on as before.
+    if let Some(events) = self.heard_raw(laid, input, platform) { return events }
+    self.handled(laid, input, platform)
+  }
+
+  /// The focus to the element keyed `key` ([Node.keyed]) once a layout has it — the frame
+  /// after the one that made it, if that is when it appears.
+  pub let focus_keyed = (self: mut, key: string) -> void => { self.focus_wanted = key }
+
+  /// `input` as the framework handles it.
+  let handled<e, p> where p: Platform = (
+    self: mut,
+    laid: Laid<e>,
+    input: InputEvent,
+    platform: mut p
   ) -> []e => match input {
     PointerMoved(at) => {
       platform.set_cursor(self.cursor_at(laid, at))
@@ -330,6 +376,100 @@ impl Ui {
     },
     AccessAction(id, request) => self.access_action(laid, id, request),
     _ => [],
+  }
+
+  /// `input` as an element taking input raw ([RawInput]) hears it — a key or text the focused
+  /// one, the pointer the one holding it or else the one under it — and the events it answers;
+  /// `None` where there is no such element or it handed the input back. A press it takes holds
+  /// the pointer for it and gives it the focus; a move it hears still hovers what is under the
+  /// pointer.
+  let heard_raw<e, p> where p: Platform = (
+    self: mut,
+    laid: Laid<e>,
+    input: InputEvent,
+    platform: mut p
+  ) -> Maybe<[]e> => match input {
+    KeyPressed(key, mods) =>
+      self.raw_key(laid, KeyInput { key: key, mods: mods, pressed: true }),
+    KeyReleased(key, mods) =>
+      self.raw_key(laid, KeyInput { key: key, mods: mods, pressed: false }),
+    TextTyped(text) => self.raw_text(laid, TypedText(text)),
+    TextComposing(text, caret, length) =>
+      self.raw_text(laid, ComposedText(text, caret, length)),
+    PointerDown(button, at, clicks) => {
+      self.pointer = at
+      let Some(target) = raw_at(laid, at) else { return None }
+      let Some(event) = pointed(target, at, PointerPress(button, clicks), platform) else {
+        return None
+      }
+      self.captured = target.laid.id
+      self.state.focus = target.laid.id
+      self.state.keyboard_focus = false
+      self.state.pressed = ""
+      Some([event])
+    },
+    PointerMoved(at) => {
+      let Some(target) = self.pointer_holder(laid, at) else { return None }
+      let Some(event) = pointed(target, at, PointerMove, platform) else { return None }
+      platform.set_cursor(self.cursor_at(laid, at))
+      Some([event, ...self.pointer_moved(laid, at)])
+    },
+    PointerUp(button, at) => {
+      let target = self.pointer_holder(laid, at)
+      self.captured = ""
+      let Some(t) = target else { return None }
+      let Some(event) = pointed(
+        t,
+        at,
+        PointerRelease(button),
+        platform
+      ) else { return None }
+      self.pointer = at
+      Some([event])
+    },
+    Scrolled(across, down) => {
+      let Some(target) = raw_at(laid, self.pointer) else { return None }
+      let Some(event) = pointed(
+        target,
+        self.pointer,
+        PointerWheel(across, down),
+        platform
+      ) else {
+        return None
+      }
+      Some([event])
+    },
+    _ => None,
+  }
+
+  /// A key for the focused element, if it takes input raw.
+  let raw_key<e> = (self, laid: Laid<e>, key: KeyInput) -> Maybe<[]e> => {
+    let Some(f) = find(laid, self.state.focus, Point {}) else { return None }
+    let Some(raw) = raw_of(f.laid) else { return None }
+    match (raw.on_key)(key) {
+      Some(event) => Some([event]),
+      None => None,
+    }
+  }
+
+  /// Text for the focused element, if it takes input raw.
+  let raw_text<e> = (self, laid: Laid<e>, text: TextInput) -> Maybe<[]e> => {
+    let Some(f) = find(laid, self.state.focus, Point {}) else { return None }
+    let Some(raw) = raw_of(f.laid) else { return None }
+    match (raw.on_text)(text) {
+      Some(event) => Some([event]),
+      None => None,
+    }
+  }
+
+  /// The element taking input raw that has the pointer: the one holding it since a press,
+  /// else the one under `at`.
+  let pointer_holder<e> = (self: mut, laid: Laid<e>, at: Point) -> Maybe<Found<e>> => {
+    if self.captured.len() > 0 {
+      if let Some(held) = find(laid, self.captured, Point {}) { return Some(held) }
+      self.captured = ""
+    }
+    raw_at(laid, at)
   }
 
   /// What assistive technology asked of the element identified as `id`, done as the keyboard
@@ -404,6 +544,20 @@ impl Ui {
     laid: Laid<e>,
     platform: mut p
   ) -> void => {
+    // An element taking input raw says where its caret is.
+    if let Some(f) = find(laid, self.state.focus, Point {}) {
+      if let Some(raw) = raw_of(f.laid) {
+        if let Some(caret) = raw.caret {
+          let at = Rect { caret | x: f.origin.x + caret.x, y: f.origin.y + caret.y }
+          if self.typing_into != f.laid.id || self.typing_at != at {
+            platform.set_text_input(Some(at))
+            self.typing_into = f.laid.id
+            self.typing_at = at
+          }
+          return
+        }
+      }
+    }
     if let Some(f) = find(laid, self.state.focus, Point {}) {
       if let Some(look) = f.laid.field {
         let at = Rect {
@@ -1312,4 +1466,34 @@ let rune_under_x<e> = pure (found: Found<e>, at: Point) -> i64 => {
   let Prose(block) = found.laid.content else { return 0 }
   let x = at.x - found.origin.x - found.laid.content_at.x
   if gap > 0 && x < caret_x(block, byte_at(spec.value, gap)) { gap - 1 } else { gap }
+}
+
+/// The deepest element under `at` taking input raw, and where it is.
+let raw_at<e> = pure (laid: Laid<e>, at: Point) -> Maybe<Found<e>> => {
+  let path = hit(laid, at)
+  for i in (path.len() - 1)..>=0 {
+    if raw_of(path[i].laid).is_some() { return Some(path[i]) }
+  }
+  None
+}
+
+/// How `laid` takes input raw, if it does: a painter's [RawInput].
+let raw_of<e> = pure (laid: Laid<e>) -> Maybe<RawInput<e>> => match laid.kind {
+  Painted(painter) => painter.input,
+  _ => None,
+}
+
+/// What `target`'s raw input answers for the pointer at `at` (in the window) doing `kind`.
+let pointed<e, p> where p: Platform = (
+  target: Found<e>,
+  at: Point,
+  kind: PointerKind,
+  platform: p
+) -> Maybe<e> => {
+  let Some(raw) = raw_of(target.laid) else { return None }
+  (raw.on_pointer)(PointerInput {
+    at: Point { x: at.x - target.origin.x, y: at.y - target.origin.y },
+    kind: kind,
+    mods: platform.held(),
+  })
 }

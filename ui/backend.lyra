@@ -42,6 +42,8 @@ pub trait Platform {
   /// Ask for typed text, with the field it goes into — where an input method's window and a
   /// phone's keyboard keep clear of — or stop asking, with `None`.
   set_text_input: (mut Self, Maybe<Rect>) -> void
+  /// The modifier keys held now — what a pointer event, which carries none, was made with.
+  held: (Self) -> Modifiers
   /// The text on the clipboard; `""` when there is none.
   clipboard: (Self) -> string
   set_clipboard: (mut Self, string) -> void
@@ -182,6 +184,13 @@ pub data InputEvent =
   /// what an input method composed. Its key's [KeyPressed] arrives as well, and a text field
   /// takes the text from here, not from the key.
   | TextTyped(string)
+  /// An input method's text being composed — not yet typed — with its caret and the length
+  /// of the part selected, in runes (`-1` for none). An empty text ends the composition;
+  /// what it makes arrives as [TextTyped].
+  | TextComposing(string, i64, i64)
+  /// The window gained the keyboard's focus, or lost it to another window or app.
+  | WindowFocused
+  | WindowUnfocused
   /// The system switched between its light and dark look, to this.
   | AppearanceChanged(Appearance)
   /// Assistive technology asked something of the element identified as this — VoiceOver
@@ -215,6 +224,9 @@ pub data Key =
   | End
   | PageUp
   | PageDown
+  | Insert
+  /// F1 to F24, by number.
+  | FunctionKey(i64)
   | Character(rune)
   | Unnamed(u32)
 

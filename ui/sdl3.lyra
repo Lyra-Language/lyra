@@ -80,8 +80,11 @@ import bindings.sdl3.{
   KeyDown as SdlKeyDown,
   KeyUp as SdlKeyUp,
   TextInput as SdlTextInput,
-  poll_event,
-  wait_event,
+  TextEditing as SdlTextEditing,
+  WindowFocusGained as SdlFocusGained,
+  WindowFocusLost as SdlFocusLost,
+  poll_event_with_modifiers,
+  wait_event_with_modifiers,
   modifiers,
   MOD_SHIFT,
   MOD_CTRL,
@@ -117,6 +120,11 @@ import bindings.sdl3.{
   KEY_END,
   KEY_PAGEUP,
   KEY_PAGEDOWN,
+  KEY_INSERT,
+  KEY_F1,
+  KEY_F12,
+  KEY_F13,
+  KEY_F24,
 }
 import ui.backend.{
   Platform,
@@ -136,6 +144,9 @@ import ui.backend.{
   KeyPressed,
   KeyReleased,
   TextTyped,
+  TextComposing,
+  WindowFocused,
+  WindowUnfocused,
   PointerButton,
   Primary,
   Secondary,
@@ -155,6 +166,8 @@ import ui.backend.{
   End,
   PageUp,
   PageDown,
+  Insert,
+  FunctionKey,
   Character,
   Unnamed,
   Modifiers,
@@ -330,10 +343,12 @@ impl Platform for SdlPlatform {
   next_events = (self, wait_ms) => {
     var events: []InputEvent = []
     let per_point = units_per_point(self.window)
-    var next = if wait_ms == 0 { poll_event() } else { wait_event(wait_ms) }
-    while let Some(event) = next {
-      if let Some(input) = translate(event, per_point) { events.push(input) }
-      next = poll_event()
+    var next = if wait_ms == 0 { poll_event_with_modifiers() } else {
+      wait_event_with_modifiers(wait_ms)
+    }
+    while let Some((event, held)) = next {
+      if let Some(input) = translate(event, held, per_point) { events.push(input) }
+      next = poll_event_with_modifiers()
     }
     // What assistive technology asked for; its request woke the wait above.
     while let Some(raw) = accesskit.next_request() {
@@ -352,6 +367,7 @@ impl Platform for SdlPlatform {
     }
     events
   }
+  held = (self) => modifiers_of(modifiers())
   window_size = (self) => {
     let (w, h) = window_size(self.window)
     let per_point = units_per_point(self.window)
@@ -505,36 +521,41 @@ let system_look = () -> Appearance =>
 let units_per_point = (window: Window) -> f32 =>
   window_pixel_density(window) / window_display_scale(window)
 
-/// An SDL event as the interface sees it, positions in logical units — or `None` for one it
-/// has no use for.
-let translate = (event: Event, per_point: f32) -> Maybe<InputEvent> => match event {
-  SdlQuit => Some(CloseRequested),
-  SdlResized(w, h) =>
-    Some(Resized(Size { w: f32(w) * per_point, h: f32(h) * per_point })),
-  SdlScaleChanged => Some(ScaleChanged),
-  SdlMouseMotion(x, y) =>
-    Some(PointerMoved(Point { x: x * per_point, y: y * per_point })),
-  SdlMouseDown(button, x, y, clicks) => Some(PointerDown(
-    pointer_button(button),
-    Point { x: x * per_point, y: y * per_point },
-    i64(clicks)
-  )),
-  SdlMouseUp(button, x, y) =>
-    Some(PointerUp(pointer_button(button), Point { x: x * per_point, y: y * per_point })),
-  // The content moves as the system's scroll views move theirs: with natural scrolling on,
-  // the way the fingers go. Shift turns a wheel's turn across, as every platform's do.
-  SdlMouseWheel(x, y, flipped) => {
-    let way: f32 = if flipped { -1.0 } else { 1.0 }
-    Some(if x.abs() < 0.0001 && modifiers() & MOD_SHIFT != 0 { Scrolled(
-      -y * way,
-      0.0
-    ) } else { Scrolled(x * way, -y * way) })
-  },
-  SdlKeyDown(code) => Some(KeyPressed(key(code), held_modifiers())),
-  SdlKeyUp(code) => Some(KeyReleased(key(code), held_modifiers())),
-  SdlTextInput(text) => Some(TextTyped(text)),
-  _ => None,
-}
+/// An SDL event as the interface sees it, positions in logical units, a key's modifiers the
+/// ones `held` as it was made — or `None` for one it has no use for.
+let translate = (event: Event, held: u16, per_point: f32) -> Maybe<InputEvent> =>
+  match event {
+    SdlQuit => Some(CloseRequested),
+    SdlResized(w, h) =>
+      Some(Resized(Size { w: f32(w) * per_point, h: f32(h) * per_point })),
+    SdlScaleChanged => Some(ScaleChanged),
+    SdlMouseMotion(x, y) =>
+      Some(PointerMoved(Point { x: x * per_point, y: y * per_point })),
+    SdlMouseDown(button, x, y, clicks) => Some(PointerDown(
+      pointer_button(button),
+      Point { x: x * per_point, y: y * per_point },
+      i64(clicks)
+    )),
+    SdlMouseUp(button, x, y) =>
+      Some(PointerUp(pointer_button(button), Point { x: x * per_point, y: y * per_point })),
+    // The content moves as the system's scroll views move theirs: with natural scrolling on,
+    // the way the fingers go. Shift turns a wheel's turn across, as every platform's do.
+    SdlMouseWheel(x, y, flipped) => {
+      let way: f32 = if flipped { -1.0 } else { 1.0 }
+      Some(if x.abs() < 0.0001 && modifiers() & MOD_SHIFT != 0 { Scrolled(
+        -y * way,
+        0.0
+      ) } else { Scrolled(x * way, -y * way) })
+    },
+    SdlKeyDown(code) => Some(KeyPressed(key(code), modifiers_of(held))),
+    SdlKeyUp(code) => Some(KeyReleased(key(code), modifiers_of(held))),
+    SdlTextInput(text) => Some(TextTyped(text)),
+    SdlTextEditing(text, start, length) =>
+      Some(TextComposing(text, i64(start), i64(length))),
+    SdlFocusGained => Some(WindowFocused),
+    SdlFocusLost => Some(WindowUnfocused),
+    _ => None,
+  }
 
 let pointer_button = pure (button: u8) -> PointerButton => match button {
   1 => Primary,
@@ -572,15 +593,20 @@ let key = pure (code: u32) -> Key =>
     PageUp
   } else if code == KEY_PAGEDOWN {
     PageDown
+  } else if code == KEY_INSERT {
+    Insert
+  } else if code >= KEY_F1 && code <= KEY_F12 {
+    FunctionKey(i64(code - KEY_F1) + 1)
+  } else if code >= KEY_F13 && code <= KEY_F24 {
+    FunctionKey(i64(code - KEY_F13) + 13)
   } else if code >= 0x20 && code < 0x40000000 {
     Character(rune(i32(code)))
   } else {
     Unnamed(code)
   }
 
-/// The modifiers held now. Command is the primary modifier on Apple's systems.
-let held_modifiers = () -> Modifiers => {
-  let held = modifiers()
+/// The modifiers in an SDL mask (`MOD_*`). Command is the primary modifier on Apple's systems.
+let modifiers_of = (held: u16) -> Modifiers => {
   let command = held & MOD_GUI != 0
   let control = held & MOD_CTRL != 0
   Modifiers {

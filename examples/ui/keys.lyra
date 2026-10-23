@@ -1,0 +1,244 @@
+// Keys: an element taking input raw (`ui.layout`'s `RawInput`, on a painter) showing what it
+// hears — every key, Tab and the arrows included, the text they type and an input method's
+// composition in progress at its caret, and the pointer, a drag held past its edge — with a
+// shortcut the program takes first (Primary+K clears it) and the window's focus.
+//
+//     lyrac run examples/ui/keys.lyra
+//     lyrac run examples/ui/keys.lyra -- --script "click:40,40 'hi' Tab F5 Primary+k a"
+//
+// **The second form** plays a script (`ui.script`) headless and prints what it heard.
+
+import ui.sdl3
+import ui.gpu
+import ui.app.{
+  App,
+  run,
+  running,
+  step_running,
+  Command,
+  Subscription,
+  OnFocus,
+  Shortcut,
+  Shortcuts,
+}
+import ui.script.{ timed_platform, parse_steps }
+import ui.backend.{
+  Key,
+  Modifiers,
+  Character,
+  Tab,
+  Enter,
+  Escape,
+  Backspace,
+  Delete,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ArrowDown,
+  Home,
+  End,
+  PageUp,
+  PageDown,
+  Insert,
+  FunctionKey,
+  Unnamed,
+}
+import ui.draw.{ Point, Size, Rect, Color, Fill, Border, radius }
+import ui.text.{ FontSpec, fonts_new }
+import ui.style.{ OverflowVisible }
+import ui.layout.{
+  Node,
+  PaintArea,
+  PaintOp,
+  PaintDraw,
+  PaintText,
+  RawInput,
+  KeyInput,
+  TextInput,
+  TypedText,
+  ComposedText,
+  PointerInput,
+  PointerPress,
+  PointerRelease,
+  PointerMove,
+  PointerWheel,
+  painted,
+}
+import std.collections.{ parse_args }
+
+const WIDTH: f32 = 640.0
+const HEIGHT: f32 = 420.0
+
+let main = () -> u8 => {
+  let args = parse_args(["--script"])
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let app = App {
+    view: view,
+    update: update,
+    subscriptions: (_: State) -> []Subscription<Event> => [OnFocus(Focused)],
+    background: BACKGROUND,
+    window_overflow: OverflowVisible,
+    shortcuts: [Shortcuts {
+      of: (_: State) -> []Shortcut<Event> => [
+        Shortcut { key: Character('k'), mods: Modifiers { primary: true }, event: Cleared },
+      ],
+    }],
+  }
+  if let Some(script) = args.value("--script") {
+    let Ok(steps) = parse_steps(script) else {
+      println("the script does not parse")
+      return 1
+    }
+    let window = match sdl3.open("Keys", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    let played = running(
+      app,
+      State {},
+      timed_platform(steps, Size { w: WIDTH, h: HEIGHT }),
+      window.renderer,
+      fonts
+    )
+    while step_running(played) {}
+    for line in played.host.state.lines { println(line) }
+    sdl3.close(window.platform, played.renderer)
+    fonts.close()
+    return 0
+  }
+  let window = match gpu.open("Keys", WIDTH, HEIGHT) {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      fonts.close()
+      return 2
+    },
+  }
+  var platform = window.platform
+  var renderer = window.renderer
+  let _ = run(app, State {}, platform, renderer, fonts)
+  gpu.close(platform, renderer)
+  fonts.close()
+  0
+}
+
+/// What was heard, newest last; the input method's composition in progress; whether the
+/// window has the keyboard.
+struct State {
+  lines: []string = [],
+  composing: string = "",
+  focused: bool = true,
+}
+
+data Event = Heard(string) | Composing(string) | Focused(bool) | Cleared
+
+/// How many lines are kept.
+const KEPT: i64 = 14
+
+let update = pure (state: State, event: Event) -> (State, []Command<Event>) =>
+  match event {
+    Heard(line) => {
+      let lines = [...state.lines, line]
+      let from = (lines.len() - KEPT).max(0)
+      (State { state | lines: lines.slice(from, lines.len()) }, [])
+    },
+    Composing(text) => (State { state | composing: text }, []),
+    Focused(on) => (State { state | focused: on }, []),
+    Cleared => (State { state | lines: [] }, []),
+  }
+
+const BACKGROUND: Color = Color { r: 0xF4, g: 0xF4, b: 0xF6 }
+const INK: Color = Color { r: 0x22, g: 0x24, b: 0x2A }
+const FAINT: Color = Color { r: 0x88, g: 0x8C, b: 0x96 }
+const COMPOSING: Color = Color { r: 0x2F, g: 0x6F, b: 0xD8 }
+const FONT: FontSpec = FontSpec { size: 15.0 }
+const LINE: f32 = 24.0
+const PAD: f32 = 20.0
+
+/// The window: what was heard, a line each, and the composition under them, where typed text
+/// goes.
+let view = pure (state: State) -> Node<Event> => {
+  let caret_y = PAD + f32(state.lines.len()) * LINE
+  painted::<Event>((area: PaintArea) -> []PaintOp => draw(
+    state,
+    area
+  )).takes_input(RawInput {
+    on_key: (k: KeyInput) -> Maybe<Event> =>
+      if k.pressed { Some(Heard("key ${modifiers(k.mods)}${key_name(k.key)}")) } else { None },
+    on_text: (t: TextInput) -> Maybe<Event> => match t {
+      TypedText(text) => Some(Heard("typed \"${text}\"")),
+      ComposedText(text, _, _) => Some(Composing(text)),
+    },
+    on_pointer: (p: PointerInput) -> Maybe<Event> => match p.kind {
+      PointerPress(_, clicks) =>
+        Some(Heard("pressed ${clicks}× at ${p.at.x.round()},${p.at.y.round()}")),
+      PointerRelease(_) => Some(Heard("let go at ${p.at.x.round()},${p.at.y.round()}")),
+      PointerMove => None,
+      PointerWheel(_, down) => Some(Heard("wheel ${down}")),
+    },
+    caret: Some(Rect { x: PAD, y: caret_y, w: 1.0, h: LINE }),
+  })
+}
+
+/// The lines, the composition, and a frame faint while the window does not have the keyboard.
+let draw = pure (state: State, area: PaintArea) -> []PaintOp => {
+  var ops: []PaintOp = [
+    PaintDraw(Border(
+      Rect { x: 8.0, y: 8.0, w: area.size.w - 16.0, h: area.size.h - 16.0 },
+      radius(8.0),
+      2.0,
+      if state.focused { INK } else { FAINT }
+    )),
+  ]
+  for i, line in state.lines {
+    ops.push(PaintText(Point { x: PAD, y: PAD + f32(i) * LINE + 17.0 }, line, FONT, INK))
+  }
+  let y = PAD + f32(state.lines.len()) * LINE
+  if state.composing.len() > 0 {
+    ops.push(PaintText(Point { x: PAD, y: y + 17.0 }, state.composing, FONT, COMPOSING))
+    ops.push(PaintDraw(Fill(
+      Rect { x: PAD, y: y + 21.0, w: 80.0, h: 1.0 },
+      radius(0.0),
+      COMPOSING
+    )))
+  } else {
+    ops.push(PaintDraw(Fill(
+      Rect { x: PAD, y: y + 3.0, w: 2.0, h: 18.0 },
+      radius(0.0),
+      INK
+    )))
+  }
+  ops
+}
+
+let modifiers = pure (m: Modifiers) -> string =>
+  "${if m.primary { "Primary+" } else { "" }}${if m.control && !m.primary { "Ctrl+" } else { "" }}${if m.alt { "Alt+" } else { "" }}${if m.shift { "Shift+" } else { "" }}"
+
+let key_name = pure (key: Key) -> string => match key {
+  Character(' ') => "Space",
+  Character(c) => "${c}",
+  Tab => "Tab",
+  Enter => "Enter",
+  Escape => "Escape",
+  Backspace => "Backspace",
+  Delete => "Delete",
+  ArrowLeft => "Left",
+  ArrowRight => "Right",
+  ArrowUp => "Up",
+  ArrowDown => "Down",
+  Home => "Home",
+  End => "End",
+  PageUp => "PageUp",
+  PageDown => "PageDown",
+  Insert => "Insert",
+  FunctionKey(n) => "F${n}",
+  Unnamed(code) => "key ${code}",
+}

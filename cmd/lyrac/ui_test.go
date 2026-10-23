@@ -4368,3 +4368,163 @@ func TestRun_UiCellsExample(t *testing.T) {
 		}
 	}
 }
+
+// An element taking input raw (`ui.layout`'s `RawInput`, a painter's) through a host and a
+// script: a click on it a move, a press and a release in its own coordinates, the press giving
+// it the focus; every key it is given before the framework — Tab too, and F5 and Insert — and
+// a key it hands back (Down) the framework's; typed text and an input method's composition; a
+// Primary shortcut the program's before the element hears the key (`App.shortcuts`); Shift held
+// on a press; a drag past its edge still its own, the press holding the pointer; a wheel it
+// hands back raising nothing; the window's focus heard (`OnFocus`); a button's `FocusKeyed`
+// giving it the focus again; and the input method's window placed at its caret.
+func TestRun_UiRawInput(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, host_of, Command, Subscription, OnFocus, FocusKeyed, Shortcut, Shortcuts }
+import ui.script.{ timed_platform, parse_steps }
+import ui.backend.{ Renderer, Key, Modifiers, Character, Tab, ArrowDown, FunctionKey, Insert, PointerButton, Primary, Secondary }
+import ui.draw.{ Point, Size, Rect, Color, TextureId }
+import ui.text.{ fonts_new }
+import ui.layout.{
+  Node,
+  PaintArea,
+  PaintOp,
+  RawInput,
+  KeyInput,
+  TextInput,
+  TypedText,
+  ComposedText,
+  PointerInput,
+  PointerPress,
+  PointerRelease,
+  PointerMove,
+  PointerWheel,
+  row,
+  MainStart,
+  CrossStart,
+  sized,
+  button,
+  painted,
+}
+
+/// A renderer that draws nothing.
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => {}
+}
+
+data Ev = Heard(string) | Pressed | Focus(bool) | NewTab
+
+/// What the program heard, in order.
+struct State {
+  heard: []string = [],
+}
+
+let update = pure (s: State, e: Ev) -> (State, []Command<Ev>) => match e {
+  Heard(what) => (State { heard: [...s.heard, what] }, []),
+  Pressed => (State { heard: [...s.heard, "the button"] }, [FocusKeyed("term")]),
+  Focus(on) => (State { heard: [...s.heard, if on { "window focused" } else { "window unfocused" }] }, []),
+  NewTab => (State { heard: [...s.heard, "shortcut: new tab"] }, []),
+}
+
+let name_of = pure (key: Key) -> string => match key {
+  Character(' ') => "Space",
+  Character(c) => "${c}",
+  Tab => "Tab",
+  FunctionKey(n) => "F${n}",
+  Insert => "Insert",
+  _ => "another key",
+}
+
+let mods_of = pure (m: Modifiers) -> string =>
+  "${if m.shift { "Shift+" } else { "" }}${if m.primary { "Primary+" } else { "" }}"
+
+let button_of = pure (b: PointerButton) -> string => match b {
+  Primary => "primary",
+  Secondary => "secondary",
+  _ => "another",
+}
+
+/// A 200 × 100 painter taking input raw — every key but Down, which it hands back, all text,
+/// and the pointer but the wheel — beside a button.
+let view = pure (_: State) -> Node<Ev> => row([
+  sized(Some(200.0), Some(100.0), [
+    painted::<Ev>((_: PaintArea) -> []PaintOp => []).takes_input(RawInput {
+      on_key: (k: KeyInput) -> Maybe<Ev> => if k.key == ArrowDown { None } else {
+        Some(Heard("key ${mods_of(k.mods)}${name_of(k.key)}${if k.pressed { "" } else { " up" }}"))
+      },
+      on_text: (t: TextInput) -> Maybe<Ev> => match t {
+        TypedText(text) => Some(Heard("typed '${text}'")),
+        ComposedText(text, caret, _) => Some(Heard("composing '${text}' caret ${caret}")),
+      },
+      on_pointer: (p: PointerInput) -> Maybe<Ev> => match p.kind {
+        PointerPress(b, clicks) => Some(Heard("${mods_of(p.mods)}${button_of(b)} press ${clicks} at ${p.at.x},${p.at.y}")),
+        PointerRelease(b) => Some(Heard("${button_of(b)} release at ${p.at.x},${p.at.y}")),
+        PointerMove => Some(Heard("move to ${p.at.x},${p.at.y}")),
+        PointerWheel(_, _) => None,
+      },
+      caret: Some(Rect { x: 10.0, y: 20.0, w: 1.0, h: 16.0 }),
+    }).keyed("term"),
+  ]),
+  button("other", Pressed),
+]).aligned(MainStart, CrossStart)
+
+let main = () -> u8 => {
+  let script = "click:30,40 a Tab Down F5 Insert 'hi' compose:'ka' Primary+t Shift+click:30,40 down:30,40 move:300,300 up:300,300 move:50,50 scroll:2 blur focus click:210,10 a"
+  let Ok(steps) = parse_steps(script) else { return 2 }
+  var platform = timed_platform(steps, Size { w: 400.0, h: 200.0 })
+  let app = App {
+    view: view,
+    update: update,
+    subscriptions: (_: State) -> []Subscription<Ev> => [OnFocus(Focus)],
+    background: Color { r: 0, g: 0, b: 0 },
+    shortcuts: [Shortcuts {
+      of: (_: State) -> []Shortcut<Ev> => [Shortcut { key: Character('t'), mods: Modifiers { primary: true }, event: NewTab }],
+    }],
+  }
+  var host = host_of(app, State {}, platform)
+  var renderer = Blank {}
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  while host.step(platform, renderer, fonts) {}
+  for line in host.state.heard { println(line) }
+  let at = platform.typing ?? Rect {}
+  println("the input method's window at ${at.x},${at.y} ${at.w}x${at.h}")
+  fonts.close()
+  0
+}
+`)
+	want := `move to 30,40
+primary press 1 at 30,40
+primary release at 30,40
+key a
+key Tab
+key F5
+key Insert
+typed 'hi'
+composing 'ka' caret 2
+shortcut: new tab
+move to 30,40
+Shift+primary press 1 at 30,40
+primary release at 30,40
+primary press 1 at 30,40
+move to 300,300
+primary release at 300,300
+move to 50,50
+window unfocused
+window focused
+the button
+key a
+the input method's window at 10,20 1x16
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}

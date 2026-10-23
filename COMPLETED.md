@@ -9,6 +9,35 @@ Newest first.
 
 ## Dated log
 
+### 10/23/26 — `ui`: an element that takes input raw
+
+- **`.takes_input(RawInput { on_key, on_text, on_pointer, caret })`** on a painter
+  (`ui/TERMINAL.md` §3, step 6): `Ui.handle` asks it first (`heard_raw`) — a key or text the
+  focused one, the pointer the one holding it or else the deepest under it — and goes on as
+  before only when it answers `None`. So Tab, the arrows and Space reach a terminal, and a key
+  it declines is still the framework's. **A press it takes holds the pointer** (`Ui.captured`)
+  until it is let go, so a selection dragged past the window's edge stays the terminal's. A
+  raw painter is focusable and draws no ring (it draws its own cursor); its `caret` is where
+  `place_text_input` puts the input method's window.
+- **The platform's input grew what a terminal sends**: `Key.Insert`, `FunctionKey(1…24)`,
+  `TextComposing` (SDL's `SDL_EVENT_TEXT_EDITING`, unbound until now — a field gets it too),
+  `WindowFocused`/`WindowUnfocused`. **A key's modifiers are its event's own** now:
+  `ui.sdl3` read `SDL_GetModState()` as it translated a drained queue, so an event further
+  back got what was held at the end. The binding answers them beside the event
+  (`poll_event_with_modifiers`) rather than changing `KeyDown`'s payload, which
+  `std.game`, the SDL3 examples and Sheliak match on. **A pointer event's modifiers are
+  `Platform.held()`**: `InputEvent`'s pointer events carry none, and the script's
+  `Shift+click:X,Y` holds them for its inputs (`Holding` steps).
+- **`App.shortcuts`** are matched in `Host.step` before `Ui.handle`, by `chord_matches`:
+  `primary` is the shortcut modifier, `control` or `command` alone the one that is not, so one
+  table serves both platforms. An array of at most one `Shortcuts` struct, for two reasons: a
+  generic struct's `None` default is not settled, and an alias cannot take type parameters (a
+  parenthesised function type in `[]` was a one-element tuple). **`Subscription.OnFocus`** and
+  **`Command.FocusKeyed(key)`**, resolved after the next layout has the keyed element.
+- Left for later, in todo.md: a key's repeat flag and physical code, the keypad's keys, a
+  `cursor` style property and AccessKit's Terminal role. `examples/ui/keys.lyra`,
+  `TestRun_UiRawInput`.
+
 ### 10/22/26 — CI in less time
 
 - **The test step was 17 of CI's 19 minutes**, nearly all `cmd/lyrac`: some thirty `ui` tests

@@ -58,6 +58,11 @@ import ui.backend.{
   Resized,
   AppearanceChanged,
   Appearance,
+  KeyPressed,
+  WindowFocused,
+  WindowUnfocused,
+  Key,
+  Modifiers,
 }
 import ui.draw.{ Point, Size, Color }
 import ui.text.{ Fonts, FontSpec, FontMetrics, GlyphAtlas, glyph_atlas }
@@ -94,6 +99,37 @@ pub struct App<s, e> {
   /// to the title, size, limits, resizing or overflow is made to the open window. `None` for
   /// a window that never changes after it opens.
   window: Maybe<() -> WindowSpec> = None,
+  /// The keys the program takes whatever has the focus — a terminal's new tab, the menus'
+  /// accelerators — matched before any element hears a key ([Shortcut]): a function of the
+  /// state answering them ([Shortcuts]), or none. (An array of at most one: a generic struct's
+  /// `None` default is not settled yet, todo.md.)
+  shortcuts: []Shortcuts<s, e> = [],
+}
+
+/// What a state's shortcuts are ([App.shortcuts]): `Shortcuts { of: (state) => [...] }`.
+pub struct Shortcuts<s, e> {
+  of: (s) -> []Shortcut<e>,
+}
+
+/// A key the program takes whatever has the focus, held with `mods`, and the event it stands
+/// for. **Write the shortcut modifier as `primary`** — Command on a Mac, Control elsewhere —
+/// and `control` or `command` alone for the one that is not: `Modifiers { primary: true }` and
+/// `Character('t')` is ⌘T on a Mac and Ctrl+T elsewhere, `Modifiers { control: true }` is Ctrl
+/// on a Mac. Shift and Alt are matched as they are; a character key is its unshifted one.
+pub struct Shortcut<e> {
+  key: Key,
+  mods: Modifiers,
+  event: e,
+}
+
+/// Whether a key held with `got` is the shortcut written with `want` ([Shortcut]).
+pub let chord_matches = pure (want: Modifiers, got: Modifiers) -> bool => {
+  // The modifier besides the primary one: in `want` whichever of the two is written, in
+  // `got` the one held that is not primary (both held, with primary, is the other held too).
+  let other_wanted = want.control || want.command
+  let other_held = if got.primary { got.control && got.command } else { got.control || got.command }
+  want.shift == got.shift && want.alt == got.alt && want.primary == got.primary &&
+    other_wanted == other_held
 }
 
 /// A window as markup describes it — lui's `<window>`, generated as `window_spec`: its title, the
@@ -146,6 +182,9 @@ pub data Command<e> =
   | QuitApp
   /// The font's measurements at its size on this display ([Fonts.metrics]) — a grid's cell.
   | MeasureFont(FontSpec, (FontMetrics) -> e)
+  /// The focus to the element keyed so ([Node.keyed]), once it is laid out — a new tab's
+  /// terminal.
+  | FocusKeyed(string)
 
 /// What a state wants to hear of while it holds.
 pub data Subscription<e> =
@@ -158,6 +197,8 @@ pub data Subscription<e> =
   | OnResize((Size) -> e)
   /// The system's look, each time it switches between light and dark.
   | OnAppearance((Appearance) -> e)
+  /// The window's keyboard focus, each time it is gained (`true`) or lost.
+  | OnFocus((bool) -> e)
 
 /// A program with no work to ask for and nothing to subscribe to: `update` answers the next
 /// state alone, Elm's sandbox.
@@ -382,13 +423,26 @@ impl Host<s, e> {
           OnAppearance(make) => Some(make(look)),
           _ => None,
         }),
+        WindowFocused => self.heard(at, platform, (sub) => match sub {
+          OnFocus(make) => Some(make(true)),
+          _ => None,
+        }),
+        WindowUnfocused => self.heard(at, platform, (sub) => match sub {
+          OnFocus(make) => Some(make(false)),
+          _ => None,
+        }),
         _ => {},
       }
-      for event in self.ui.handle(
-        laid,
-        input,
-        platform
-      ) { self.dispatch(event, at, platform) }
+      // A shortcut is the program's before any element hears the key.
+      let taken = match input {
+        KeyPressed(key, mods) => self.shortcut_for(key, mods),
+        _ => None,
+      }
+      let events = match taken {
+        Some(event) => [event],
+        None => self.ui.handle(laid, input, platform),
+      }
+      for event in events { self.dispatch(event, at, platform) }
       self.deliver_due(at, platform)
       if !self.running { return false }
       laid = self.lay_out_view(platform, fonts)
@@ -567,8 +621,19 @@ impl Host<s, e> {
         },
         QuitApp => { self.running = false },
         MeasureFont(font, done) => self.measures.push(Measure { font: font, done: done }),
+        FocusKeyed(key) => self.ui.focus_keyed(key),
       }
     }
+  }
+
+  /// The event of the program's shortcut for `key` held with `mods`, if it has one.
+  let shortcut_for = (self, key: Key, mods: Modifiers) -> Maybe<e> => {
+    for list in self.app.shortcuts {
+      for s in (list.of)(self.state) {
+        if s.key == key && chord_matches(s.mods, mods) { return Some(s.event) }
+      }
+    }
+    None
   }
 
   /// The fonts asked to be measured, measured: their events waiting for the next delivery.

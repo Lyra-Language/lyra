@@ -16,7 +16,12 @@ module ui.script
 //! - a key, held with any of `Shift+`, `Alt+`, `Ctrl+`, `Cmd+` and `Primary+` (Command on a
 //!   Mac, Control elsewhere — the shortcut modifier): `Tab`, `Enter`, `Space`, `Escape`,
 //!   `Backspace`, `Delete`, `Left`, `Right`, `Up`, `Down`, `Home`, `End`, `PageUp`,
-//!   `PageDown`, or one character (`a`, `/`), which is its key.
+//!   `PageDown`, `Insert`, `F1` to `F24`, or one character (`a`, `/`), which is its key.
+//! - `compose:'text'` — an input method's composition in progress, its caret at its end
+//!   (`compose:''` ends it).
+//! - `focus`, `blur` — the window gained the keyboard's focus, or lost it.
+//! - a pointer input with modifiers, `Shift+click:X,Y` — held for its inputs alone
+//!   ([Platform.held]); only [parse_steps] reads it.
 //! - `move:X,Y`, `down:X,Y`, `up:X,Y` and `click:X,Y` (a move, a press and a release) — the
 //!   pointer, in logical units; `double:X,Y` and `triple:X,Y` are two and three clicks in a
 //!   row, the last press counting 2 or 3; `scroll:N` scrolls down `N` lines (up for a negative `N`), `scroll:X,Y` across and down.
@@ -41,6 +46,9 @@ import ui.backend.{
   Scrolled,
   KeyPressed,
   TextTyped,
+  TextComposing,
+  WindowFocused,
+  WindowUnfocused,
   Primary,
   Key,
   Modifiers,
@@ -57,6 +65,8 @@ import ui.backend.{
   End,
   PageUp,
   PageDown,
+  Insert,
+  FunctionKey,
   Character,
   Cursor,
   Arrow,
@@ -96,11 +106,14 @@ pub struct ScriptPlatform {
   /// The clock, in milliseconds, and how much of the current wait has passed.
   clock: i64 = 0,
   waited: i64 = 0,
+  /// The modifier keys held, as the last `Holding` step said.
+  holding: Modifiers = Modifiers {},
 }
 
-/// One step of a script: an input, time passing, or the window dragged to a size — the
-/// platform's live-resize hook called from inside its wait, as macOS does, with no input.
-pub data Step = Played(InputEvent) | Waited(i64) | Dragged(Size)
+/// One step of a script: an input, time passing, the window dragged to a size — the
+/// platform's live-resize hook called from inside its wait, as macOS does, with no input — or
+/// the modifier keys held from now on ([Platform.held]), for the pointer.
+pub data Step = Played(InputEvent) | Waited(i64) | Dragged(Size) | Holding(Modifiers)
 
 /// A platform playing `inputs`, its window `size` large, with no time passing.
 pub let script_platform = pure (inputs: []InputEvent, size: Size) -> ScriptPlatform =>
@@ -124,6 +137,11 @@ impl Platform for ScriptPlatform {
           self.next += 1
           self.waited = 0
         }
+        []
+      },
+      Holding(mods) => {
+        self.next += 1
+        self.holding = mods
         []
       },
       Dragged(size) => {
@@ -150,6 +168,7 @@ impl Platform for ScriptPlatform {
     }
   }
   window_size = pure (self) => self.size
+  held = pure (self) => self.holding
   scale = pure (self) => self.units
   set_text_input = (self, field) => { self.typing = field }
   clipboard = pure (self) => self.clip
@@ -186,6 +205,8 @@ pub let parse_script = pure (script: string) -> Result<[]InputEvent, string> => 
         return Err("wait: is a step, not an input; read the script with parse_steps"),
       Dragged(_) =>
         return Err("drag: is a step, not an input; read the script with parse_steps"),
+      Holding(_) =>
+        return Err("a modifier on the pointer is a step, not an input; read the script with parse_steps"),
     }
   }
   Ok(inputs)
@@ -232,6 +253,20 @@ pub let parse_steps = pure (script: string) -> Result<[]Step, string> => {
       inputs.push(Waited(n))
       continue
     }
+    if let Some(quoted) = token.strip_prefix("compose:") {
+      if !quoted.starts_with("'") || !quoted.ends_with("'") || quoted.len() < 2 {
+        return Err("not quoted text: ${token}")
+      }
+      let text = quoted.slice(1, quoted.len() - 1).replace("\\'", "'")
+      var runes = 0
+      for _ in text { runes += 1 }
+      inputs.push(Played(TextComposing(text, runes, -1)))
+      continue
+    }
+    if token == "focus" || token == "blur" {
+      inputs.push(Played(if token == "focus" { WindowFocused } else { WindowUnfocused }))
+      continue
+    }
     if let Some(place) = token.strip_prefix("drag:") {
       let Some(at) = point(place) else { return Err("not a size: ${token}") }
       inputs.push(Dragged(Size { w: at.x, h: at.y }))
@@ -247,6 +282,18 @@ pub let parse_steps = pure (script: string) -> Result<[]Step, string> => {
       continue
     }
     let parts = token.split("+")
+    // Modifiers on the pointer — `Shift+click:10,20` — are held for its inputs alone.
+    if parts.len() > 1 {
+      if let Some((verb, place)) = pointer_token(parts[parts.len() - 1]) {
+        let Some(held) = modifiers_named(parts.slice(0, parts.len() - 1)) else {
+          return Err("not a modifier in ${token}")
+        }
+        inputs.push(Holding(held))
+        for step in parse_steps("${verb}:${place}")? { inputs.push(step) }
+        inputs.push(Holding(Modifiers {}))
+        continue
+      }
+    }
     var mods = Modifiers {}
     for i in 0..<(parts.len() - 1) {
       match parts[i] {
@@ -313,6 +360,30 @@ let point = pure (place: string) -> Maybe<Point> => {
 }
 
 /// The key a script names.
+/// The modifiers `names` name (`Shift`, `Alt`, `Ctrl`, `Cmd`, `Primary`), or `None` if one is
+/// none of them.
+let modifiers_named = pure (names: []string) -> Maybe<Modifiers> => {
+  var mods = Modifiers {}
+  for name in names {
+    match name {
+      "Shift" => { mods = Modifiers { mods | shift: true } },
+      "Alt" => { mods = Modifiers { mods | alt: true } },
+      "Ctrl" => { mods = Modifiers { mods | control: true } },
+      "Cmd" => { mods = Modifiers { mods | command: true } },
+      "Primary" => { mods = Modifiers { mods | primary: true } },
+      _ => return None,
+    }
+  }
+  Some(mods)
+}
+
+/// `F1` to `F24` as their key.
+let function_key = pure (name: string) -> Maybe<Key> => {
+  let Some(digits) = name.strip_prefix("F") else { return None }
+  let Some(n) = digits.parse_i64() else { return None }
+  if n >= 1 && n <= 24 { Some(FunctionKey(n)) } else { None }
+}
+
 let key_named = pure (name: string) -> Maybe<Key> => match name {
   "Tab" => Some(Tab),
   "Enter" => Some(Enter),
@@ -328,5 +399,6 @@ let key_named = pure (name: string) -> Maybe<Key> => match name {
   "End" => Some(End),
   "PageUp" => Some(PageUp),
   "PageDown" => Some(PageDown),
-  _ => if name.len() == 1 { Some(Character(name[0])) } else { None },
+  "Insert" => Some(Insert),
+  _ => if name.len() == 1 { Some(Character(name[0])) } else { function_key(name) },
 }
