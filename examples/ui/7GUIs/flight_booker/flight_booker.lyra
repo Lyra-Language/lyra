@@ -1,0 +1,38 @@
+import ui.gpu
+import ui.app.{ step_running }
+import flight_booker_view.{
+  view,
+  update,
+  subscriptions,
+  window_spec,
+  State,
+  ONE_WAY_FLIGHT
+}
+import std.temporal.{ today }
+
+let main = () -> u8 => {
+  let today_date = today()
+  let state = State {
+    flight_type: ONE_WAY_FLIGHT,
+    flight_1_date_str: "${today_date}",
+    flight_2_date_str: "${today_date}",
+    flight_1_date: today_date,
+    flight_2_date: today_date,
+    flight_1_error: false,
+    flight_2_error: false,
+    flight_2_disabled: true,
+    book_btn_disabled: false,
+    book_message: "",
+  }
+  let window = match gpu.open_app(window_spec, view, update, subscriptions, state) {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      return 1
+    },
+  }
+  // The loop is `main`'s own, for `lyrac run --live`.
+  while step_running(window) {}
+  gpu.close_app(window)
+  0
+}

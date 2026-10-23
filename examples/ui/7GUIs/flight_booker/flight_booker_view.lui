@@ -1,0 +1,122 @@
+<window title="Flight Booker" width="280" height="250" resize={false} />
+
+<script target="ui">
+  import ui.app.{ Command, Subscription }
+  import std.temporal.{ PlainDate, parse_plain_date }
+
+  pub data Event =
+  FlightTypeSelected(i64)
+  | Flight1Edited(string)
+  | Flight2Edited(string)
+  | BookButtonPressed
+
+  pub const ONE_WAY_FLIGHT = 0
+  const RETURN_FLIGHT = 1
+  const FLIGHT_TYPES = ["one-way flight", "return flight"]
+
+  pub struct State {
+    flight_type: i64,
+    flight_1_date_str: string,
+    flight_2_date_str: string,
+    flight_1_date: PlainDate,
+    flight_2_date: PlainDate,
+    flight_1_error: bool,
+    flight_2_error: bool,
+    flight_2_disabled: bool,
+    book_btn_disabled: bool,
+    book_message: string,
+  }
+
+  pub let update = pure (s: State, event: Event) -> (State, []Command<Event>) => match event {
+    FlightTypeSelected(flight_type) => (State { s |
+      flight_type: flight_type,
+      flight_2_disabled: flight_type == ONE_WAY_FLIGHT
+    }, []),
+    Flight1Edited(flight_1_date_str) => {
+      let flight_1_date = parse_plain_date(flight_1_date_str)
+      match flight_1_date {
+        Some(date) => {
+          let book_btn_disabled = if s.flight_type == RETURN_FLIGHT && s.flight_2_date <= date {
+            true
+          } else {
+            false
+          }
+          (
+            State { s |
+              flight_1_date_str: flight_1_date_str,
+              flight_1_date: date,
+              flight_1_error: false,
+              book_btn_disabled: book_btn_disabled
+            },
+            []
+          )
+        },
+        None => (State { s | flight_1_date_str: flight_1_date_str, flight_1_error: true, book_btn_disabled: true }, []),
+      }
+    },
+    Flight2Edited(flight_2_date_str) => {
+      let flight_2_date = parse_plain_date(flight_2_date_str)
+      match flight_2_date {
+        Some(date) => {
+          let book_btn_disabled = if s.flight_type == RETURN_FLIGHT && date <= s.flight_1_date {
+            true
+          } else {
+            false
+          }
+          (
+            State { s |
+              flight_2_date_str: flight_2_date_str,
+              flight_2_date: date,
+              flight_2_error: false,
+              book_btn_disabled: book_btn_disabled
+            },
+            []
+          )
+        },
+        None => (State { s | flight_2_date_str: flight_2_date_str, flight_2_error: true, book_btn_disabled: true }, []),
+      }
+    },
+    BookButtonPressed => {
+      let flight_date_str = if s.flight_type == ONE_WAY_FLIGHT {
+        s.flight_1_date_str
+      } else {
+        s.flight_2_date_str
+      }
+      (State { s | book_message: "You have booked a ${FLIGHT_TYPES[s.flight_type]} on ${flight_date_str}" }, [])
+    }
+  }
+
+  pub let subscriptions = pure (_: State) -> []Subscription<Event> => []
+</script>
+
+<component name="view" props={{ s: State }} event={Event}>
+  <style>
+    Column { padding: $space.m; gap: $space.m }
+    Select { width: 130; }
+    TextInput { width: 100; }
+    TextInput.error { background: #FAA; border-color: #F66; border-width: 1; }
+  </style>
+
+  <Column>
+    <Select
+      options={FLIGHT_TYPES}
+      selected={s.flight_type}
+      on_change={FlightTypeSelected}
+    />
+    <TextInput
+      class={if s.flight_1_error { "error" } else { "" }}
+      value={s.flight_1_date_str}
+      on_edit={Flight1Edited}
+      label="Flight One"
+    />
+    <TextInput
+      class={if s.flight_2_error { "error" } else { "" }}
+      value={s.flight_2_date_str}
+      on_edit={Flight2Edited}
+      label="Flight Two"
+      disabled={s.flight_2_disabled}
+    />
+    <Button disabled={s.book_btn_disabled} on_click={BookButtonPressed}>Book</Button>
+    <Text>{s.book_message}</Text>
+  </Column>
+</component>
