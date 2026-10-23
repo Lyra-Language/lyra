@@ -22,6 +22,8 @@ module ui.script
 //! - `focus`, `blur` — the window gained the keyboard's focus, or lost it.
 //! - `maximize`, `minimize`, `restore` — the system did that to the window
 //!   ([WindowStateChanged]).
+//! - `choose:PATH` — the oldest file dialog asked for answers `PATH` (`choose:` alone, a cancel);
+//!   only [parse_steps] reads it.
 //! - `menu:N` — the item tagged `N` of the platform's own menu bar chosen ([MenuChosen]), as
 //!   on a Mac; a script platform has such a bar where its `native_menus` says.
 //! - a pointer input with modifiers, `Shift+click:X,Y` — held for its inputs alone
@@ -87,6 +89,8 @@ import ui.backend.{
   ToMaximized,
   ToRestored,
   WindowStateChanged,
+  FileDialog,
+  FileAnswered,
 }
 import ui.draw.{ Point, Size, Rect }
 
@@ -118,6 +122,8 @@ pub struct ScriptPlatform {
   keep_areas: []Rect = [],
   resize_margin: f32 = 0.0,
   answers: []InputEvent = [],
+  /// The file dialogs asked for and not yet answered, oldest first, each by its tag.
+  dialogs: [](i32, FileDialog) = [],
   opened: []string = [],
   access: AccessTree = AccessTree {},
   /// The least and greatest size the window may be (nothing for no limit), which a step's
@@ -139,7 +145,14 @@ pub struct ScriptPlatform {
 /// One step of a script: an input, time passing, the window dragged to a size — the
 /// platform's live-resize hook called from inside its wait, as macOS does, with no input — or
 /// the modifier keys held from now on ([Platform.held]), for the pointer.
-pub data Step = Played(InputEvent) | Waited(i64) | Dragged(Size) | Holding(Modifiers)
+pub data Step =
+  Played(InputEvent)
+  | Waited(i64)
+  | Dragged(Size)
+  | Holding(Modifiers)
+  /// The oldest file dialog asked for and not yet answered answers this: a path, or `None` for
+  /// a cancel. Nothing, where none was asked for.
+  | Answered(Maybe<string>)
 
 /// A platform playing `inputs`, its window `size` large, with no time passing.
 pub let script_platform = pure (inputs: []InputEvent, size: Size) -> ScriptPlatform =>
@@ -175,6 +188,13 @@ impl Platform for ScriptPlatform {
         self.next += 1
         self.holding = mods
         []
+      },
+      Answered(path) => {
+        self.next += 1
+        if self.dialogs.len() == 0 { return [] }
+        let (tag, _) = self.dialogs[0]
+        self.dialogs = self.dialogs.slice(1, self.dialogs.len())
+        [FileAnswered(tag, path)]
       },
       Dragged(size) => {
         self.next += 1
@@ -241,6 +261,7 @@ impl Platform for ScriptPlatform {
     self.answers.push(WindowStateChanged(self.window))
   }
   set_decorated = (self, on) => { self.decorated = on }
+  choose_file = (self, tag, dialog) => { self.dialogs.push((tag, dialog)) }
   set_window_areas = (self, drags, keeps, margin) => {
     self.drag_areas = drags
     self.keep_areas = keeps
@@ -262,6 +283,8 @@ pub let parse_script = pure (script: string) -> Result<[]InputEvent, string> => 
         return Err("drag: is a step, not an input; read the script with parse_steps"),
       Holding(_) =>
         return Err("a modifier on the pointer is a step, not an input; read the script with parse_steps"),
+      Answered(_) =>
+        return Err("choose: is a step, not an input; read the script with parse_steps"),
     }
   }
   Ok(inputs)
@@ -343,6 +366,10 @@ pub let parse_steps = pure (script: string) -> Result<[]Step, string> => {
         WindowState {}
       }
       inputs.push(Played(WindowStateChanged(state)))
+      continue
+    }
+    if let Some(path) = token.strip_prefix("choose:") {
+      inputs.push(Answered(if path.len() == 0 { None } else { Some(path) }))
       continue
     }
     if let Some(tag) = token.strip_prefix("menu:") {

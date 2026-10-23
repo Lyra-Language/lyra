@@ -80,6 +80,14 @@ rm -f "$OUT/lib/liblyra-hittest.a"
 ar rcs "$OUT/lib/liblyra-hittest.a" "$OUT/lib/hittest.o"
 rm -f "$OUT/lib/hittest.o"
 
+# **The C half of `bindings.dialog`** (`dialog.c`): SDL's open and save dialogs, their answers
+# queued and the loop's wait woken — `ui.app`'s `ChooseFile`. POSIX threads' mutex and SDL's
+# functions resolved when the program links SDL3, as the wake's are.
+"${LYRA_CC:-clang}" -O2 -std=c11 -c "$ROOT/bindings/dialog/dialog.c" -o "$OUT/lib/dialog.o"
+rm -f "$OUT/lib/liblyra-dialog.a"
+ar rcs "$OUT/lib/liblyra-dialog.a" "$OUT/lib/dialog.o"
+rm -f "$OUT/lib/dialog.o"
+
 # **lyrafmt is built when it can be**, and skipped with a note when it cannot. The
 # formatter is a Lyra program that links the tree-sitter runtime and the grammar
 # (examples/lyrafmt/libs.sh), so it needs a C compiler, `libtree-sitter` and the sibling
@@ -140,4 +148,4 @@ else
   gpu_note="a stub liblyra-gpu.a (${gpu_err##*: })"
 fi
 
-printf 'built %s/{lyrac,lyra-lsp} %s, %s, lib/liblyra-{menubar,pty,wake,hittest}.a, %s, %s and %s, with std -> ../std, bindings -> ../bindings, ui -> ../ui\n' "$OUT" "$fmt_note" "$lui_note" "$imgui_note" "$accesskit_note" "$gpu_note"
+printf 'built %s/{lyrac,lyra-lsp} %s, %s, lib/liblyra-{menubar,pty,wake,hittest,dialog}.a, %s, %s and %s, with std -> ../std, bindings -> ../bindings, ui -> ../ui\n' "$OUT" "$fmt_note" "$lui_note" "$imgui_note" "$accesskit_note" "$gpu_note"

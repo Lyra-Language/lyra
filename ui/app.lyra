@@ -76,6 +76,8 @@ import ui.backend.{
   ToMinimized,
   ToMaximized,
   ToRestored,
+  FileDialog,
+  FileAnswered,
 }
 import ui.draw.{ Point, Size, Rect, Color }
 import ui.text.{ Fonts, FontSpec, FontMetrics, GlyphAtlas, glyph_atlas }
@@ -250,6 +252,9 @@ pub data Command<e> =
   | WindowMinimize
   | WindowMaximize
   | WindowRestore
+  /// The system's open or save dialog ([FileDialog]), and the event its answer makes: the path
+  /// chosen, or `None` for none. The dialog is the user's while it is open; the program goes on.
+  | ChooseFile(FileDialog, (Maybe<string>) -> e)
 
 /// What a state wants to hear of while it holds.
 pub data Subscription<e> =
@@ -372,6 +377,10 @@ pub struct Host<s, e> {
   native_chords: []Chord = [],
   /// Whether the system's frame has been taken away, for a drawn title bar.
   undecorated: bool = false,
+  /// The file dialogs open, each by the tag it was asked with and what its answer makes, and the
+  /// next tag.
+  dialogs: [](i32, (Maybe<string>) -> e) = [],
+  next_dialog: i32 = 0,
   last_frame: i64 = -1,
   running: bool = true,
   live: bool = false,
@@ -584,6 +593,17 @@ impl Host<s, e> {
           OnWindowState(make) => Some(make(state)),
           _ => None,
         }),
+        FileAnswered(tag, path) => {
+          var waiting: [](i32, (Maybe<string>) -> e) = []
+          for (asked, make) in self.dialogs {
+            if asked == tag { self.dispatch(
+              make(path),
+              at,
+              platform
+            ) } else { waiting.push((asked, make)) }
+          }
+          self.dialogs = waiting
+        },
         MenuChosen(tag) => {
           if tag >= 0 && i64(tag) < self.menu_events.len() { self.dispatch(
             self.menu_events[tag],
@@ -805,6 +825,12 @@ impl Host<s, e> {
         WindowMinimize => platform.change_window(ToMinimized),
         WindowMaximize => platform.change_window(ToMaximized),
         WindowRestore => platform.change_window(ToRestored),
+        ChooseFile(d, make) => {
+          let tag = self.next_dialog
+          self.next_dialog += 1
+          self.dialogs.push((tag, make))
+          platform.choose_file(tag, d)
+        },
         MeasureFont(font, done) => self.measures.push(Measure { font: font, done: done }),
         FocusKeyed(key) => self.ui.focus_keyed(key),
         ScrollTo(key, y) => self.ui.scroll_keyed(key, y),

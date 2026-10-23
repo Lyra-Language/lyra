@@ -129,6 +129,8 @@ import bindings.sdl3.{
 import bindings.wake
 import bindings.menubar
 import bindings.hittest
+import bindings.dialog
+import bindings.dialog.{ PathChosen, ChoiceCancelled, ChoiceFailed }
 import bindings.sdl3.{
   window_flags,
   minimize_window,
@@ -153,6 +155,7 @@ import ui.backend.{
   ToMaximized,
   ToRestored,
   WindowStateChanged,
+  FileAnswered,
   Renderer,
   InputEvent,
   Appearance,
@@ -383,6 +386,19 @@ impl Platform for SdlPlatform {
     // The items of the Mac's own bar chosen — by click or key equivalent, during SDL's pump —
     // whose choice woke the wait above (`bindings.menubar` pushes an event for it).
     while let Some(tag) = menubar.poll_menu() { events.push(MenuChosen(tag)) }
+    // File dialogs answered — possibly from another thread, during SDL's pump or between — whose
+    // answer woke the wait (`bindings.dialog` pushes an event for it). A dialog SDL could not
+    // show is no choice, and says why.
+    while let Some(answer) = dialog.poll() {
+      events.push(match answer {
+        PathChosen(tag, path) => FileAnswered(tag, Some(path)),
+        ChoiceCancelled(tag) => FileAnswered(tag, None),
+        ChoiceFailed(tag, why) => {
+          println("ui.sdl3: the file dialog could not be shown: ${why}")
+          FileAnswered(tag, None)
+        },
+      })
+    }
     // What assistive technology asked for; its request woke the wait above.
     while let Some(raw) = accesskit.next_request() {
       let Some(element) = self.access_keys.get(raw.target) else { continue }
@@ -473,6 +489,9 @@ impl Platform for SdlPlatform {
     }
   }
   // A Mac's title bar stays the system's, its buttons where macOS puts them (`ui/WINDOW.md`).
+  choose_file = (self, tag, d) => {
+    let _ = dialog.show(self.window, tag, d.save, d.filters, d.start)
+  }
   set_decorated = (self, on) => {
     if !apple() { let _ = set_window_bordered(self.window, on) }
   }

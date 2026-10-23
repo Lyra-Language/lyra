@@ -97,6 +97,18 @@ pub trait Platform {
   /// and, inside that, what keeps a press (its controls), in logical units; and the margin
   /// round its edges it is resized from. Ignored where the window keeps the system's frame.
   set_window_areas: (mut Self, []Rect, []Rect, f32) -> void
+  /// Show the system's open or save dialog, its answer to come as [FileAnswered] under this tag
+  /// — later, the dialog being the user's while it is open.
+  choose_file: (mut Self, i32, FileDialog) -> void
+}
+
+/// A file dialog to show: what it offers (each a name and its extensions without dots, joined
+/// by `;` — `("Fonts", "ttf;otf")` — or `*` for every file), where it starts (the system's
+/// choice for `None`), and whether it chooses where to save, a path that may not exist yet.
+pub struct FileDialog {
+  filters: [](string, string) = [],
+  start: Maybe<string> = None,
+  save: bool = false,
 }
 
 /// The window as the system has it: minimized, maximized, fullscreen.
@@ -271,6 +283,9 @@ pub data InputEvent =
   | MenuChosen(i32)
   /// The window was minimized, maximized, made fullscreen or put back, to this.
   | WindowStateChanged(WindowState)
+  /// The file dialog asked for under this tag ([Platform.choose_file]) answered: the path
+  /// chosen, or `None` — closed without a choice, or not shown at all.
+  | FileAnswered(i32, Maybe<string>)
 
 /// A mouse button, or a touch (which is [Primary]).
 pub data PointerButton = Primary | Secondary | Middle | OtherButton(u8)

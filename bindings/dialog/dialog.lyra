@@ -1,0 +1,85 @@
+@link("lyra-dialog")
+module bindings.dialog
+//! The system's open and save dialogs (SDL's) for a program whose loop sleeps in SDL's event
+//! wait — `ui.app`'s `ChooseFile`. [show] returns at once; the answer comes later, under the tag
+//! it was asked with, from [poll], after the program's events: SDL answers through a callback,
+//! possibly on another thread, which Lyra cannot be, so the C half (`dialog.c`) queues the answer
+//! and pushes an SDL event that ends the wait. `bindings.imgui` has its own, on ImGui's host.
+//!
+//! Its C half needs no SDL headers (the program links SDL3 itself) and builds into
+//! `build/lib/liblyra-dialog.a` with `build.sh`.
+
+import std.ffi
+import std.ffi.{ cstring_len, with_cstrings }
+import bindings.sdl3.{ Window }
+
+/// What a dialog answered, under the tag it was asked with: the path chosen, a cancel, or SDL's
+/// reason it could not be shown.
+pub data DialogAnswer = PathChosen(
+  i32,
+  string
+) | ChoiceCancelled(i32) | ChoiceFailed(i32, string)
+
+/// Show the system's open dialog — or, `save`, its save dialog, whose path may not exist yet —
+/// modal to `window`, offering `filters` (each a name and its extensions without dots, joined by
+/// `;`, or `*` for every file) and starting at `start` (the system's choice for `None`). The
+/// answer comes from [poll] under `tag`. False only when out of memory; then none will.
+pub let show = (
+  window: Window,
+  tag: i32,
+  save: bool,
+  filters: [](string, string),
+  start: Maybe<string>
+) -> bool => {
+  let lines = [f in filters | "${f.0}\t${f.1}\n"].join("")
+  with_cstrings(
+    lines,
+    start ?? "",
+    (l, s) => unsafe { lyra_dialog_show(window, tag, save, l, s) }
+  )
+}
+
+/// The oldest answer not yet read, or `None`.
+pub let poll = () -> Maybe<DialogAnswer> => {
+  var tag: i32 = 0
+  var kind: i32 = -1
+  let c_tag = unsafe { &mut tag }
+  let c_kind = unsafe { &mut kind }
+  let text = unsafe { lyra_dialog_poll(c_tag, c_kind) }
+  match kind {
+    0 => Some(PathChosen(tag, from_cstring(text))),
+    1 => Some(ChoiceCancelled(tag)),
+    2 => Some(ChoiceFailed(tag, from_cstring(text))),
+    _ => None,
+  }
+}
+
+/// Queue `answer` as the system's dialog would — for a test, with no dialog shown; [poll] hands
+/// it back, and the program's wait is woken once a dialog has been shown.
+pub let answer = (a: DialogAnswer) -> void => match a {
+  PathChosen(tag, path) =>
+    path.with_cstring((p) => unsafe { lyra_dialog_answer(tag, 0, p) }),
+  ChoiceCancelled(tag) =>
+    "".with_cstring((p) => unsafe { lyra_dialog_answer(tag, 1, p) }),
+  ChoiceFailed(tag, why) =>
+    why.with_cstring((p) => unsafe { lyra_dialog_answer(tag, 2, p) }),
+}
+
+/// Copy a C string the C half answers; NULL is `""`.
+let from_cstring = pure (p: ^u8) -> string =>
+  if p == nullptr { "" } else { unsafe { p.decode_utf8(cstring_len(p)) } }
+
+@symbol("lyra_dialog_show")
+unsafe extern lyra_dialog_show: (
+  window: Window,
+  tag: i32,
+  save: bool,
+  filters: ^u8,
+  location: ^u8
+) -> bool
+
+@symbol("lyra_dialog_poll")
+unsafe extern lyra_dialog_poll: (tag: ^mut i32, kind: ^mut i32) -> ^u8
+
+@symbol("lyra_dialog_answer")
+unsafe extern lyra_dialog_answer: (tag: i32, kind: i32, text: ^u8) -> void

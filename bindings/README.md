@@ -659,6 +659,18 @@ flags)` is that answer, for a test to ask with no window (`set_areas_only`). Lik
 its C declares SDL's three functions itself, so `build.sh` builds `liblyra-hittest.a` with a
 bare C compiler and the test harness compiles it where `build/lib` has none.
 
+## `bindings/dialog/`
+
+The system's open and save dialogs (SDL's) for a program whose loop sleeps in SDL's event wait —
+`ui.app`'s `ChooseFile`: `show(window, tag, save, filters, start)` returns at once, and the
+answer — `PathChosen`, `ChoiceCancelled`, `ChoiceFailed` with SDL's reason — comes from
+`poll()` under the tag. SDL answers through a callback, possibly on another thread, so the C
+half (`dialog.c`) queues the answer under a mutex and pushes an SDL event that ends the wait.
+`answer(a)` queues one as the callback would, for a test. Its C declares SDL's functions
+itself, as the wake's does: `build.sh` builds `liblyra-dialog.a` with a bare C compiler, and
+the test harness compiles it where `build/lib` has none. (`bindings.imgui` has its own, on
+ImGui's host, which draws every frame and needs no wake.)
+
 ## `bindings/pty/`
 
 A program on a pseudo-terminal, for a terminal emulator (`../termina`). `spawn(args, cols,

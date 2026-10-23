@@ -4114,7 +4114,8 @@ shortcut ⌘= / Ctrl+=: zoom in
 // examples/ui/menus.lyra played: from the keyboard File's Save (Down past a separator), then
 // View's Zoom In (Right across the bar, into the submenu); the shortcuts the menus show, taken
 // by the app with no table of the program's (Primary+N, Primary+Shift+S); a press outside an
-// open menu choosing nothing; and ☰'s first item by pointer. The last frame is written.
+// open menu choosing nothing; and ☰'s first item by pointer. Then File ▸ Open…, its dialog
+// answered from the script (choose:), and by its shortcut cancelled. The last frame is written.
 func TestRun_UiMenusExample(t *testing.T) {
 	t.Parallel()
 	skipWithoutText(t)
@@ -4127,32 +4128,31 @@ func TestRun_UiMenusExample(t *testing.T) {
 	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, filepath.Join(repoRoot(t), "examples", "ui", "menus.lyra")); code != 0 {
 		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
 	}
-	shot := filepath.Join(dir, "end.png")
-	cmd := command(t, bin, "--script",
-		"Tab Enter Down Down Enter Enter Right Right Down Right Enter Escape Primary+n Primary+Shift+s click:22,14 click:400,300 click:540,14 click:520,52",
-		"--png", shot)
-	cmd.Dir = dir
-	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
-	out, err := cmd.CombinedOutput()
-	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 &&
-		strings.Contains(string(out), "SDL could not") {
-		t.Skipf("SDL could not open a dummy window here: %s", out)
-	} else if ok && exitErr.ExitCode() == 1 && strings.HasPrefix(string(out), "no font") {
-		t.Skipf("no font here: %s", out)
-	} else if err != nil {
-		t.Fatalf("running: %v\n%s", err, out)
-	}
-	want := `save
-zoom 1
-new
-save as
-preferences
-`
-	if string(out) != want {
-		t.Errorf("got\n%s\nwant\n%s", out, want)
-	}
-	if _, err := os.Stat(shot); err != nil {
-		t.Errorf("no last frame: %v", err)
+	for _, c := range []struct{ script, want string }{
+		{"Tab Enter Down Down Enter Enter Right Right Down Right Enter Escape Primary+n Primary+Shift+s click:22,14 click:400,300 click:540,14 click:520,52",
+			"save\nzoom 1\nnew\nsave as\npreferences\n"},
+		// File ▸ Open…, and its dialog answered; then its shortcut, and the dialog cancelled.
+		{"Tab Enter Down Enter choose:/notes/today.txt Primary+o choose:", "opened /notes/today.txt\nopen cancelled\n"},
+	} {
+		shot := filepath.Join(dir, "end.png")
+		cmd := command(t, bin, "--script", c.script, "--png", shot)
+		cmd.Dir = dir
+		cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+		out, err := cmd.CombinedOutput()
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 &&
+			strings.Contains(string(out), "SDL could not") {
+			t.Skipf("SDL could not open a dummy window here: %s", out)
+		} else if ok && exitErr.ExitCode() == 1 && strings.HasPrefix(string(out), "no font") {
+			t.Skipf("no font here: %s", out)
+		} else if err != nil {
+			t.Fatalf("running: %v\n%s", err, out)
+		}
+		if string(out) != c.want {
+			t.Errorf("%s: got\n%s\nwant\n%s", c.script, out, c.want)
+		}
+		if _, err := os.Stat(shot); err != nil {
+			t.Errorf("no last frame: %v", err)
+		}
 	}
 }
 
@@ -4777,6 +4777,104 @@ drag areas 1, controls in them 4, the system's frame false
 	}
 	if _, err := os.Stat(shot); err != nil {
 		t.Errorf("no last frame: %v", err)
+	}
+}
+
+// Command.ChooseFile (WINDOW.md §5) through the host: the platform asked for the dialog — its
+// filters, where it starts, open or save — under a tag of the host's; its answer, a path or a
+// cancel, raising the event the command made with it, the program going on meanwhile; and an
+// answer with no dialog asked raising nothing.
+func TestRun_UiChooseFile(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, Command, Subscription, ChooseFile, host_of }
+import ui.script.{ timed_platform, ScriptPlatform, Played, Waited, Answered }
+import ui.backend.{ Renderer, TextureId, KeyPressed, Modifiers, Tab, Enter, FileDialog }
+import ui.draw.{ Size, Color }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, column, button, text }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => {}
+}
+
+data Ev = Open | SaveAs | Chosen(Maybe<string>)
+
+let main = () -> u8 => {
+  var platform = timed_platform([Waited(1)], Size { w: 300.0, h: 200.0 })
+  var renderer = Blank {}
+  var fonts = fonts_new()
+  var host = host_of(app(), "nothing", platform)
+  let _ = host.step(platform, renderer, fonts)
+  for (name, steps) in [
+    ("Tab, Enter on Open", [Played(KeyPressed(Tab, Modifiers {})), Played(KeyPressed(Enter, Modifiers {}))]),
+    ("a font chosen", [Answered(Some("/fonts/a.ttf"))]),
+    ("Tab, Enter on Save As", [Played(KeyPressed(Tab, Modifiers {})), Played(KeyPressed(Enter, Modifiers {}))]),
+    ("cancelled", [Answered(None)]),
+    ("an answer with none asked", [Answered(Some("/nowhere"))]),
+  ] {
+    platform.steps = [...platform.steps, ...steps, Waited(1)]
+    while platform.next < platform.steps.len() { let _ = host.step(platform, renderer, fonts) }
+    let asked = [d in platform.dialogs | "#${d.0} ${if d.1.save { "save" } else { "open" }} ${[f in d.1.filters | "${f.0}:${f.1}"].join(",")} from ${d.1.start ?? "anywhere"}"]
+    println("${name}: '${host.state}'; waiting ${asked.join("; ")}")
+  }
+  0
+}
+
+let app = pure () -> App<string, Ev> => App {
+  view: (heard: string) -> Node<Ev> => column([button("Open", Open), button("Save As", SaveAs), text(heard)]),
+  update: (heard: string, e: Ev) -> (string, []Command<Ev>) => match e {
+    Open => ("opening", [ChooseFile(FileDialog { filters: [("Fonts", "ttf;otf"), ("All", "*")], start: Some("/fonts") }, Chosen)]),
+    SaveAs => ("saving", [ChooseFile(FileDialog { save: true }, Chosen)]),
+    Chosen(path) => (path ?? "cancelled", []),
+  },
+  subscriptions: (_: string) -> []Subscription<Ev> => [],
+  background: Color { r: 0, g: 0, b: 0 },
+}
+`)
+	want := `Tab, Enter on Open: 'opening'; waiting #0 open Fonts:ttf;otf,All:* from /fonts
+a font chosen: '/fonts/a.ttf'; waiting 
+Tab, Enter on Save As: 'saving'; waiting #1 save  from anywhere
+cancelled: 'cancelled'; waiting 
+an answer with none asked: 'cancelled'; waiting 
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// bindings.dialog's queue, with no dialog shown: answers queued as SDL's callback would queue
+// them — a path, a cancel, a failure with its reason — handed back oldest first under their
+// tags, then none.
+func TestRun_DialogQueue(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import bindings.dialog.{ answer, poll, PathChosen, ChoiceCancelled, ChoiceFailed }
+
+let main = () -> void => {
+  answer(PathChosen(3, "/fonts/a.ttf"))
+  answer(ChoiceCancelled(4))
+  answer(ChoiceFailed(5, "no portal"))
+  for _ in 0..<4 {
+    println(match poll() {
+      Some(PathChosen(tag, path)) => "#${tag} chose ${path}",
+      Some(ChoiceCancelled(tag)) => "#${tag} cancelled",
+      Some(ChoiceFailed(tag, why)) => "#${tag} failed: ${why}",
+      None => "none",
+    })
+  }
+}
+`)
+	want := "#3 chose /fonts/a.ttf\n#4 cancelled\n#5 failed: no portal\nnone\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
 }
 

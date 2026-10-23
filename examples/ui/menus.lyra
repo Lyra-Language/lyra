@@ -1,7 +1,8 @@
 // Menus: `ui.layout`'s `menu_bar` and `menu_button` — menus as data (`Menu`, `MenuEntry`,
 // `MenuItem`), drawn as a bar of titles and as a ☰ button, with separators, an item greyed,
 // one checked, a submenu beside its item, and shortcuts spelled as the platform spells them and
-// taken by the app without being written twice. **On a Mac the same menus are in the system's
+// taken by the app without being written twice; File ▸ Open… asks the system's open dialog
+// (`ChooseFile`). **On a Mac the same menus are in the system's
 // own menu bar** (`App.menus`), after an application menu of ☰'s entries, and the window
 // draws no bar of its own. A press on a title opens its menu; while one is
 // open the pointer moves it from title to title; the arrows walk the items and across the bar,
@@ -16,10 +17,19 @@
 import ui.sdl3
 import ui.sdl3.{ SdlRenderer, capture }
 import ui.gpu
-import ui.app.{ App, Menus, run, running, step_running, Command, Subscription }
+import ui.app.{
+  App,
+  Menus,
+  run,
+  running,
+  step_running,
+  Command,
+  Subscription,
+  ChooseFile
+}
 import bindings.sdl3.{ platform }
 import ui.script.{ timed_platform, parse_steps }
-import ui.backend.{ Modifiers, Character, Chord }
+import ui.backend.{ Modifiers, Character, Chord, FileDialog }
 import ui.draw.{ Point, Size, Color }
 import ui.text.{ Fonts, fonts_new, glyph_atlas }
 import ui.style.{ Style, insets, OverflowVisible }
@@ -125,13 +135,19 @@ struct State {
   zoom: i64 = 0,
 }
 
-data Event = Chose(string) | StatusBar | Zoom(i64)
+data Event = Chose(string) | StatusBar | Zoom(i64) | OpenAsked | Opened(Maybe<string>)
 
 let update = pure (state: State, event: Event) -> (State, []Command<Event>) =>
   match event {
     Chose(what) => (State { state | chosen: [...state.chosen, what] }, []),
     StatusBar => (State { state | status_bar: !state.status_bar, chosen: [...state.chosen, "status bar"] }, []),
     Zoom(by) => (State { state | zoom: state.zoom + by, chosen: [...state.chosen, "zoom ${state.zoom + by}"] }, []),
+    // The system's open dialog; the program goes on while it is open.
+    OpenAsked => (state, [ChooseFile(FileDialog { filters: [("Text", "txt;md"), ("All files", "*")] }, Opened)]),
+    Opened(path) => (State { state | chosen: [...state.chosen, match path {
+      Some(p) => "opened ${p}",
+      None => "open cancelled",
+    }] }, []),
   }
 
 /// The window: the bar and ☰ along the top, what was chosen below.
@@ -153,7 +169,7 @@ let menus = pure (state: State) -> []Menu<Event> => [
     label: "File",
     entries: [
       item("New", Chose("new"), Some('n'), false),
-      item("Open…", Chose("open"), Some('o'), false),
+      item("Open…", OpenAsked, Some('o'), false),
       MenuSeparator,
       item("Save", Chose("save"), Some('s'), false),
       item("Save As…", Chose("save as"), Some('s'), true),

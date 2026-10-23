@@ -9,6 +9,21 @@ Newest first.
 
 ## Dated log
 
+### 10/23/26 — `ui`: a file dialog
+
+- **`Command.ChooseFile(FileDialog { filters, start, save }, make)`** (`ui/WINDOW.md` step 6):
+  the host gives each dialog a tag and keeps `make` by it until the platform says
+  `FileAnswered(tag, path)`, the program going on meanwhile; an answer for no dialog it asked is
+  dropped.
+- **`bindings.dialog`**, not `bindings.imgui`'s: SDL's dialogs answer through a callback,
+  possibly on another thread, and ImGui's host only queued the answer, polled each frame it
+  draws. `ui` sleeps in SDL's wait, so the C half also pushes an SDL event as it queues, under
+  a mutex of POSIX threads' — SDL's functions declared, not included, as the wake's are. A
+  dialog SDL cannot show is `None` to the program, and its reason printed.
+- **A script answers the oldest dialog asked** (`choose:PATH`, `choose:` a cancel — a step, as
+  `wait:` is, since its tag is the host's), and its platform records what was asked. No test
+  shows a real dialog: it would wait for a user.
+
 ### 10/23/26 — `ui`: the window's controls, and a title bar the program draws
 
 - **`WindowMinimize`, `WindowMaximize`, `WindowRestore`** and **`OnWindowState`**
