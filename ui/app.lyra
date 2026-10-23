@@ -70,7 +70,7 @@ import ui.style.{ Viewport, Style, Overflow, OverflowAuto, light_theme }
 import ui.layout.{ Node, Laid, LayoutCache, layout_cache, paint, tight, Painted }
 import ui.interact.{ Ui, ui_new }
 import ui.access.{ access_tree }
-import std.io.{ read_file, write_file }
+import std.io.{ read_file, write_file, readable }
 import std.collections.{ HashMap, hashmap_new }
 import std.env.{ lookup, process_id }
 
@@ -185,6 +185,9 @@ pub data Command<e> =
   /// The focus to the element keyed so ([Node.keyed]), once it is laid out — a new tab's
   /// terminal.
   | FocusKeyed(string)
+  /// The scroller keyed so scrolled this far down, once it is laid out: past its end is its
+  /// end (`UNBOUNDED` for it), where one that follows its end follows it again.
+  | ScrollTo(string, f32)
 
 /// What a state wants to hear of while it holds.
 pub data Subscription<e> =
@@ -199,6 +202,11 @@ pub data Subscription<e> =
   | OnAppearance((Appearance) -> e)
   /// The window's keyboard focus, each time it is gained (`true`) or lost.
   | OnFocus((bool) -> e)
+  /// The event each pass that file descriptor has data to read — or has closed, which a read
+  /// says — so a terminal reads its programs' output as it comes, and an idle one sleeps:
+  /// the platform's wait wakes for it (`Platform.wake_for`). Level-triggered, as `poll` is:
+  /// the event comes again until the data is read.
+  | Readable(i32, e)
 
 /// A program with no work to ask for and nothing to subscribe to: `update` answers the next
 /// state alone, Elm's sandbox.
@@ -387,6 +395,7 @@ impl Host<s, e> {
   ) -> bool => {
     let now = platform.now_ms()
     self.measure(platform, fonts)
+    self.read_ready(now, platform)
     self.deliver_due(now, platform)
     let subs = (self.app.subscriptions)(self.state)
     let elapsed = f32(now - self.last_frame)
@@ -407,6 +416,8 @@ impl Host<s, e> {
       fonts
     ) }
     var laid = self.shown[0]
+    // The descriptors the state reads, which wake the wait when they have data.
+    platform.wake_for(self.watched())
     for input in platform.next_events(self.wait_ms(now)) {
       self.dirty = true
       let at = platform.now_ms()
@@ -554,6 +565,9 @@ impl Host<s, e> {
   /// past a tenth of a second under `--live`.
   let wait_ms = (self: mut, now: i64) -> i64 => {
     if self.waiting.len() > 0 || self.measures.len() > 0 { return 0 }
+    for fd in self.watched() {
+      if readable(fd) { return 0 }
+    }
     var wait: i64 = if self.ui.animating() { FRAME_MS } else { -1 }
     for timer in self.timers { wait = sooner(wait, timer.at - now) }
     for sub in (self.app.subscriptions)(self.state) {
@@ -622,6 +636,7 @@ impl Host<s, e> {
         QuitApp => { self.running = false },
         MeasureFont(font, done) => self.measures.push(Measure { font: font, done: done }),
         FocusKeyed(key) => self.ui.focus_keyed(key),
+        ScrollTo(key, y) => self.ui.scroll_keyed(key, y),
       }
     }
   }
@@ -634,6 +649,28 @@ impl Host<s, e> {
       }
     }
     None
+  }
+
+  /// The descriptors the state's `Readable` subscriptions read.
+  let watched = (self) -> []i32 => {
+    var fds: []i32 = []
+    for sub in (self.app.subscriptions)(self.state) {
+      if let Readable(fd, _) = sub { fds.push(fd) }
+    }
+    fds
+  }
+
+  /// Each `Readable` subscription whose descriptor has data now, through `update`.
+  let read_ready<p> where p: Platform = (
+    self: mut,
+    now: i64,
+    platform: mut p
+  ) -> void => {
+    for sub in (self.app.subscriptions)(self.state) {
+      if let Readable(fd, event) = sub {
+        if readable(fd) { self.dispatch(event, now, platform) }
+      }
+    }
   }
 
   /// The fonts asked to be measured, measured: their events waiting for the next delivery.

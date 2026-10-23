@@ -1,6 +1,6 @@
 # What a terminal needs of `ui` — design
 
-**Status: proposed 10/22; steps 1–5 built 10/22, step 6 10/23** (`painted`, `PaintDraw`, `PaintText`,
+**Status: proposed 10/22; steps 1–5 built 10/22, steps 6 and 7 10/23** (`painted`, `PaintDraw`, `PaintText`,
 `on_size`, `PaintArea.visible`, `examples/ui/painted.lyra`; the atlas's pages; faces, made
 faces, metrics and hinting — `Fonts.hinting` light unless the program says, as `ui.text` asks
 no platform which it is on; `MeasureFont` answered once, not again as fonts change;
@@ -13,7 +13,8 @@ terminal sends a repeat as a press; nothing needs the physical key yet), `Key` w
 keypad's, no `cursor` style property and no AccessKit Terminal role yet; a pointer event's
 modifiers from `Platform.held()`, since `InputEvent`'s carry none; `App.shortcuts` an array of
 at most one `Shortcuts`; `FocusKeyed(key)` for `Focus(id)`, since a program knows its keys, not
-its identities; `examples/ui/keys.lyra`) — the ops `Paint`-prefixed, as
+its identities; `examples/ui/keys.lyra`; `ScrollTo(key, y)` by key, as `FocusKeyed`; the wake's
+thread is `bindings.wake`, its C needing no SDL headers; `examples/ui/follow.lyra`) — the ops `Paint`-prefixed, as
 constructors match program-wide by name and `bindings.imgui.ui` has a `Text`, and `Painter`
 without `input` until step 6. Three additions to the framework, each useful
 beyond Termina: an element the program paints itself (§1), font faces and fallback (§2),
@@ -354,7 +355,7 @@ the end.
    pixels read back (`read_frame`).
 6. **Raw input** (**built 10/23**, what the status says left for later): `RawInput`, `KeyInput` and the wider `Key`, `TextInput` with
    composition, `PointerInput` with capture, `App.shortcuts`, `OnFocus`, `Focus`.
-7. **`Readable`** and **`scroll_follow`**/`ScrollTo`.
+7. **`Readable`** and **`scroll_follow`**/`ScrollTo`. **Built 10/23.**
 8. **Termina**: the grid, the box and the cards as one painter over a following scroller;
    then the tab bar, menus and Settings (the next note).
 

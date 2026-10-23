@@ -694,7 +694,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   fallback, raw keys and pointer; designed in `ui/TERMINAL.md` (10/22), for Termina's move
   off ImGui. Steps 1 (`painted`, `PaintDraw`/`PaintText`, `on_size`), 2 (the atlas's pages)
   and 3 (faces, metrics, hinting), 4 (fallback) and 5 (`PaintCells`, `PaintWave`) are built
-  (10/22), 6 (raw input) 10/23; next `Readable` and `scroll_follow` (step 7).
+  (10/22), 6 (raw input) and 7 (`Readable`, `scroll_follow`, `ScrollTo`) 10/23; next Termina
+  itself (step 8).
 - **[OPEN] What raw input left out** (`ui/TERMINAL.md` §3): a key's repeat flag and physical
   code, the keypad's keys (they type through text), a `cursor` style property (a painter's
   I-beam over its command line), and AccessKit's Terminal role (a painter is a group).

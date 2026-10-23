@@ -765,6 +765,9 @@ pub struct WidgetState {
   /// the pointer took hold of it, while it drags one.
   scroll: Maybe<f32> = None,
   scroll_x: Maybe<f32> = None,
+  /// Whether it was at its end when last scrolled (or has not been): a scroller that follows
+  /// its end (`scroll_follow`) is kept there while this holds.
+  following: bool = true,
   grab: f32 = 0.0,
   caret: i64 = 0,
   anchor: i64 = 0,
@@ -998,7 +1001,7 @@ let state_under = pure (ui: Interaction, id: string) -> string => {
   }
   for (key, w) in ui.widgets.entries() {
     if inside(key) {
-      out = "${out}|${key}:${w.scroll ?? -1.0}:${w.scroll_x ?? -1.0}:${w.caret}:${w.anchor}:${w.field_scroll}"
+      out = "${out}|${key}:${w.scroll ?? -1.0}:${w.scroll_x ?? -1.0}:${w.following}:${w.caret}:${w.anchor}:${w.field_scroll}"
     }
   }
   // An element whose sizes are moving lays out afresh each frame they move.
@@ -1253,7 +1256,12 @@ let lay_fresh<e> = (
     }
     offset = Point {
       x: if ox == OverflowClip { 0.0 } else { (held.scroll_x ?? start.x).clamp(0.0, spare.w) },
-      y: if oy == OverflowClip { 0.0 } else { (held.scroll ?? start.y).clamp(0.0, spare.h) },
+      y: if oy == OverflowClip { 0.0 } else if style.scroll_follow && held.following {
+        // At its end it stays there, however far the content grew.
+        spare.h
+      } else {
+        (held.scroll ?? start.y).clamp(0.0, spare.h)
+      },
     }
     shown = port
     let bar_rules = scrollbar_rules(within.theme.colors)

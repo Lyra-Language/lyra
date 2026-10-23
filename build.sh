@@ -64,6 +64,14 @@ rm -f "$OUT/lib/liblyra-pty.a"
 ar rcs "$OUT/lib/liblyra-pty.a" "$OUT/lib/pty.o"
 rm -f "$OUT/lib/pty.o"
 
+# **The C half of `bindings.wake`** (`wake.c`): a thread waking an SDL program's event wait
+# when a file descriptor has data — `ui.app`'s `Readable`. Plain POSIX threads; SDL's two
+# functions resolve when the program links SDL3, so it builds with no SDL here.
+"${LYRA_CC:-clang}" -O2 -std=c11 -c "$ROOT/bindings/wake/wake.c" -o "$OUT/lib/wake.o"
+rm -f "$OUT/lib/liblyra-wake.a"
+ar rcs "$OUT/lib/liblyra-wake.a" "$OUT/lib/wake.o"
+rm -f "$OUT/lib/wake.o"
+
 # **lyrafmt is built when it can be**, and skipped with a note when it cannot. The
 # formatter is a Lyra program that links the tree-sitter runtime and the grammar
 # (examples/lyrafmt/libs.sh), so it needs a C compiler, `libtree-sitter` and the sibling
@@ -124,4 +132,4 @@ else
   gpu_note="a stub liblyra-gpu.a (${gpu_err##*: })"
 fi
 
-printf 'built %s/{lyrac,lyra-lsp} %s, %s, lib/liblyra-{menubar,pty}.a, %s, %s and %s, with std -> ../std, bindings -> ../bindings, ui -> ../ui\n' "$OUT" "$fmt_note" "$lui_note" "$imgui_note" "$accesskit_note" "$gpu_note"
+printf 'built %s/{lyrac,lyra-lsp} %s, %s, lib/liblyra-{menubar,pty,wake}.a, %s, %s and %s, with std -> ../std, bindings -> ../bindings, ui -> ../ui\n' "$OUT" "$fmt_note" "$lui_note" "$imgui_note" "$accesskit_note" "$gpu_note"

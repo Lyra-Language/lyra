@@ -4528,3 +4528,244 @@ the input method's window at 10,20 1x16
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
 }
+
+// A descriptor the state reads (`ui.app`'s `Readable`) through a host: readable while it holds
+// data — what was written before the loop, then what the first update wrote — and not once
+// it is drained. And a scroller that follows its end (`scroll_follow`): kept there as its
+// content grows, left where the user scrolled it off its end however it grows, and following
+// again once `ScrollTo` puts it at its end; `ScrollTo` to an offset is that offset.
+func TestRun_UiReadableAndScrollFollow(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, host_of, Command, Subscription, Readable, ScrollTo }
+import ui.script.{ timed_platform, script_platform, Waited, Step }
+import ui.backend.{ Renderer, PointerMoved, Scrolled }
+import ui.draw.{ Point, Size, Color, TextureId }
+import ui.text.{ fonts_new }
+import ui.style.{ Style, OverflowAuto }
+import ui.layout.{ Node, Laid, column, sized, layout_cache, tight, UNBOUNDED }
+import ui.interact.{ ui_new }
+import std.ffi
+
+/// A renderer that draws nothing.
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, background, ops) => {}
+}
+
+@symbol("pipe")
+unsafe extern posix_pipe: (fds: ^mut i32) -> i32
+@symbol("read")
+unsafe extern posix_read: (fd: i32, buf: ^mut u8, count: u64) -> i64
+@symbol("write")
+unsafe extern posix_write: (fd: i32, buf: ^u8, count: u64) -> i64
+
+/// The pipe's ends, what was read from it, and how many times it was readable.
+struct Piped {
+  read_end: i32,
+  write_end: i32,
+  got: string = "",
+  heard: i64 = 0,
+}
+
+data Ev = Ready
+
+/// Read what is waiting; the first time, write more for the next pass to find.
+let update = (s: Piped, _: Ev) -> (Piped, []Command<Ev>) => {
+  var buf: []u8 = [0; 64]
+  let n = unsafe { posix_read(s.read_end, buf.data_mut(), 64) }
+  let got = "${s.got}${[b in buf.slice(0, n.max(0)) | rune(i32(b))].join()}"
+  if s.heard == 0 {
+    let more = "world".encode_utf8()
+    let _ = unsafe { posix_write(s.write_end, more.data(), u64(more.len())) }
+  }
+  (Piped { s | got: got, heard: s.heard + 1 }, [])
+}
+
+/// A scroller 100 high keyed "log", following its end, holding rows rows 30 high — in a
+/// column, as a key names an element among its siblings.
+let log = pure (rows: i64) -> Node<Ev> => column([
+  column([i in 0..<rows | sized::<Ev>(Some(200.0), Some(30.0))])
+    .with_style(Style { height: Some(100.0), overflow_y: Some(OverflowAuto), scroll_follow: Some(true) })
+    .keyed("log"),
+])
+
+let offset_of = pure (laid: Laid<Ev>) -> f32 => match laid.children[0].laid.scroller {
+  Some(sc) => sc.offset.y,
+  None => -1.0,
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var renderer = Blank {}
+
+  println("Readable, on a pipe written before the loop and by the first update:")
+  var ends: []i32 = [0, 0]
+  if unsafe { posix_pipe(ends.data_mut()) } != 0 { return 2 }
+  let hello = "hello".encode_utf8()
+  let _ = unsafe { posix_write(ends[1], hello.data(), u64(hello.len())) }
+  let piped_view = pure (_: Piped) -> Node<Ev> => sized::<Ev>(Some(10.0), Some(10.0))
+  let app = App {
+    view: piped_view,
+    update: update,
+    subscriptions: (s: Piped) -> []Subscription<Ev> => [Readable(s.read_end, Ready)],
+    background: Color { r: 0, g: 0, b: 0 },
+  }
+  var steps: []Step = []
+  for _ in 0..<6 { steps.push(Waited(1)) }
+  var platform = timed_platform(steps, Size { w: 100.0, h: 100.0 })
+  var host = host_of(app, Piped { read_end: ends[0], write_end: ends[1] }, platform)
+  while host.step(platform, renderer, fonts) {}
+  println("  read \"${host.state.got}\", readable ${host.state.heard} times")
+
+  println("a scroller following its end:")
+  var ui = ui_new()
+  var cache = layout_cache::<Ev>()
+  var fake = script_platform([], Size { w: 200.0, h: 100.0 })
+  let window = tight(Size { w: 200.0, h: 100.0 })
+  var laid = ui.frame_within(log(5), window, fonts, cache)
+  println("  5 rows (150 in 100): at ${offset_of(laid)}")
+  laid = ui.frame_within(log(8), window, fonts, cache)
+  println("  8 rows: at ${offset_of(laid)}, still its end")
+  let _ = ui.handle(laid, PointerMoved(Point { x: 50.0, y: 50.0 }), fake)
+  let _ = ui.handle(laid, Scrolled(0.0, -2.0), fake)
+  laid = ui.frame_within(log(8), window, fonts, cache)
+  let scrolled = offset_of(laid)
+  println("  scrolled up 2 lines: at ${scrolled}")
+  laid = ui.frame_within(log(12), window, fonts, cache)
+  println("  12 rows: still at ${offset_of(laid)}, where it was ${offset_of(laid) == scrolled}")
+  ui.scroll_keyed("log", UNBOUNDED)
+  laid = ui.frame_within(log(12), window, fonts, cache)
+  println("  ScrollTo past its end: at ${offset_of(laid)}")
+  laid = ui.frame_within(log(15), window, fonts, cache)
+  println("  15 rows: at ${offset_of(laid)}, following again")
+  ui.scroll_keyed("log", 30.0)
+  laid = ui.frame_within(log(15), window, fonts, cache)
+  println("  ScrollTo 30: at ${offset_of(laid)}")
+  fonts.close()
+  0
+}
+`)
+	want := `Readable, on a pipe written before the loop and by the first update:
+  read "helloworld", readable 2 times
+a scroller following its end:
+  5 rows (150 in 100): at 50
+  8 rows: at 140, still its end
+  scrolled up 2 lines: at 60
+  12 rows: still at 60, where it was true
+  ScrollTo past its end: at 260
+  15 rows: at 350, following again
+  ScrollTo 30: at 30
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// bindings.wake's watcher thread waking an SDL wait: armed, a write to the pipe it watches
+// wakes `wait_event` with its event; having woken it is disarmed, and a second write does
+// not; armed again with that data unread, it wakes at once.
+func TestRun_UiWakeWatch(t *testing.T) {
+	t.Parallel()
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	setenv(t, "SDL_VIDEODRIVER", "dummy")
+	src := filepath.Join(t.TempDir(), "main.lyra")
+	if err := os.WriteFile(src, []byte(`import bindings.sdl3.{ init, quit, INIT_VIDEO, Event, wait_event, Other as SdlOther }
+import bindings.wake
+import std.ffi
+
+@symbol("pipe")
+unsafe extern posix_pipe: (fds: ^mut i32) -> i32
+@symbol("write")
+unsafe extern posix_write: (fd: i32, buf: ^u8, count: u64) -> i64
+
+/// Whether event is the watcher's wake, of event type kind.
+let woke = pure (event: Maybe<Event>, kind: u32) -> bool => match event {
+  Some(SdlOther(k)) => k == kind,
+  _ => false,
+}
+
+let send = (fd: i32, text: string) -> void => {
+  let bytes = text.encode_utf8()
+  let _ = unsafe { posix_write(fd, bytes.data(), u64(bytes.len())) }
+}
+
+let main = () -> u8 => {
+  if !init(INIT_VIDEO) {
+    println("SDL could not start")
+    return 2
+  }
+  // Whatever SDL queued as it started, out of the way.
+  while let Some(_) = wait_event(50) {}
+  var ends: []i32 = [0, 0]
+  if unsafe { posix_pipe(ends.data_mut()) } != 0 { return 3 }
+  let kind = wake.watch([ends[0]])
+  println("watching: ${kind != 0}")
+  send(ends[1], "x")
+  println("armed, a write wakes the wait: ${woke(wait_event(2000), kind)}")
+  send(ends[1], "y")
+  println("disarmed, another write does not: ${!woke(wait_event(300), kind)}")
+  let _ = wake.watch([ends[0]])
+  println("armed again with data unread, it wakes at once: ${woke(wait_event(2000), kind)}")
+  let _ = wake.watch([])
+  quit()
+  0
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := captureRunUnoptimized(t, "run", src)
+	if code == 2 && strings.Contains(stdout, "SDL could not start") {
+		t.Skipf("SDL could not start here: %s", stderr)
+	}
+	want := `watching: true
+armed, a write wakes the wait: true
+disarmed, another write does not: true
+armed again with data unread, it wakes at once: true
+`
+	if code != 0 || stdout != want {
+		t.Errorf("exited %d\ngot\n%s\nwant\n%s\nstderr: %s", code, stdout, want, stderr)
+	}
+}
+
+// examples/ui/follow.lyra run headless, the wake and all: a command's forty lines read as they
+// come, through `Readable` and bindings.wake's watcher waking SDL's wait, until the command
+// ends and the program with it.
+func TestRun_UiFollowExample(t *testing.T) {
+	t.Parallel()
+	skipWithoutText(t)
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	bin := filepath.Join(t.TempDir(), "follow")
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, filepath.Join(root, "examples", "ui", "follow.lyra")); code != 0 {
+		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	out, err := commandContext(t, ctx, bin, "--headless").CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("the command's output never ended the program (a wake missed?):\n%s", out)
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
+		t.Skipf("SDL could not open a dummy window here: %s", out)
+	} else if ok && exitErr.ExitCode() == 1 && strings.HasPrefix(string(out), "no font") {
+		t.Skipf("no font here: %s", out)
+	}
+	if err != nil || !strings.Contains(string(out), `read 40 lines, the last "line 40 of 40"`) {
+		t.Errorf("following the command: %v\n%s", err, out)
+	}
+}

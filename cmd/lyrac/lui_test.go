@@ -1200,3 +1200,46 @@ func TestLui_UiTargetReadOnlyField(t *testing.T) {
 		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
 }
+
+// lui's `scroll-follow`: `true` or `false` into `Style.scroll_follow`, anything else refused
+// at its line.
+func TestLui_UiTargetScrollFollow(t *testing.T) {
+	t.Parallel()
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script target="ui">
+  pub data Ev = Go
+</script>
+<style global name="app_sheet">
+  .log { overflow-y: auto; scroll-follow: true }
+  .still { scroll-follow: false }
+</style>
+<component name="view" event={Ev}>
+  <Column class="log"/>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"scroll_follow: Some(true)", "scroll_follow: Some(false)"} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	bad := filepath.Join(dir, "bad.lui")
+	if err := os.WriteFile(bad, []byte(strings.Replace(source, "scroll-follow: true", "scroll-follow: sometimes", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := command(t, lui, bad).CombinedOutput()
+	if err == nil || !strings.Contains(string(b), "bad.lui:5: scroll-follow is true or false, not sometimes") {
+		t.Errorf("a bad value: %v\n%s", err, b)
+	}
+}

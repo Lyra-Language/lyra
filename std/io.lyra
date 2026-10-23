@@ -425,6 +425,15 @@ pub let create_dir_all = (path: string) -> bool => {
 /// as much longer as the system makes it. Nothing at or below 0.
 ///
 /// Over libc's `usleep` in steps of half a second: POSIX lets it refuse a second or more.
+/// Whether file descriptor `fd` has data to read now — or its other end has closed or it
+/// failed, which a read then says — asked without waiting (POSIX's `poll`, no timeout): what a
+/// loop checks a pipe or a terminal's descriptor with before reading it.
+pub let readable = (fd: i32) -> bool => {
+  var p = PollFd { fd: fd, events: POLLIN, revents: 0 }
+  let raw: ^mut u8 = unsafe { pointer_at((&mut p).address()) }
+  unsafe { posix_poll(raw, 1, 0) } > 0 && p.revents != 0
+}
+
 pub let sleep_ms = (ms: i64) -> void => {
   var left = ms
   while left > 0 {
@@ -434,6 +443,20 @@ pub let sleep_ms = (ms: i64) -> void => {
   }
 }
 
+/// `struct pollfd`, and `POLLIN` (1 on every POSIX system Lyra builds for).
+struct PollFd {
+  fd: i32,
+  events: i16,
+  revents: i16,
+}
+const POLLIN: i16 = 1
+
+// `nfds_t` is 32 bits on macOS and 64 on Linux; a count passed as 64 bits is read right by
+// both, the high half being zero. **The `struct pollfd *` is a byte pointer here**, as the
+// compiler's own declaration of `poll` has it (a `std.tui` program's terminal reads): one C
+// symbol has one signature in a program.
+@symbol("poll")
+unsafe extern posix_poll: (fds: ^mut u8, count: u64, timeout_ms: i32) -> i32
 unsafe extern usleep: (micros: u32) -> i32
 unsafe extern open: (path: ^u8, flags: i32, ...) -> i32
 unsafe extern creat: (path: ^u8, mode: u32) -> i32

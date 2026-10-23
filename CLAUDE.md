@@ -526,7 +526,7 @@ such changes on a user module.
 | `pkg/printer` | Reflection AST printer for golden tests | below |
 | `cmd/lyra-lsp` | LSP server | [README](cmd/lyra-lsp/README.md) |
 | `cmd/lyrac` | CLI: `check`/`build`/`run`/`doc` | [README](cmd/lyrac/README.md) |
-| `bindings/` | Per-library FFI binding modules (SDL3, SDL3_image, raylib, jpeg, HarfBuzz, FreeType, tree-sitter, `menubar` with its own Objective-C shim, `pty` with a C one, `accesskit` over AccessKit's pinned, downloaded prebuilt release with an Objective-C shim, `gpu` (`ui.gpu`'s renderer over SDL_GPU, Metal shaders compiled at run time, a C shim), and Dear ImGui over a downloaded, pinned C++ half — with `bindings.imgui.ui` over it, an interface as a tree of nodes, components and scoped style sheets, and `.lui` markup generated into it by `tools/lui`) | [README](bindings/README.md) |
+| `bindings/` | Per-library FFI binding modules (SDL3, SDL3_image, raylib, jpeg, HarfBuzz, FreeType, tree-sitter, `menubar` with its own Objective-C shim, `pty` with a C one, `wake` (a thread waking an SDL wait for a file descriptor's data, a C shim), `accesskit` over AccessKit's pinned, downloaded prebuilt release with an Objective-C shim, `gpu` (`ui.gpu`'s renderer over SDL_GPU, Metal shaders compiled at run time, a C shim), and Dear ImGui over a downloaded, pinned C++ half — with `bindings.imgui.ui` over it, an interface as a tree of nodes, components and scoped style sheets, and `.lui` markup generated into it by `tools/lui`) | [README](bindings/README.md) |
 | `ui/` | The GUI framework (Lyra): the display list (`ui.draw`), its tessellation (`ui.tess`), the `Platform`/`Renderer` seams (`ui.backend`) and their SDL3 implementation (`ui.sdl3`); text (`ui.text`, HarfBuzz shaping and a FreeType glyph atlas), styles and the cascade, states as CSS's pseudo-classes (`ui.style`), a constraints layout of `Node<e>` painted as a display list (an element the program paints among them, `painted`), with CSS's flexbox and grid beside Flutter-style rows and columns and `@media` rules keyed into the layout cache by what they answered, and CSS's `overflow` with overlay scrollbars on any element and the window (`ui.layout`, a directory module), input routed to the program's events with the framework's state by identity (`ui.interact`), CSS's transitions — paint-only properties blended after layout, sizes through the next one (`ui.motion`), the accessibility tree VoiceOver hears through `bindings.accesskit` (`ui.access`), the run loop with commands, subscriptions and a `Host` `main` can step for `lyrac run --live` (`ui.app`), the GPU renderer with shadows, gradients and blur and its fallback (`ui.gpu`), and scripted input on a clock of its own (`ui.script`). `tools/lui` writes markup for it (`<script target="ui">`). A root beside `std` and `bindings`, linked by `build.sh` | [README](ui/README.md) |
 
 **`pkg/cst`** — `cst.Field(node, "name")` is *the* way to read a grammar field (same nil
@@ -701,7 +701,9 @@ of Markdown.
   (`installLibDir`), so a binding with a shim links with no `LIBRARY_PATH` — and, for a
   shared library there (an install that ships one, as Vega's release does SDL3 on macOS),
   `-Wl,-rpath` to it, so the program runs against it. **And
-  `build/lib/liblyra-pty.a`**, `bindings.pty`'s (`pty.c`, plain POSIX).
+  `build/lib/liblyra-pty.a`**, `bindings.pty`'s (`pty.c`, plain POSIX), **and
+  `build/lib/liblyra-wake.a`**, `bindings.wake`'s (`wake.c`, POSIX threads; every `ui.sdl3`
+  program links it, and `cmd/lyrac`'s harness compiles it when `build/lib` lacks it).
 - **`build.sh` builds `build/lui`** (`tools/lui/lui.lyra`, std only): the `.lui` markup
   generator for `bindings.imgui.ui` and, by a script's `target="ui"`, for `ui`
   (bindings/README.md). Its output is ignored by

@@ -169,6 +169,8 @@ impl Platform for ScriptPlatform {
   }
   window_size = pure (self) => self.size
   held = pure (self) => self.holding
+  // It never waits: each pass plays the next step.
+  wake_for = (self, fds) => {}
   scale = pure (self) => self.units
   set_text_input = (self, field) => { self.typing = field }
   clipboard = pure (self) => self.clip

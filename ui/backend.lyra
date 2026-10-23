@@ -44,6 +44,10 @@ pub trait Platform {
   set_text_input: (mut Self, Maybe<Rect>) -> void
   /// The modifier keys held now — what a pointer event, which carries none, was made with.
   held: (Self) -> Modifiers
+  /// Wake [Platform.next_events]'s wait once when any of these file descriptors has data to
+  /// read (or closes): asked each pass, after what was ready has been read; none stops it. A
+  /// platform that never waits ignores it.
+  wake_for: (mut Self, []i32) -> void
   /// The text on the clipboard; `""` when there is none.
   clipboard: (Self) -> string
   set_clipboard: (mut Self, string) -> void

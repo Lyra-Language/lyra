@@ -1,0 +1,28 @@
+@link("lyra-wake")
+module bindings.wake
+//! File descriptors that wake an SDL program's event wait: [watch] has a thread of its own
+//! (`wake.c`) wait for them to have data and push an SDL event when one does, so a loop asleep
+//! in `SDL_WaitEventTimeout` — an interface with nothing to draw — wakes for a terminal's
+//! output as it does for a key. `ui.sdl3` uses it for `ui.app`'s `Readable` subscription.
+//!
+//! **A watch wakes once, then waits to be armed again**: call [watch] each pass of the loop,
+//! after reading what was ready, or a descriptor left readable would wake the loop without
+//! end. The event it pushes is one SDL registered for it, which a program ignores — it only
+//! ends the wait.
+//!
+//! Its C half needs no SDL headers (the program links SDL3 itself) and builds into
+//! `build/lib/liblyra-wake.a` with `build.sh`.
+
+import std.ffi
+
+/// Wake the loop's SDL wait once when any of `fds` has data to read, its other end closes or
+/// it fails — at most 256 — and stop watching any others; none stops watching. The SDL event
+/// type the wake comes as, or 0 if the watching thread could not be started.
+pub let watch = (fds: []i32) -> u32 => {
+  if fds.len() == 0 { return unsafe { lyra_wake_watch(nullptr, 0) } }
+  var list = fds
+  unsafe { lyra_wake_watch(list.data_mut(), i32(list.len())) }
+}
+
+@symbol("lyra_wake_watch")
+unsafe extern lyra_wake_watch: (fds: ^mut i32, count: i32) -> u32

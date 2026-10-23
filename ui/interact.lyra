@@ -155,6 +155,9 @@ pub struct Ui {
   captured: string = "",
   /// The key of the element to focus once it is laid out ([Ui.focus_keyed]); `""` for none.
   focus_wanted: string = "",
+  /// The key of a scroller to scroll once it is laid out, and how far down ([Ui.scroll_keyed]).
+  scroll_wanted: string = "",
+  scroll_wanted_to: f32 = 0.0,
 }
 
 /// What a press in a text field selected: the clicks it made (1 by rune, 2 by word, 3 all)
@@ -222,6 +225,24 @@ impl Ui {
           self.focus_wanted = ""
           break
         }
+      }
+    }
+    // A scroll asked for by key: the offset set, and the tree laid out again with it.
+    if self.scroll_wanted.len() > 0 {
+      for id in present.keys() {
+        if !id.ends_with("/:${self.scroll_wanted}") { continue }
+        let Some(found) = find(laid, id, Point {}) else { continue }
+        let Some(sc) = found.laid.scroller else { continue }
+        let end = sc.room().h
+        let to = self.scroll_wanted_to.clamp(0.0, end)
+        let state = self.widget(id)
+        self.state.widgets.insert(
+          id,
+          WidgetState { state | scroll: Some(to), following: to >= end - 0.5 }
+        )
+        self.scroll_wanted = ""
+        laid = layout_cached(view, c, fonts, self.state, cache)
+        break
       }
     }
     for id in self.state.widgets.keys() {
@@ -351,6 +372,13 @@ impl Ui {
   /// The focus to the element keyed `key` ([Node.keyed]) once a layout has it — the frame
   /// after the one that made it, if that is when it appears.
   pub let focus_keyed = (self: mut, key: string) -> void => { self.focus_wanted = key }
+
+  /// The scroller keyed `key` scrolled `y` units down — past its end is its end, where one that
+  /// follows its end (`scroll_follow`) follows it again — once a layout has it.
+  pub let scroll_keyed = (self: mut, key: string, y: f32) -> void => {
+    self.scroll_wanted = key
+    self.scroll_wanted_to = y
+  }
 
   /// `input` as the framework handles it.
   let handled<e, p> where p: Platform = (
@@ -811,7 +839,8 @@ impl Ui {
     self.state.widgets.insert(id, if axis == Horizontal {
       WidgetState { state | scroll_x: Some(next) }
     } else {
-      WidgetState { state | scroll: Some(next) }
+      // Scrolled to its end, a following scroller follows again; off it, it stays put.
+      WidgetState { state | scroll: Some(next), following: next >= spare.h - 0.5 }
     })
     true
   }

@@ -152,6 +152,10 @@ pub struct Style {
   /// `overflow-y` (lui's `overflow` sets both).
   overflow_x: Maybe<Overflow> = None,
   overflow_y: Maybe<Overflow> = None,
+  /// Whether a scroller at its end stays there as its content grows — a terminal's, a chat's
+  /// — and, scrolled off it, stays where it was until scrolled back (lui's `scroll-follow`).
+  /// CSS has no such property; every terminal and chat needs one.
+  scroll_follow: Maybe<bool> = None,
   /// How a change of a property's value is shown — over time rather than at once: CSS's
   /// `transition`, one entry a property (`"all"` for every one that animates), the last
   /// entry naming a property its own.
@@ -311,6 +315,7 @@ impl Style {
     backdrop_blur: self.backdrop_blur.or(base.backdrop_blur),
     overflow_x: self.overflow_x.or(base.overflow_x),
     overflow_y: self.overflow_y.or(base.overflow_y),
+    scroll_follow: self.scroll_follow.or(base.scroll_follow),
     transition: self.transition.or(base.transition),
   }
 }
@@ -660,6 +665,7 @@ pub struct Computed {
   backdrop_blur: f32 = 0.0,
   overflow_x: Overflow = OverflowVisible,
   overflow_y: Overflow = OverflowVisible,
+  scroll_follow: bool = false,
   transition: []Transition = [],
 }
 
@@ -782,6 +788,7 @@ impl Cascade {
       backdrop_blur: (s.backdrop_blur ?? 0.0).max(0.0),
       overflow_x: s.overflow_x ?? OverflowVisible,
       overflow_y: s.overflow_y ?? OverflowVisible,
+      scroll_follow: s.scroll_follow ?? false,
       transition: s.transition ?? [],
     }
   }

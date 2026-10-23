@@ -563,7 +563,8 @@ The example's interface is `examples/imgui/components_view.lui`.
   `backdrop-filter` as `blur(N)` or `none` — each checked, an error at its line.
   **`overflow`** takes one value for both axes or two (x, then y), and `overflow-x`/`overflow-y`
   one: `visible`, `hidden`, `clip`, `scroll` or `auto`; `<window overflow="…">` sets
-  `window_spec().overflow`. **Transitions, as CSS writes them**: `transition` is a comma list, each
+  `window_spec().overflow`. **`scroll-follow`** (`true` or `false`, not CSS's) is
+  `Style.scroll_follow`: a scroller at its end stays there as its content grows. **Transitions, as CSS writes them**: `transition` is a comma list, each
   `[property] duration [timing-function] [delay]` in any order (the property `all` when
   omitted; `none` for none), and `transition-property`, `-duration`, `-timing-function` and
   `-delay` are its longhands, their lists paired by place and a shorter one repeated. Times
@@ -633,6 +634,17 @@ gradient stops) in one storage buffer, and commands (`DRAW` a run from a texture
 - `keep_frames` and `read` give the last frame back (a fence waited on), for tests.
 - `LYRA_UI_RENDERER=sdl` refuses the GPU; `LYRA_UI_NOVSYNC` presents without vsync where the
   window allows it (for measuring).
+
+## `bindings/wake/`
+
+File descriptors that wake an SDL program's event wait, for `ui.app`'s `Readable`: `watch(fds)
+-> u32` has a thread of its own (`wake.c`, POSIX threads and `poll`) wait for any of them to
+have data, close or fail, and push an SDL event of a type it registered, which ends
+`SDL_WaitEventTimeout` and is otherwise ignored. **It wakes once and is then disarmed** until
+`watch` is called again — each pass of the loop, after reading what was ready — or a descriptor
+left readable would wake the loop without end. SDL's two functions are declared in the C, not
+taken from SDL's headers, so `build.sh` builds `liblyra-wake.a` with nothing but a C compiler,
+and the test harness compiles it itself where `build/lib` has none (CI tests before it builds).
 
 ## `bindings/pty/`
 

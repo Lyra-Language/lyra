@@ -1,0 +1,137 @@
+// Follow: a command's output as it comes — run on a pseudo-terminal (`bindings.pty`), read
+// when it has written (`ui.app`'s `Readable`, which wakes the loop's wait: nothing is drawn
+// or read while the command is quiet), and shown in a scroller that follows its end
+// (`scroll_follow`). Scroll up and it stays put while lines arrive; scroll back to the end, or
+// press End, and it follows again.
+//
+//     lyrac run examples/ui/follow.lyra
+//     lyrac run examples/ui/follow.lyra -- --headless
+//
+// **The second form** runs it with no window to see (SDL's dummy driver), the wake and all,
+// until the command ends, and prints what it read. Drawn by SDL's 2D renderer either way.
+
+import ui.sdl3
+import ui.app.{
+  App,
+  run,
+  Command,
+  QuitApp,
+  ScrollTo,
+  Subscription,
+  Readable,
+  Shortcut,
+  Shortcuts
+}
+import ui.backend.{ Modifiers, End }
+import ui.text.{ fonts_new }
+import ui.style.{ Style, insets, OverflowAuto, OverflowVisible, light_theme }
+import ui.layout.{ Node, column, text, UNBOUNDED }
+import bindings.pty.{ Pty, spawn, close }
+import std.collections.{ parse_args }
+import bindings.sdl3.{ set_hint }
+
+/// The command whose output is followed: a line a twentieth of a second, forty of them.
+const COMMAND: []string = [
+  "/bin/sh",
+  "-c",
+  "i=1; while [ $i -le 40 ]; do echo \"line $i of 40\"; i=$((i+1)); sleep 0.05; done",
+]
+
+let main = () -> u8 => {
+  let args = parse_args(["--headless"])
+  let headless = args.has("--headless")
+  // No window to see: SDL's dummy video driver, chosen before SDL starts.
+  if headless { let _ = set_hint("SDL_VIDEO_DRIVER", "dummy") }
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let Some(pty) = spawn(COMMAND, 80, 24) else {
+    println("the command could not start")
+    return 1
+  }
+  let app = App {
+    view: view,
+    update: update,
+    subscriptions: (s: State) -> []Subscription<Event> => if s.done { [] } else {
+      [Readable(s.pty.fd, Output)]
+    },
+    background: light_theme().colors.background,
+    window_overflow: OverflowVisible,
+    shortcuts: [Shortcuts {
+      of: (_: State) -> []Shortcut<Event> =>
+        [Shortcut { key: End, mods: Modifiers {}, event: ToEnd }],
+    }],
+  }
+  let window = match sdl3.open("Follow", 480.0, 320.0) {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      close(pty)
+      fonts.close()
+      return 2
+    },
+  }
+  var platform = window.platform
+  var renderer = window.renderer
+  let last = run(app, State { pty: pty, headless: headless }, platform, renderer, fonts)
+  sdl3.close(platform, renderer)
+  close(pty)
+  fonts.close()
+  if headless {
+    println("read ${last.lines.len()} lines, the last \"${last.lines[last.lines.len() - 1]}\"")
+  }
+  0
+}
+
+/// The command's terminal, its lines so far and the one it is in the middle of, whether it
+/// has ended, and whether no one is watching (end the program with the command).
+struct State {
+  pty: Pty,
+  lines: []string = [],
+  partial: string = "",
+  done: bool = false,
+  headless: bool = false,
+}
+
+data Event = Output | ToEnd
+
+let update = (state: State, event: Event) -> (State, []Command<Event>) => match event {
+  ToEnd => (state, [ScrollTo("log", UNBOUNDED)]),
+  Output => match state.pty.read() {
+    // Ended: a read of nothing at all, or the terminal closed.
+    None => ended(state),
+    Some(bytes) => if bytes.len() == 0 { ended(state) } else {
+      var lines = state.lines
+      var partial = state.partial
+      for b in bytes {
+        if b == 10 {
+          lines.push(partial)
+          partial = ""
+        } else if b != 13 {
+          partial = "${partial}${rune(i32(b))}"
+        }
+      }
+      (State { state | lines: lines, partial: partial }, [])
+    },
+  },
+}
+
+/// The command has ended: nothing more to read, and the headless run is over.
+let ended = pure (state: State) -> (State, []Command<Event>) =>
+  (State { state | done: true }, if state.headless { [QuitApp] } else { [] })
+
+/// The lines in a scroller that follows its end.
+let view = pure (state: State) -> Node<Event> => column([
+  text::<Event>(if state.done { "The command has ended." } else { "Following…" })
+    .with_style(Style { padding: Some(insets(10.0)) }),
+  column([line in state.lines | text::<Event>(line)])
+    .with_style(Style {
+      height: Some(260.0),
+      padding: Some(insets(10.0)),
+      overflow_y: Some(OverflowAuto),
+      scroll_follow: Some(true),
+    })
+    .keyed("log"),
+])

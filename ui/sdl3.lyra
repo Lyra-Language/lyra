@@ -126,6 +126,7 @@ import bindings.sdl3.{
   KEY_F13,
   KEY_F24,
 }
+import bindings.wake
 import ui.backend.{
   Platform,
   Renderer,
@@ -368,6 +369,9 @@ impl Platform for SdlPlatform {
     events
   }
   held = (self) => modifiers_of(modifiers())
+  wake_for = (self, fds) => {
+    let _ = wake.watch(fds)
+  }
   window_size = (self) => {
     let (w, h) = window_size(self.window)
     let per_point = units_per_point(self.window)

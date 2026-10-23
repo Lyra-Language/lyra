@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 10/23/26 — `ui`: a descriptor that wakes the loop, and a scroller that follows its end
+
+- **`Subscription.Readable(fd, e)`** (`ui/TERMINAL.md` §4, step 7): each pass the host
+  dispatches the event for a subscribed descriptor with data (`std.io.readable`, `poll` with
+  no timeout; level-triggered), and before waiting hands the platform the descriptors
+  (`Platform.wake_for`). **SDL's wait cannot watch a descriptor**, so `ui.sdl3` hands them to
+  `bindings.wake`, a C thread that `poll`s them and pushes an SDL event of its own when one has
+  data — **once, then disarmed** until the next pass re-arms it, or unread data would wake the
+  loop without end; it disarms before it pushes, so a re-arm racing it is never lost. Its C
+  declares SDL's two functions itself, so it builds with a bare C compiler — and the test
+  harness compiles it where `build/lib` has none, since CI tests before `build.sh` and every
+  `ui.sdl3` program now links it. `examples/ui/follow.lyra` reads a command's forty lines in
+  0.29 s of CPU over 2.7 s.
+- **`std.io.readable` declares `poll` with a byte pointer**: the compiler's own TUI runtime
+  declares the symbol so, and a program with both (`examples/calendar`) refused two
+  signatures for one C symbol. The struct's address goes through `pointer_at`.
+- **`scroll_follow`**: `WidgetState.following` (true for a new scroller) keeps a following
+  scroller at its end at layout; `scroll_by` — the one way every scroll moves — sets it from
+  whether it ended at the end. It is in the layout cache's key, or a cached layout would ignore
+  a change of it. **`Command.ScrollTo(key, y)`** sets the offset once a layout has the keyed
+  scroller and lays out again; like `FocusKeyed`, a key names an element among its siblings,
+  so the tree's root cannot be found by one.
+- `TestRun_UiReadableAndScrollFollow`, `TestRun_UiWakeWatch`, `TestRun_UiFollowExample`.
+
 ### 10/23/26 — `ui`: an element that takes input raw
 
 - **`.takes_input(RawInput { on_key, on_text, on_pointer, caret })`** on a painter
