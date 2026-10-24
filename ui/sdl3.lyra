@@ -45,6 +45,9 @@ import bindings.sdl3.{
   create_window,
   destroy_window,
   set_window_size,
+  window_position,
+  set_window_position,
+  on_a_display,
   set_window_minimum_size,
   set_window_maximum_size,
   set_window_resizable,
@@ -476,6 +479,15 @@ impl Platform for SdlPlatform {
     let per_point = units_per_point(self.window)
     let points = (units: f32) -> i32 => i32((units / per_point).round())
     let _ = set_window_size(self.window, points(size.w), points(size.h))
+  }
+  window_position = (self) => match window_position(self.window) {
+    Some((x, y)) => Some(Point { x: f32(x), y: f32(y) }),
+    None => None,
+  }
+  set_window_position = (self, at) => {
+    let x = i32(at.x.round())
+    let y = i32(at.y.round())
+    if on_a_display(x, y) { let _ = set_window_position(self.window, x, y) }
   }
   set_title = (self, title) => {
     let _ = set_window_title(self.window, title)

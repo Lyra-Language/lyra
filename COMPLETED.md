@@ -20,6 +20,10 @@ Newest first.
   a `LoadFonts` followed by a `MeasureFont` of the new family is answered in one pass.
 - **`SelectSpec.separators`**: Termina's saved themes follow its own after a rule. The rule
   is keyed as no option is, so `option_of` and the keys, which count options, never see it.
+- **`Platform.window_position` and `set_window_position`**, for Termina's Settings ▸ Window
+  (the window opened where it was last closed). A place no display shows — saved while another
+  screen was plugged in — is ignored: SDL's display for a point is the nearest one, so
+  `bindings.sdl3.on_a_display` asks that display's bounds too.
 - **A component's sheet reaches the top-level elements of the components it calls**, beneath
   their own sheets and no deeper, as Vue's scoped styles do (`Cascade.roots`). Termina's
   Settings page styled `.swatch-row`, the row a `color_field` component is made of, and the

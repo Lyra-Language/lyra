@@ -3362,6 +3362,52 @@ top later: radius 9, corners 6 6 0 0
 	}
 }
 
+// The window's place on its screens (ui.sdl3, under SDL's dummy driver): where it is, moved,
+// and a place no display shows — one saved while another screen was plugged in — ignored, since
+// SDL's display for a point is merely the nearest.
+func TestRun_UiWindowPosition(t *testing.T) {
+	t.Parallel()
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	setenv(t, "SDL_VIDEODRIVER", "dummy")
+	setenv(t, "SDL_RENDER_DRIVER", "software")
+	got := runUiProgram(t, `import ui.sdl3
+import ui.backend.{ Platform }
+import ui.draw.{ Point }
+
+let main = () -> u8 => {
+  let window = match sdl3.open("Place", 300.0, 200.0) {
+    Ok(w) => w,
+    Err(why) => {
+      println("no window: ${why}")
+      return 0
+    },
+  }
+  var p = window.platform
+  println("placed: ${p.window_position().is_some()}")
+  p.set_window_position(Point { x: 120.0, y: 80.0 })
+  println("moved: ${describe(p.window_position())}")
+  p.set_window_position(Point { x: 100000.0, y: 100000.0 })
+  println("off every display: ${describe(p.window_position())}")
+  sdl3.close(p, window.renderer)
+  0
+}
+
+let describe = pure (at: Maybe<Point>) -> string => match at {
+  Some(pt) => "${pt.x},${pt.y}",
+  None => "unknown",
+}
+`)
+	if strings.HasPrefix(got, "no window") {
+		t.Skipf("SDL could not open a dummy window here: %s", got)
+	}
+	want := "placed: true\nmoved: 120,80\noff every display: 120,80\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // A select's separators (ui/WINDOW.md §7, Termina's saved themes after its own): a rule
 // before each option listed, between the options in the list; each option keeps its index, so
 // a click below a rule chooses the option there, and the keys walk the options over it.

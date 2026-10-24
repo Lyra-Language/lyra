@@ -117,6 +117,8 @@ pub struct ScriptPlatform {
   /// last given ([Platform.set_window_areas]); and the system's answers to changes asked of
   /// it, said at the next pass.
   window: WindowState = WindowState {},
+  /// Where the window is on its screens ([Platform.window_position]), as a script sets it.
+  position: Maybe<Point> = Some(Point {}),
   decorated: bool = true,
   drag_areas: []Rect = [],
   keep_areas: []Rect = [],
@@ -246,6 +248,8 @@ impl Platform for ScriptPlatform {
   set_window_size = (self, size) => {
     self.size = size.held(self.least, self.most)
   }
+  window_position = pure (self) => self.position
+  set_window_position = (self, at) => { self.position = Some(at) }
   set_title = (self, title) => { self.title = title }
   set_menus = (self, menus) => {
     self.menus = menus

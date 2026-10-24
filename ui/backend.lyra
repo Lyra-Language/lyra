@@ -72,6 +72,13 @@ pub trait Platform {
   set_size_limits: (mut Self, Size, Size) -> void
   /// Resize the window to this, in logical units, as the program asks (not the user).
   set_window_size: (mut Self, Size) -> void
+  /// Where the window's top-left corner is on the screens, in the system's own coordinates;
+  /// `None` where the system does not say (Wayland never tells a window where it is).
+  window_position: (Self) -> Maybe<Point>
+  /// Move the window's top-left corner there, if a display shows that place — one saved
+  /// while another screen was plugged in may be on none, and is ignored. The system may
+  /// refuse (Wayland's does).
+  set_window_position: (mut Self, Point) -> void
   /// The window's title bar.
   set_title: (mut Self, string) -> void
   /// Call `hook` each time the system asks for a frame while the window is resized by

@@ -167,6 +167,58 @@ pub let window_size = (window: Window) -> (i64, i64) => {
   (i64(w), i64(h))
 }
 
+/// `SDL_Point` — a place on the screens, in screen coordinates.
+pub struct ScreenPoint {
+  x: i32,
+  y: i32,
+}
+
+@symbol("SDL_GetWindowPosition")
+unsafe extern sdl_get_window_position: (window: Window, x: ^mut i32, y: ^mut i32) -> bool
+
+@symbol("SDL_SetWindowPosition")
+unsafe extern sdl_set_window_position: (window: Window, x: i32, y: i32) -> bool
+
+@symbol("SDL_GetDisplayForPoint")
+unsafe extern sdl_get_display_for_point: (point: ^ScreenPoint) -> u32
+
+/// `SDL_Rect` as a display's bounds, in screen coordinates.
+pub struct ScreenRect {
+  x: i32,
+  y: i32,
+  w: i32,
+  h: i32,
+}
+
+@symbol("SDL_GetDisplayBounds")
+unsafe extern sdl_get_display_bounds: (display: u32, rect: ^mut ScreenRect) -> bool
+
+/// Where the window's top-left corner is on the screens, in screen coordinates (as its size
+/// is); `None` where SDL cannot say — on Wayland a window is never told where it is.
+pub let window_position = (window: Window) -> Maybe<(i64, i64)> => {
+  var x: i32 = 0
+  var y: i32 = 0
+  if !unsafe { sdl_get_window_position(window, &mut x, &mut y) } { return None }
+  Some((i64(x), i64(y)))
+}
+
+/// Move the window's top-left corner to `x`, `y` on the screens — which the system may
+/// refuse (Wayland's always does).
+pub let set_window_position = (window: Window, x: i32, y: i32) -> bool =>
+  unsafe { sdl_set_window_position(window, x, y) }
+
+/// Whether a display shows the place `x`, `y` — a place saved while another screen was
+/// plugged in may be on none. (SDL's display for a point is the nearest one, so its bounds are
+/// asked too.)
+pub let on_a_display = (x: i32, y: i32) -> bool => {
+  let p = ScreenPoint { x: x, y: y }
+  let display = unsafe { sdl_get_display_for_point(&p) }
+  if display == 0 { return false }
+  var r = ScreenRect { x: 0, y: 0, w: 0, h: 0 }
+  if !unsafe { sdl_get_display_bounds(display, &mut r) } { return false }
+  x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h
+}
+
 /// How large the window's content should be drawn: the pixel density of a high-density
 /// display times the scale the user chose for it (Windows' 150%, say). An interface laid
 /// out in its own units draws at this many pixels a unit. `1.0` if SDL cannot say.
