@@ -32,6 +32,8 @@ const BACKGROUND: Color = Color { r: 0xF6, g: 0xF5, b: 0xF4 }
 let main = () -> u8 => {
   let args = parse_args(["--script", "--png"])
   var fonts = fonts_new()
+  // The shortcuts' ⌘, ⇧ and ⌥, a checked item's ✓ and ☰ are in a symbols fallback, not Helvetica.
+  let _ = fonts.add_system_fallbacks()
   if !fonts.add_system_font() {
     println("no font: none of ui.text's SYSTEM_FONTS is here")
     return 1

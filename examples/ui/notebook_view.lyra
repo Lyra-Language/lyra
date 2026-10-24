@@ -106,7 +106,7 @@ pub let view = pure (s: State) -> Node<Event> =>
           ...[k in 0..<s.notes.len() | TabSpec { label: "${s.notes[k].title}", key: s.notes[k].id }], // notebook_view.lui:117
         ], selected: s.selected, on_select: (value: i64) -> Event => Select(value), on_close: (value: i64) -> Event => Close(value), on_move: (from: i64, to: i64) -> Event => Move(from, to), after: [
           button("+", Add).keyed("add"), // notebook_view.lui:120
-          menu_button(text::<Event>("More"), [ // notebook_view.lui:121
+          menu_button(text::<Event>("☰"), [ // notebook_view.lui:121
             MenuItemEntry(MenuItem { label: "Wrap Lines", on_select: ToggleWrap, checked: s.wrap }), // notebook_view.lui:122
           ]).keyed("more"),
         ] }),

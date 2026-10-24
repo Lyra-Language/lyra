@@ -299,7 +299,9 @@ layer — implements the two traits; the display list is the whole contract.
   `chord_text`: `⇧⌘T` where `Viewport.apple` — the platform's `apple()` — else
   `Ctrl+Shift+T`), so the list made from the entries is the same everywhere and a layout from
   the cache refreshes through it (`laid_children`, which a popup's holder needs too) — and
-  **the app takes every drawn menu's shortcuts** (`menu_shortcuts`, after `App.shortcuts`).
+  **the app takes every drawn menu's shortcuts** (`menu_shortcuts`, after `App.shortcuts`). **A program drawing menus adds `add_system_fallbacks()`**: Helvetica, the Mac's
+  system font here, has no `⌘ ⇧ ⌥ ⌃`, nor a checked item's `✓`, and without the symbols
+  fallback they are blank.
 - **A title bar the program draws** (`App.title_bar: DrawnTitleBar`, `ui/WINDOW.md` step 5):
   the host takes the system's frame away once (`Platform.set_decorated`) and, after each
   redraw, tells the platform what of the window moves it — what the view marks

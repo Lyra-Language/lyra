@@ -118,7 +118,7 @@
           <Tab key={s.notes[k].id}>{s.notes[k].title}</Tab>
         </for>
         <Button on_click={Add} key="add">+</Button>
-        <MenuButton title="More" key="more">
+        <MenuButton title="☰" key="more">
           <MenuItem on_select={ToggleWrap} checked={s.wrap}>Wrap Lines</MenuItem>
         </MenuButton>
       </TabBar>
