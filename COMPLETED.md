@@ -9,6 +9,20 @@ Newest first.
 
 ## Dated log
 
+### 10/23/26 — `ui`: Termina's tabs and menus on it, and two fixes they found
+
+- **termina-ui has the tab bar, the menus and, off a Mac, a header bar** (`ui/WINDOW.md`
+  step 9's first part, `termina/src/face/window.lyra`): the menus are one tree as data, in
+  the Mac's bar through `App.menus` and behind the header bar's ☰ elsewhere, the chrome in a
+  `ui` theme made from Termina's.
+- **A shifted punctuation key reaches AppKit as the character it types.** `⌘⇧[` went over as
+  `[` with the Shift bit, which AppKit never matches, and since ui.app leaves a key the bar
+  holds to the bar, Show Previous Tab's key did nothing at all. `ui.sdl3`'s `shifted_key`
+  folds Shift into the character, on a US layout, as Termina's ImGui bar spelled `{`.
+- **The first pass draws before installing the menus.** Installing AppKit's bar takes long
+  enough that a terminal's first program ran before the window was laid out and read 80
+  columns from its PTY's default; drawn first, it reads the window's 108.
+
 ### 10/23/26 — `ui`: the window's elements in lui, and `Fragment`
 
 - **lui's `ui` target writes the window's elements** (`ui/WINDOW.md` step 8): menus, the tab

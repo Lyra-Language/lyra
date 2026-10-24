@@ -71,8 +71,8 @@ let main = () -> u8 => {
 
 // ui.sdl3's install_menus, App.menus' half on a Mac (ui/WINDOW.md step 3), read back from the
 // bar AppKit was given: the first menu as the application menu, its title the app's name; the
-// shortcuts as key equivalents — Shift a modifier, the arrows and F1 AppKit's function-key
-// characters; a submenu; a greyed and a checked item; macOS's Window menu after the last. A
+// shortcuts as key equivalents — Shift a modifier on a letter, folded into a bracket's character
+// (⌘⇧[ is ⌘{), the arrows and F1 AppKit's function-key characters; a submenu; a greyed and a checked item; macOS's Window menu after the last. A
 // change of greying keeps the shape and is only synced; a renamed item is a new shape, installed
 // again. And a choice wakes SDL's event wait: the binding pushes an event, or a ui program
 // sleeping there would not hear a click until its next input.
@@ -121,7 +121,10 @@ let main = () -> u8 => {
 let menus = pure (name: string, enabled: bool) -> []NativeMenu => [
   NativeMenu {
     label: "Counter",
-    entries: [NativeItem(NativeItemSpec { label: "Settings…", tag: 0, shortcut: Some(Chord { key: Character(','), mods: Modifiers { primary: true } }) })],
+    entries: [
+      NativeItem(NativeItemSpec { label: "Settings…", tag: 0, shortcut: Some(Chord { key: Character(','), mods: Modifiers { primary: true } }) }),
+      NativeItem(NativeItemSpec { label: "Previous Tab", tag: 4, shortcut: Some(Chord { key: Character('['), mods: Modifiers { primary: true, shift: true } }) }),
+    ],
   },
   NativeMenu {
     label: "Edit",
@@ -154,7 +157,7 @@ let menus = pure (name: string, enabled: bool) -> []NativeMenu => [
 	}
 	first, greyed, renamed := parts[0], parts[1], parts[2]
 	for _, want := range []string{
-		"Counter\n  Settings…\tCmd+,\n",
+		"Counter\n  Settings…\tCmd+,\n  Previous Tab\tCmd+{\n",
 		"Quit Counter\tCmd+Q",
 		// Edit's title carries a word joiner (the binding's, keeping AppKit's own Edit items out).
 		"\n  Count\tShift+Cmd+K\n  ---\n  Move >\n    Up\tOption+\uf700\n    Help\t\uf704 [x]\n",

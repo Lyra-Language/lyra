@@ -553,13 +553,17 @@ impl Host<s, e> {
     // every pass under `--live`, where the code itself may have.
     if self.shown.len() == 0 { self.limit_size(platform, platform.window_size()) }
     if self.live { self.follow_window(platform) }
-    self.sync_menus(platform)
+    // The first pass draws before the menus are installed, which on a Mac takes AppKit a
+    // moment: the window shows, and its painters hear their size (a terminal's columns), first.
+    let first = self.shown.len() == 0
+    if !first { self.sync_menus(platform) }
     // A transition moving draws every frame too, until it arrives.
-    if self.dirty || self.live || self.shown.len() == 0 || self.ui.animating() { self.redraw(
+    if self.dirty || self.live || first || self.ui.animating() { self.redraw(
       platform,
       renderer,
       fonts
     ) }
+    if first { self.sync_menus(platform) }
     // From the layout just drawn, before the wait the next press comes in.
     self.sync_title_bar(platform)
     var laid = self.shown[0]

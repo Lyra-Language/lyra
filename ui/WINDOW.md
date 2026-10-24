@@ -255,7 +255,9 @@ Termina moves at the end.
 9. **Termina**: termina-ui gains the tab bar, its menus (native on a Mac, a GNOME header bar
    with ☰ on Linux, a menu bar elsewhere), the Settings tab as `ui`-target markup, and
    Other Font File…; then `Termina.app` and the Linux releases are built from it, and the
-   ImGui front end and `uitest` go.
+   ImGui front end and `uitest` go. **The tab bar, the menus and the header bar built 10/23**
+   (`termina/src/face/window.lyra`; the header bar off every Mac, there being no third
+   platform); the Settings tab and the move of the releases next.
 
 ## 9. Open questions
 

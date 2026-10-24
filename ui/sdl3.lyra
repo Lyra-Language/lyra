@@ -792,10 +792,15 @@ let sync_entries = (entries: []NativeEntry) -> void => {
 }
 
 /// A shortcut's key as AppKit's key equivalent: a letter in lower case (Shift is a modifier
-/// bit), the editing keys' control characters, and the arrows, Home, End, the pages, Insert
-/// and F1–F24 as AppKit's private-use function-key characters. `""` for a key it has none for.
+/// bit), a shifted punctuation key or digit as the character it types ([shifted_key]: AppKit
+/// matches ⌘⇧[ as `{` with Command alone, and never as `[` with Shift), the editing keys'
+/// control characters, and the arrows, Home, End, the pages, Insert and F1–F24 as AppKit's
+/// private-use function-key characters. `""` for a key it has none for.
 let key_equivalent = pure (c: Chord) -> string => match c.key {
-  Character(r) => "${r.to_ascii_lower()}",
+  Character(r) => match shifted_key(c) {
+    Some(typed) => "${typed}",
+    None => "${r.to_ascii_lower()}",
+  },
   Enter => "\r",
   Tab => "\t",
   Escape => "\e",
@@ -814,10 +819,26 @@ let key_equivalent = pure (c: Chord) -> string => match c.key {
   _ => "",
 }
 
-/// A shortcut's modifiers as `bindings.menubar`'s bits: the primary modifier is Command here.
+/// The character a shortcut's Shift and punctuation key or digit type, on a US layout — the
+/// key equivalent AppKit matches them by, Shift in it — or `None`: no Shift, or a letter or
+/// another key, whose Shift stays a modifier bit.
+let shifted_key = pure (c: Chord) -> Maybe<rune> => {
+  if !c.mods.shift { return None }
+  let Character(r) = c.key else { return None }
+  let plain = "[]=-,./;'\\`1234567890".to_runes()
+  let typed = "{}+_<>?:\"|~!@#$%^&*()".to_runes()
+  for k, p in plain {
+    if p == r { return Some(typed[k]) }
+  }
+  None
+}
+
+/// A shortcut's modifiers as `bindings.menubar`'s bits: the primary modifier is Command here,
+/// and a Shift folded into its key ([shifted_key]) is none.
 let modifier_bits = pure (c: Chord) -> u32 => {
   let m = c.mods
-  (if m.primary || m.command { menubar.COMMAND } else { 0 }) | (if m.shift { menubar.SHIFT } else { 0 }) |
+  let shift = m.shift && shifted_key(c).is_none()
+  (if m.primary || m.command { menubar.COMMAND } else { 0 }) | (if shift { menubar.SHIFT } else { 0 }) |
     (if m.alt { menubar.OPTION } else { 0 }) | (if m.control { menubar.CONTROL } else { 0 })
 }
 

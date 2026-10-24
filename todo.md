@@ -704,7 +704,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   in `ui/WINDOW.md` (10/23), the rest of Termina's move off ImGui. Steps 1 (popups, the
   select's list on them), 2 (menus drawn), 3 (menus native on a Mac), 4 (the tab bar), 5 (the
   window's controls, a drawn title bar), 6 (a file dialog), 7 (colour) and 8 (lui's elements,
-  `Fragment`) built 10/23; next Termina on them (step 9).
+  `Fragment`) built 10/23; step 9's tab bar, menus and header bar in termina-ui 10/23, its
+  Settings tab and the releases' move next.
 - **[OPEN] `ui`: a drawn title bar wants trying on a Linux desktop** — SDL's hit test calling
   `bindings.hittest` for a borderless window (moving it, its edges resizing it) is untested:
   the dummy driver refuses a hit test. And its double click: SDL starts a move at the press, so
