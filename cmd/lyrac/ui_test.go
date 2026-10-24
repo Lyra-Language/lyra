@@ -337,8 +337,9 @@ constrain 20 0 2 0
 // The cascade's order (`ui.style`): within a layer the more specific rule wins and then the
 // later; a higher layer beats a lower one whatever its specificity — the theme's elements, the
 // global sheets (outermost first), a component's scoped sheet, part rules, inline style. A
-// component's sheet does not reach a component inside it, whose parts its own part rules
-// style. Colour, font and opacity are inherited (opacity multiplied), the background is not,
+// component's sheet reaches a component inside it only at its top-level elements, as Vue's
+// scoped styles do — beneath that component's own sheet, and no deeper — and its parts through
+// its part rules. Colour, font and opacity are inherited (opacity multiplied), the background is not,
 // and a themed subtree takes its theme's text colour. Each rule sets a different gray, so the
 // gray an element ends with names the rule that won.
 func TestRun_UiCascade(t *testing.T) {
@@ -372,7 +373,7 @@ let main = () -> u8 => {
   ] }
   let inner = Sheet { rules: [rule(".outer", 9)] }
   let card_sheet = Sheet { rules: [rule("Text", 10), rule("Badge::dot", 11)] }
-  let badge_sheet = Sheet { rules: [rule(".dot", 12)] }
+  let badge_sheet = Sheet { rules: [rule(".dot", 12), rule(".own", 14)] }
   let tree: Node<NoEvent> = themed(theme, globals, [
     column([
       text("").with_class("spec"),
@@ -387,9 +388,12 @@ let main = () -> u8 => {
         // Inline beats everything.
         text("").with_class("inline").with_part("label").with_style(Style { color: Some(gray(13)) }),
         component("Badge", badge_sheet, [
-          // The card's sheet does not reach inside the badge (the global Text rule does), and
-          // the card's part rule for the badge's dot beats the badge's own rule.
+          // The card's sheet reaches the badge's top-level elements, and no deeper (the global
+          // Text rule does); the card's part rule for the badge's dot beats the badge's own.
           text("").with_class("nested"),
+          // The badge's own sheet beats the card's, there too.
+          text("").with_class("nested own"),
+          column([text("").with_class("deeper")]),
           text("").with_class("dot").with_part("dot"),
         ]),
       ]),
@@ -438,7 +442,9 @@ outer: 9 14 1 false
 scoped spec: 10 14 1 false
 part: 8 14 1 false
 inline: 13 14 1 false
-nested: 6 14 1 false
+nested: 10 14 1 false
+nested own: 14 14 1 false
+deeper: 6 14 1 false
 dot: 11 14 1 false
 parent: 20 14 0.5 true
 child: 20 14 0.5 false

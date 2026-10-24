@@ -151,8 +151,9 @@ layer — implements the two traits; the display list is the whole contract.
   (`drag:W,H`) the same way, the hook called from inside its wait.
 - **The cascade is five layers**, each beating the ones below whatever their specificity:
   the theme's `elements`, the global sheets (`themed`'s, outermost first, one layer), the
-  enclosing component's scoped sheet (never reaching a component inside it; made from the
-  theme in force where the component is `component_of`), part rules (`Card::label`, and the
+  enclosing component's scoped sheet (made from the theme in force where the component is
+  `component_of`; reaching a component inside it only at that component's top-level
+  elements, beneath its own sheet, as Vue's scoped styles do — `Cascade.roots`), part rules (`Card::label`, and the
   more specific `Card.big::label`, from the theme, the global sheets and the sheet of the
   component around the part's), and inline style. Within a layer the more specific (tag 1, class 10, both 11),
   then the later. `color`, `font` and `opacity` are inherited, opacity multiplied.

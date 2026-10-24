@@ -769,7 +769,9 @@ pub struct Computed {
 
 /// Where an element stands in the cascade: the theme in force, the global rules (outermost
 /// sheet first), the component it is in and that component's rules, the rules of the
-/// component around that one (for its parts), and what its parent passes down.
+/// component around that one (for its parts — and, as `roots`, for the component's own
+/// top-level elements, which a sheet reaches from outside as Vue's scoped styles do), and what
+/// its parent passes down.
 pub struct Cascade {
   theme: Theme,
   globals: []Rule = [],
@@ -778,6 +780,9 @@ pub struct Cascade {
   component_classes: string = "",
   scoped: []Rule = [],
   outer_scoped: []Rule = [],
+  /// The rules of the component around, while this is one of its own top-level elements: so
+  /// `.row { gap: 8 }` in a page's sheet reaches the row a component it calls is made of.
+  roots: []Rule = [],
   inherited: Computed,
 }
 
@@ -802,6 +807,9 @@ impl Cascade {
     var out = applied(under, tag, classes, Style {})
     out = applied(self.theme.elements.rules, tag, classes, out)
     out = applied(self.globals, tag, classes, out)
+    // The sheet of the component around, on this component's own top-level elements, beneath
+    // the component's own sheet.
+    out = applied(self.roots, tag, classes, out)
     out = applied(self.scoped, tag, classes, out)
     if part.len() > 0 && self.component.len() > 0 {
       // `Component::part`, then the more specific `Component.class::part`, each in order.
@@ -914,11 +922,13 @@ impl Cascade {
     component_classes: classes,
     scoped: sheet.rules,
     outer_scoped: self.scoped,
+    roots: self.scoped,
   }
 
-  /// The cascade for the children of an element computed as `computed`.
+  /// The cascade for the children of an element computed as `computed`: below a component's
+  /// own top-level elements, the sheet of the component around reaches no further.
   pub let inside = pure (self, computed: Computed) -> Cascade =>
-    Cascade { self | inherited: computed }
+    Cascade { self | inherited: computed, roots: [] }
 }
 
 /// `base` with the rules of one layer matching an element of `tag` and `classes` laid over it,

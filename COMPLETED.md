@@ -20,6 +20,10 @@ Newest first.
   a `LoadFonts` followed by a `MeasureFont` of the new family is answered in one pass.
 - **`SelectSpec.separators`**: Termina's saved themes follow its own after a rule. The rule
   is keyed as no option is, so `option_of` and the keys, which count options, never see it.
+- **A component's sheet reaches the top-level elements of the components it calls**, beneath
+  their own sheets and no deeper, as Vue's scoped styles do (`Cascade.roots`). Termina's
+  Settings page styled `.swatch-row`, the row a `color_field` component is made of, and the
+  rule did nothing: a component's sheet stopped at every component inside it.
 - **Tabs past the strip go into a more-tabs menu** (`ui/WINDOW.md`'s open question 2, the
   user's answer): shrunk to `TAB_LEAST`, then as many as fit beside an arrow listing the rest,
   rather than a strip that scrolls them out of sight. The menu's items call each tab's

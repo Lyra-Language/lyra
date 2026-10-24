@@ -531,7 +531,8 @@ The example's interface is `examples/imgui/components_view.lui`.
   `<tile class="wide"/>` spans its grid's columns. A `<for>` holding several elements makes an
   array of them each pass, `flatten`ed in place.
 - **Styling for `ui`**: a component's `<style>` is a sheet made from the theme it is drawn
-  in (`component_of`); a top-level `<style global theme={AppTheme} name="app_sheet">` is a
+  in (`component_of`), reaching its own elements and, as Vue's scoped styles do, the top-level
+  elements of the components it calls (beneath their own sheets); a top-level `<style global theme={AppTheme} name="app_sheet">` is a
   `pub` function of that theme (`Theme` by default) answering the sheet, for `<Themed
   theme={t} sheet={app_sheet(t)}>`. A `$path` reads the theme — `$colors.accent` is
   `t.colors.accent`, `$space.m` `t.space.m` — wherever a number or colour goes (not in an

@@ -1692,7 +1692,8 @@ let styled_at<e> = (
     Scope(sheet_of) => {
       let (scoped, asked) = sheet_of(own.theme).at(ui.viewport)
       media = asked
-      own.in_component(node.tag, classes, scoped).inside(style)
+      // Its children are its top-level elements: the sheet around reaches them ([Cascade.roots]).
+      own.inside(style).in_component(node.tag, classes, scoped)
     },
     // A control owns its parts (`Slider::thumb`) — a window's own button too, which takes no
     // focus.
