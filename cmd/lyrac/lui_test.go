@@ -497,7 +497,7 @@ func TestLui_UiTargetExampleIsCurrentAndChecks(t *testing.T) {
 
 // The ui target's mistakes, at their markup lines: an element ui lacks, a part a component
 // does not have (its own, or a control's), a token in an inline style, `key=` or a global
-// style in the bindings.imgui.ui target, an unknown target, a <for> of several elements, an
+// style in the bindings.imgui.ui target, an unknown target, a <for> without each, an
 // import lui cannot read, and a misspelt prop of an imported component.
 func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 	t.Parallel()
@@ -518,7 +518,7 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"imgui key", "<component name=\"a\" props={{ x: e }}>\n  <Button on_click={x} key=\"k\">Hi</Button>\n</component>", "x.lui:2: key= and part= are the ui target's"},
 		{"imgui global", "<style global>\n</style>", "x.lui:1: a global <style> is the ui target's"},
 		{"target", "<script target=\"web\"></script>", "x.lui:1: target is \"ui\" or \"imgui\", not \"web\""},
-		{"for", ui + "<component name=\"a\">\n  <for each={i in 0..<2}>\n    <Text>a</Text>\n    <Text>b</Text>\n  </for>\n</component>", "x.lui:3: a <for> holds one element in the ui target"},
+		{"for without each", ui + "<component name=\"a\">\n  <for>\n    <Text>a</Text>\n  </for>\n</component>", "x.lui:3: <for> needs each={x in xs}"},
 		{"import", ui + "<import src=\"nope.lui\"/>", "x.lui:2: cannot read nope.lui"},
 		{"imported prop", ui + "<import src=\"w.lui\"/>\n<component name=\"a\">\n  <badge word=\"hi\"/>\n</component>", "x.lui:4: component badge has no prop word"},
 		{"imported part", ui + "<import src=\"w.lui\"/>\n<style global>\n  badge::lable { color: #fff }\n</style>", "x.lui:4: badge has no part lable (its parts: label)"},
@@ -1088,6 +1088,136 @@ func TestLui_UiTargetPopup(t *testing.T) {
 	}
 }
 
+// The window's elements in the ui target (ui/WINDOW.md step 8): `<MenuBar>` of `<Menu>`s,
+// whose `<MenuItem>`s, `<Separator/>`s and nested `<Menu>`s (submenus) are data, a `<for>`
+// among them; shortcuts as Chords (Cmd and Ctrl the primary modifier, a function key, a
+// character); `disabled` and `checked`; `<MenuButton title>`; `<TabBar>` with `<Tab>`s — a
+// `<for>` of them — and what follows them; `<Swatch>`; `<WindowButtons/>`; `window-drag`; and
+// a `<for>` holding several elements, flattened in place. The module checks clean; and each
+// misuse is refused at its line.
+func TestLui_UiTargetWindowElements(t *testing.T) {
+	t.Parallel()
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script target="ui">
+  import ui.draw.{ Color }
+
+  pub struct Doc {
+    title: string,
+    id: string,
+  }
+
+  pub data Ev = Chose(string) | Select(i64) | Close(i64) | Move(i64, i64) | Add | Open | Shut | Paint(Color)
+</script>
+<component name="view" props={{ docs: []Doc, selected: i64, wrap: bool, color: Color, open: bool }} event={Ev}>
+  <style>
+    MenuItem::shortcut { color: #888888 }
+  </style>
+  <Column>
+    <Row window-drag>
+      <MenuBar>
+        <Menu title="File">
+          <MenuItem on_select={Chose("new")} shortcut="Cmd+N">New</MenuItem>
+          <MenuItem on_select={Chose("save as")} shortcut="Ctrl+Shift+S">Save As…</MenuItem>
+          <Separator/>
+          <Menu title="Recent">
+            <for each={d in docs}>
+              <MenuItem on_select={Chose(d.id)}>{d.title}</MenuItem>
+            </for>
+          </Menu>
+          <MenuItem on_select={Chose("quit")} disabled={docs.len() == 0}>Quit</MenuItem>
+        </Menu>
+        <Menu title="View">
+          <MenuItem on_select={Chose("wrap")} checked={wrap}>Wrap Lines</MenuItem>
+          <MenuItem on_select={Chose("full")} shortcut="F11">Full Screen</MenuItem>
+        </Menu>
+      </MenuBar>
+      <WindowButtons/>
+    </Row>
+    <TabBar selected={selected} on_select={Select} on_close={Close} on_move={Move}>
+      <Tab key="home" closable="false" movable="false">Home</Tab>
+      <for each={d in docs}>
+        <Tab key={d.id}>{d.title}</Tab>
+      </for>
+      <Button on_click={Add}>+</Button>
+      <MenuButton title="☰">
+        <MenuItem on_select={Chose("settings")} shortcut="Cmd+,">Settings…</MenuItem>
+      </MenuButton>
+    </TabBar>
+    <for each={d in docs}>
+      <Text>{d.title}</Text>
+      <Swatch color={color} open={open} on_open={Open} on_change={Paint} on_dismiss={Shut}/>
+    </for>
+  </Column>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`menu_bar([`,
+		`Menu { label: "File", entries: [`,
+		`MenuItemEntry(MenuItem { label: "New", on_select: Chose("new"), shortcut: Some(Chord { key: Character('n'), mods: Modifiers { primary: true } }) })`,
+		`shortcut: Some(Chord { key: Character('s'), mods: Modifiers { primary: true, shift: true } })`,
+		`MenuSeparator,`,
+		`Submenu("Recent", [`,
+		`...[d in docs | MenuItemEntry(MenuItem { label: "${d.title}", on_select: Chose(d.id) })]`,
+		`enabled: !(docs.len() == 0)`,
+		`checked: wrap`,
+		`shortcut: Some(Chord { key: FunctionKey(11) })`,
+		`window_buttons::<Ev>()`,
+		`]).window_drag(),`,
+		`tab_bar(TabsSpec { tabs: [`,
+		`TabSpec { label: "Home", key: "home", closable: false, movable: false }`,
+		`...[d in docs | TabSpec { label: "${d.title}", key: d.id }]`,
+		`on_move: (from: i64, to: i64) -> Ev => Move(from, to), after: [`,
+		`menu_button(text::<Ev>("☰"), [`,
+		`key: Character(','), mods: Modifiers { primary: true }`,
+		`...flatten([d in docs | [`,
+		`swatch(color, open, Open, (value: Color) -> Ev => Paint(value), Shut)`,
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	for _, c := range []struct{ from, to, line, why string }{
+		{`<Menu title="View">`, "<Text>View</Text>\n<Menu title=\"View\">", ":29", "<MenuBar> holds <Menu>s, not <Text>"},
+		{`<Separator/>`, `<Button on_click={Add}>x</Button>`, ":21", "a menu holds <MenuItem>s, <Separator/>s and <Menu>s, not <Button>"},
+		{`shortcut="F11"`, `shortcut="Hyper+K"`, ":31", "Hyper is not Cmd, Ctrl, Alt or Shift"},
+		{`shortcut="F11"`, `shortcut="Cmd+Whatever"`, ":31", `a shortcut's key is one character or a key's name, not "Whatever"`},
+		{`<Tab key={d.id}>`, `<Tab>`, ":39", "<Tab> needs key"},
+		{`<MenuButton title="☰">`, `<MenuButton>`, ":42", "<MenuButton> needs title"},
+		{`<Row window-drag>`, `<Row window-drag="yes">`, ":16", "window-drag is bare"},
+		{` on_move={Move}>`, `>`, ":36", "<TabBar> needs on_move"},
+		{`<Menu title="Recent">`, `<Menu>`, ":22", "<Menu> needs title"},
+	} {
+		bad := filepath.Join(dir, "bad.lui")
+		if !strings.Contains(source, c.from) {
+			t.Fatalf("the source lacks %q", c.from)
+		}
+		if err := os.WriteFile(bad, []byte(strings.Replace(source, c.from, c.to, 1)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := command(t, lui, bad).CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "bad.lui"+c.line) || !strings.Contains(string(out), c.why) {
+			t.Errorf("%s → %s: want %q at line %s\n%s", c.from, c.to, c.why, c.line, out)
+		}
+	}
+}
+
 // Colours in a ui-target sheet as CSS Color 4 writes them (ui.color's parse_color): oklch(),
 // oklab() and rgb() with a slash's alpha, in a colour, a gradient's stops and a shadow — words
 // split outside parentheses — each written as its sRGB; and a word that is none refused at its
@@ -1213,6 +1343,26 @@ func TestLui_OverflowExampleIsCurrentAndChecks(t *testing.T) {
 		t.Fatalf("examples/ui/overflow_view.lyra is stale: %v\n%s", err, b)
 	}
 	stdout, stderr, code := captureRun(t, "check", filepath.Join(root, "examples", "ui", "overflow.lyra"))
+	if code != 0 {
+		t.Fatalf("checking the example exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if out := stdout + stderr; strings.Contains(out, "warning") {
+		t.Errorf("the example or its generated view warns:\n%s", out)
+	}
+}
+
+// The notebook example — the window's elements in markup: a drawn title bar's menus and
+// buttons, tabs, swatches in a grid filled by a <for> of two — is what lui makes from it, and
+// checks clean.
+func TestLui_NotebookExampleIsCurrentAndChecks(t *testing.T) {
+	t.Parallel()
+	skipWithoutText(t)
+	lui := buildLui(t)
+	root := repoRoot(t)
+	if b, err := command(t, lui, "--check", filepath.Join(root, "examples", "ui", "notebook_view.lui")).CombinedOutput(); err != nil {
+		t.Fatalf("examples/ui/notebook_view.lyra is stale: %v\n%s", err, b)
+	}
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(root, "examples", "ui", "notebook.lyra"))
 	if code != 0 {
 		t.Fatalf("checking the example exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}

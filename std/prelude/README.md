@@ -63,7 +63,7 @@ an error that names the shadow.
 | `prelude.lyra` | module header and module doc |
 | `maybe.lyra` | `Maybe` and its combinators |
 | `result.lyra` | `Result` and its combinators |
-| `array.lyra` | combinators over `[]t` (`map`, `filter`, `contains`, `index_of`, `any`, `all`), sorting |
+| `array.lyra` | combinators over `[]t` (`map`, `filter`, `contains`, `index_of`, `any`, `all`), sorting, and `flatten` over `[][]t` |
 | `seq.lyra` | `Seq<t>` combinators |
 | `ordering.lyra` | `Ordering`, `Ord`, `Eq`, `min`/`max`/`clamp` |
 | `math.lyra` | `Add`/`Sub`/`Mul`/`Div`, `Arithmetic` |

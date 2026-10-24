@@ -1,0 +1,128 @@
+// A notebook: the markup of notebook_view.lui run by `ui.app` — a title bar the program draws
+// with a menu bar and the window's own buttons, the notes as tabs, and each note's colour on a
+// swatch opening its picker. The menus' shortcuts are the app's (Primary+N a new note,
+// Primary+W closing the shown one, Alt+Z wrapping lines).
+//
+//     build/lui examples/ui/notebook_view.lui      # after editing the markup
+//     lyrac run examples/ui/notebook.lyra
+//     lyrac run examples/ui/notebook.lyra -- --script "Primary+n click:30,16" [--png FILE]
+//
+// **The second form** plays a script (`ui.script`) headless, prints the notes as they were left
+// and with `--png FILE` writes the last frame.
+
+import ui.sdl3
+import ui.sdl3.{ SdlRenderer, capture }
+import ui.gpu
+import ui.app.{ App, DrawnTitleBar, run, running, step_running, Command, Subscription }
+import ui.script.{ timed_platform, parse_steps }
+import ui.draw.{ Point, Size, Color }
+import ui.text.{ Fonts, fonts_new, glyph_atlas }
+import ui.style.{ OverflowVisible }
+import ui.color.{ color_text }
+import ui.layout.{ Laid, paint }
+import notebook_view.{ State, Event, Note, view, update }
+import std.collections.{ parse_args }
+import std.png.{ write_png }
+import std.io.{ write_bytes }
+
+const WIDTH: f32 = 600.0
+const HEIGHT: f32 = 480.0
+const BACKGROUND: Color = Color { r: 0xF6, g: 0xF5, b: 0xF4 }
+
+let main = () -> u8 => {
+  let args = parse_args(["--script", "--png"])
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let app = App {
+    view: view,
+    update: (s: State, e: Event) -> (State, []Command<Event>) => (update(s, e), []),
+    subscriptions: (_: State) -> []Subscription<Event> => [],
+    background: BACKGROUND,
+    window_overflow: OverflowVisible,
+    title_bar: DrawnTitleBar,
+  }
+  let start = State {
+    notes: [
+      Note { title: "Groceries", id: "groceries", color: Color { r: 0xF2, g: 0xC1, b: 0x4E } },
+      Note { title: "Ideas", id: "ideas", color: Color { r: 0x5D, g: 0x8C, b: 0xD6 } },
+    ],
+    made: 0,
+  }
+  if let Some(script) = args.value("--script") {
+    let Ok(steps) = parse_steps(script) else {
+      println("the script does not parse")
+      return 1
+    }
+    let window = match sdl3.open("Notebook", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    let played = running(
+      app,
+      start,
+      timed_platform(steps, Size { w: WIDTH, h: HEIGHT }),
+      window.renderer,
+      fonts
+    )
+    while step_running(played) {}
+    let s = played.host.state
+    for k, n in s.notes {
+      println("${if k == s.selected { "*" } else { " " }} ${n.title} ${color_text(n.color)}")
+    }
+    println("wrap ${s.wrap}")
+    var status: u8 = 0
+    if let Some(path) = args.value("--png") {
+      if !save(played.renderer, played.fonts, played.host.shown[0], path) { status = 1 }
+    }
+    sdl3.close(window.platform, played.renderer)
+    fonts.close()
+    return status
+  }
+  let window = match gpu.open("Notebook", WIDTH, HEIGHT) {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      fonts.close()
+      return 2
+    },
+  }
+  var system = window.platform
+  var renderer = window.renderer
+  let _ = run(app, start, system, renderer, fonts)
+  gpu.close(system, renderer)
+  fonts.close()
+  0
+}
+
+/// `laid` — the window as the host last laid it out — drawn without showing it, and written to
+/// `path` as a PNG.
+let save = (
+  renderer: SdlRenderer,
+  fonts: Fonts,
+  laid: Laid<Event>,
+  path: string
+) -> bool => {
+  var r = renderer
+  var f = fonts
+  var atlas = glyph_atlas()
+  let ops = paint(laid, Point {}, 1.0, f, atlas, r)
+  let Some(frame) = capture(r, BACKGROUND, ops) else { return false }
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(u8((p >> 24) & 0xFF))
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(png) => write_bytes(path, png),
+    Err(_) => false,
+  }
+}

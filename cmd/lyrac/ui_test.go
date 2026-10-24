@@ -4942,6 +4942,55 @@ hsv(210, 0.5, 0.8): #6699cc, back 210 0.5 0.8
 	}
 }
 
+// examples/ui/notebook.lyra (WINDOW.md step 8) headless — the window's elements written in
+// markup: the menus' shortcuts taken by the app, a submenu's item reached by the pointer (a
+// press on its opener leaves it open), a menu item closing the shown note, a tab's ×, and a
+// swatch's picker changing a note's hue.
+func TestRun_UiNotebookExample(t *testing.T) {
+	t.Parallel()
+	skipWithoutText(t)
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "notebook")
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, filepath.Join(repoRoot(t), "examples", "ui", "notebook.lyra")); code != 0 {
+		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
+	}
+	for _, c := range []struct{ script, want string }{
+		{"", "* Groceries #f2c14e\n  Ideas #5d8cd6\nwrap false\n"},
+		{"Primary+n Alt+z", "  Groceries #f2c14e\n  Ideas #5d8cd6\n* Note 1 #f2c14e\nwrap true\n"},
+		// File ▸ Go To ▸ Ideas.
+		{"click:20,16 click:60,108 click:220,140", "  Groceries #f2c14e\n* Ideas #5d8cd6\nwrap false\n"},
+		// File ▸ Close Note, then Groceries' tab's ×.
+		{"click:20,16 click:60,73", "* Ideas #5d8cd6\nwrap false\n"},
+		{"click:87,50", "* Ideas #5d8cd6\nwrap false\n"},
+		// Ideas' swatch, its hue strip's start, and a press away.
+		{"click:561,183 click:380,364 click:300,450", "* Groceries #f2c14e\n  Ideas #d67f5d\nwrap false\n"},
+	} {
+		shot := filepath.Join(dir, "end.png")
+		cmd := command(t, bin, "--script", c.script, "--png", shot)
+		cmd.Dir = dir
+		cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+		out, err := cmd.CombinedOutput()
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 &&
+			strings.Contains(string(out), "SDL could not") {
+			t.Skipf("SDL could not open a dummy window here: %s", out)
+		} else if ok && exitErr.ExitCode() == 1 && strings.HasPrefix(string(out), "no font") {
+			t.Skipf("no font here: %s", out)
+		} else if err != nil {
+			t.Fatalf("running: %v\n%s", err, out)
+		}
+		if string(out) != c.want {
+			t.Errorf("%q: got\n%s\nwant\n%s", c.script, out, c.want)
+		}
+		if _, err := os.Stat(shot); err != nil {
+			t.Errorf("no last frame: %v", err)
+		}
+	}
+}
+
 // examples/ui/colors.lyra (WINDOW.md step 7) headless: its three colours as CSS writes them; the
 // Accent's picker opened and its square pressed; and the colour typed into its field as oklch( and
 // taken as the focus leaves.

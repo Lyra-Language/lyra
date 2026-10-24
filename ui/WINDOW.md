@@ -249,7 +249,9 @@ Termina moves at the end.
    shown by any test (a dialog needs a user), only the queue it answers through.
 7. **Colour**: `swatch` and the picker, `ui.color` (CSS Color 4's text, Oklab, OKLCH, HSV),
    lui's colours through it. **Built 10/23**; its lui element waits for step 8.
-8. **lui's elements** for all of it, and `Fragment`.
+8. **lui's elements** for all of it, and `Fragment`. **Built 10/23**: a `<for>` of several is
+   an array each pass, flattened (`flatten`, new in the prelude); example
+   `examples/ui/notebook_view.lui`.
 9. **Termina**: termina-ui gains the tab bar, its menus (native on a Mac, a GNOME header bar
    with ☰ on Linux, a menu bar elsewhere), the Settings tab as `ui`-target markup, and
    Other Font File…; then `Termina.app` and the Linux releases are built from it, and the

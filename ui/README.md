@@ -453,6 +453,11 @@ layer — implements the two traits; the display list is the whole contract.
 - `examples/ui/colors.lyra` — swatches: a theme's three colours, one translucent, each opening
   the picker and shown as `ui.color` writes it and in OKLCH (`--script "…" [--png FILE]`
   headless, printing the colours).
+- `examples/ui/notebook_view.lui` — the window's elements in markup, as Termina's window has
+  them: a title bar the program draws holding a menu bar (File's Go To a submenu filled by a
+  `<for>`) and the window's buttons, the notes as tabs with `+` and More after them, and a grid
+  of each note's name and swatch, two cells a `<for>`; run by `examples/ui/notebook.lyra`
+  (`--script "…" [--png FILE]` headless, printing the notes).
 - `examples/ui/form.lyra` — phase 3's gate, a form that works from the keyboard: two
   fields, a checkbox, a slider and Submit, run by `ui.app`. `--script "…"` plays input
   instead of waiting for a user and prints the state it left; `--png FILE` the last frame.
@@ -503,7 +508,10 @@ layer — implements the two traits; the display list is the whole contract.
   `bindings.dialog`'s queue; `TestRun_UiColor` `ui.color`'s text, Oklab and OKLCH, gamut
   mapping and HSV; `TestRun_UiColorPicker` a swatch's picker by pointer, keys and its field,
   and a hue held through white; `TestRun_UiColorsExample` the example;
-  `TestLui_UiTargetColourSyntax` the markup's colours; `TestRun_UiMenusInstalledInTheMacsBar` (`menubar_test.go`) the bar AppKit was given,
+  `TestLui_UiTargetColourSyntax` the markup's colours; `TestLui_UiTargetWindowElements` the
+  markup's menus, tabs, swatch, window buttons, `window-drag` and a `<for>` of several, and
+  their refusals; `TestRun_UiNotebookExample` the example by shortcut, menu, submenu, tab and
+  picker, and `TestLui_NotebookExampleIsCurrentAndChecks` its view; `TestRun_UiMenusInstalledInTheMacsBar` (`menubar_test.go`) the bar AppKit was given,
   synced and reinstalled, and a choice waking SDL's wait;
   `TestRun_UiDisabledIsLaidOutAtOnce` a control disabled with nothing else changed;
   `TestLui_UiTargetReadOnlyField` the markup's `readonly`.

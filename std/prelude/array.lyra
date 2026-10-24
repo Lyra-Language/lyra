@@ -381,3 +381,22 @@ impl []t {
     }
   }
 }
+
+impl [][]t {
+  /// One array of every element of the arrays, in order: what a comprehension cannot write,
+  /// since a clause may not draw from an earlier clause's binding (`[row in grid, cell in row |
+  /// cell]` is refused) — so `[x in xs | [a(x), b(x)]].flatten()` makes two of each.
+  ///
+  /// Allocates the result.
+  ///
+  /// ```
+  /// let all = [[1, 2], [], [3]].flatten()   // [1, 2, 3]
+  /// ```
+  pub let flatten<t> = pure (self) -> []t => {
+    var out: []t = []
+    for row in self {
+      for x in row { out.push(x) }
+    }
+    out
+  }
+}

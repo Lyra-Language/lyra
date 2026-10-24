@@ -487,14 +487,20 @@ impl Ui {
   }
 
   /// A press on an opener, or while a menu is open: an opener's opens its menu, or closes it
-  /// and those from it when it is open — the press taken; any other press outside every open
-  /// menu closes them all, and goes on (`None`).
+  /// and those from it when it is open — but a submenu's item leaves its submenu open, which the
+  /// pointer opened on its way to the press — the press taken; any other press outside every
+  /// open menu closes them all, and goes on (`None`).
   let menu_press<e> = (self: mut, laid: Laid<e>, at: Point) -> Maybe<[]e> => {
     if let Some(target) = control_at(laid, at) {
       if let Opens(_) = target.laid.kind {
         let id = target.laid.id
         match self.state.menus.index_of(id) {
-          Some(place) => { self.state.menus = self.state.menus.slice(0, place) },
+          Some(place) => {
+            if self.menu_level(id) < 0 { self.state.menus = self.state.menus.slice(
+              0,
+              place
+            ) }
+          },
           None => self.open_menu(id),
         }
         self.state.focus = id

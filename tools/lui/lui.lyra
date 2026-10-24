@@ -590,6 +590,10 @@ struct Writer {
   file: string,
   /// The event type of the component being written, for the lambdas `on_change` becomes.
   event: string = "e",
+  /// What the ui target's elements are being written as: nodes (`""`), or the data a control
+  /// holds — a menu bar's menus (`"menus"`), a menu's entries (`"entries"`), a tab bar's tabs
+  /// (`"tabs"`) — so `<for>` and `<if>` work among them as among nodes.
+  making: string = "",
 }
 
 /// A generated array element and the markup line it came from.
@@ -718,6 +722,9 @@ impl Writer {
       "Select" => Some(["arrow", "list", "option"]),
       "Popup" => Some(["content"]),
       "TextInput" => Some(["placeholder", "selection", "caret"]),
+      "MenuItem" => Some(["check", "shortcut", "arrow"]),
+      "Tab" => Some(["label"]),
+      "WindowButton" => Some(["glyph", "frame", "cross"]),
       _ => None,
     }
   }
@@ -764,15 +771,22 @@ impl Writer {
             let each = t.code_attr("each").unwrap_or("")
             if each.len() == 0 { return Err("${t.line}: <for> needs each={x in xs}") }
             let body = self.nodes_of(t.children, "${indent}  ")?
-            let one = if body.len() == 1 && !body[0].text.starts_with("...") {
-              body[0].text
+            if body.len() == 1 && !body[0].text.starts_with("...") {
+              items.push(Item { text: "...[${each} | ${body[0].text}]", line: t.line })
             } else if self.target == UI {
-              return Err("${t.line}: a <for> holds one element in the ui target; wrap its children in a <Column> or <Row>")
+              // Several a time, in place: an array each, flattened — called as a function, which
+              // the list's element type reaches (a method's receiver it does not).
+              items.push(Item {
+                text: "...flatten([${each} | ${self.listed(body, "${indent}  ")}])",
+                line: t.line
+              })
             } else {
               self.use("Fragment")
-              "Fragment(${self.listed(body, indent)})"
+              items.push(Item {
+                text: "...[${each} | Fragment(${self.listed(body, indent)})]",
+                line: t.line
+              })
             }
-            items.push(Item { text: "...[${each} | ${one}]", line: t.line })
           } else {
             items.push(Item { text: self.element(t, indent)?, line: t.line })
           }
@@ -785,6 +799,7 @@ impl Writer {
 
   /// One element or component call, its continuation lines at `indent`.
   let element = (self: mut, t: Tag, indent: string) -> Result<string, string> => {
+    if self.making.len() > 0 { return self.datum(t, indent) }
     if !is_upper(t.name) { return self.call(t, indent) }
     if self.target == UI { return self.ui_element(t, indent) }
     if attr_named(t.attrs, "key").is_some() || attr_named(t.attrs, "part").is_some() {
@@ -1167,6 +1182,19 @@ const UI_MODULES = [
       "text_input",
       "flex",
       "grid",
+      "Menu",
+      "MenuItem",
+      "MenuItemEntry",
+      "Submenu",
+      "MenuSeparator",
+      "menu_bar",
+      "menu_button",
+      "TabsSpec",
+      "TabSpec",
+      "tab_bar",
+      "swatch",
+      "color_picker",
+      "window_buttons",
     ],
   ),
   ("ui.style", [
@@ -1190,7 +1218,28 @@ const UI_MODULES = [
     "LinearGradient",
     "RadialGradient",
   ]),
-  ("ui.backend", ["LightMode", "DarkMode"]),
+  ("ui.backend", [
+    "LightMode",
+    "DarkMode",
+    "Chord",
+    "Modifiers",
+    "Character",
+    "FunctionKey",
+    "Enter",
+    "Tab",
+    "Escape",
+    "Backspace",
+    "Delete",
+    "ArrowLeft",
+    "ArrowRight",
+    "ArrowUp",
+    "ArrowDown",
+    "Home",
+    "End",
+    "PageUp",
+    "PageDown",
+    "Insert",
+  ]),
   ("ui.app", ["WindowSpec"]),
 ]
 
@@ -1278,11 +1327,16 @@ data UiShape =
   /// A flex container or a grid: its attributes are style properties (`direction="column"`
   /// is `flex-direction: column`), which a sheet may set as well.
   | ShapeLayout(string)
+  /// Menus as data: `menu_bar` (its `<Menu>`s), `menu_button` (its face and entries).
+  | ShapeMenus(string)
+  /// A tab bar: its `<Tab>`s, then what follows them.
+  | ShapeTabs
 
 /// The attributes every ui element takes: its classes, the part of its component it is, its
-/// key, its label for assistive technology, its inline style, and whether it is disabled
-/// (bare, or `disabled={condition}`).
-const UI_COMMON = ["class", "part", "key", "label", "style", "disabled"]
+/// key, its label for assistive technology, its inline style, whether it is disabled (bare, or
+/// `disabled={condition}`), and whether a press on it moves the window (`window-drag`, bare: a
+/// title bar the program draws).
+const UI_COMMON = ["class", "part", "key", "label", "style", "disabled", "window-drag"]
 
 impl Writer {
   /// A capitalized tag as the `ui.layout` call it stands for, its common attributes chained
@@ -1433,6 +1487,9 @@ impl Writer {
             }
             "text_input(FieldSpec { ${fields.join(", ")} })"
           },
+          "swatch" => self.bare_control(t, builder)?,
+          "color_picker" => self.bare_control(t, builder)?,
+          "window_buttons" => self.bare_control(t, builder)?,
           _ => {
             self.use("Size")
             let w = number_attr(t, "width")?
@@ -1467,6 +1524,26 @@ impl Writer {
         }
         "popup(${items[0].text}, ${open}, ${items[1].text}, ${required(t, "on_dismiss")?}${side})"
       },
+      ShapeMenus(which) => {
+        if which == "menu_bar" {
+          self.use("menu_bar")
+          let menus = self.making_of("menus", t.children, indent)?
+          "menu_bar(${self.listed(menus, indent)})"
+        } else {
+          self.use("menu_button")
+          let face = match (t.text_attr("title"), t.code_attr("face")) {
+            (Some(title), None) => {
+              self.use("text")
+              "text::<${self.event}>(${interpolated(title)})"
+            },
+            (None, Some(code)) => code,
+            _ => return Err("${t.line}: <MenuButton> needs title=\"…\" or face={…}, one of them"),
+          }
+          let entries = self.making_of("entries", t.children, indent)?
+          "menu_button(${face}, ${self.listed(entries, indent)})"
+        }
+      },
+      ShapeTabs => self.tab_bar_of(t, indent)?,
       ShapeThemed => {
         self.use("themed")
         let items = self.nodes_of(t.children, "${indent}  ")?
@@ -1521,6 +1598,10 @@ impl Writer {
           }
           out = "${out}.disabled_if(${off})"
         },
+        "window-drag" => {
+          if a.value != Bare { return Err("${a.line}: window-drag is bare") }
+          out = "${out}.window_drag()"
+        },
         "style" => {
           self.use("Style")
           let fields = match a.value {
@@ -1564,6 +1645,269 @@ impl Writer {
       }),
       _ => Err("${a.line}: ${name} of <${t.name}> takes {…}"),
     }
+  }
+
+  /// `children` written as the data `making` names (`"menus"`, `"entries"`, `"tabs"`), at
+  /// `indent`: `<for>`, `<if>` and `{…}` among them as among nodes.
+  let making_of = (
+    self: mut,
+    making: string,
+    children: []Markup,
+    indent: string
+  ) -> Result<[]Item, string> => {
+    let was = self.making
+    self.making = making
+    let items = self.nodes_of(children, "${indent}  ")
+    self.making = was
+    items
+  }
+
+  /// One element written as the data [making_of] makes: a `<Menu title>` of a menu bar; a
+  /// menu's `<MenuItem>`, `<Separator/>` or `<Menu title>` (a submenu); a tab bar's `<Tab>`.
+  let datum = (self: mut, t: Tag, indent: string) -> Result<string, string> => {
+    let wanted = match self.making {
+      "menus" => ["Menu"],
+      "entries" => ["MenuItem", "Separator", "Menu"],
+      _ => ["Tab"],
+    }
+    if !wanted.any((w) => w == t.name) {
+      let holder = match self.making {
+        "menus" => "<MenuBar> holds <Menu>s",
+        "entries" => "a menu holds <MenuItem>s, <Separator/>s and <Menu>s",
+        _ => "<TabBar>'s tabs are <Tab>s",
+      }
+      return Err("${t.line}: ${holder}, not <${t.name}>")
+    }
+    let allowed = match t.name {
+      "Menu" => ["title"],
+      "MenuItem" => ["on_select", "shortcut", "disabled", "checked"],
+      "Tab" => ["key", "closable", "movable"],
+      _ => [],
+    }
+    for a in t.attrs {
+      if !allowed.any((n) => n == a.name) { return Err("${a.line}: <${t.name}> has no attribute ${a.name}") }
+    }
+    match t.name {
+      "Menu" => {
+        let Some(title) = attr_named(
+          t.attrs,
+          "title"
+        ) else { return Err("${t.line}: <Menu> needs title") }
+        let entries = self.making_of("entries", t.children, indent)?
+        if self.making == "menus" {
+          self.use("Menu")
+          Ok("Menu { label: ${attr_lyra(title.value)}, entries: ${self.listed(entries, indent)} }")
+        } else {
+          self.use("Submenu")
+          Ok("Submenu(${attr_lyra(title.value)}, ${self.listed(entries, indent)})")
+        }
+      },
+      "Separator" => {
+        if t.children.len() > 0 && words_of(t.children).trim().len() > 0 {
+          return Err("${t.line}: <Separator> holds nothing")
+        }
+        self.use("MenuSeparator")
+        Ok("MenuSeparator")
+      },
+      "MenuItem" => {
+        self.use("MenuItem")
+        self.use("MenuItemEntry")
+        var fields = ["label: ${label_of(t)?}", "on_select: ${required(t, "on_select")?}"]
+        if let Some(a) = attr_named(t.attrs, "shortcut") {
+          let Quoted(text) = a.value else { return Err("${a.line}: shortcut is text: shortcut=\"Cmd+S\"") }
+          fields.push("shortcut: Some(${self.chord(text).map_err((what) => "${a.line}: ${what}")?})")
+        }
+        if let Some(a) = attr_named(t.attrs, "disabled") {
+          match a.value {
+            Bare => fields.push("enabled: false"),
+            Braced(code) => fields.push("enabled: !(${code})"),
+            Quoted(_) => return Err("${a.line}: disabled is bare or {condition}"),
+          }
+        }
+        if let Some(a) = attr_named(t.attrs, "checked") {
+          match a.value {
+            Quoted(_) => return Err("${a.line}: checked is bare or {condition}"),
+            other => fields.push("checked: ${attr_lyra(other)}"),
+          }
+        }
+        Ok("MenuItemEntry(MenuItem { ${fields.join(", ")} })")
+      },
+      _ => {
+        self.use("TabSpec")
+        var fields = ["label: ${label_of(t)?}", "key: ${required(t, "key")?}"]
+        for flag in ["closable", "movable"] {
+          if let Some(a) = attr_named(t.attrs, flag) {
+            match a.value {
+              Quoted(text) => {
+                if text != "true" && text != "false" { return Err("${a.line}: ${flag} is bare, {condition}, or \"false\"") }
+                fields.push("${flag}: ${text}")
+              },
+              other => fields.push("${flag}: ${attr_lyra(other)}"),
+            }
+          }
+        }
+        Ok("TabSpec { ${fields.join(", ")} }")
+      },
+    }
+  }
+
+  /// A `<TabBar selected={…} on_select={…} on_close={…} on_move={…}>`: its tabs — `<Tab
+  /// key={…}>`s, or `tabs={…}`, a Lyra `[]TabSpec` — then any other elements, which follow the
+  /// tabs in the strip (a `+`, a menu button). `on_select` and `on_close` take the tab's place,
+  /// `on_move` its place and the place it moves to.
+  let tab_bar_of = (self: mut, t: Tag, indent: string) -> Result<string, string> => {
+    self.use("tab_bar")
+    self.use("TabsSpec")
+    var tab_markup: []Markup = []
+    var after_markup: []Markup = []
+    for child in t.children {
+      match child {
+        Element(c) => {
+          if c.name == "Tab" || c.name == "for" || c.name == "if" || c.name == "else" {
+            tab_markup.push(child)
+          } else {
+            after_markup.push(child)
+          }
+        },
+        Words(w, line) => {
+          if w
+            .trim()
+            .len() > 0 { return Err("${line}: <TabBar> holds <Tab>s and elements, not text") }
+        },
+        Code(_, line) => { return Err("${line}: <TabBar> holds <Tab>s, not {…}; or write tabs={…}") },
+      }
+    }
+    let tabs = match t.code_attr("tabs") {
+      Some(code) => {
+        if tab_markup.len() > 0 { return Err("${t.line}: <TabBar> takes tabs={…} or <Tab>s, not both") }
+        code
+      },
+      None => {
+        if tab_markup.len() == 0 { return Err("${t.line}: <TabBar> needs tabs={…} or <Tab>s") }
+        self.listed(self.making_of("tabs", tab_markup, indent)?, indent)
+      },
+    }
+    var fields = [
+      "tabs: ${tabs}",
+      "selected: ${required(t, "selected")?}",
+      "on_select: ${self.changes(t, "on_select", "i64")?}",
+      "on_close: ${self.changes(t, "on_close", "i64")?}",
+      "on_move: ${self.moves(t, "on_move")?}",
+    ]
+    if after_markup.len() > 0 {
+      let after = self.nodes_of(after_markup, "${indent}  ")?
+      fields.push("after: ${self.listed(after, indent)}")
+    }
+    Ok("tab_bar(TabsSpec { ${fields.join(", ")} })")
+  }
+
+  /// A move's attribute: a bare name is the lambda calling it with a place and the place it
+  /// moves to.
+  let moves = pure (self, t: Tag, name: string) -> Result<string, string> => {
+    let Some(a) = attr_named(
+      t.attrs,
+      name
+    ) else { return Err("${t.line}: <${t.name}> needs ${name}") }
+    match a.value {
+      Braced(code) => Ok(if is_bare_name(code) {
+        "(from: i64, to: i64) -> ${self.event} => ${code}(from, to)"
+      } else {
+        code
+      }),
+      _ => Err("${a.line}: ${name} of <${t.name}> takes {…}"),
+    }
+  }
+
+  /// `<Swatch>`, `<ColorPicker>` and `<WindowButtons/>`, controls of attributes alone.
+  let bare_control = (self: mut, t: Tag, builder: string) -> Result<string, string> => {
+    self.use(builder)
+    match builder {
+      "swatch" => {
+        self.use("Color")
+        let open = match attr_named(t.attrs, "open") {
+          Some(a) => match a.value {
+            Bare => "true",
+            Braced(code) => code,
+            Quoted(_) => return Err("${a.line}: open of <Swatch> is bare or {condition}"),
+          },
+          None => return Err("${t.line}: <Swatch> needs open"),
+        }
+        Ok("swatch(${required(t, "color")?}, ${open}, ${required(t, "on_open")?}, ${self.changes(t, "on_change", "Color")?}, ${required(t, "on_dismiss")?})")
+      },
+      "color_picker" => {
+        self.use("Color")
+        Ok("color_picker(${required(t, "color")?}, ${self.changes(t, "on_change", "Color")?})")
+      },
+      _ => Ok("window_buttons::<${self.event}>()"),
+    }
+  }
+
+  /// A shortcut as `ui.backend`'s `Chord`: modifiers and a key joined by `+` — `Cmd` or `Ctrl`
+  /// (the primary modifier either way: Cmd on a Mac, Ctrl elsewhere), `Alt`, `Shift` — and a
+  /// character or a key's name (`Enter`, `Tab`, `Escape`, `Backspace`, `Delete`, `Left`,
+  /// `Right`, `Up`, `Down`, `Home`, `End`, `PgUp`, `PgDn`, `Insert`, `Space`, `F1`–`F24`).
+  let chord = (self: mut, text: string) -> Result<string, string> => {
+    var mods: []string = []
+    var key = ""
+    let parts = text.split("+")
+    for i, part in parts {
+      let p = part.trim().to_ascii_lower()
+      if i < parts.len() - 1 {
+        let field = match p {
+          "cmd" => "primary",
+          "ctrl" => "primary",
+          "alt" => "alt",
+          "shift" => "shift",
+          _ => return Err("${part.trim()} is not Cmd, Ctrl, Alt or Shift"),
+        }
+        if !mods.any((m) => m == "${field}: true") { mods.push("${field}: true") }
+      } else {
+        key = part.trim()
+      }
+    }
+    // `Cmd++`: the key is the last `+`, which split leaves empty.
+    if key.len() == 0 && text.ends_with("+") { key = "+" }
+    if key.len() == 0 { return Err("a shortcut needs a key: \"Cmd+S\"") }
+    let named = match key.to_ascii_lower() {
+      "enter" => "Enter",
+      "tab" => "Tab",
+      "escape" => "Escape",
+      "esc" => "Escape",
+      "backspace" => "Backspace",
+      "delete" => "Delete",
+      "left" => "ArrowLeft",
+      "right" => "ArrowRight",
+      "up" => "ArrowUp",
+      "down" => "ArrowDown",
+      "home" => "Home",
+      "end" => "End",
+      "pgup" => "PageUp",
+      "pageup" => "PageUp",
+      "pgdn" => "PageDown",
+      "pagedown" => "PageDown",
+      "insert" => "Insert",
+      "space" => "",
+      _ => "",
+    }
+    let written = if named.len() > 0 {
+      self.use(named)
+      named
+    } else if key.to_ascii_lower() == "space" {
+      self.use("Character")
+      "Character(' ')"
+    } else if let Some(n) = function_number(key) {
+      self.use("FunctionKey")
+      "FunctionKey(${n})"
+    } else if key.to_runes().len() == 1 {
+      self.use("Character")
+      "Character(${rune_literal(key.to_ascii_lower())})"
+    } else {
+      return Err("a shortcut's key is one character or a key's name, not \"${key}\"")
+    }
+    self.use("Chord")
+    if mods.len() == 0 { return Ok("Chord { key: ${written} }") }
+    self.use("Modifiers")
+    Ok("Chord { key: ${written}, mods: Modifiers { ${mods.join(", ")} } }")
   }
 
   /// A `<Select selected={…} on_change={…}>` and its options: `options={…}`, a Lyra
@@ -1704,6 +2048,13 @@ let ui_kind = pure (tag: string) -> Maybe<(UiShape, []string)> => match tag {
     Some((ShapeBare("text_input"), ["value", "placeholder", "readonly", "on_edit"])),
   "Image" => Some((ShapeBare("image"), ["texture", "texels", "width", "height"])),
   "Themed" => Some((ShapeThemed, ["theme", "sheet"])),
+  "MenuBar" => Some((ShapeMenus("menu_bar"), [])),
+  "MenuButton" => Some((ShapeMenus("menu_button"), ["title", "face"])),
+  "TabBar" => Some((ShapeTabs, ["tabs", "selected", "on_select", "on_close", "on_move"])),
+  "Swatch" =>
+    Some((ShapeBare("swatch"), ["color", "open", "on_open", "on_change", "on_dismiss"])),
+  "ColorPicker" => Some((ShapeBare("color_picker"), ["color", "on_change"])),
+  "WindowButtons" => Some((ShapeBare("window_buttons"), [])),
   "Flex" => Some((ShapeLayout("flex"), FLEX_ATTRIBUTES)),
   "Grid" => Some((ShapeLayout("grid"), GRID_ATTRIBUTES)),
   _ => None,
@@ -2881,6 +3232,17 @@ let shortcut = pure (text: string) -> Result<string, string> => {
 
 /// The keys a shortcut names rather than types.
 const NAMED_KEYS = ["PgUp", "PgDn"]
+
+/// `F1` to `F24`'s number.
+let function_number = pure (key: string) -> Maybe<i64> => {
+  let Some(digits) = key.to_ascii_lower().strip_prefix("f") else { return None }
+  let Some(n) = digits.parse_i64() else { return None }
+  if n >= 1 && n <= 24 { Some(n) } else { None }
+}
+
+/// One character as a Lyra rune literal.
+let rune_literal = pure (c: string) -> string =>
+  if c == "'" || c == "\\" { "'\\${c}'" } else { "'${c}'" }
 
 // ── Styles ───────────────────────────────────────────────────────────────────
 

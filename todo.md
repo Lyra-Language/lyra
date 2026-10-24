@@ -703,8 +703,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   Mac), a tab bar, the window's controls and a drawn title bar, a file dialog, colour; designed
   in `ui/WINDOW.md` (10/23), the rest of Termina's move off ImGui. Steps 1 (popups, the
   select's list on them), 2 (menus drawn), 3 (menus native on a Mac), 4 (the tab bar), 5 (the
-  window's controls, a drawn title bar), 6 (a file dialog) and 7 (colour) built 10/23; next
-  lui's elements and `Fragment` (step 8).
+  window's controls, a drawn title bar), 6 (a file dialog), 7 (colour) and 8 (lui's elements,
+  `Fragment`) built 10/23; next Termina on them (step 9).
 - **[OPEN] `ui`: a drawn title bar wants trying on a Linux desktop** — SDL's hit test calling
   `bindings.hittest` for a borderless window (moving it, its edges resizing it) is untested:
   the dummy driver refuses a hit test. And its double click: SDL starts a move at the press, so
@@ -831,8 +831,13 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] `ui.app`: commands run where the host runs.** A file read holds the loop until it
   ends; async I/O wants a worker and results the platform posts (an `InputEvent` carrying an
   id, since it cannot carry the program's event type).
-- **[OPEN] lui's `ui` target lacks** menus, windows, a colour picker and `Fragment` (a `<for>`
-  holds one element); `ui` itself has no such elements yet.
+- **[DONE 10/23] lui's `ui` target's menus, tab bar, swatch, window buttons and `Fragment`**
+  (`ui/WINDOW.md` step 8, COMPLETED.md 10/23).
+- **[OPEN] Backend: a string pattern holding an escape** (`"\\"` as a `match` arm) is refused
+  ("escaped string patterns not implemented yet"); lui writes an `if` instead.
+- **[OPEN] Typechecker: an expected type does not reach a method's receiver** —
+  `let xs: []Node<Ev> = [...[x in ys | [text("a")]].flatten()]` cannot infer `text`'s event,
+  while `flatten([…])`, the same function called plainly, can.
 - **[OPEN] lui: an import's module is its path from the importing file**, `/` as `.` — right
   when both are under the program's root as written, else `module="…"`. Imports are one level:
   an imported file's own imports are not read.

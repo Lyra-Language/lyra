@@ -50,6 +50,29 @@ let main = () -> void => {
 	}
 }
 
+// `flatten` on `[][]t` (10/23, asked for by lui's <for> of several elements, which a
+// comprehension cannot write: a clause may not draw from an earlier one's binding): the arrays
+// in order, an empty one adding nothing; managed elements kept; and called as a function, so an
+// expected element type reaches the comprehension inside.
+func TestExec_ArrayFlatten(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let none_of<t> = pure () -> Maybe<t> => None
+let main = () -> void => {
+  let xs = [x in [1, 2, 3] | [x, x * 10]].flatten()
+  let words = [["a", "b"], [], ["c"]].flatten()
+  let empty: [][]i64 = []
+  let typed: []Maybe<i64> = [...flatten([i in 0..<2 | [none_of(), Some(i)]])]
+  print("${[x in xs | "${x}"].join(",")} ${words.join("")} ${empty.flatten().len()} ${typed.len()} ${typed[3] ?? -1}")
+}
+`
+	want := "1,10,2,20,3,30 abc 0 4 1"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("got %q; want %q", got, want)
+	}
+}
+
 // A float's IEEE bits and back (10/19, asked for by Vega's Furnace reader, which assembled
 // an `f32` from its bytes by hand): exact patterns, checked against Python's `struct`.
 func TestExec_FloatBits(t *testing.T) {

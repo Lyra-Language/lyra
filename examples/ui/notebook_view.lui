@@ -1,0 +1,136 @@
+<!--
+  A notebook, as markup: the window's elements together, as Termina's window has them. A title
+  bar the program draws (`window-drag`), holding a menu bar and the window's own buttons; the
+  notes as tabs, with + and ☰ after them; and a grid of each note's name and its colour's swatch.
+  The grid's cells are two a note, from one `<for>` (several elements, flattened in place).
+  `build/lui examples/ui/notebook_view.lui` writes notebook_view.lyra beside it, which
+  notebook.lyra runs.
+-->
+
+<script target="ui">
+  import ui.draw.{ Color }
+  import ui.style.{ Theme, light_theme }
+
+  /// A note: its title, the key it is known by whatever its place, and its colour.
+  pub struct Note {
+    title: string,
+    id: string,
+    color: Color,
+  }
+
+  /// The notes, the one shown, whether lines wrap, which note's swatch is open (`-1` for none),
+  /// and how many notes have been made.
+  pub struct State {
+    notes: []Note,
+    selected: i64 = 0,
+    wrap: bool = false,
+    open: i64 = -1,
+    made: i64 = 0,
+  }
+
+  /// What the menus, the tabs and the swatches say.
+  pub data Event =
+    Add
+    | Close(i64)
+    | Select(i64)
+    | Move(i64, i64)
+    | ToggleWrap
+    | Opened(i64)
+    | Shut
+    | Paint(i64, Color)
+
+  /// The colours new notes take in turn.
+  const COLORS: []Color = [
+    Color { r: 0xF2, g: 0xC1, b: 0x4E },
+    Color { r: 0x7F, g: 0xB0, b: 0x69 },
+    Color { r: 0x5D, g: 0x8C, b: 0xD6 },
+    Color { r: 0xD9, g: 0x6C, b: 0x75 },
+  ]
+
+  /// `s` after `event`.
+  pub let update = pure (s: State, event: Event) -> State => match event {
+    Add => {
+      let made = s.made + 1
+      let note = Note { title: "Note ${made}", id: "note ${made}", color: COLORS[(made - 1) %% COLORS.len()] }
+      let notes = [...s.notes, note]
+      State { s | notes: notes, made: made, selected: notes.len() - 1 }
+    },
+    Close(i) => {
+      if i < 0 || i >= s.notes.len() { return s }
+      let notes = [k in 0..<s.notes.len() | k != i | s.notes[k]]
+      let shown = if s.selected > i || s.selected >= notes.len() { s.selected - 1 } else { s.selected }
+      State { s | notes: notes, selected: shown.max(0), open: -1 }
+    },
+    Select(i) => State { s | selected: i },
+    // The note at `from` to `to`'s place; the shown note stays shown.
+    Move(from, to) => {
+      let rest = [k in 0..<s.notes.len() | k != from | s.notes[k]]
+      var placed: []Note = []
+      for k in 0..<rest.len() {
+        if k == to { placed.push(s.notes[from]) }
+        placed.push(rest[k])
+      }
+      if to >= rest.len() { placed.push(s.notes[from]) }
+      let shown = s.notes[s.selected].id
+      var selected = 0
+      for k, n in placed { if n.id == shown { selected = k } }
+      State { s | notes: placed, selected: selected }
+    },
+    ToggleWrap => State { s | wrap: !s.wrap },
+    Opened(k) => State { s | open: k },
+    Shut => State { s | open: -1 },
+    Paint(k, c) => State { s | notes: [i in 0..<s.notes.len() | if i == k { Note { s.notes[i] | color: c } } else { s.notes[i] }] },
+  }
+</script>
+
+<style global theme={Theme} name="notebook_sheet">
+  .bar { background: #e4e2df; gap: 8; padding: 0 4 }
+  .page { padding: $space.xl; gap: $space.l }
+  Text.title { font-size: 18 }
+  .notes { grid-template-columns: 1fr auto; row-gap: 10; column-gap: 16; align-items: center }
+</style>
+
+<!-- The window for a state. -->
+<component name="view" props={{ s: State }} event={Event}>
+  <Themed theme={light_theme()} sheet={notebook_sheet(light_theme())}>
+    <Column cross="stretch">
+      <Row class="bar" window-drag>
+        <MenuBar>
+          <Menu title="File">
+            <MenuItem on_select={Add} shortcut="Cmd+N">New Note</MenuItem>
+            <MenuItem on_select={Close(s.selected)} shortcut="Cmd+W" disabled={s.notes.len() == 0}>Close Note</MenuItem>
+            <Separator/>
+            <Menu title="Go To">
+              <for each={k in 0..<s.notes.len()}>
+                <MenuItem on_select={Select(k)} checked={k == s.selected}>{s.notes[k].title}</MenuItem>
+              </for>
+            </Menu>
+          </Menu>
+          <Menu title="View">
+            <MenuItem on_select={ToggleWrap} checked={s.wrap} shortcut="Alt+Z">Wrap Lines</MenuItem>
+          </Menu>
+        </MenuBar>
+        <Expanded><Row/></Expanded>
+        <WindowButtons/>
+      </Row>
+      <TabBar selected={s.selected} on_select={Select} on_close={Close} on_move={Move}>
+        <for each={k in 0..<s.notes.len()}>
+          <Tab key={s.notes[k].id}>{s.notes[k].title}</Tab>
+        </for>
+        <Button on_click={Add} key="add">+</Button>
+        <MenuButton title="More" key="more">
+          <MenuItem on_select={ToggleWrap} checked={s.wrap}>Wrap Lines</MenuItem>
+        </MenuButton>
+      </TabBar>
+      <Column class="page" cross="stretch">
+        <Text class="title">{if s.notes.len() > 0 { s.notes[s.selected].title } else { "No notes" }}</Text>
+        <Grid class="notes">
+          <for each={k in 0..<s.notes.len()}>
+            <Text>{s.notes[k].title}</Text>
+            <Swatch color={s.notes[k].color} open={s.open == k} on_open={Opened(k)} on_change={(c: Color) -> Event => Paint(k, c)} on_dismiss={Shut}/>
+          </for>
+        </Grid>
+      </Column>
+    </Column>
+  </Themed>
+</component>

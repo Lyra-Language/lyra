@@ -502,6 +502,21 @@ let intrinsic_width<e> = (
       grid_intrinsic_width(node.children, style, least, styled.within, fonts, ui, id),
     Scrolls(Horizontal, _) =>
       if least { 0.0 } else { children_width(node, least, false, styled.within, fonts, ui, id, shrunk) },
+    // A popup lends its anchor's width: its content floats, open or not.
+    PopsUp(_, _, _) => if node.children.len() == 0 { 0.0 } else {
+      intrinsic_width(
+        node.children[0],
+        least,
+        styled.within,
+        fonts,
+        ui,
+        child_id(id, node.children[0], 0),
+        true,
+        false,
+        shrunk
+      )
+    },
+    ColorAxis(spec) => axis_size(spec.channel).w,
     // A control's width is the one it chooses with all the room it wants.
     Ranged(_) => return measured_width(node, cascade, fonts, ui, id),
     Editable(_) => return measured_width(node, cascade, fonts, ui, id),

@@ -515,10 +515,20 @@ The example's interface is `examples/imgui/components_view.lui`.
   theme sheet>`, `<Flex direction wrap justify align align-content gap row-gap column-gap>`,
   `<Grid columns rows gap row-gap column-gap flow justify-items align-items auto-columns
   auto-rows>` — a `<Flex>`'s or `<Grid>`'s attributes are the style properties they name,
-  written as CSS writes them), and every element takes `class`, `part`, `key` (its identity,
-  `.keyed`), `label` (for assistive technology) and `style` — **a component's call too**,
-  on the component's own node (a prop of that name is the prop), so `<tile class="wide"/>`
-  spans its grid's columns. A `<for>` there holds one element.
+  written as CSS writes them), and the window's (`ui/WINDOW.md`): `<MenuBar>` holding `<Menu
+  title>`s, and `<MenuButton title="☰">` (or `face={…}`) holding entries — a menu's
+  `<MenuItem on_select shortcut disabled checked>` (its text the label; `shortcut="Cmd+Shift+S"`
+  a `Chord`, Cmd and Ctrl both the primary modifier, a key a character or a name — `Enter`,
+  `Tab`, `Escape`, the arrows `Left` …, `Home`, `End`, `PgUp`, `PgDn`, `Insert`, `Space`,
+  `F1`–`F24`), `<Separator/>` and a nested `<Menu title>`, its submenu; data, not nodes, with
+  `<for>` and `<if>` among them still — `<TabBar selected on_select on_close on_move>` holding
+  `<Tab key closable movable>`s (or `tabs={…}`) and then what follows the tabs, `<Swatch color
+  open on_open on_change on_dismiss>`, `<ColorPicker color on_change>` and `<WindowButtons/>`.
+  Every element takes `class`, `part`, `key` (its identity, `.keyed`), `label` (for assistive
+  technology), `style` and `window-drag` (bare: a title bar the program draws) — **a
+  component's call too**, on the component's own node (a prop of that name is the prop), so
+  `<tile class="wide"/>` spans its grid's columns. A `<for>` holding several elements makes an
+  array of them each pass, `flatten`ed in place.
 - **Styling for `ui`**: a component's `<style>` is a sheet made from the theme it is drawn
   in (`component_of`); a top-level `<style global theme={AppTheme} name="app_sheet">` is a
   `pub` function of that theme (`Theme` by default) answering the sheet, for `<Themed

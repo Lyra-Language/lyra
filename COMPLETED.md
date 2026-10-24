@@ -9,6 +9,24 @@ Newest first.
 
 ## Dated log
 
+### 10/23/26 — `ui`: the window's elements in lui, and `Fragment`
+
+- **lui's `ui` target writes the window's elements** (`ui/WINDOW.md` step 8): menus, the tab
+  bar, the swatch, the window's buttons and `window-drag`. A menu's entries and a bar's tabs
+  are data, not nodes, so the writer has a mode (`Writer.making`) that `<for>`, `<if>` and
+  `{…}` pass through unchanged: the same markup control flow works among entries as among
+  elements.
+- **A `<for>` of several elements is `...flatten([x in xs | [a, b]])`**: a comprehension
+  cannot write it, since a clause may not draw from an earlier one's binding. `flatten` went
+  into the prelude, and lui calls it as a function: the list's element type reaches a
+  function's argument but not a method's receiver, and `[text(…)]` needs it (todo.md).
+- **A popup lends its anchor's width** to an intrinsic measure. It lent its widest child's,
+  which counted the closed content: a swatch in a grid's `auto` column made the column as
+  wide as its picker. Found by the notebook example; it held for every popup since step 1.
+- **A press on a submenu's item leaves its submenu open.** A click moves the pointer over the
+  item, which opens the submenu, then presses it, which toggled the submenu shut, so no
+  submenu could be opened by the pointer. Since step 2; also found by the notebook example.
+
 ### 10/23/26 — `ui`: colour — a swatch, its picker, and CSS's colour syntax
 
 - **`ui.color`** (`ui/WINDOW.md` step 7) reads CSS Color 4's text — hex, `rgb(…)`, `oklab(…)`,
