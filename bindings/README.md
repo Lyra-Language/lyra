@@ -524,7 +524,8 @@ The example's interface is `examples/imgui/components_view.lui`.
   `F1`–`F24`), `<Separator/>` and a nested `<Menu title>`, its submenu; data, not nodes, with
   `<for>` and `<if>` among them still — `<TabBar selected on_select on_close on_move>` holding
   `<Tab key closable movable>`s (or `tabs={…}`) and then what follows the tabs, `<Swatch color
-  open on_open on_change on_dismiss>`, `<ColorPicker color on_change>` and `<WindowButtons/>`.
+  open on_open on_change on_dismiss opaque>`, `<ColorPicker color on_change opaque>` (`opaque`
+  bare or `{condition}`: no opacity strip) and `<WindowButtons/>`.
   Every element takes `class`, `part`, `key` (its identity, `.keyed`), `label` (for assistive
   technology), `style` and `window-drag` (bare: a title bar the program draws) — **a
   component's call too**, on the component's own node (a prop of that name is the prop), so

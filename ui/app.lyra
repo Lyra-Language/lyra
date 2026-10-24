@@ -255,6 +255,10 @@ pub data Command<e> =
   | WindowMinimize
   | WindowMaximize
   | WindowRestore
+  /// The window see-through where a frame is translucent, or opaque ([Platform.set_see_through]);
+  /// and what is behind it blurred by this many points, 0 for none ([Platform.set_backdrop_blur]).
+  | WindowSeeThrough(bool)
+  | WindowBlur(f32)
   /// The system's open or save dialog ([FileDialog]), and the event its answer makes: the path
   /// chosen, or `None` for none. The dialog is the user's while it is open; the program goes on.
   | ChooseFile(FileDialog, (Maybe<string>) -> e)
@@ -838,6 +842,8 @@ impl Host<s, e> {
         },
         QuitApp => { self.running = false },
         WindowMinimize => platform.change_window(ToMinimized),
+        WindowSeeThrough(on) => { let _ = platform.set_see_through(on) },
+        WindowBlur(radius) => { let _ = platform.set_backdrop_blur(radius) },
         WindowMaximize => platform.change_window(ToMaximized),
         WindowRestore => platform.change_window(ToRestored),
         ChooseFile(d, make) => {

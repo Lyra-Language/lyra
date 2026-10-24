@@ -28,6 +28,9 @@ pub const WINDOW_MAXIMIZED: u64 = 0x0000000000000080
 pub const WINDOW_RESIZABLE: u64 = 0x0000000000000020
 /// Ask for a backing store at the display's real pixel density.
 pub const WINDOW_HIGH_PIXEL_DENSITY: u64 = 0x0000000000002000
+/// A window whose frames' alpha shows what is behind it — given only as it is made, and which
+/// SDL's GPU API refuses to draw into.
+pub const WINDOW_TRANSPARENT: u64 = 0x0000000040000000
 
 /// Whether the system is set to a light or a dark appearance (`SDL_GetSystemTheme`) —
 /// unknown where it does not say, or before SDL's video is started.

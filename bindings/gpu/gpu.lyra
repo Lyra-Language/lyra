@@ -36,6 +36,24 @@ pub let create = (window: Window) -> Maybe<Gpu> => {
 pub let pin_contents = (window: Window) -> void =>
   unsafe { lyra_gpu_pin_contents(window) }
 
+/// Whether `window` shows what is behind it where a frame is translucent (`on`), or is opaque
+/// again: its window and Metal layers made non-opaque, which SDL's GPU API cannot ask for at
+/// creation. False off macOS — where a window is see-through only if made so — or where AppKit
+/// has no window.
+pub let set_see_through = (window: Window, on: bool) -> bool =>
+  unsafe { lyra_gpu_set_see_through(window, on) }
+
+/// Whether nothing of `window` is opaque once SDL's content view has updated its layer — the
+/// window, its Metal layers, the content view's background: for a test of [set_see_through].
+pub let see_through_state = (window: Window) -> bool =>
+  unsafe { lyra_gpu_see_through_state(window) }
+
+/// What is behind `window` blurred by `radius` points, 0 for none — the window server's own
+/// blur, which a see-through window shows. False where there is none (off macOS, or a macOS
+/// without the private function it is asked through).
+pub let set_backdrop_blur = (window: Window, radius: i32) -> bool =>
+  unsafe { lyra_gpu_set_backdrop_blur(window, radius) }
+
 /// The renderer put away, its textures and the window's claim with it.
 pub let destroy = (g: Gpu) -> void => unsafe { lyra_gpu_destroy(g) }
 
@@ -103,6 +121,9 @@ pub let read = (g: Gpu, cap: i64) -> Maybe<(i64, i64, []u32)> => {
 
 unsafe extern lyra_gpu_create: (window: Window) -> Gpu
 unsafe extern lyra_gpu_pin_contents: (window: Window) -> void
+unsafe extern lyra_gpu_set_see_through: (window: Window, on: bool) -> bool
+unsafe extern lyra_gpu_set_backdrop_blur: (window: Window, radius: i32) -> bool
+unsafe extern lyra_gpu_see_through_state: (window: Window) -> bool
 unsafe extern lyra_gpu_destroy: (g: Gpu) -> void
 unsafe extern lyra_gpu_upload: (
   g: Gpu,

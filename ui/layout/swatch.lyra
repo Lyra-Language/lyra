@@ -31,13 +31,15 @@ pub struct AxisSpec<e> {
 /// a [color_picker] below it (`ColorPicker`, in a popup). A press on it raises `on_open`, or
 /// `on_dismiss` while it is open, so the swatch closes its own picker; a press outside it,
 /// Escape or the window losing the focus raises `on_dismiss`. Each colour picked raises
-/// `on_change`, dragging included, so the program shows it at once.
+/// `on_change`, dragging included, so the program shows it at once. Without `alpha`, the
+/// colour is opaque: its picker has no opacity strip.
 pub let swatch<e> = pure (
   color: Color,
   open: bool,
   on_open: e,
   on_change: (Color) -> e,
-  on_dismiss: e
+  on_dismiss: e,
+  alpha: bool = true
 ) -> Node<e> => {
   let kind: Kind<e> = Pressable(if open { on_dismiss } else { on_open })
   let patch: Kind<e> = ColorPatch(color)
@@ -47,19 +49,32 @@ pub let swatch<e> = pure (
     label: color_text(color),
     children: [sized::<e>(Some(22.0), Some(22.0), [Node { kind: patch, tag: "ColorPatch" }])],
   }
-  popup(face, open, color_picker(color, on_change), on_dismiss)
+  popup(face, open, color_picker(color, on_change, alpha), on_dismiss)
 }
 
 /// A colour picker (`ColorPicker`) for `color`: the saturation-and-value square, the hue strip
-/// and the opacity strip — each a `ColorAxis` — and the colour's text, each change raising
-/// `on_change`. A swatch opens one; a program may show one on its own.
-pub let color_picker<e> = pure (color: Color, on_change: (Color) -> e) -> Node<e> => {
+/// and — with `alpha` — the opacity strip, each a `ColorAxis`, and the colour's text, each
+/// change raising `on_change`; without `alpha`, a colour typed is taken opaque. A swatch opens
+/// one; a program may show one on its own.
+pub let color_picker<e> = pure (
+  color: Color,
+  on_change: (Color) -> e,
+  alpha: bool = true
+) -> Node<e> => {
   let field = text_input::<e>(FieldSpec {
     value: color_text(color),
     draft: true,
     // A text that is no colour yet raises the colour as it was: the draft keeps what was typed.
-    on_edit: (text: string) -> e => on_change(parse_color(text) ?? color),
+    on_edit: (text: string) -> e => {
+      let typed = parse_color(text) ?? color
+      on_change(if alpha { typed } else { Color { typed | a: 255 } })
+    },
   })
+  let opacity: []Node<e> = if alpha { [axis_node(
+    AlphaChannel,
+    color,
+    on_change
+  ).keyed("alpha")] } else { [] }
   let kind: Kind<e> = Flow(Vertical, MainStart, CrossStretch)
   Node {
     kind: kind,
@@ -68,7 +83,7 @@ pub let color_picker<e> = pure (color: Color, on_change: (Color) -> e) -> Node<e
     children: [
       axis_node(SatValue, color, on_change).keyed("plane"),
       axis_node(HueChannel, color, on_change).keyed("hue"),
-      axis_node(AlphaChannel, color, on_change).keyed("alpha"),
+      ...opacity,
       field.keyed("text"),
     ],
   }

@@ -59,6 +59,7 @@ import bindings.sdl3.{
   window_pixel_density,
   WINDOW_RESIZABLE,
   WINDOW_HIGH_PIXEL_DENSITY,
+  WINDOW_TRANSPARENT,
   Renderer as Canvas,
   destroy_renderer,
   Color as CanvasColor,
@@ -234,7 +235,7 @@ import ui.backend.{
   AxDecrement,
 }
 import bindings.accesskit
-import bindings.gpu.{ pin_contents }
+import bindings.gpu.{ pin_contents, set_see_through, set_backdrop_blur }
 import bindings.accesskit.{ AccessRequestRaw }
 import std.collections.{ HashMap, hashmap_new }
 import ui.draw.{
@@ -269,29 +270,40 @@ pub struct SdlWindow {
 }
 
 /// Open a window `width` × `height` logical units, resizable and at the display's full
-/// density — or why not.
-pub let open = (title: string, width: f32, height: f32) -> Result<SdlWindow, string> => {
-  let window = open_window(title, width, height)?
+/// density — see-through where a frame is translucent, if `see_through` — or why not.
+pub let open = (
+  title: string,
+  width: f32,
+  height: f32,
+  see_through: bool = false
+) -> Result<SdlWindow, string> => {
+  let window = open_window(title, width, height, see_through)?
   let Some(renderer) = renderer_for(window) else {
     let why = last_error()
     destroy_window(window)
     quit()
     return Err("SDL could not make a renderer: ${why}")
   }
-  Ok(SdlWindow { platform: platform_for(window), renderer: renderer })
+  var system = platform_for(window)
+  if see_through { let _ = system.set_see_through(true) }
+  Ok(SdlWindow { platform: system, renderer: renderer })
 }
 
 /// SDL started and a window `width` × `height` logical units opened, with nothing drawing
-/// into it yet — what [open] and `ui.gpu`'s `open` begin with.
+/// into it yet — what [open] and `ui.gpu`'s `open` begin with. `see_through` makes it SDL's
+/// transparent window off macOS, the only time SDL takes it; on macOS it is made so after its
+/// renderer claims it ([Platform.set_see_through]), since SDL's GPU API refuses one made so.
 pub let open_window = (
   title: string,
   width: f32,
-  height: f32
+  height: f32,
+  see_through: bool = false
 ) -> Result<Window, string> => {
   if !init(INIT_VIDEO) {
     return Err("SDL could not start: ${last_error()}")
   }
-  let flags = WINDOW_RESIZABLE | WINDOW_HIGH_PIXEL_DENSITY
+  let transparent = if see_through && !apple() { WINDOW_TRANSPARENT } else { 0 }
+  let flags = WINDOW_RESIZABLE | WINDOW_HIGH_PIXEL_DENSITY | transparent
   let Some(window) = create_window(
     title,
     i32(width.round()),
@@ -480,6 +492,13 @@ impl Platform for SdlPlatform {
     let points = (units: f32) -> i32 => i32((units / per_point).round())
     let _ = set_window_size(self.window, points(size.w), points(size.h))
   }
+  set_see_through = (self, on) =>
+    if apple() { set_see_through(self.window, on) } else {
+      // Made so or not as it opened: an opaque frame hides what is behind a see-through one.
+      (window_flags(self.window) & WINDOW_TRANSPARENT) != 0 || !on
+    }
+  set_backdrop_blur = (self, radius) =>
+    set_backdrop_blur(self.window, i32(radius.round()))
   window_position = (self) => match window_position(self.window) {
     Some((x, y)) => Some(Point { x: f32(x), y: f32(y) }),
     None => None,

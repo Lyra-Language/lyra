@@ -117,8 +117,11 @@ pub struct ScriptPlatform {
   /// last given ([Platform.set_window_areas]); and the system's answers to changes asked of
   /// it, said at the next pass.
   window: WindowState = WindowState {},
-  /// Where the window is on its screens ([Platform.window_position]), as a script sets it.
+  /// Where the window is on its screens ([Platform.window_position]), as a script sets it;
+  /// whether it was made see-through, and the blur behind it.
   position: Maybe<Point> = Some(Point {}),
+  see_through: bool = false,
+  backdrop_blur: f32 = 0.0,
   decorated: bool = true,
   drag_areas: []Rect = [],
   keep_areas: []Rect = [],
@@ -249,6 +252,14 @@ impl Platform for ScriptPlatform {
     self.size = size.held(self.least, self.most)
   }
   window_position = pure (self) => self.position
+  set_see_through = (self, on) => {
+    self.see_through = on
+    true
+  }
+  set_backdrop_blur = (self, radius) => {
+    self.backdrop_blur = radius
+    true
+  }
   set_window_position = (self, at) => { self.position = Some(at) }
   set_title = (self, title) => { self.title = title }
   set_menus = (self, menus) => {

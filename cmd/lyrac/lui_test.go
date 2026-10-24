@@ -1096,8 +1096,9 @@ func TestLui_UiTargetPopup(t *testing.T) {
 // among them; shortcuts as Chords (Cmd and Ctrl the primary modifier, a function key, a
 // character); `disabled` and `checked`; `<MenuButton title>`; `<TabBar>` with `<Tab>`s — a
 // `<for>` of them — and what follows them; `<Swatch>`; `<WindowButtons/>`; `window-drag`; and
-// a `<for>` holding several elements, flattened in place. The module checks clean; and each
-// misuse is refused at its line.
+// a `<for>` holding several elements, flattened in place; an `opaque` swatch (bare, or a
+// condition), its picker with no opacity strip. The module checks clean; and each misuse is
+// refused at its line.
 func TestLui_UiTargetWindowElements(t *testing.T) {
 	t.Parallel()
 	lui := buildLui(t)
@@ -1151,6 +1152,8 @@ func TestLui_UiTargetWindowElements(t *testing.T) {
       <Text>{d.title}</Text>
       <Swatch color={color} open={open} on_open={Open} on_change={Paint} on_dismiss={Shut}/>
     </for>
+    <Swatch color={color} open={false} on_open={Open} on_change={Paint} on_dismiss={Shut} opaque/>
+    <Swatch color={color} open={false} on_open={Open} on_change={Paint} on_dismiss={Shut} opaque={!open}/>
   </Column>
 </component>
 `
@@ -1186,6 +1189,8 @@ func TestLui_UiTargetWindowElements(t *testing.T) {
 		`key: Character(','), mods: Modifiers { primary: true }`,
 		`...flatten([d in docs | [`,
 		`swatch(color, open, Open, (value: Color) -> Ev => Paint(value), Shut)`,
+		`swatch(color, false, Open, (value: Color) -> Ev => Paint(value), Shut, false)`,
+		`swatch(color, false, Open, (value: Color) -> Ev => Paint(value), Shut, !(!open))`,
 	} {
 		if !strings.Contains(string(generated), want) {
 			t.Errorf("the generated module lacks %q:\n%s", want, generated)

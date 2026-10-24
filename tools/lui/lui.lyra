@@ -1833,11 +1833,11 @@ impl Writer {
           },
           None => return Err("${t.line}: <Swatch> needs open"),
         }
-        Ok("swatch(${required(t, "color")?}, ${open}, ${required(t, "on_open")?}, ${self.changes(t, "on_change", "Color")?}, ${required(t, "on_dismiss")?})")
+        Ok("swatch(${required(t, "color")?}, ${open}, ${required(t, "on_open")?}, ${self.changes(t, "on_change", "Color")?}, ${required(t, "on_dismiss")?}${opaque_arg(t)?})")
       },
       "color_picker" => {
         self.use("Color")
-        Ok("color_picker(${required(t, "color")?}, ${self.changes(t, "on_change", "Color")?})")
+        Ok("color_picker(${required(t, "color")?}, ${self.changes(t, "on_change", "Color")?}${opaque_arg(t)?})")
       },
       _ => Ok("window_buttons::<${self.event}>()"),
     }
@@ -2070,8 +2070,8 @@ let ui_kind = pure (tag: string) -> Maybe<(UiShape, []string)> => match tag {
   "MenuButton" => Some((ShapeMenus("menu_button"), ["title", "face"])),
   "TabBar" => Some((ShapeTabs, ["tabs", "selected", "on_select", "on_close", "on_move"])),
   "Swatch" =>
-    Some((ShapeBare("swatch"), ["color", "open", "on_open", "on_change", "on_dismiss"])),
-  "ColorPicker" => Some((ShapeBare("color_picker"), ["color", "on_change"])),
+    Some((ShapeBare("swatch"), ["color", "open", "on_open", "on_change", "on_dismiss", "opaque"])),
+  "ColorPicker" => Some((ShapeBare("color_picker"), ["color", "on_change", "opaque"])),
   "WindowButtons" => Some((ShapeBare("window_buttons"), [])),
   "Flex" => Some((ShapeLayout("flex"), FLEX_ATTRIBUTES)),
   "Grid" => Some((ShapeLayout("grid"), GRID_ATTRIBUTES)),
@@ -3276,6 +3276,18 @@ let shortcut = pure (text: string) -> Result<string, string> => {
 
 /// The keys a shortcut names rather than types.
 const NAMED_KEYS = ["PgUp", "PgDn"]
+
+/// A swatch's or a picker's `opaque` — bare, or `{condition}` — as the `alpha` argument it
+/// stands against; nothing where it is not written.
+let opaque_arg = pure (t: Tag) -> Result<string, string> =>
+  match attr_named(t.attrs, "opaque") {
+    None => Ok(""),
+    Some(a) => match a.value {
+      Bare => Ok(", false"),
+      Braced(code) => Ok(", !(${code})"),
+      Quoted(_) => Err("${a.line}: opaque is bare or {condition}"),
+    },
+  }
 
 /// `F1` to `F24`'s number.
 let function_number = pure (key: string) -> Maybe<i64> => {

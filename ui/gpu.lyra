@@ -99,11 +99,18 @@ pub struct AnyRenderer {
 
 /// Open a window `width` × `height` logical units, drawn on the GPU where there is one — or
 /// why it could not open at all.
-pub let open = (title: string, width: f32, height: f32) -> Result<GpuWindow, string> => {
-  let window = open_window(title, width, height)?
+pub let open = (
+  title: string,
+  width: f32,
+  height: f32,
+  see_through: bool = false
+) -> Result<GpuWindow, string> => {
+  let window = open_window(title, width, height, see_through)?
+  var system = platform_for(window)
   if let Some(g) = gpu.create(window) {
+    if see_through { let _ = system.set_see_through(true) }
     return Ok(GpuWindow {
-      platform: platform_for(window),
+      platform: system,
       renderer: AnyRenderer { gpu: Some(GpuRenderer { gpu: g, window: window }) },
     })
   }
@@ -113,10 +120,8 @@ pub let open = (title: string, width: f32, height: f32) -> Result<GpuWindow, str
     quit()
     return Err("SDL could not make a renderer: ${why}")
   }
-  Ok(GpuWindow {
-    platform: platform_for(window),
-    renderer: AnyRenderer { sdl: Some(canvas) }
-  })
+  if see_through { let _ = system.set_see_through(true) }
+  Ok(GpuWindow { platform: system, renderer: AnyRenderer { sdl: Some(canvas) } })
 }
 
 /// Close the window: the renderer, the window, and SDL.
@@ -235,12 +240,14 @@ impl Renderer for GpuRenderer {
     )
   draw = (self, background, ops) => {
     let frame = frame_of(self, ops)
+    // Premultiplied, as everything the GPU draws is: what a see-through window's layer shows.
+    let a = unit(background.a)
     let _ = gpu.frame(
       self.gpu,
-      unit(background.r),
-      unit(background.g),
-      unit(background.b),
-      unit(background.a),
+      unit(background.r) * a,
+      unit(background.g) * a,
+      unit(background.b) * a,
+      a,
       frame.instances,
       frame.commands
     )

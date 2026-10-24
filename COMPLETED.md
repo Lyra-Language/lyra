@@ -20,6 +20,18 @@ Newest first.
   a `LoadFonts` followed by a `MeasureFont` of the new family is answered in one pass.
 - **`SelectSpec.separators`**: Termina's saved themes follow its own after a rule. The rule
   is keyed as no option is, so `option_of` and the keys, which count options, never see it.
+- **A see-through window, and a blur behind it** (Termina's translucent background): SDL's GPU
+  API refuses a window made `SDL_WINDOW_TRANSPARENT`, and SDL's Metal view decides its layer's
+  opacity once, as it is made, so on macOS `bindings.gpu`'s shim makes the claimed window and
+  its layers non-opaque afterwards. **SDL's content view paints its own layer black** each
+  time AppKit asks it to update, unless the window was made transparent: under the Metal
+  layer it hid the desktop everywhere but the title bar, the first try's whole effect. The
+  shim keeps that layer clear by observing its `backgroundColor`. And the window being non-opaque, its
+  title bar showed the desktop too: the shim puts an opaque backing in the window's background
+  colour behind the title bar's contents. The GPU already drew premultiplied colour; only the clear
+  colour was straight. The blur is the window server's, as iTerm2's and Warp's, through
+  CoreGraphics' private function, looked up at run time so a macOS without it has none. On
+  Linux only a window opened with SDL's flag is see-through, and there is no blur.
 - **`Platform.window_position` and `set_window_position`**, for Termina's Settings ▸ Window
   (the window opened where it was last closed). A place no display shows — saved while another
   screen was plugged in — is ignored: SDL's display for a point is the nearest one, so

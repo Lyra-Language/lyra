@@ -2487,6 +2487,70 @@ hover #/0/1/0:
 	}
 }
 
+// A see-through window on the GPU (ui.gpu's open with see_through, macOS): a frame over a clear
+// background keeps its alpha — the clear background none, a half-clear fill half, its colour
+// premultiplied as the window's layer composites it — nothing of its content opaque once SDL's
+// content view has updated its layer, which painted it black under the Metal layer, and its
+// title bar on an opaque backing, as an opaque window's; and the
+// blur behind it and opacity again are taken (the blur through CoreGraphics' private function,
+// which this macOS has).
+func TestRun_UiGpuSeeThrough(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "darwin" {
+		t.Skip("ui.gpu's shaders are Metal's")
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	src := filepath.Join(t.TempDir(), "main.lyra")
+	if err := os.WriteFile(src, []byte(`import ui.gpu
+import ui.gpu.{ keep_frames, read_frame }
+import ui.backend.{ Renderer, Platform }
+import ui.draw.{ Color, Rect, rgba, radius, Fill, DrawOp }
+import bindings.gpu.{ see_through_state }
+
+let main = () -> u8 => {
+  let Ok(window) = gpu.open("see", 300.0, 220.0, true) else { return 2 }
+  var platform = window.platform
+  var renderer = window.renderer
+  let Some(g) = renderer.gpu else {
+    println("no gpu")
+    return 3
+  }
+  keep_frames(g)
+  let ops: []DrawOp = [Fill(Rect { x: 20.0, y: 20.0, w: 100.0, h: 60.0 }, radius(0.0), rgba(0xFF000080))]
+  for _ in 0..<3 { renderer.draw(Color { r: 0, g: 0, b: 0, a: 0 }, ops) }
+  let Some(frame) = read_frame(g) else {
+    println("no frame")
+    return 4
+  }
+  let s = f32(frame.width) / 300.0
+  let at = (x: f32, y: f32) -> string => {
+    let p = frame.argb[i64((y * s).round()) * frame.width + i64((x * s).round())]
+    "a ${(p >> 24) & 0xFF} r ${(p >> 16) & 0xFF}"
+  }
+  println("the clear background: ${at(200.0, 150.0)}")
+  println("a half-clear red: ${at(70.0, 50.0)}")
+  println("the content see-through, the title bar opaque: ${see_through_state(platform.window)}")
+  println("blur taken: ${platform.set_backdrop_blur(20.0)}, opaque again: ${platform.set_see_through(false)}")
+  gpu.close(platform, renderer)
+  0
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := captureRunUnoptimized(t, "run", src)
+	switch code {
+	case 2, 3, 4:
+		t.Skipf("no GPU frame here (%d): %s", code, stdout)
+	case 0:
+	default:
+		t.Fatalf("exited %d\nstderr: %s", code, stderr)
+	}
+	want := "the clear background: a 0 r 0\na half-clear red: a 128 r 128\nthe content see-through, the title bar opaque: true\nblur taken: true, opaque again: true\n"
+	if stdout != want {
+		t.Errorf("got\n%s\nwant\n%s", stdout, want)
+	}
+}
+
 // ui.gpu's frame read back from the GPU (macOS with a GPU; skipped elsewhere): a card's shadow
 // fades smoothly below it — darker nearer, half its strength at the shadow's edge, gone three
 // deviations out; a three-stop gradient is each stop's colour at its place; and a black box
