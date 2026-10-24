@@ -80,7 +80,7 @@ import ui.backend.{
   FileAnswered,
 }
 import ui.draw.{ Point, Size, Rect, Color }
-import ui.text.{ Fonts, FontSpec, FontMetrics, GlyphAtlas, glyph_atlas }
+import ui.text.{ Fonts, FontSpec, FontMetrics, FontFile, GlyphAtlas, glyph_atlas }
 import ui.style.{ Viewport, Style, Overflow, OverflowAuto, light_theme }
 import ui.layout.{
   Node,
@@ -241,6 +241,9 @@ pub data Command<e> =
   | QuitApp
   /// The font's measurements at its size on this display ([Fonts.metrics]) — a grid's cell.
   | MeasureFont(FontSpec, (FontMetrics) -> e)
+  /// Faces added to the fonts the window draws with ([Fonts.add]) at the next pass, before any
+  /// font is measured — a family the user chose; the event says whether every one loaded.
+  | LoadFonts([]FontFile, (bool) -> e)
   /// The focus to the element keyed so ([Node.keyed]), once it is laid out — a new tab's
   /// terminal.
   | FocusKeyed(string)
@@ -366,8 +369,10 @@ pub struct Host<s, e> {
   ui: Ui,
   atlas: GlyphAtlas,
   waiting: []e = [],
-  /// Fonts asked to be measured ([MeasureFont]), answered at the next pass, where the fonts are.
+  /// Fonts asked to be measured ([MeasureFont]), answered at the next pass, where the fonts are;
+  /// and faces asked to be loaded ([LoadFonts]), loaded there first.
   measures: []Measure<e> = [],
+  loads: []FontLoad<e> = [],
   timers: []Timer<e> = [],
   fired: [](i64, i64) = [],
   /// What the items of the menus last handed to the platform raise, by tag; whether the
@@ -494,6 +499,12 @@ let sooner = pure (wait: i64, delay: i64) -> i64 => {
 pub struct Measure<e> {
   font: FontSpec,
   done: (FontMetrics) -> e,
+}
+
+/// Faces to load, and the event saying whether every one loaded.
+pub struct FontLoad<e> {
+  files: []FontFile,
+  done: (bool) -> e,
 }
 
 /// An event due at a moment of the platform's clock.
@@ -836,6 +847,7 @@ impl Host<s, e> {
           platform.choose_file(tag, d)
         },
         MeasureFont(font, done) => self.measures.push(Measure { font: font, done: done }),
+        LoadFonts(files, done) => self.loads.push(FontLoad { files: files, done: done }),
         FocusKeyed(key) => self.ui.focus_keyed(key),
         ScrollTo(key, y) => self.ui.scroll_keyed(key, y),
       }
@@ -933,6 +945,14 @@ impl Host<s, e> {
     platform: p,
     fonts: mut Fonts
   ) -> void => {
+    for load in self.loads {
+      var all = true
+      for f in load.files {
+        if !fonts.add(f.family, f.path, f.index, f.weight, f.italic) { all = false }
+      }
+      self.waiting.push((load.done)(all))
+    }
+    self.loads = []
     for asked in self.measures {
       self.waiting.push((asked.done)(fonts.metrics(asked.font, platform.scale())))
     }

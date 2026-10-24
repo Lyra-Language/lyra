@@ -34,7 +34,7 @@ module ui.style
 //! set them takes its parent's, and an opacity multiplies into its parent's, so a half-
 //! transparent card's text is half-transparent too. Everything else starts unset.
 
-import ui.draw.{ Color, Size, BoxShadow, Gradient, rgb, rgba }
+import ui.draw.{ Color, Size, Radii, BoxShadow, Gradient, rgb, rgba }
 import ui.backend.{ Appearance }
 import ui.text.{ FontSpec }
 
@@ -82,6 +82,9 @@ pub struct Style {
   border_width: Maybe<f32> = None,
   /// Every corner's radius.
   radius: Maybe<f32> = None,
+  /// Each corner's radius — CSS's four `border-*-radius` longhands as one, `border-radius: 6 6
+  /// 0 0` in a sheet — which, where set, the corners are rounded by rather than `radius`.
+  corners: Maybe<Radii> = None,
   /// Space between the element's edge and what is inside it.
   padding: Maybe<Insets> = None,
   /// Space between a Row's or Column's children; a flex container's or grid's `row_gap` and
@@ -276,6 +279,7 @@ impl Style {
     border_color: self.border_color.or(base.border_color),
     border_width: self.border_width.or(base.border_width),
     radius: self.radius.or(base.radius),
+    corners: self.corners.or(base.corners),
     padding: self.padding.or(base.padding),
     gap: self.gap.or(base.gap),
     font: self.font.or(base.font),
@@ -640,6 +644,11 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
   },
   Rule { selector: "TabClose", style: Style { padding: Some(insets_xy(4.0, 0.0)), radius: Some(3.0), opacity: Some(0.45) } },
   Rule { selector: "TabClose:hover", style: Style { background: Some(faded(c.text, 0.12)), opacity: Some(1.0) } },
+  // The more-tabs button: its arrow quiet as a select's, lit while the pointer is over it or
+  // its menu is open.
+  Rule { selector: "TabsMore", style: Style { padding: Some(insets_xy(8.0, 6.0)), radius: Some(6.0) } },
+  Rule { selector: "TabsMore:hover, TabsMore:open", style: Style { background: Some(faded(c.text, 0.08)) } },
+  Rule { selector: "TabsMore::arrow", style: Style { background: Some(c.muted) } },
   // The window's own buttons on a drawn title bar: quiet until the pointer is over one, close
   // red then, as on every desktop.
   Rule { selector: "WindowButton:hover", style: Style { background: Some(faded(c.text, 0.08)) } },
@@ -710,6 +719,8 @@ pub struct Computed {
   border_color: Maybe<Color> = None,
   border_width: f32 = 0.0,
   radius: f32 = 0.0,
+  /// Each corner's radius, where the style set them ([Style.corners]); `radius` otherwise.
+  corners: Maybe<Radii> = None,
   padding: Insets = Insets {},
   gap: f32 = 0.0,
   font: FontSpec = FontSpec {},
@@ -833,6 +844,7 @@ impl Cascade {
       border_color: s.border_color,
       border_width: s.border_width ?? 0.0,
       radius: s.radius ?? 0.0,
+      corners: s.corners,
       padding: s.padding ?? Insets {},
       gap: s.gap ?? 0.0,
       font: FontSpec {

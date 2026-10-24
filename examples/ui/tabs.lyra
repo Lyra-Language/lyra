@@ -1,7 +1,8 @@
 // Tabs: `ui.layout`'s `tab_bar` — a strip of tabs whose order is the program's: a press selects
 // one, its × or a middle click closes it, a drag moves it (Home, not movable, stays first), `+`
 // adds one; while a tab has the focus the arrows select its neighbours. Past the window's width
-// the tabs shrink together, then the strip scrolls with the selected tab kept in view.
+// the tabs shrink together, then as many as fit show — the selected among them — beside a
+// more-tabs button whose menu lists the rest.
 //
 //     lyrac run examples/ui/tabs.lyra
 //     lyrac run examples/ui/tabs.lyra -- --script "click:200,18 down:200,18 move:300,18 up:300,18" [--png FILE]

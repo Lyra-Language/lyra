@@ -292,6 +292,9 @@ pub struct SelectSpec<e> {
   options: []string,
   selected: i64 = -1,
   on_change: (i64) -> e,
+  /// The options a rule goes before in the list, by index: groups of them, as a saved theme
+  /// after the built-in ones.
+  separators: []i64 = [],
 }
 
 /// A text field's value — the program's, set from its state each frame — the text shown while
@@ -695,6 +698,7 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
     options: spec.options,
     selected: spec.selected,
     on_change: (i: i64) -> b => f((spec.on_change)(i)),
+    separators: spec.separators,
   }),
   PopsUp(open, side, dismissed) => PopsUp(open, side, f(dismissed)),
   Opens(spec) => Opens(MenuSpec { entries: mapped_entries(spec.entries, f), side: spec.side, in_bar: spec.in_bar }),
@@ -1149,8 +1153,11 @@ let carry<e> = (cache: mut LayoutCache<e>, laid: Laid<e>) -> void => {
 
 /// `laid`, laid out from a node equal to `node` in all but its events, with each element's kind
 /// — which says what it raises — taken from `node` and its children's.
-let refreshed<e> = pure (laid: Laid<e>, node: Node<e>) -> Laid<e> => {
-  let kids = laid_children(node)
+let refreshed<e> = (laid: Laid<e>, node: Node<e>) -> Laid<e> => {
+  let kids = match node.kind {
+    TabStrip => strip_children(laid, node),
+    _ => laid_children(node),
+  }
   var children: []Placed<e> = []
   for k, p in laid.children {
     var mine = p.laid
@@ -1327,7 +1334,8 @@ let same_kind<e> = (a: Kind<e>, b: Kind<e>, theme: Theme) -> bool => match (a, b
     same_f32(r1.step, r2.step),
   (Editable(f1), Editable(f2)) =>
     f1.value == f2.value && f1.placeholder == f2.placeholder && f1.draft == f2.draft,
-  (Choosing(s1), Choosing(s2)) => s1.selected == s2.selected && s1.options == s2.options,
+  (Choosing(s1), Choosing(s2)) =>
+    s1.selected == s2.selected && s1.options == s2.options && s1.separators == s2.separators,
   (PopsUp(open1, side1, _), PopsUp(open2, side2, _)) => open1 == open2 && side1 == side2,
   (Opens(m1), Opens(m2)) =>
     m1.side == m2.side && m1.in_bar == m2.in_bar && same_entries(m1.entries, m2.entries),
@@ -1958,16 +1966,24 @@ let lay_select<e> = (
 ) -> Body<e> => {
   let face = lay_wrapped(children, c, ctx, fonts, cache)
   if ctx.ui.open != ctx.id { return Body { size: face.size, children: face.children } }
-  let options: []Node<e> = [
-    i in 0..<spec.options.len() |
-      Node {
-        kind: Checkable(i == spec.selected, (spec.on_change)(i)),
-        tag: "Option",
-        part: "option",
-        key: "${i}",
-        children: [text::<e>(spec.options[i])],
-      }
-  ]
+  // Each option keyed by its place, which is what `option_of` reads; a rule before one
+  // listed in `separators`, keyed as no option is.
+  var options: []Node<e> = []
+  for i in 0..<spec.options.len() {
+    if spec.separators.contains(i) {
+      options.push(padding::<e>(
+        Insets { top: 4.0, bottom: 4.0 },
+        Node { kind: Measured(None, Some(1.0)), tag: "MenuSeparator" }
+      ).keyed("rule ${i}"))
+    }
+    options.push(Node {
+      kind: Checkable(i == spec.selected, (spec.on_change)(i)),
+      tag: "Option",
+      part: "option",
+      key: "${i}",
+      children: [text::<e>(spec.options[i])],
+    })
+  }
   // Scrolling where it is longer than the window has room for (`ui.interact` keeps the
   // option under the keys in view).
   let list = column::<e>(options)
@@ -2527,7 +2543,7 @@ let paint_into<e, r> where r: Renderer = (
 ) -> void => {
   let s = laid.style
   let box = Rect { x: origin.x, y: origin.y, w: laid.size.w, h: laid.size.h }
-  let corners = radius(s.radius)
+  let corners = s.corners ?? radius(s.radius)
   // A blurred element is drawn into a layer, wide enough for the blur to spread into.
   if s.filter_blur > 0.0 {
     ops.push(PushLayer(
@@ -2677,7 +2693,13 @@ let paint_into<e, r> where r: Renderer = (
     }
   }
   if let Some(ring) = laid.ring {
-    ops.push(Border(box.inset(-3.0), radius(s.radius + 3.0), 2.5, ring))
+    let around = Radii {
+      top_left: corners.top_left + 3.0,
+      top_right: corners.top_right + 3.0,
+      bottom_right: corners.bottom_right + 3.0,
+      bottom_left: corners.bottom_left + 3.0,
+    }
+    ops.push(Border(box.inset(-3.0), around, 2.5, ring))
   }
   if s.filter_blur > 0.0 { ops.push(PopLayer) }
 }

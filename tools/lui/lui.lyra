@@ -1209,6 +1209,7 @@ const UI_MODULES = [
   ("ui.draw", [
     "Size",
     "Rect",
+    "Radii",
     "Color",
     "rgb",
     "rgba",
@@ -1912,15 +1913,23 @@ impl Writer {
 
   /// A `<Select selected={…} on_change={…}>` and its options: `options={…}`, a Lyra
   /// `[]string`, or `<Option>`s inside it, each its text (`{…}` interpolated, as a button's
-  /// label is) — one or the other. `on_change` takes the index chosen, an `i64`.
+  /// label is) — one or the other — with `<Separator/>`s between groups of them, or
+  /// `separators={…}`, the indices a rule goes before. `on_change` takes the index chosen, an
+  /// `i64`.
   let select_of = (self: mut, t: Tag) -> Result<string, string> => {
     self.use("SelectSpec")
     var texts: []string = []
+    var rules: []string = []
     for child in t.children {
       match child {
         Element(o) => {
+          if o.name == "Separator" {
+            if o.attrs.len() > 0 { return Err("${o.attrs[0].line}: <Separator> takes no attributes") }
+            rules.push("${texts.len()}")
+            continue
+          }
           if o.name != "Option" {
-            return Err("${o.line}: <Select> holds <Option>s, not <${o.name}>")
+            return Err("${o.line}: <Select> holds <Option>s and <Separator/>s, not <${o.name}>")
           }
           if o.attrs.len() > 0 { return Err("${o.attrs[0].line}: <Option> takes no attributes") }
           texts.push(label_of(o)?)
@@ -1947,11 +1956,18 @@ impl Writer {
         "[${texts.join(", ")}]"
       },
     }
-    let fields = [
+    var fields = [
       "options: ${options}",
       "selected: ${required(t, "selected")?}",
       "on_change: ${self.changes(t, "on_change", "i64")?}",
     ]
+    match t.code_attr("separators") {
+      Some(code) => {
+        if rules.len() > 0 { return Err("${t.line}: <Select> takes separators={…} or <Separator/>s, not both") }
+        fields.push("separators: ${code}")
+      },
+      None => if rules.len() > 0 { fields.push("separators: [${rules.join(", ")}]") },
+    }
     Ok("select(SelectSpec { ${fields.join(", ")} })")
   }
 
@@ -1984,6 +2000,7 @@ impl Writer {
         let known = [
           "rgb",
           "rgba",
+          "Radii",
           "insets",
           "insets_xy",
           "Insets",
@@ -2042,7 +2059,8 @@ let ui_kind = pure (tag: string) -> Maybe<(UiShape, []string)> => match tag {
   "Button" => Some((ShapeLabelled("button"), ["on_click"])),
   "Checkbox" => Some((ShapeLabelled("checkbox"), ["checked", "on_toggle"])),
   "Slider" => Some((ShapeBare("slider"), ["value", "min", "max", "step", "on_change"])),
-  "Select" => Some((ShapeBare("select"), ["options", "selected", "on_change"])),
+  "Select" =>
+    Some((ShapeBare("select"), ["options", "selected", "on_change", "separators"])),
   "Popup" => Some((ShapePopup, ["open", "on_dismiss", "side"])),
   "TextInput" =>
     Some((ShapeBare("text_input"), ["value", "placeholder", "readonly", "on_edit"])),
@@ -2466,7 +2484,16 @@ let ui_declarations = pure (
     }
     let field = match name {
       "rounding" => "radius",
+      "border_radius" => "radius",
       other => other,
+    }
+    // Two to four radii, in CSS's order, round each corner: `corners`.
+    if field == "radius" && given.split(" ").filter((w) => w.len() > 0).len() > 1 {
+      fields = with_field(
+        fields,
+        "corners: Some(${corners_of(given).map_err((what) => "${line}: ${what}")?})"
+      )
+      continue
     }
     let set_by = effect_declaration(name, given).or(layout_declaration(name, given))
     if let Some(set) = set_by {
@@ -2483,11 +2510,12 @@ let ui_declarations = pure (
       "border_width" => ui_number(given),
       "radius" => ui_number(given),
       "rounding" => ui_number(given),
+      "border_radius" => ui_number(given),
       "opacity" => ui_number(given),
       "font_size" => ui_number(given),
       "line_height" => ui_number(given),
       "padding" => ui_padding(given),
-      _ => Err("no style property ${name} in ui (color, background, border-color, border-width, radius, gap, opacity, font-size, line-height, padding; transition and transition-property, -duration, -timing-function, -delay; overflow (one or two of visible, hidden, clip, scroll, auto), overflow-x, overflow-y; box-shadow, a gradient background or background-image, filter: blur(), backdrop-filter: blur(); width, height and their min- and max-; row-gap, column-gap; flex, flex-direction, flex-wrap, flex-grow, flex-shrink, flex-basis, order, justify-content, align-content, align-items, align-self; grid-template-columns, grid-template-rows, grid-auto-columns, grid-auto-rows, grid-auto-flow, grid-column, grid-row, justify-items, justify-self)"),
+      _ => Err("no style property ${name} in ui (color, background, border-color, border-width, radius (one to four numbers, as border-radius), gap, opacity, font-size, line-height, padding; transition and transition-property, -duration, -timing-function, -delay; overflow (one or two of visible, hidden, clip, scroll, auto), overflow-x, overflow-y; box-shadow, a gradient background or background-image, filter: blur(), backdrop-filter: blur(); width, height and their min- and max-; row-gap, column-gap; flex, flex-direction, flex-wrap, flex-grow, flex-shrink, flex-basis, order, justify-content, align-content, align-items, align-self; grid-template-columns, grid-template-rows, grid-auto-columns, grid-auto-rows, grid-auto-flow, grid-column, grid-row, justify-items, justify-self)"),
     }
     match lyra {
       Ok(v) => { fields = with_field(fields, "${field}: Some(${v})") },
@@ -2496,6 +2524,22 @@ let ui_declarations = pure (
   }
   if moves.given { fields = with_field(fields, "transition: Some(${moves.as_lyra()})") }
   Ok(fields)
+}
+
+/// `border-radius`'s two to four radii as each corner's, in CSS's order: top-left and
+/// bottom-right then the other two; top-left, those two, bottom-right; or each from the top
+/// left round.
+let corners_of = pure (value: string) -> Result<string, string> => {
+  let words = value.split(" ").filter((w) => w.len() > 0)
+  var n: []string = []
+  for w in words { n.push(ui_number(w)?) }
+  let (tl, tr, br, bl) = match n.len() {
+    2 => (n[0], n[1], n[0], n[1]),
+    3 => (n[0], n[1], n[2], n[1]),
+    4 => (n[0], n[1], n[2], n[3]),
+    _ => return Err("a radius is one to four numbers, not ${value}"),
+  }
+  Ok("Radii { top_left: ${tl}, top_right: ${tr}, bottom_right: ${br}, bottom_left: ${bl} }")
 }
 
 /// A rule's `transition` declarations so far: the properties, durations, timing functions

@@ -704,8 +704,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   in `ui/WINDOW.md` (10/23), the rest of Termina's move off ImGui. Steps 1 (popups, the
   select's list on them), 2 (menus drawn), 3 (menus native on a Mac), 4 (the tab bar), 5 (the
   window's controls, a drawn title bar), 6 (a file dialog), 7 (colour) and 8 (lui's elements,
-  `Fragment`) built 10/23; step 9's tab bar, menus and header bar in termina-ui 10/23, its
-  Settings tab and the releases' move next.
+  `Fragment`) built 10/23; step 9's tab bar, menus, header bar and Settings tab in termina-ui
+  10/23; the releases' move next.
 - **[OPEN] `ui`: a drawn title bar wants trying on a Linux desktop** — SDL's hit test calling
   `bindings.hittest` for a borderless window (moving it, its edges resizing it) is untested:
   the dummy driver refuses a hit test. And its double click: SDL starts a move at the press, so
@@ -834,6 +834,10 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   id, since it cannot carry the program's event type).
 - **[DONE 10/23] lui's `ui` target's menus, tab bar, swatch, window buttons and `Fragment`**
   (`ui/WINDOW.md` step 8, COMPLETED.md 10/23).
+- **[OPEN] Backend: a lambda capturing a reassigned `var` in a generic function** — in
+  `lay_tab_strip<e>`, `let at = (laid) => Placed { at: Point { x: x, … } }` over `var x` (and
+  `var height`) passed the front end and failed in the backend, "unbound identifier `x`". The
+  same lambda in a plain `main` works; not reduced further. Written as a function meanwhile.
 - **[OPEN] Backend: a string pattern holding an escape** (`"\\"` as a `match` arm) is refused
   ("escaped string patterns not implemented yet"); lui writes an `if` instead.
 - **[OPEN] Typechecker: an expected type does not reach a method's receiver** —

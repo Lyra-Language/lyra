@@ -257,15 +257,19 @@ Termina moves at the end.
    Other Font File…; then `Termina.app` and the Linux releases are built from it, and the
    ImGui front end and `uitest` go. **The tab bar, the menus and the header bar built 10/23**
    (`termina/src/face/window.lyra`; the header bar off every Mac, there being no third
-   platform); the Settings tab and the move of the releases next.
+   platform), **and the Settings tab** (`termina/src/settings_page.lui`; a family loaded
+   while the app runs by `LoadFonts`, the theme list's rules `SelectSpec.separators`); the
+   move of the releases next.
 
 ## 9. Open questions
 
 1. **Should a drawn menu bar's open path be the program's, as a popup's is?** Proposed: the
    framework's — nothing a program does depends on which menu is open, and making it the
    program's puts an event and a field in every program with menus.
-2. **Tabs past the strip's width: shrink, scroll, or a list of the rest?** Proposed: shrink to
-   a least, then scroll, as browsers do. A "more tabs" menu is the other answer.
+2. **Tabs past the strip's width: shrink, scroll, or a list of the rest?** **Answered 10/23:
+   shrink to a least, then a "more tabs" menu** — as many tabs as fit, the selected among
+   them, and an arrow whose menu lists the rest (`more_tabs`). Scrolling hid the tabs past
+   the edge with nothing to say they were there.
 3. **A drawn title bar's double click.** It maximizes on every desktop, but SDL's hit test
    starts a move at the press, so the second click never reaches the program — the ImGui
    app's open item. Either the shim answers the press `SDL_HITTEST_NORMAL` when it is a

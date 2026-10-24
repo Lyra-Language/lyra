@@ -9,9 +9,15 @@ module ui.layout
 //! neither moves nor is passed by one that is.
 //!
 //! **Widths**: each tab as wide as its label (and its ×), up to [TAB_MOST]; past the strip's
-//! width they shrink together, each to no less than [TAB_LEAST], and then the strip scrolls
-//! across — the selected tab scrolled into view when it changes, the wheel either way scrolling
-//! it (`ui.interact`), no bar shown. A label too long for its tab is clipped, not wrapped.
+//! width they shrink together, each to no less than [TAB_LEAST]; and where even then they do
+//! not fit, **the strip shows as many as fit beside a more-tabs button** (`TabsMore`, an arrow,
+//! [more_tabs]) — the selected one always among them — whose menu lists the rest, an item
+//! choosing one as a press on it would (`ui/WINDOW.md`'s open question 2). A label too long for
+//! its tab is clipped, not wrapped.
+//!
+//! **The more-tabs menu is made at layout**, from the tabs hidden, as a select's list is; a
+//! strip from the cache makes it again from the fresh nodes of the same tabs ([strip_children]),
+//! so its events are this frame's.
 
 import ui.style.{ OverflowHidden }
 
@@ -100,7 +106,8 @@ let tab_node<e> = pure (spec: TabsSpec<e>, i: i64) -> Node<e> => {
 
 /// A strip's children along it: its tabs as wide as they need up to [TAB_MOST], shrunk together
 /// toward [TAB_LEAST] where the strip is narrower than they and what follows them, each as tall
-/// as the tallest; then what follows, at its own width. Wider than the strip, it scrolls.
+/// as the tallest; where even at their least they do not fit, as many as do — the selected one
+/// among them — and the more-tabs button holding the rest; then what follows, at its own width.
 let lay_tab_strip<e> = (
   children: []Node<e>,
   c: Constraints,
@@ -124,40 +131,148 @@ let lay_tab_strip<e> = (
   }
   var height: f32 = 0.0
   var others: f32 = 0.0
+  var tabs: []i64 = []
   var wants: []f32 = []
   for i, child in children {
     height = height.max(natural[i].size.h)
-    if is_tab(child.kind) { wants.push(natural[i].size.w.min(TAB_MOST)) } else { others += natural[i].size.w }
+    if is_tab(child.kind) {
+      tabs.push(i)
+      wants.push(natural[i].size.w.min(TAB_MOST))
+    } else {
+      others += natural[i].size.w
+    }
   }
-  let gaps = gap * f32((children.len() - 1).max(0))
-  let left = if c.bounded_w() { c.max_w - others - gaps } else { UNBOUNDED }
-  let widths = shrunk(wants, left)
+  // The tabs shown, by their place among the tabs; the rest go into the more-tabs menu.
+  var shown: []i64 = [k in 0..<tabs.len() | k]
+  var more: []Laid<e> = []
+  let all_gaps = gap * f32((children.len() - 1).max(0))
+  if c.bounded_w() && least_width(wants) > c.max_w - others - all_gaps {
+    let empty = more_tabs::<e>([])
+    let button_laid = lay(
+      empty,
+      Constraints { max_h: c.max_h },
+      ctx.cascade,
+      fonts,
+      ctx.ui,
+      child_id(ctx.id, empty, children.len()),
+      cache
+    )
+    let others_gaps = gap * f32(children.len() - tabs.len())
+    let beside = c.max_w - others - button_laid.size.w - others_gaps
+    let selected = selected_tab(children, tabs)
+    shown = fitting(wants, beside, gap, selected)
+    let hidden = [k in 0..<tabs.len() | !shown.contains(k) | children[tabs[k]]]
+    let list = more_tabs(hidden)
+    more = [lay(
+      list,
+      Constraints { max_h: c.max_h },
+      ctx.cascade,
+      fonts,
+      ctx.ui,
+      child_id(ctx.id, list, children.len()),
+      cache
+    )]
+    height = height.max(button_laid.size.h)
+  }
+  let count = shown.len() + more.len() + children.len() - tabs.len()
+  let gaps = gap * f32((count - 1).max(0))
+  let left = if c.bounded_w() {
+    c.max_w - others - gaps - (if more.len() > 0 { more[0].size.w } else { 0.0 })
+  } else { UNBOUNDED }
+  let widths = shrunk([k in shown | wants[k]], left)
   var placed: []Placed<e> = []
   var x: f32 = 0.0
-  var k = 0
-  for i, child in children {
-    let laid = if is_tab(child.kind) {
-      let w = widths[k]
-      k += 1
-      lay(
-        child,
-        Constraints { min_w: w, max_w: w, min_h: height, max_h: height },
-        ctx.cascade,
-        fonts,
-        ctx.ui,
-        child_id(ctx.id, child, i),
-        cache
-      )
-    } else {
-      natural[i]
-    }
-    placed.push(Placed {
-      at: Point { x: x, y: (height - laid.size.h) / 2.0 },
-      laid: laid
-    })
+  for j, k in shown {
+    let i = tabs[k]
+    let laid = lay(
+      children[i],
+      Constraints { min_w: widths[j], max_w: widths[j], min_h: height, max_h: height },
+      ctx.cascade,
+      fonts,
+      ctx.ui,
+      child_id(ctx.id, children[i], i),
+      cache
+    )
+    placed.push(placed_at(laid, x, height))
     x += laid.size.w + gap
   }
+  for laid in more {
+    placed.push(placed_at(laid, x, height))
+    x += laid.size.w + gap
+  }
+  for i, child in children {
+    if !is_tab(child.kind) {
+      placed.push(placed_at(natural[i], x, height))
+      x += natural[i].size.w + gap
+    }
+  }
   Body { size: Size { w: (x - gap).max(0.0), h: height }, children: placed }
+}
+
+/// `laid` at `left` along a strip `height` tall, centred down it.
+let placed_at<e> = pure (laid: Laid<e>, left: f32, height: f32) -> Placed<e> =>
+  Placed { at: Point { x: left, y: (height - laid.size.h) / 2.0 }, laid: laid }
+
+/// The more-tabs button (`TabsMore`, its arrow the `TabsMore::arrow` part): its menu the tabs
+/// `hidden` — each by its label, choosing it raising what a press on it would.
+let more_tabs<e> = (hidden: []Node<e>) -> Node<e> => {
+  var entries: []MenuEntry<e> = []
+  for child in hidden {
+    if let Tabbed(spot) = child.kind {
+      entries.push(MenuItemEntry(MenuItem {
+        label: child.label,
+        on_select: (spot.on_select)(spot.index),
+        checked: spot.selected,
+      }))
+    }
+  }
+  opener(select_arrow::<e>(), entries, FloatBelow, false, "TabsMore").keyed("more tabs")
+}
+
+/// What a strip from the cache holds as its children (`refreshed`): its own, and — where its
+/// layout hid tabs — the more-tabs button made again from those tabs' nodes as they are now.
+let strip_children<e> = (laid: Laid<e>, node: Node<e>) -> []Node<e> => {
+  let ids = [p in laid.children | p.laid.id]
+  let hidden = [
+    i in 0..<node.children.len() |
+      is_tab(node.children[i].kind) && !ids.contains(child_id(
+        laid.id,
+        node.children[i],
+        i
+      )) |
+      node.children[i]
+  ]
+  if hidden.len() == 0 { node.children } else { [...node.children, more_tabs(hidden)] }
+}
+
+/// What `wants` come to at their least: each at [TAB_LEAST], or less where it wants less.
+let least_width = pure (wants: []f32) -> f32 => {
+  var total: f32 = 0.0
+  for w in wants { total += w.min(TAB_LEAST) }
+  total
+}
+
+/// The place among the tabs of the selected one, or -1.
+let selected_tab<e> = pure (children: []Node<e>, tabs: []i64) -> i64 => {
+  for k, i in tabs {
+    if let Tabbed(spot) = children[i].kind { if spot.selected { return k } }
+  }
+  -1
+}
+
+/// The tabs, by place, that fit in `room` at their least, each with a `gap` after it: a run
+/// from the first, or one ending at `selected` where the run from the first would not reach
+/// it — never none.
+let fitting = pure (wants: []f32, room: f32, gap: f32, selected: i64) -> []i64 => {
+  var n = 0
+  var used: f32 = 0.0
+  while n < wants.len() && used + wants[n].min(TAB_LEAST) + gap <= room + 0.5 {
+    used += wants[n].min(TAB_LEAST) + gap
+    n += 1
+  }
+  n = n.max(1)
+  let start = if selected < n { 0 } else { selected - n + 1 }
+  [k in start..<(start + n) | k]
 }
 
 /// `wants` made to fit `room` where they do not: each shrunk by its share of what they are over,

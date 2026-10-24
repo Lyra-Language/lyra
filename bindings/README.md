@@ -508,8 +508,9 @@ The example's interface is `examples/imgui/components_view.lui`.
   `<Expanded flex>`, `<Positioned left top …>`, `<Padding all | x y | top …>`, `<Align
   at="top-left">`, `<Scroll axis offset>`, `<SizedBox width height>`, `<Text>`, `<Button
   on_click>`, `<Checkbox checked on_toggle>`, `<Slider value min max step on_change>`,
-  `<Select selected on_change>` with `<Option>`s inside (each its text) or `options={…}`
-  (`on_change` takes the index, an `i64`), `<Popup open on_dismiss side>` holding its anchor
+  `<Select selected on_change>` with `<Option>`s inside (each its text) and `<Separator/>`s
+  between groups of them, or `options={…}` and `separators={…}` (`on_change` takes the index,
+  an `i64`), `<Popup open on_dismiss side>` holding its anchor
   then its content (`open` bare or `{condition}`, `side="beside"` for a submenu's; its
   content the `Popup::content` part), `<TextInput value placeholder on_edit>`, `<Image texture texels width height>`, `<Themed
   theme sheet>`, `<Flex direction wrap justify align align-content gap row-gap column-gap>`,
@@ -535,7 +536,8 @@ The example's interface is `examples/imgui/components_view.lui`.
   theme={t} sheet={app_sheet(t)}>`. A `$path` reads the theme — `$colors.accent` is
   `t.colors.accent`, `$space.m` `t.space.m` — wherever a number or colour goes (not in an
   inline `style`, which has no theme); properties `color`, `background`, `border-color`,
-  `border-width`, `radius` (or `rounding`), `gap`, `opacity`, `font-size`, `line-height`,
+  `border-width`, `radius` (or `rounding`, or `border-radius`: one number every corner's, two
+  to four each corner's in CSS's order, `Style.corners`), `gap`, `opacity`, `font-size`, `line-height`,
   `padding` (one, two — across then down — or four); and layout's, as CSS writes them:
   `width`, `height` and their `min-`/`max-`, `row-gap`, `column-gap`, `flex` (`none`, `auto`,
   or grow, shrink and basis — `flex: 1` is `1 1 0`), `flex-direction`, `flex-wrap`,

@@ -567,7 +567,7 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"window title bare", ui + "<window title/>", "x.lui:2: title of <window> needs a value"},
 		{"select bare", ui + "<script target=\"ui\">\n  pub data Ev = Chose(i64)\n</script>\n<component name=\"a\" event={Ev}>\n  <Select selected={0} on_change={Chose}/>\n</component>", "x.lui:6: <Select> needs options={…} or <Option>s"},
 		{"select both", ui + "<script target=\"ui\">\n  pub data Ev = Chose(i64)\n</script>\n<component name=\"a\" event={Ev}>\n  <Select options={[\"a\"]} selected={0} on_change={Chose}><Option>b</Option></Select>\n</component>", "x.lui:6: <Select> takes options={…} or <Option>s, not both"},
-		{"select holds", ui + "<script target=\"ui\">\n  pub data Ev = Chose(i64)\n</script>\n<component name=\"a\" event={Ev}>\n  <Select selected={0} on_change={Chose}><Text>b</Text></Select>\n</component>", "x.lui:6: <Select> holds <Option>s, not <Text>"},
+		{"select holds", ui + "<script target=\"ui\">\n  pub data Ev = Chose(i64)\n</script>\n<component name=\"a\" event={Ev}>\n  <Select selected={0} on_change={Chose}><Text>b</Text></Select>\n</component>", "x.lui:6: <Select> holds <Option>s and <Separator/>s, not <Text>"},
 		{"select options text", ui + "<script target=\"ui\">\n  pub data Ev = Chose(i64)\n</script>\n<component name=\"a\" event={Ev}>\n  <Select options=\"a\" selected={0} on_change={Chose}/>\n</component>", "x.lui:6: options of <Select> takes {…}, a []string"},
 		{"option outside", ui + "<script target=\"ui\">\n  pub data Ev = Chose(i64)\n</script>\n<component name=\"a\" event={Ev}>\n  <Option>b</Option>\n</component>", "x.lui:6: <Option> is not an element of ui"},
 		{"window resize text", ui + "<window resize_x=\"false\"/>", "x.lui:2: resize_x is bare or {condition}, not text"},
@@ -982,8 +982,9 @@ func TestLui_UiTargetOverflow(t *testing.T) {
 }
 
 // `<Select>` in the ui target: its options as `<Option>`s — each its text, `{…}` interpolated
-// — or `options={…}`, `selected`, and `on_change` with a bare constructor taking the index; a
-// sheet styles its parts (`Select::option:hover`). The module checks clean.
+// — with a `<Separator/>` between two groups, or `options={…}` and `separators={…}`,
+// `selected`, and `on_change` with a bare constructor taking the index; a sheet styles its
+// parts (`Select::option:hover`). The module checks clean.
 func TestLui_UiTargetSelect(t *testing.T) {
 	t.Parallel()
 	lui := buildLui(t)
@@ -1001,8 +1002,10 @@ func TestLui_UiTargetSelect(t *testing.T) {
     <Select selected={s.kind} on_change={Chose}>
       <Option>One-way {name}</Option>
       <Option>Return {name}</Option>
+      <Separator/>
+      <Option>Open jaw</Option>
     </Select>
-    <Select options={s.cities} selected={s.city} on_change={Picked} />
+    <Select options={s.cities} selected={s.city} on_change={Picked} separators={[1]} />
   </Column>
 </component>
 `
@@ -1018,8 +1021,8 @@ func TestLui_UiTargetSelect(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`select(SelectSpec { options: ["One-way ${name}", "Return ${name}"], selected: s.kind, on_change: (value: i64) -> Ev => Chose(value) })`,
-		`select(SelectSpec { options: s.cities, selected: s.city, on_change: (value: i64) -> Ev => Picked(value) })`,
+		`select(SelectSpec { options: ["One-way ${name}", "Return ${name}", "Open jaw"], selected: s.kind, on_change: (value: i64) -> Ev => Chose(value), separators: [2] })`,
+		`select(SelectSpec { options: s.cities, selected: s.city, on_change: (value: i64) -> Ev => Picked(value), separators: [1] })`,
 		`selector: "Select::option:hover"`,
 		"SelectSpec",
 	} {
@@ -1215,6 +1218,62 @@ func TestLui_UiTargetWindowElements(t *testing.T) {
 		if err == nil || !strings.Contains(string(out), "bad.lui"+c.line) || !strings.Contains(string(out), c.why) {
 			t.Errorf("%s → %s: want %q at line %s\n%s", c.from, c.to, c.why, c.line, out)
 		}
+	}
+}
+
+// `radius` (or `rounding`, or `border-radius`) in a ui-target sheet: one number every corner's,
+// two to four each corner's in CSS's order (`Style.corners`); five refused at its line.
+func TestLui_UiTargetCornerRadii(t *testing.T) {
+	t.Parallel()
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script target="ui">
+  pub data Ev = Go
+</script>
+<component name="view" event={Ev}>
+  <style>
+    .a { radius: 6 }
+    .b { border-radius: 6 6 0 0 }
+    .c { rounding: 4 8 }
+    .d { radius: 1 2 3 }
+  </style>
+  <Column class="a"/>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`radius: Some(6.0)`,
+		`corners: Some(Radii { top_left: 6.0, top_right: 6.0, bottom_right: 0.0, bottom_left: 0.0 })`,
+		`corners: Some(Radii { top_left: 4.0, top_right: 8.0, bottom_right: 4.0, bottom_left: 8.0 })`,
+		`corners: Some(Radii { top_left: 1.0, top_right: 2.0, bottom_right: 3.0, bottom_left: 2.0 })`,
+		"import ui.draw.{ Radii }",
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	bad := filepath.Join(dir, "bad.lui")
+	if err := os.WriteFile(bad, []byte(strings.Replace(source, "radius: 1 2 3", "radius: 1 2 3 4 5", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := command(t, lui, bad).CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "bad.lui:9") || !strings.Contains(string(out), "a radius is one to four numbers") {
+		t.Errorf("five radii: %v\n%s", err, out)
 	}
 }
 

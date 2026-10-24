@@ -3301,6 +3301,151 @@ script double:X,Y in world: 'world' (anchor 13, caret 18)
 	}
 }
 
+// Each corner's radius (`Style.corners`, CSS's border-*-radius): an element's corners where a
+// rule set them, whatever another rule's `radius`; `radius` alone otherwise; and a rule's
+// `radius` after another's `corners` leaving the corners (the longhands are kept, as fields).
+func TestRun_UiCornerRadii(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new }
+import ui.draw.{ Size, Radii }
+import ui.text.{ fonts_new }
+import ui.style.{ light_theme, Sheet, Rule, Style }
+import ui.layout.{ Node, Laid, column, text, themed, tight, layout_cache }
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var ui = ui_new()
+  var cache = layout_cache::<i64>()
+  let sheet = Sheet {
+    rules: [
+      Rule { selector: ".round", style: Style { radius: Some(6.0) } },
+      Rule { selector: ".top", style: Style { corners: Some(Radii { top_left: 6.0, top_right: 6.0 }) } },
+      Rule { selector: ".top.later", style: Style { radius: Some(9.0) } },
+    ],
+  }
+  let view = themed::<i64>(light_theme(), sheet, [
+    column([
+      text::<i64>("a").with_class("round"),
+      text::<i64>("b").with_class("top round"),
+      text::<i64>("c").with_class("top later"),
+    ]),
+  ])
+  let laid = ui.frame_within(view, tight(Size { w: 200.0, h: 200.0 }), fonts, cache)
+  show(laid)
+  0
+}
+
+let show = (laid: Laid<i64>) -> void => {
+  if laid.class.len() > 0 {
+    let corners = match laid.style.corners {
+      Some(r) => "${r.top_left} ${r.top_right} ${r.bottom_right} ${r.bottom_left}",
+      None => "none",
+    }
+    println("${laid.class}: radius ${laid.style.radius}, corners ${corners}")
+  }
+  for child in laid.children { show(child.laid) }
+}
+`)
+	want := `round: radius 6, corners none
+top round: radius 6, corners 6 6 0 0
+top later: radius 9, corners 6 6 0 0
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A select's separators (ui/WINDOW.md §7, Termina's saved themes after its own): a rule
+// before each option listed, between the options in the list; each option keeps its index, so
+// a click below a rule chooses the option there, and the keys walk the options over it.
+func TestRun_UiSelectSeparators(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new, Found }
+import ui.script.{ script_platform, ScriptPlatform }
+import ui.backend.{ InputEvent, PointerMoved, PointerDown, PointerUp, Primary, KeyPressed, Modifiers, ArrowDown, Enter, Key }
+import ui.draw.{ Size, Point }
+import ui.text.{ Fonts, fonts_new }
+import ui.style.{ light_theme, Sheet }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, select, SelectSpec, themed, tight }
+
+struct Run {
+  ui: Ui,
+  cache: LayoutCache<i64>,
+  platform: ScriptPlatform,
+  chosen: i64 = 1,
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var run = Run { ui: ui_new(), cache: layout_cache(), platform: script_platform([], Size { w: 300.0, h: 400.0 }) }
+  play(run, fonts, click(where_is(run, fonts, "Select")))
+  println("open: ${rows(laid_out(run, fonts))}")
+  play(run, fonts, click(where_is(run, fonts, "Option", 2)))
+  println("clicked the third: ${run.chosen}")
+  play(run, fonts, click(where_is(run, fonts, "Select")))
+  play(run, fonts, click(where_is(run, fonts, "Option", 1)))
+  println("clicked the second: ${run.chosen}")
+  play(run, fonts, [...click(where_is(run, fonts, "Select")), ...key(ArrowDown), ...key(Enter)])
+  println("Down from the second, over the rule: ${run.chosen}")
+  0
+}
+
+let play = (run: mut Run, fonts: mut Fonts, inputs: []InputEvent) -> void => {
+  for input in inputs {
+    let laid = laid_out(run, fonts)
+    for e in run.ui.handle(laid, input, run.platform) { run.chosen = e }
+  }
+}
+
+let laid_out = (run: mut Run, fonts: mut Fonts) -> Laid<i64> =>
+  run.ui.frame_within(view(run), tight(Size { w: 300.0, h: 400.0 }), fonts, run.cache)
+
+let view = pure (run: Run) -> Node<i64> => themed::<i64>(light_theme(), Sheet {}, [
+  column([select(SelectSpec { options: ["Dark", "Light", "Mine"], selected: run.chosen, on_change: (k: i64) -> i64 => k, separators: [2] })]),
+])
+
+/// The list's rows top to bottom: each option by its text, a rule as ---.
+let rows = pure (laid: Laid<i64>) -> string => {
+  var out: []string = []
+  gather(laid, out)
+  out.join(" ")
+}
+
+let gather = (laid: Laid<i64>, out: mut []string) -> void => {
+  if laid.tag == "MenuSeparator" { out.push("---") }
+  if laid.tag == "Option" { out.push(laid.id.split("/:")[laid.id.split("/:").len() - 1]) }
+  for child in laid.children { gather(child.laid, out) }
+}
+
+/// The middle of element nth of those tagged tag.
+let where_is = (run: mut Run, fonts: mut Fonts, tag: string, nth: i64 = 0) -> Point => {
+  var found: []Point = []
+  find_all(laid_out(run, fonts), Point {}, tag, found)
+  if nth < found.len() { found[nth] } else { Point { x: -1.0, y: -1.0 } }
+}
+
+let find_all = (laid: Laid<i64>, origin: Point, tag: string, out: mut []Point) -> void => {
+  if laid.tag == tag { out.push(Point { x: origin.x + laid.size.w / 2.0, y: origin.y + laid.size.h / 2.0 }) }
+  for child in laid.children { find_all(child.laid, Point { x: origin.x + child.at.x, y: origin.y + child.at.y }, tag, out) }
+}
+
+let click = pure (at: Point) -> []InputEvent =>
+  [PointerMoved(at), PointerDown(Primary, at, 1), PointerUp(Primary, at)]
+
+let key = pure (k: Key) -> []InputEvent => [KeyPressed(k, Modifiers {})]
+`)
+	want := `open: 0 1 --- 2
+clicked the third: 2
+clicked the second: 1
+Down from the second, over the rule: 2
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // A select (HTML's <select>): a click opens its list over what is below it — a click where
 // the list covers a button chooses the option there, not the button — and a click on an
 // option chooses it, closes the list and leaves the focus on the select; a click elsewhere
@@ -4264,9 +4409,9 @@ no menus: 0 handed over
 }
 
 // A tab bar (WINDOW.md §3): tabs as wide as their labels where they fit; shrunk together, none
-// below TAB_LEAST, where they do not; past that the strip scrolls, the selected tab scrolled into
-// view as it changes, and the wheel (down, as a mouse's turns) scrolls it across — it shows no
-// bar. A press selects a tab, on its × closes it — the focus left where it was — a middle click closes one (not
+// below TAB_LEAST, where they do not; past that as many as fit — the selected among them — and
+// the more-tabs button, whose menu lists the rest, one chosen as a press on it would (open
+// question 2). A press selects a tab, on its × closes it — the focus left where it was — a middle click closes one (not
 // Home, which is not closable); a drag past a neighbour's middle moves it, never past Home, which
 // is not movable, and the press stays on the tab through the move; the arrows, Home and End
 // select along the strip with the focus. Heard as a tab list of tabs.
@@ -4274,7 +4419,7 @@ func TestRun_UiTabs(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new, find, Found }
 import ui.script.{ script_platform, ScriptPlatform }
-import ui.backend.{ InputEvent, PointerMoved, PointerDown, PointerUp, Primary, Middle, KeyPressed, Scrolled, Key, Modifiers, ArrowRight, Home, End, AxTabList, AxTab }
+import ui.backend.{ InputEvent, PointerMoved, PointerDown, PointerUp, Primary, Middle, KeyPressed, Key, Modifiers, ArrowRight, Home, End, AxTabList, AxTab }
 import ui.access.{ access_tree }
 import ui.draw.{ Size, Point, Rect }
 import ui.text.{ Fonts, fonts_new }
@@ -4306,15 +4451,11 @@ let main = () -> u8 => {
   }
   run.selected = 15
   let _ = widths(run, fonts, "16 tabs, the last selected", own)
-  play(run, fonts, [PointerMoved(tab_middle(run, fonts, 15)), Scrolled(0.0, -40.0)])
-  let back = match strip_of(laid_out(run, fonts), Point {}) {
-    Some(f) => match f.laid.scroller {
-      Some(sc) => sc.offset.x < 0.5 && sc.content.w > sc.port.w,
-      None => false,
-    },
-    None => false,
-  }
-  println("the wheel turned up over the strip: scrolled back to its start ${back}")
+  play(run, fonts, click(tagged_middle(laid_out(run, fonts), Point {}, "TabsMore")))
+  let items = count_tagged(laid_out(run, fonts), "MenuItem")
+  play(run, fonts, click(tagged_middle(laid_out(run, fonts), Point {}, "MenuItem")))
+  println("the more-tabs menu: ${items} items, the first chosen: [${run.events.join(", ")}], selected ${run.names[run.selected]}")
+  run.events = []
 
   run.names = ["Home", "One", "Two", "Three", "Four"]
   run.selected = 0
@@ -4363,8 +4504,8 @@ let main = () -> u8 => {
 
 /// How the strip laid the tabs out — whether the documents' tabs (Home's label is shorter than
 /// TAB_LEAST, and never grows to it) are narrower than own, the widest they were with room,
-/// and none below TAB_LEAST; whether it scrolls; whether the selected tab is in view — and the
-/// widest document's tab.
+/// and none below TAB_LEAST; how many it shows, and whether the more-tabs button; whether the
+/// selected tab is in view — and the widest document's tab.
 let widths = (run: mut Run, fonts: mut Fonts, name: string, own: f32) -> f32 => {
   let laid = laid_out(run, fonts)
   let Some(strip) = strip_of(laid, Point {}) else { return 0.0 }
@@ -4383,12 +4524,11 @@ let widths = (run: mut Run, fonts: mut Fonts, name: string, own: f32) -> f32 => 
       }
     }
   }
-  let scrolls = match strip.laid.scroller {
-    Some(sc) => sc.content.w > sc.port.w + 0.5,
-    None => false,
-  }
+  var shown = 0
+  for c in strip.laid.children { if let Tabbed(_) = c.laid.kind { shown += 1 } }
+  let more = strip.laid.children.any((c) => c.laid.tag == "TabsMore")
   let shrunk = own > 0.0 && widest < own - 0.5
-  println("${name}: narrowest ${if least >= TAB_LEAST - 0.5 { "at least TAB_LEAST" } else { "below TAB_LEAST" }}, shrunk ${shrunk}, scrolls ${scrolls}, the selected in view ${seen}")
+  println("${name}: narrowest ${if least >= TAB_LEAST - 0.5 { "at least TAB_LEAST" } else { "below TAB_LEAST" }}, shrunk ${shrunk}, ${shown} shown, the more-tabs button ${more}, the selected in view ${seen}")
   if own > 0.0 { own } else { widest }
 }
 
@@ -4455,6 +4595,23 @@ let strip_of = pure (laid: Laid<Ev>, origin: Point) -> Maybe<Found<Ev>> => {
   None
 }
 
+/// The middle of the first element tagged tag, in the window.
+let tagged_middle = pure (laid: Laid<Ev>, origin: Point, tag: string) -> Point => {
+  if laid.tag == tag { return Point { x: origin.x + laid.size.w / 2.0, y: origin.y + laid.size.h / 2.0 } }
+  for child in laid.children {
+    let p = tagged_middle(child.laid, Point { x: origin.x + child.at.x, y: origin.y + child.at.y }, tag)
+    if p.x >= 0.0 { return p }
+  }
+  Point { x: -1.0, y: -1.0 }
+}
+
+/// How many elements are tagged tag.
+let count_tagged = pure (laid: Laid<Ev>, tag: string) -> i64 => {
+  var n = if laid.tag == tag { 1 } else { 0 }
+  for child in laid.children { n += count_tagged(child.laid, tag) }
+  n
+}
+
 /// Tab i's box in the window.
 let box_of = (run: mut Run, fonts: mut Fonts, i: i64) -> Rect => {
   let Some(strip) = strip_of(laid_out(run, fonts), Point {}) else { return Rect {} }
@@ -4484,11 +4641,11 @@ let click = pure (at: Point) -> []InputEvent =>
 
 let key = pure (k: Key) -> []InputEvent => [KeyPressed(k, Modifiers {})]
 `)
-	want := `4 tabs: narrowest at least TAB_LEAST, shrunk false, scrolls false, the selected in view true
-8 tabs: narrowest at least TAB_LEAST, shrunk true, scrolls false, the selected in view true
-16 tabs: narrowest at least TAB_LEAST, shrunk true, scrolls true, the selected in view true
-16 tabs, the last selected: narrowest at least TAB_LEAST, shrunk true, scrolls true, the selected in view true
-the wheel turned up over the strip: scrolled back to its start true
+	want := `4 tabs: narrowest at least TAB_LEAST, shrunk false, 4 shown, the more-tabs button false, the selected in view true
+8 tabs: narrowest at least TAB_LEAST, shrunk true, 8 shown, the more-tabs button false, the selected in view true
+16 tabs: narrowest at least TAB_LEAST, shrunk true, 8 shown, the more-tabs button true, the selected in view true
+16 tabs, the last selected: narrowest at least TAB_LEAST, shrunk true, 8 shown, the more-tabs button true, the selected in view true
+the more-tabs menu: 8 items, the first chosen: [Selected(0)], selected Home
 press Two: [Selected(2)] Home One Two Three Four, selected Two, focus Two
 press Three's ×: [Closed(3)] Home One Two Four, selected Two, focus Two
 middle click One: [Closed(1)] Home Two Four, selected Four, focus Two
@@ -4508,7 +4665,7 @@ heard: 4 tabs
 
 // examples/ui/tabs.lyra played: a press selects Document 2, a drag moves Document 1 past it,
 // and Document 3's × closes it; then, from the keyboard, + pressed nine times, the strip shrinking
-// and scrolling. The last frame is written.
+// and then holding the rest in its more-tabs menu. The last frame is written.
 func TestRun_UiTabsExample(t *testing.T) {
 	t.Parallel()
 	skipWithoutText(t)
@@ -5643,17 +5800,19 @@ frame 4, MM: on 0×2; 3 pages, 2 emptied, 3 uploaded, 2 cleared, 5 rendered
 // picks (500 the 400, 600 and 900 the 700, 100 and 350 the 300), the italic face for italic,
 // a family's only face whatever is asked, the first family's for an unknown one; what the
 // family lacks made once — a 700 italic the italic emboldened, a regular-only family's bold
-// and italic drawn wider than its regular; a glyph hinted another way rendered again; and a
-// font's metrics through `MeasureFont`, the advance whole while glyphs are hinted. Where the
+// and italic drawn wider than its regular; a glyph hinted another way rendered again; faces
+// loaded while the app runs (`LoadFonts`), true for a file that is a font and false for one
+// that is not there; and the loaded family's metrics through `MeasureFont`, the advance whole
+// while glyphs are hinted. Where the
 // machine has a variable font, its 700 is its own instance — wider, not emboldened — and a
 // weight past its axis its heaviest.
 func TestRun_UiFontFaces(t *testing.T) {
 	t.Parallel()
-	program := `import ui.app.{ App, sandbox, host_of, Command, MeasureFont }
+	program := `import ui.app.{ App, sandbox, host_of, Command, MeasureFont, LoadFonts }
 import ui.script.{ timed_platform, parse_steps }
 import ui.backend.{ Renderer }
 import ui.draw.{ Point, Size, Color, TextureId }
-import ui.text.{ Fonts, FontSpec, FontMetrics, GlyphAtlas, fonts_new, glyph_atlas, SYSTEM_FONTS }
+import ui.text.{ Fonts, FontSpec, FontMetrics, FontFile, GlyphAtlas, fonts_new, glyph_atlas, SYSTEM_FONTS }
 import ui.layout.{ Node, button, sized }
 import bindings.freetype.{ HintNone, HintLight }
 
@@ -5687,7 +5846,15 @@ let ink_width = (fonts: mut Fonts, spec: FontSpec) -> i64 => {
   if renderer.widths.len() == 0 { -1 } else { renderer.widths[0] }
 }
 
-data Ev = Measure | Measured(FontMetrics)
+data Ev = Measure | MissingLoaded(bool) | Loaded(bool) | Measured(FontMetrics)
+
+/// What the app heard: whether the missing file loaded, whether the real one did, and the
+/// loaded family's metrics.
+struct Probe {
+  missing: bool = true,
+  loaded: bool = false,
+  metrics: Maybe<FontMetrics> = None,
+}
 
 let main = () -> u8 => {
   var fonts = fonts_new()
@@ -5729,21 +5896,25 @@ let main = () -> u8 => {
   plain.hinting = HintNone
   let _ = atlas.glyphs(plain, renderer, block, Point {}, 1.0, Color { r: 0, g: 0, b: 0 })
   println("  rendered ${renderer.widths.len()} times")
-  println("metrics, through MeasureFont:")
+  println("faces loaded while the app runs, and measured:")
   plain.hinting = HintLight
   let app = App {
     sandbox(view, update, Color { r: 0, g: 0, b: 0 }) |
-    update: (s: Maybe<FontMetrics>, e: Ev) -> (Maybe<FontMetrics>, []Command<Ev>) => match e {
-      Measure => (s, [MeasureFont(FontSpec { family: "p", size: 13.0 }, Measured)]),
-      Measured(m) => (Some(m), []),
+    update: (s: Probe, e: Ev) -> (Probe, []Command<Ev>) => match e {
+      Measure => (s, [LoadFonts([FontFile { family: "q", path: "/no/such/font.ttf" }], MissingLoaded)]),
+      MissingLoaded(ok) => (Probe { s | missing: ok }, [LoadFonts([FontFile { family: "q", path: path, weight: 700 }], Loaded)]),
+      Loaded(ok) => (Probe { s | loaded: ok }, [MeasureFont(FontSpec { family: "q", size: 13.0, weight: 700 }, Measured)]),
+      Measured(m) => (Probe { s | metrics: Some(m) }, []),
     },
   }
-  let Ok(steps) = parse_steps("click:20,10") else { return 2 }
+  // A pass for each command of the chain: the missing load, the real one, the measuring.
+  let Ok(steps) = parse_steps("click:20,10 wait:10 wait:10 wait:10") else { return 2 }
   var platform = timed_platform(steps, Size { w: 200.0, h: 100.0 })
-  var host = host_of(app, None, platform)
+  var host = host_of(app, Probe {}, platform)
   var paint = Widths {}
   while host.step(platform, paint, plain) {}
-  let Some(m) = host.state else {
+  println("  a missing file loaded ${host.state.missing}, a font file ${host.state.loaded}, its family ${plain.faces.any((f) => f.family == "q")}")
+  let Some(m) = host.state.metrics else {
     println("  never measured")
     return 0
   }
@@ -5752,9 +5923,9 @@ let main = () -> u8 => {
   0
 }
 
-let view = pure (_: Maybe<FontMetrics>) -> Node<Ev> => sized(Some(100.0), Some(30.0), [button("measure", Measure)])
+let view = pure (_: Probe) -> Node<Ev> => sized(Some(100.0), Some(30.0), [button("measure", Measure)])
 
-let update = pure (s: Maybe<FontMetrics>, _: Ev) -> Maybe<FontMetrics> => s
+let update = pure (s: Probe, _: Ev) -> Probe => s
 `
 	variable := `  var varied = fonts_new()
   if varied.add("v", "VARIABLE_PATH") {
@@ -5780,7 +5951,8 @@ what the family lacks, made once:
   a made bold is wider: true; a made italic is wider: true; a 500 is the regular: true
 a glyph hinted another way is another glyph:
   rendered 2 times
-metrics, through MeasureFont:
+faces loaded while the app runs, and measured:
+  a missing file loaded false, a font file true, its family true
   ascent true, descent true, advance true and whole true, underline below true and true thick, strikeout above true and true thick
 `
 	// A variable font with a weight axis, where there is one.

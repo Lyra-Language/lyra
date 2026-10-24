@@ -9,6 +9,28 @@ Newest first.
 
 ## Dated log
 
+### 10/23/26 — `ui`: Termina's Settings tab on it — a font loaded while the app runs, a select's rules
+
+- **termina-ui's Settings tab is `ui`-target markup** (`termina/src/settings_page.lui`, step
+  9's second part): selects for the family and the theme, sliders with their values beside
+  them, the theme's name and buttons, swatches in groups that wrap, and Other Font File…
+  through `ChooseFile`.
+- **`Command.LoadFonts`**: a family the user picks has to reach the window's `Fonts`, which
+  the host owns. The host adds the faces at its next pass, before it measures anything, so
+  a `LoadFonts` followed by a `MeasureFont` of the new family is answered in one pass.
+- **`SelectSpec.separators`**: Termina's saved themes follow its own after a rule. The rule
+  is keyed as no option is, so `option_of` and the keys, which count options, never see it.
+- **Tabs past the strip go into a more-tabs menu** (`ui/WINDOW.md`'s open question 2, the
+  user's answer): shrunk to `TAB_LEAST`, then as many as fit beside an arrow listing the rest,
+  rather than a strip that scrolls them out of sight. The menu's items call each tab's
+  `on_select`, so it is made at layout; `refreshed` lost its `pure` to make it again from a
+  cached strip's fresh nodes, since a pure function may not call a stored function even where
+  its type says `pure`.
+- **`Style.corners`**, each corner's radius (CSS's `border-*-radius`; lui's `radius` with two
+  to four numbers): Termina's tabs are rounded only above, standing on the terminal. Kept as a
+  field of its own beside `radius`, so a rule's `corners` holds whatever another's `radius`
+  says — CSS's later shorthand would win; no rule here needs it to.
+
 ### 10/23/26 — `ui`: Termina's tabs and menus on it, and two fixes they found
 
 - **termina-ui has the tab bar, the menus and, off a Mac, a header bar** (`ui/WINDOW.md`

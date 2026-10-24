@@ -204,6 +204,16 @@ pub let offset_at_x = pure (block: TextBlock, x: f32, length: i64) -> i64 => {
 pub let fonts_new = pure () -> Fonts =>
   Fonts { made: hashmap_new(), laid: hashmap_new(), older: hashmap_new() }
 
+/// A face to load into a family ([Fonts.add]): its file, the face's index in a collection,
+/// its weight and whether it is italic — what `ui.app`'s `LoadFonts` adds while a program runs.
+pub struct FontFile {
+  family: string,
+  path: string,
+  index: i64 = 0,
+  weight: i64 = 400,
+  italic: bool = false,
+}
+
 /// The font files tried by [Fonts.add_system_font], in order: macOS's, then the common
 /// places Linux distributions keep DejaVu Sans.
 pub const SYSTEM_FONTS: []string = [
