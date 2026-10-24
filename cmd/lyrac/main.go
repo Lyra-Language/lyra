@@ -673,7 +673,31 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 // platform's own `.pc` files there (platformPkgFlags) — in full, since a static library's
 // needs are part of the answer: SDL3 for iOS is `-lSDL3` and seventeen frameworks
 // (`tools/sdl3-ios.sh` installs it so).
+//
+// **On Linux the libraries are one group** (`--start-group … --end-group`): the links are a
+// sorted set (`collectLinks`), and GNU ld resolves a static archive only against what came
+// before it, so `-lfreetype -lharfbuzz` — two static archives a release links (Termina's
+// `tools/textlibs.sh`) — left HarfBuzz's calls into FreeType undefined. In a group the linker
+// goes round until nothing more resolves; macOS's linker needs no such thing.
 func linkFlags(res *driver.Result, p target.Platform) []string {
+	flags := libraryFlags(res, p)
+	if p.OS != "linux" {
+		return flags
+	}
+	// The -L flags first, then the libraries grouped.
+	var dirs, libs []string
+	for _, f := range flags {
+		if strings.HasPrefix(f, "-L") || strings.HasPrefix(f, "-Wl,-rpath") {
+			dirs = append(dirs, f)
+		} else {
+			libs = append(libs, f)
+		}
+	}
+	return append(append(dirs, "-Wl,--start-group"), append(libs, "-Wl,--end-group")...)
+}
+
+// libraryFlags is [linkFlags]'s directories and libraries, in the order found.
+func libraryFlags(res *driver.Result, p target.Platform) []string {
 	flags := []string{}
 	seenDir := map[string]bool{}
 	if !p.IsMachine() {

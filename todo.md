@@ -699,13 +699,10 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   and 3 (faces, metrics, hinting), 4 (fallback) and 5 (`PaintCells`, `PaintWave`) are built
   (10/22), 6 (raw input) and 7 (`Readable`, `scroll_follow`, `ScrollTo`) 10/23, and step 8's
   first half 10/23: `termina-ui` beside the ImGui app.
-- **[OPEN] What a terminal's window needs of `ui`** — popups, menus (drawn, and native on a
-  Mac), a tab bar, the window's controls and a drawn title bar, a file dialog, colour; designed
-  in `ui/WINDOW.md` (10/23), the rest of Termina's move off ImGui. Steps 1 (popups, the
-  select's list on them), 2 (menus drawn), 3 (menus native on a Mac), 4 (the tab bar), 5 (the
-  window's controls, a drawn title bar), 6 (a file dialog), 7 (colour) and 8 (lui's elements,
-  `Fragment`) built 10/23; step 9's tab bar, menus, header bar and Settings tab in termina-ui
-  10/23; the releases' move next.
+- **[DONE 10/23] What a terminal's window needs of `ui`** — popups, menus (drawn, and native
+  on a Mac), a tab bar, the window's controls and a drawn title bar, a file dialog, colour,
+  lui's elements; and Termina moved onto them, its releases built from `ui` and the ImGui
+  front end gone (`ui/WINDOW.md`, COMPLETED.md 10/23).
 - **[OPEN] `ui`: a drawn title bar wants trying on a Linux desktop** — SDL's hit test calling
   `bindings.hittest` for a borderless window (moving it, its edges resizing it) is untested:
   the dummy driver refuses a hit test. And its double click: SDL starts a move at the press, so

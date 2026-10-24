@@ -239,7 +239,7 @@ Termina moves at the end.
    10/23**; their lui elements wait for step 8.
 3. **Menus native**: `App.menus` installed through `bindings.menubar` on a Mac, synced,
    reinstalled on a change of shape; `menubar.m` pushing its event. Checked by a test that
-   installs and reads back, as Termina's `menutest` does. **Built 10/23.**
+   installs and reads back, as Termina's `menutest` did. **Built 10/23.**
 4. **The tab bar**: order by `on_move`, keys, closing, shrinking and scrolling. **Built
    10/23**; its lui element waits for step 8.
 5. **The window**: the commands, `OnWindowState`, `DrawnTitleBar` with its hit-test shim and
@@ -258,8 +258,10 @@ Termina moves at the end.
    ImGui front end and `uitest` go. **The tab bar, the menus and the header bar built 10/23**
    (`termina/src/face/window.lyra`; the header bar off every Mac, there being no third
    platform), **and the Settings tab** (`termina/src/settings_page.lui`; a family loaded
-   while the app runs by `LoadFonts`, the theme list's rules `SelectSpec.separators`); the
-   move of the releases next.
+   while the app runs by `LoadFonts`, the theme list's rules `SelectSpec.separators`); and
+   **the move, 10/23**: `Termina.app` and the Linux releases are built from it (FreeType and
+   HarfBuzz built static for them, `termina/tools/textlibs.sh`), and the ImGui front end,
+   uitest and menutest are gone, uitest's checks moved to vttest and scripted ones.
 
 ## 9. Open questions
 

@@ -9,6 +9,29 @@ Newest first.
 
 ## Dated log
 
+### 10/23/26 — Termina's releases built on `ui`, its ImGui front end gone
+
+- **`Termina.app` and the Linux releases are built from the `ui` front end** (`ui/WINDOW.md`
+  step 9's last part): `termina-ui` became `termina`, and the ImGui front end (`gui`, the
+  menus, the old Settings view), `uitest` and `menutest` were removed. uitest's checks of
+  the window's logic — the theme, sessions, mouse reports, Meta and bright bold, lines typed
+  ahead — moved to vttest; what it checked through ImGui's window is now `tools/check.sh`'s
+  scripted runs, with the command line at zsh's prompt added (arrows, Home, Ctrl+U, Tab
+  completing, history).
+- **FreeType and HarfBuzz are built static for a release** (`termina/tools/textlibs.sh`):
+  `ui` shapes and rasterises with them, which ImGui's archive had carried inside itself.
+  Homebrew's are shared and built for the Mac they run on, and a Linux desktop may have any
+  version, or none. Both are pinned and SHA-256 checked, with no optional dependencies;
+  HarfBuzz is its amalgamated `harfbuzz.cc` without exceptions, RTTI or thread-safe statics,
+  so it needs no C++ runtime and links into a C program. `package.sh` refuses a Linux
+  program that links either as a shared library.
+- **On Linux lyrac links a program's libraries as one group** (`-Wl,--start-group …
+  --end-group`, `cmd/lyrac`'s `linkFlags`). The `-l`s are a sorted set, so `-lfreetype`
+  comes before `-lharfbuzz`, which calls into it. Shared libraries don't mind the order, but
+  two static archives do: GNU ld reads an archive once, left to right. The search
+  directories stay outside the group. macOS's linker resolves archives in any order and
+  gets no group.
+
 ### 10/23/26 — `ui`: Termina's Settings tab on it — a font loaded while the app runs, a select's rules
 
 - **termina-ui's Settings tab is `ui`-target markup** (`termina/src/settings_page.lui`, step

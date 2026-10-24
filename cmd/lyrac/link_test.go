@@ -11,14 +11,23 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/target"
 )
 
+// grouped is the libraries `libs` as the machine links them: in a group on Linux
+// (`linkFlags`), as they are elsewhere.
+func grouped(libs string) string {
+	if mustMachine().OS == "linux" {
+		return "-Wl,--start-group " + libs + " -Wl,--end-group"
+	}
+	return libs
+}
+
 // The link line: `-lm` unconditionally, plus one `-l` per library an `extern`'s `@link`
 // named. A requirement rides the declaration that has it, so a module needing zlib says so
 // once and every program reaching it links zlib — which a CLI flag could not do, since a
 // module's requirement would not compose into its callers' build.
 func TestLinkFlags_AddsOneFlagPerLinkedLibrary(t *testing.T) {
 	res := &driver.Result{Links: []string{"curl", "z"}}
-	if got := strings.Join(linkFlags(res, mustMachine()), " "); got != "-lm -lcurl -lz" {
-		t.Errorf("linkFlags = %q; want \"-lm -lcurl -lz\"", got)
+	if got, want := strings.Join(linkFlags(res, mustMachine()), " "), grouped("-lm -lcurl -lz"); got != want {
+		t.Errorf("linkFlags = %q; want %q", got, want)
 	}
 }
 
@@ -26,14 +35,36 @@ func TestLinkFlags_AddsOneFlagPerLinkedLibrary(t *testing.T) {
 // intrinsics, and a program that also names it explicitly is asking for what it has.
 func TestLinkFlags_DoesNotRepeatLibm(t *testing.T) {
 	res := &driver.Result{Links: []string{"m"}}
-	if got := strings.Join(linkFlags(res, mustMachine()), " "); got != "-lm" {
-		t.Errorf("linkFlags = %q; want \"-lm\"", got)
+	if got, want := strings.Join(linkFlags(res, mustMachine()), " "), grouped("-lm"); got != want {
+		t.Errorf("linkFlags = %q; want %q", got, want)
 	}
 }
 
 func TestLinkFlags_NothingAskedIsJustLibm(t *testing.T) {
-	if got := strings.Join(linkFlags(&driver.Result{}, mustMachine()), " "); got != "-lm" {
-		t.Errorf("linkFlags = %q; want \"-lm\"", got)
+	if got, want := strings.Join(linkFlags(&driver.Result{}, mustMachine()), " "), grouped("-lm"); got != want {
+		t.Errorf("linkFlags = %q; want %q", got, want)
+	}
+}
+
+// On Linux the libraries are one group, so two static archives link whatever their order —
+// `collectLinks` sorts them, putting FreeType before HarfBuzz, which calls into it — and the
+// search directories stay before it; on macOS, whose linker needs none, no group.
+func TestLinkFlags_GroupsTheLibrariesOnLinux(t *testing.T) {
+	res := &driver.Result{Links: []string{"freetype", "harfbuzz"}}
+	linux, err := target.PlatformNamed("linux-x86_64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(linkFlags(res, linux), " ")
+	if !strings.HasSuffix(got, "-Wl,--start-group -lm -lfreetype -lharfbuzz -Wl,--end-group") {
+		t.Errorf("Linux's link = %q; want the libraries grouped at its end", got)
+	}
+	mac, err := target.PlatformNamed("macos-arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(linkFlags(res, mac), " "); strings.Contains(got, "group") {
+		t.Errorf("a Mac's link = %q; want no group", got)
 	}
 }
 
@@ -59,7 +90,7 @@ let main = () -> u8 => {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
 	}
-	if !strings.Contains(stdout, "-lm -lz -o") {
+	if !strings.Contains(stdout, grouped("-lm -lz")+" -o") {
 		t.Errorf("the compile hint should name every linked library:\n%s", stdout)
 	}
 }
@@ -85,7 +116,7 @@ func TestLinkFlags_AddsThePackagesLibraryDirectories(t *testing.T) {
 		Links:    []string{"SDL3", "SDL3_image"},
 		Packages: []string{"missing", "sdl3", "sdl3-image"},
 	}
-	want := "-L/opt/brew/lib -L/opt/brew/Cellar/sdl3_image/lib -lm -lSDL3 -lSDL3_image"
+	want := "-L/opt/brew/lib -L/opt/brew/Cellar/sdl3_image/lib " + grouped("-lm -lSDL3 -lSDL3_image")
 	if got := strings.Join(linkFlags(res, mustMachine()), " "); got != want {
 		t.Errorf("linkFlags = %q; want %q", got, want)
 	}
@@ -102,7 +133,7 @@ func TestLinkFlags_SearchesTheInstallsLibFirst(t *testing.T) {
 		return []string{"/opt/brew/lib", "/opt/lyra/lib"}, nil
 	}
 	res := &driver.Result{Links: []string{"lyra-menubar", "SDL3"}, Packages: []string{"sdl3"}}
-	want := "-L/opt/lyra/lib -L/opt/brew/lib -lm -llyra-menubar -lSDL3"
+	want := "-L/opt/lyra/lib -L/opt/brew/lib " + grouped("-lm -llyra-menubar -lSDL3")
 	if got := strings.Join(linkFlags(res, mustMachine()), " "); got != want {
 		t.Errorf("linkFlags = %q; want %q", got, want)
 	}
@@ -121,14 +152,14 @@ func TestLinkFlags_AnInstallsSharedLibraryIsFoundAtRunTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := &driver.Result{Links: []string{"SDL3"}, Packages: []string{"sdl3"}}
-	want := "-L" + dir + " -lm -lSDL3"
+	want := "-L" + dir + " " + grouped("-lm -lSDL3")
 	if got := strings.Join(linkFlags(res, mustMachine()), " "); got != want {
 		t.Errorf("archives only: linkFlags = %q; want %q", got, want)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "libSDL3.dylib"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	want = "-L" + dir + " -Wl,-rpath," + dir + " -lm -lSDL3"
+	want = "-L" + dir + " -Wl,-rpath," + dir + " " + grouped("-lm -lSDL3")
 	if got := strings.Join(linkFlags(res, mustMachine()), " "); got != want {
 		t.Errorf("with a shared library: linkFlags = %q; want %q", got, want)
 	}

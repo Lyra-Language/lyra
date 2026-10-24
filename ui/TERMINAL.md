@@ -362,7 +362,8 @@ the end.
    framework-free (`session`, `term`), ImGui's drawing moved to `gui`, and `face` painting
    them on `ui` as `build/termina-ui` — the tabs as buttons, the Mac's menus not yet, the
    settings read but not edited; played headless by `--script` and checked by
-   `termina/tools/termina-ui-check.sh`. **The painter scrolls itself** (question 3): its
+   `termina/tools/termina-ui-check.sh` (since the ImGui front end went, 10/23, `build/termina`
+   and `tools/check.sh`). **The painter scrolls itself** (question 3): its
    columns and rows are the view's, which a scroller's content never learns, and the box
    sits at the view's foot wherever it is scrolled. It found that two modules' same-named
    types shared one retain glue (and, where the holder could see neither name, one drop

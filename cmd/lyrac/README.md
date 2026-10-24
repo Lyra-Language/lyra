@@ -35,7 +35,10 @@ lyrac run --target linux-arm64 prog.lyra     # run there: the Simulator, or Dock
   `<root>/lib` when it exists (`installLibDir` — where `build.sh` puts a binding's shim
   archive), then pkg-config's for each `pkg:`. A shared library in that `lib/` adds an rpath
   to it (`holdsSharedLibrary`), so the program finds it when it runs: Vega's release ships
-  SDL3 there on macOS. The workspace's `lib/` holds archives only.
+  SDL3 there on macOS. The workspace's `lib/` holds archives only. **On Linux the libraries
+  are one group** (`-Wl,--start-group … --end-group`): the links are a sorted set, and two
+  static archives where one calls the other (FreeType and HarfBuzz, as Termina's release links
+  them) need no order then.
 - **`-o` and the `.ll`** (`llPath`): the `.ll` goes beside the executable `-o` names; under
   `--emit-llvm`, `-o` names the `.ll` itself.
 - **Default `-O2`**: no debug info is emitted at any level, so `-O0` buys nothing. The level
