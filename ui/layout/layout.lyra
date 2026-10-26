@@ -295,6 +295,9 @@ pub struct SelectSpec<e> {
   /// The options a rule goes before in the list, by index: groups of them, as a saved theme
   /// after the built-in ones.
   separators: []i64 = [],
+  /// Each option's font family, by index (`""`, or none past the end, for the select's own):
+  /// a font's name in that font, in the list and on the select when it is the one chosen.
+  option_families: []string = [],
 }
 
 /// A text field's value — the program's, set from its state each frame — the text shown while
@@ -546,7 +549,8 @@ pub let select<e> = pure (spec: SelectSpec<e>) -> Node<e> => {
   let texts = stack::<e>([
     i in 0..<spec.options.len() |
       text::<e>(spec.options[i]).with_style(Style {
-        opacity: Some(if i == spec.selected { 1.0 } else { 0.0 })
+        opacity: Some(if i == spec.selected { 1.0 } else { 0.0 }),
+        font_family: option_family(spec, i),
       })
   ])
   let face = row::<e>([expanded::<e>(texts), select_arrow::<e>()])
@@ -555,13 +559,21 @@ pub let select<e> = pure (spec: SelectSpec<e>) -> Node<e> => {
   Node { kind: Choosing(spec), tag: "Select", children: [face] }
 }
 
+/// Option `i`'s own family, if `spec` gives it one.
+let option_family = pure (spec: SelectSpec<e>, i: i64) -> Maybe<string> =>
+  if i < spec.option_families.len() && spec.option_families[i] != "" {
+    Some(spec.option_families[i])
+  } else { None }
+
 /// A select's arrow: a small triangle pointing down, drawn as bars narrowing to its tip — the
 /// display list has no paths, and the system font no arrow worth the name. Each bar is the
 /// `Select::arrow` part, so a sheet colours it with `background`.
 let select_arrow<e> = pure () -> Node<e> => {
   let widths: []f32 = [10.0, 8.0, 6.0, 4.0, 2.0]
+  // Centred down it too: the column takes the row's height, and its bars at its top sat above
+  // the text's middle.
   column::<e>([w in widths | sized::<e>(Some(w), Some(1.2)).with_part("arrow")])
-    .aligned(MainStart, CrossCenter)
+    .aligned(MainCenter, CrossCenter)
 }
 
 /// A popup: `anchor` in its place, and while `open` — the program's to say — `content`
@@ -699,6 +711,7 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
     selected: spec.selected,
     on_change: (i: i64) -> b => f((spec.on_change)(i)),
     separators: spec.separators,
+    option_families: spec.option_families,
   }),
   PopsUp(open, side, dismissed) => PopsUp(open, side, f(dismissed)),
   Opens(spec) => Opens(MenuSpec { entries: mapped_entries(spec.entries, f), side: spec.side, in_bar: spec.in_bar }),
@@ -1982,7 +1995,7 @@ let lay_select<e> = (
       tag: "Option",
       part: "option",
       key: "${i}",
-      children: [text::<e>(spec.options[i])],
+      children: [text::<e>(spec.options[i]).with_style(Style { font_family: option_family(spec, i) })],
     })
   }
   // Scrolling where it is longer than the window has room for (`ui.interact` keeps the

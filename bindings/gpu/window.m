@@ -176,6 +176,7 @@ static bool backdrop_blur(NSWindow *ns, int32_t radius) {
         view = [[LyraBackdrop alloc] initWithFrame:content.bounds];
         view.wantsLayer = YES;
         view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        // At the very bottom: under any regions view (`set_backdrop_regions`) too.
         [content addSubview:view positioned:NSWindowBelow relativeTo:nil];
         objc_setAssociatedObject(ns, &backdrop_key, view, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
@@ -192,6 +193,109 @@ static bool backdrop_blur(NSWindow *ns, int32_t radius) {
         return false;
     }
     return true;
+}
+
+// What blurs the desktop behind parts of a see-through window, each at its own radius: a
+// program's frosted panels (`ui.gpu`'s `Backdrop` ops, cut to their clips). A view above the
+// window's own backdrop and below its content, a backdrop layer a region in it, rounded as
+// the region is; layers of one radius share one capture (`groupName`). It takes no clicks.
+@interface LyraRegions : NSView
+@end
+
+@implementation LyraRegions
+- (BOOL)isFlipped { return YES; }
+- (NSView *)hitTest:(NSPoint)point { return nil; }
+@end
+
+static char regions_key;
+
+// `set_backdrop_regions`: the regions, nine floats each — x, y, width, height in points from the
+// window's content's top-left, the top-left, top-right, bottom-right and bottom-left radii,
+// and the blur — the layers made, moved or let go to match. None on a window that is opaque,
+// whose desktop does not show; false where Core Animation's private classes are not there.
+bool lyra_gpu_set_backdrop_regions(SDL_Window *window, const float *regions, int32_t count) {
+    NSWindow *ns = cocoa_window(window);
+    if (!ns || !ns.contentView) return false;
+    Class backdrop_class = NSClassFromString(@"CABackdropLayer");
+    Class filter_class = NSClassFromString(@"CAFilter");
+    SEL make_filter = NSSelectorFromString(@"filterWithType:");
+    if (!backdrop_class || !filter_class || ![filter_class respondsToSelector:make_filter]) return false;
+    if (ns.opaque) count = 0;
+    LyraRegions *view = objc_getAssociatedObject(ns, &regions_key);
+    if (count == 0 && !view) return true;
+    NSView *content = ns.contentView;
+    if (!view) {
+        view = [[LyraRegions alloc] initWithFrame:content.bounds];
+        view.wantsLayer = YES;
+        // Its layers placed from the top-left, as the view's own points are.
+        view.layer.geometryFlipped = YES;
+        view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        objc_setAssociatedObject(ns, &regions_key, view, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    // Above the window's own backdrop, below everything else.
+    LyraBackdrop *whole = objc_getAssociatedObject(ns, &backdrop_key);
+    if (view.superview != content) {
+        if (whole && whole.superview == content) {
+            [content addSubview:view positioned:NSWindowAbove relativeTo:whole];
+        } else {
+            [content addSubview:view positioned:NSWindowBelow relativeTo:nil];
+        }
+    }
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    NSMutableArray<CALayer *> *layers = [NSMutableArray arrayWithArray:view.layer.sublayers ?: @[]];
+    while ((int32_t)layers.count > count) {
+        [layers.lastObject removeFromSuperlayer];
+        [layers removeLastObject];
+    }
+    id (*make)(Class, SEL, NSString *) = (id (*)(Class, SEL, NSString *))objc_msgSend;
+    for (int32_t i = 0; i < count; i++) {
+        const float *r = regions + 9 * i;
+        CALayer *layer;
+        if (i < (int32_t)layers.count) {
+            layer = layers[i];
+        } else {
+            layer = [backdrop_class new];
+            @try {
+                [layer setValue:@YES forKey:@"windowServerAware"];
+            } @catch (NSException *e) {
+                [CATransaction commit];
+                return false;
+            }
+            layer.masksToBounds = YES;
+            [view.layer addSublayer:layer];
+            [layers addObject:layer];
+        }
+        layer.frame = CGRectMake(r[0], r[1], r[2], r[3]);
+        // One radius, on the corners that have one: the view is flipped, so min-y is the top.
+        float radius = fmaxf(fmaxf(r[4], r[5]), fmaxf(r[6], r[7]));
+        layer.cornerRadius = radius;
+        CACornerMask corners = 0;
+        if (r[4] > 0) corners |= kCALayerMinXMinYCorner;
+        if (r[5] > 0) corners |= kCALayerMaxXMinYCorner;
+        if (r[6] > 0) corners |= kCALayerMaxXMaxYCorner;
+        if (r[7] > 0) corners |= kCALayerMinXMaxYCorner;
+        layer.maskedCorners = corners;
+        NSNumber *blur = @(r[8]);
+        id filter = layer.filters.firstObject;
+        if (!filter || ![[filter valueForKey:@"inputRadius"] isEqual:blur]) {
+            filter = make(filter_class, make_filter, @"gaussianBlur");
+            [filter setValue:blur forKey:@"inputRadius"];
+            layer.filters = @[filter];
+            [layer setValue:[NSString stringWithFormat:@"lyra-blur-%g", r[8]] forKey:@"groupName"];
+        }
+    }
+    [CATransaction commit];
+    return true;
+}
+
+// `backdrop_regions_state`: how many regions the window blurs, -1 where it has no view for them
+// — for a test of `set_backdrop_regions`.
+int32_t lyra_gpu_backdrop_regions_state(SDL_Window *window) {
+    NSWindow *ns = cocoa_window(window);
+    LyraRegions *view = ns ? objc_getAssociatedObject(ns, &regions_key) : nil;
+    if (!view || view.superview != ns.contentView) return -1;
+    return (int32_t)view.layer.sublayers.count;
 }
 
 // `backdrop_state`: the radius the window's backdrop blurs by, -1 where it has none (a window

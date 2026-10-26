@@ -1097,7 +1097,7 @@ func TestLui_UiTargetPopup(t *testing.T) {
 // character); `disabled` and `checked`; `<MenuButton title>`; `<TabBar>` with `<Tab>`s — a
 // `<for>` of them — and what follows them; `<Swatch>`; `<WindowButtons/>`; `window-drag`; and
 // a `<for>` holding several elements, flattened in place; an `opaque` swatch (bare, or a
-// condition), its picker with no opacity strip. The module checks clean; and each misuse is
+// condition), its picker with no opacity strip; a swatch's children, its picker's `below`. The module checks clean; and each misuse is
 // refused at its line.
 func TestLui_UiTargetWindowElements(t *testing.T) {
 	t.Parallel()
@@ -1154,6 +1154,7 @@ func TestLui_UiTargetWindowElements(t *testing.T) {
     </for>
     <Swatch color={color} open={false} on_open={Open} on_change={Paint} on_dismiss={Shut} opaque/>
     <Swatch color={color} open={false} on_open={Open} on_change={Paint} on_dismiss={Shut} opaque={!open}/>
+    <Swatch color={color} open={false} on_open={Open} on_change={Paint} on_dismiss={Shut}><Text>Below the opacity</Text></Swatch>
   </Column>
 </component>
 `
@@ -1191,6 +1192,8 @@ func TestLui_UiTargetWindowElements(t *testing.T) {
 		`swatch(color, open, Open, (value: Color) -> Ev => Paint(value), Shut)`,
 		`swatch(color, false, Open, (value: Color) -> Ev => Paint(value), Shut, false)`,
 		`swatch(color, false, Open, (value: Color) -> Ev => Paint(value), Shut, !(!open))`,
+		`swatch(color, false, Open, (value: Color) -> Ev => Paint(value), Shut, true, [`,
+		`"Below the opacity"`,
 	} {
 		if !strings.Contains(string(generated), want) {
 			t.Errorf("the generated module lacks %q:\n%s", want, generated)

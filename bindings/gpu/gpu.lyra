@@ -55,6 +55,21 @@ pub let see_through_state = (window: Window) -> bool =>
 pub let set_backdrop_blur = (window: Window, radius: i32) -> bool =>
   unsafe { lyra_gpu_set_backdrop_blur(window, radius) }
 
+/// The desktop behind parts of a see-through `window` blurred, each at its own radius:
+/// `regions` nine numbers each — x, y, width and height in points from the content's top-left,
+/// the top-left, top-right, bottom-right and bottom-left radii, and the blur — under the
+/// window's content and over its own backdrop ([set_backdrop_blur]). An empty list lets them
+/// go; on an opaque window there are none. False off macOS, or without the private classes.
+pub let set_backdrop_regions = (window: Window, regions: []f32) -> bool => {
+  let data: ^f32 = if regions.len() == 0 { nullptr } else { unsafe { regions.data() } }
+  unsafe { lyra_gpu_set_backdrop_regions(window, data, i32(regions.len() / 9)) }
+}
+
+/// How many regions `window` blurs, -1 where it has none made: for a test of
+/// [set_backdrop_regions].
+pub let backdrop_regions_state = (window: Window) -> i32 =>
+  unsafe { lyra_gpu_backdrop_regions_state(window) }
+
 /// The radius `window`'s backdrop blurs by, -1 where it has none: for a test of
 /// [set_backdrop_blur].
 pub let backdrop_state = (window: Window) -> i32 =>
@@ -131,6 +146,12 @@ unsafe extern lyra_gpu_set_see_through: (window: Window, on: bool) -> bool
 unsafe extern lyra_gpu_set_backdrop_blur: (window: Window, radius: i32) -> bool
 unsafe extern lyra_gpu_see_through_state: (window: Window) -> bool
 unsafe extern lyra_gpu_backdrop_state: (window: Window) -> i32
+unsafe extern lyra_gpu_set_backdrop_regions: (
+  window: Window,
+  regions: ^f32,
+  count: i32
+) -> bool
+unsafe extern lyra_gpu_backdrop_regions_state: (window: Window) -> i32
 unsafe extern lyra_gpu_destroy: (g: Gpu) -> void
 unsafe extern lyra_gpu_upload: (
   g: Gpu,

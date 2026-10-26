@@ -9,6 +9,47 @@ Newest first.
 
 ## Dated log
 
+### 10/26/26 — `ui`: a backdrop frosts the desktop too; a colour picker's own controls
+
+- **A `Backdrop` op on a see-through window blurs the desktop behind it as well** — CSS's
+  `backdrop-filter` over everything behind, which a window shows through: `ui.gpu` collects
+  each one, cut to its clip (a corner the cut passes square), and `bindings.gpu`'s
+  `set_backdrop_regions` keeps a `CABackdropLayer` a region, rounded as it is, in a view above
+  the window's own backdrop and under its content; layers of one radius share one capture
+  (`groupName`). The GPU still blurs the window's own drawing behind the op. Termina's input
+  and output sections, each its own blur, frost the desktop behind them. **The regions are
+  layers the window server composites, not the frame**, so they may trail the frame by one
+  while it scrolls; not yet seen in a real window. `TestRun_UiGpuSeeThrough` reads the
+  regions back (`backdrop_regions_state`).
+- **`swatch` and `color_picker` take `below`**, the program's controls under the opacity
+  strip (lui: `<Swatch>`'s children) — Termina's blur sliders, in the three background
+  colours' pickers. **The opacity strip shows its value beside it**, 0 to 1 to two places, in
+  a row keyed `opacity` that `picker_of` steps over, so the three axes still name one picker;
+  the strip's natural width is the narrower for it, or the row widened the picker and moved
+  the square under a click (`TestRun_UiColorsExample` noticed). The opacity strip is square,
+  as the checkerboard under it is: rounded, its gradient's ends missed the board's corners.
+
+### 10/26/26 — `ui`: a select's options in their own fonts, its arrow centred
+
+- **`SelectSpec.option_families`**, each option's font family, in the list and on the select
+  when chosen, through **`Style.font_family`** (CSS's `font-family`: the family alone, its
+  size kept, inherited as `font_size` is) — Termina's Family list shows each family in itself.
+  **Mapping a node's events (`mapped_kind`) copied the spec field by field and dropped the new
+  one**: the face's texts, built before the map, had their families; the list, built at layout
+  from the spec, had none. Rule 8's copies again; `TestRun_UiSelectOptionFamilies` maps the
+  select, and fails without the copied field.
+- **The select's arrow is centred down its row**: its column of bars took the row's height and
+  laid them from its top, above the text's middle.
+
+### 10/26/26 — `ui`: Edit's items given to the focused field
+
+- **`Command.EditField(FieldEdit)`** (`Ui.edit_focused`): select all, copy, cut, paste or undo
+  in the focused text field, as its key would. On a Mac the bar holds ⌘A, ⌘C, ⌘X, ⌘V and ⌘Z
+  and the host leaves a chord the bar holds to it, so a field never heard them: Termina's
+  colour pickers' hex could not be copied or pasted, its Edit items going to the terminal.
+  The program routes Edit's items to the field where one is the target, as Termina does while
+  its Settings tab is shown. `TestRun_UiEditFocused`.
+
 ### 10/26/26 — `ui`: a tab strip's gap gives way before its tabs
 
 - **The strip's gap is what its style asks while the tabs fit at the widths they want**, and

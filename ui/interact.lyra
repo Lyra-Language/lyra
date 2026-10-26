@@ -148,6 +148,12 @@ import ui.motion.{ Motion, advance, shown_at, in_motion, moves_sizes }
 import ui.style
 import std.collections.{ HashMap, hashmap_new }
 
+/// An edit of the focused text field a program asks for ([Ui.edit_focused], the host's
+/// `Command.EditField`): Edit's items, whose keys the Mac's own bar holds — AppKit gives ⌘A,
+/// ⌘C, ⌘X, ⌘V and ⌘Z to the menu, so the field never hears them. All of its text selected, the
+/// selection copied or cut, the clipboard pasted, the last edit undone.
+pub data FieldEdit = FieldSelectAll | FieldCopy | FieldCut | FieldPaste | FieldUndo
+
 /// The framework's state between frames: the [Interaction] the layout reads, where the pointer
 /// was last, and the text field the platform was last told text input is for, and where.
 pub struct Ui {
@@ -1631,6 +1637,25 @@ impl Ui {
       undo: state.undo.slice(0, state.undo.len() - 1),
     })
     [(spec.on_edit)(last.value)]
+  }
+
+  /// `edit` applied to the focused text field of `laid` as its key would be, the field's events
+  /// raised; none where no field has the focus.
+  pub let edit_focused<e, p> where p: Platform = (
+    self: mut,
+    laid: Laid<e>,
+    edit: FieldEdit,
+    platform: mut p
+  ) -> []e => {
+    let Some(field) = self.focused_field(laid) else { return [] }
+    let key = match edit {
+      FieldSelectAll => 'a',
+      FieldCopy => 'c',
+      FieldCut => 'x',
+      FieldPaste => 'v',
+      FieldUndo => 'z',
+    }
+    self.field_key(field, Character(key), Modifiers { primary: true }, platform)
   }
 
   /// The focused field, if a field has the focus.

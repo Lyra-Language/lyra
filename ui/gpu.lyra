@@ -251,6 +251,9 @@ impl Renderer for GpuRenderer {
       frame.instances,
       frame.commands
     )
+    // What the backdrops blur of the desktop, which the GPU never sees: the window's own
+    // drawing behind them it blurs itself (kind 7).
+    let _ = gpu.set_backdrop_regions(self.window, frame.regions)
   }
 }
 
@@ -275,10 +278,45 @@ pub let prepare = (renderer: GpuRenderer, ops: []DrawOp) -> (i64, i64) => {
   (frame.instances.len() / 80, frame.commands.len() / 6)
 }
 
-/// A frame for the GPU: its instances, 80 floats each, and its commands, six words each.
+/// A backdrop at `at` (points), rounded by `radii`, blurring by `blur`, as a region of the
+/// desktop behind a see-through window ([gpu.set_backdrop_regions]): cut to the innermost of
+/// `clips` (pixels, `scale` to a point), a corner the cut passes square — and none where the cut
+/// leaves nothing.
+let backdrop_region = (
+  regions: mut []f32,
+  at: Rect,
+  radii: Radii,
+  blur: f32,
+  clips: [](Rect, Radii),
+  scale: f32
+) -> void => {
+  let cut = if clips.len() == 0 { at } else { at.intersect(clips[clips.len() - 1].0.scaled(1.0 / scale)) }
+  if cut.w <= 0.0 || cut.h <= 0.0 { return }
+  let left = cut.x <= at.x + 0.01
+  let right = cut.x + cut.w >= at.x + at.w - 0.01
+  let top = cut.y <= at.y + 0.01
+  let bottom = cut.y + cut.h >= at.y + at.h - 0.01
+  let kept = (r: f32, a: bool, b: bool) -> f32 => if a && b { r } else { 0.0 }
+  for v in [
+    cut.x,
+    cut.y,
+    cut.w,
+    cut.h,
+    kept(radii.top_left, top, left),
+    kept(radii.top_right, top, right),
+    kept(radii.bottom_right, bottom, right),
+    kept(radii.bottom_left, bottom, left),
+    blur
+  ] { regions.push(v) }
+}
+
+/// A frame for the GPU: its instances, 80 floats each, and its commands, six words each; and
+/// its backdrops as regions of the desktop to blur behind a see-through window, nine floats
+/// each ([backdrop_region]).
 struct Frame {
   instances: []f32 = [],
   commands: []i64 = [],
+  regions: []f32 = [],
 }
 
 /// What draws one op: a quad, the shape it shades, the shape's radii, its colours, its kind
@@ -414,6 +452,7 @@ let frame_of = (renderer: GpuRenderer, ops: []DrawOp) -> Frame => {
         continue
       },
       Backdrop(at, radii, blur) => {
+        backdrop_region(out.regions, at, radii, blur, clips, scale)
         end_run(out, run_texture, run_first, count)
         let index = count
         push_instance(out, Instance {

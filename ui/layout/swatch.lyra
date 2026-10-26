@@ -1,7 +1,8 @@
 module ui.layout
 //! Colour (`ui/WINDOW.md` §6): a [swatch] — the colour on a square, a checkerboard under it when
 //! it is translucent — opening a [color_picker] in a popup: a saturation-and-value square over
-//! the hue, a hue strip, an opacity strip, and the colour as CSS writes it in a field that takes
+//! the hue, a hue strip, an opacity strip with its value (0 to 1, two places) beside it, the
+//! program's own controls (`below`), and the colour as CSS writes it in a field that takes
 //! any of `ui.color`'s syntax (`#rrggbb`, `rgb(…)`, `oklab(…)`, `oklch(…)`) and keeps what is
 //! typed while it is edited ([FieldSpec.draft]).
 //!
@@ -32,14 +33,16 @@ pub struct AxisSpec<e> {
 /// `on_dismiss` while it is open, so the swatch closes its own picker; a press outside it,
 /// Escape or the window losing the focus raises `on_dismiss`. Each colour picked raises
 /// `on_change`, dragging included, so the program shows it at once. Without `alpha`, the
-/// colour is opaque: its picker has no opacity strip.
+/// colour is opaque: its picker has no opacity strip. `below`, the program's own controls in
+/// the picker, under the opacity strip ([color_picker]).
 pub let swatch<e> = pure (
   color: Color,
   open: bool,
   on_open: e,
   on_change: (Color) -> e,
   on_dismiss: e,
-  alpha: bool = true
+  alpha: bool = true,
+  below: []Node<e> = []
 ) -> Node<e> => {
   let kind: Kind<e> = Pressable(if open { on_dismiss } else { on_open })
   let patch: Kind<e> = ColorPatch(color)
@@ -49,17 +52,20 @@ pub let swatch<e> = pure (
     label: color_text(color),
     children: [sized::<e>(Some(22.0), Some(22.0), [Node { kind: patch, tag: "ColorPatch" }])],
   }
-  popup(face, open, color_picker(color, on_change, alpha), on_dismiss)
+  popup(face, open, color_picker(color, on_change, alpha, below), on_dismiss)
 }
 
 /// A colour picker (`ColorPicker`) for `color`: the saturation-and-value square, the hue strip
 /// and — with `alpha` — the opacity strip, each a `ColorAxis`, and the colour's text, each
-/// change raising `on_change`; without `alpha`, a colour typed is taken opaque. A swatch opens
-/// one; a program may show one on its own.
+/// change raising `on_change`; without `alpha`, a colour typed is taken opaque. `below` goes
+/// under the strips, above the text: a program's controls of what the colour is for — how
+/// much what is behind a translucent background is blurred. A swatch opens one; a program may
+/// show one on its own.
 pub let color_picker<e> = pure (
   color: Color,
   on_change: (Color) -> e,
-  alpha: bool = true
+  alpha: bool = true,
+  below: []Node<e> = []
 ) -> Node<e> => {
   let field = text_input::<e>(FieldSpec {
     value: color_text(color),
@@ -70,11 +76,11 @@ pub let color_picker<e> = pure (
       on_change(if alpha { typed } else { Color { typed | a: 255 } })
     },
   })
-  let opacity: []Node<e> = if alpha { [axis_node(
-    AlphaChannel,
-    color,
-    on_change
-  ).keyed("alpha")] } else { [] }
+  // The opacity strip and its value beside it, 0 to 1 to two places.
+  let opacity: []Node<e> = if alpha { [row::<e>([
+    expanded::<e>(axis_node(AlphaChannel, color, on_change).keyed("alpha")),
+    text::<e>((f64(color.a) / 255.0).to_fixed(2)).with_part("opacity"),
+  ]).with_style(Style { gap: Some(8.0) }).keyed(OPACITY_ROW)] } else { [] }
   let kind: Kind<e> = Flow(Vertical, MainStart, CrossStretch)
   Node {
     kind: kind,
@@ -84,6 +90,7 @@ pub let color_picker<e> = pure (
       axis_node(SatValue, color, on_change).keyed("plane"),
       axis_node(HueChannel, color, on_change).keyed("hue"),
       ...opacity,
+      ...below,
       field.keyed("text"),
     ],
   }
@@ -108,9 +115,12 @@ let axis_node<e> = pure (
   Node { kind: kind, tag: "ColorAxis", label: label }
 }
 
-/// How large an axis of `channel` is: the square, or a strip.
+/// How large an axis of `channel` is: the square, or a strip — the opacity's narrower, sharing
+/// its row with its value, so the row is no wider than the square; laid out expanded, it takes
+/// the rest of the row.
 let axis_size = pure (channel: ColorChannel) -> Size => match channel {
   SatValue => Size { w: 200.0, h: 140.0 },
+  AlphaChannel => Size { w: 150.0, h: 14.0 },
   _ => Size { w: 200.0, h: 14.0 },
 }
 
@@ -122,11 +132,18 @@ let axis_hue = pure (color: Color, ui: Interaction, id: string) -> f32 => {
   ui.hues.get(picker_of(id)) ?? f32(h.h)
 }
 
-/// The identity a picker holds its hue by, from an axis's `id`: the picker's.
+/// The identity a picker holds its hue by, from an axis's `id`: the picker's — past the row the
+/// opacity strip shares with its value ([OPACITY_ROW]).
 pub let picker_of = pure (id: string) -> string => {
+  let segment = "/:${OPACITY_ROW}/"
+  let around = id.split(segment)
+  if around.len() > 1 { return around.slice(0, around.len() - 1).join(segment) }
   let parts = id.split("/")
   parts.slice(0, parts.len() - 1).join("/")
 }
+
+/// The key of the row a picker's opacity strip shares with its value.
+const OPACITY_ROW: string = "opacity"
 
 /// The colour an axis of `spec`, drawn at `hue`, makes at the fraction `x` across it and `y`
 /// down it (each 0 to 1), and the hue it leaves held: the square sets saturation and value, the
@@ -161,7 +178,12 @@ pub let axis_spot = pure (spec: AxisSpec<e>, hue: f32) -> (f32, f32) => {
 /// down, the hue strip the hues round, the opacity strip the colour from clear to opaque over a
 /// checkerboard; and its thumb — a ring on the square, a bar on a strip.
 let paint_axis = (ops: mut []DrawOp, spec: AxisSpec<e>, hue: f32, box: Rect) -> void => {
-  let corners = radius(if spec.channel == SatValue { 6.0 } else { 7.0 })
+  // The opacity strip square, as the checkerboard under it is.
+  let corners = radius(match spec.channel {
+    SatValue => 6.0,
+    HueChannel => 7.0,
+    AlphaChannel => 0.0,
+  })
   let white = Color { r: 255, g: 255, b: 255 }
   let black = Color { r: 0, g: 0, b: 0 }
   match spec.channel {

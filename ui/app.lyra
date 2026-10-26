@@ -103,7 +103,7 @@ import ui.layout.{
   menu_shortcuts,
   entries_shortcuts,
 }
-import ui.interact.{ Ui, ui_new }
+import ui.interact.{ Ui, ui_new, FieldEdit }
 import ui.access.{ access_tree }
 import std.io.{ read_file, write_file, readable }
 import std.collections.{ HashMap, hashmap_new }
@@ -247,6 +247,10 @@ pub data Command<e> =
   /// The focus to the element keyed so ([Node.keyed]), once it is laid out — a new tab's
   /// terminal.
   | FocusKeyed(string)
+  /// An edit of the focused text field, as its key would make it ([FieldEdit]) — for Edit's
+  /// items, whose keys the Mac's bar takes before the field hears them; its events come back
+  /// as a field's do. Nothing where no field has the focus.
+  | EditField(FieldEdit)
   /// The scroller keyed so scrolled this far down, once it is laid out: past its end is its
   /// end (`UNBOUNDED` for it), where one that follows its end follows it again.
   | ScrollTo(string, f32)
@@ -855,6 +859,10 @@ impl Host<s, e> {
         MeasureFont(font, done) => self.measures.push(Measure { font: font, done: done }),
         LoadFonts(files, done) => self.loads.push(FontLoad { files: files, done: done }),
         FocusKeyed(key) => self.ui.focus_keyed(key),
+        EditField(edit) => if self.shown.len() > 0 {
+          let raised = self.ui.edit_focused(self.shown[0], edit, platform)
+          for edited in raised { self.waiting.push(edited) }
+        },
         ScrollTo(key, y) => self.ui.scroll_keyed(key, y),
       }
     }

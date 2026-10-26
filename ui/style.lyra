@@ -30,9 +30,9 @@ module ui.style
 //!    as CSS's `::part` does;
 //! 5. the element's own inline `style`.
 //!
-//! **Inherited**: `color`, `font` (and `font_size` and `line_height`) and `opacity` — an element that does not
-//! set them takes its parent's, and an opacity multiplies into its parent's, so a half-
-//! transparent card's text is half-transparent too. Everything else starts unset.
+//! **Inherited**: `color`, `font` (and `font_size`, `font_family` and `line_height`) and
+//! `opacity` — an element that does not set them takes its parent's, and an opacity multiplies
+//! into its parent's, so a half-transparent card's text is half-transparent too. Everything else starts unset.
 
 import ui.draw.{ Color, Size, Radii, BoxShadow, Gradient, rgb, rgba }
 import ui.backend.{ Appearance }
@@ -94,6 +94,9 @@ pub struct Style {
   font: Maybe<FontSpec> = None,
   /// The font's size alone, its family kept. Inherited (as part of the font).
   font_size: Maybe<f32> = None,
+  /// The font's family alone, its size kept (CSS's `font-family`): a name [Fonts] has, as a
+  /// select's list shows each font family in itself. Inherited (as part of the font).
+  font_family: Maybe<string> = None,
   /// Lines this many font sizes apart (CSS's unitless `line-height`). Inherited (as part of
   /// the font).
   line_height: Maybe<f32> = None,
@@ -284,6 +287,7 @@ impl Style {
     gap: self.gap.or(base.gap),
     font: self.font.or(base.font),
     font_size: self.font_size.or(base.font_size),
+    font_family: self.font_family.or(base.font_family),
     line_height: self.line_height.or(base.line_height),
     opacity: self.opacity.or(base.opacity),
     width: self.width.or(base.width),
@@ -857,6 +861,7 @@ impl Cascade {
       gap: s.gap ?? 0.0,
       font: FontSpec {
         base_font |
+        family: s.font_family ?? base_font.family,
         size: s.font_size ?? base_font.size,
         line_height: s.line_height ?? base_font.line_height,
       },

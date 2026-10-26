@@ -2493,7 +2493,9 @@ hover #/0/1/0:
 // content view has updated its layer, which painted it black under the Metal layer, and its
 // title bar on an opaque backing, as an opaque window's; and the blur behind it is taken by a
 // backdrop layer inside the window, at the radius asked (the window server's blur, the fallback,
-// showed past the window's rounded corners), gone again at 0, and opacity again is taken.
+// showed past the window's rounded corners), gone again at 0; a frame's backdrops are regions of
+// the desktop blurred (one clipped away is none), and opacity again is taken, after which a
+// frame has none.
 func TestRun_UiGpuSeeThrough(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS != "darwin" {
@@ -2504,8 +2506,8 @@ func TestRun_UiGpuSeeThrough(t *testing.T) {
 	if err := os.WriteFile(src, []byte(`import ui.gpu
 import ui.gpu.{ keep_frames, read_frame }
 import ui.backend.{ Renderer, Platform }
-import ui.draw.{ Color, Rect, rgba, radius, Fill, DrawOp }
-import bindings.gpu.{ see_through_state, backdrop_state }
+import ui.draw.{ Color, Rect, rgba, radius, Fill, DrawOp, Backdrop, PushClip, PopClip }
+import bindings.gpu.{ see_through_state, backdrop_state, backdrop_regions_state }
 
 let main = () -> u8 => {
   let Ok(window) = gpu.open("see", 300.0, 220.0, true) else { return 2 }
@@ -2531,7 +2533,19 @@ let main = () -> u8 => {
   println("a half-clear red: ${at(70.0, 50.0)}")
   println("the content see-through, the title bar opaque: ${see_through_state(platform.window)}")
   println("blur taken: ${platform.set_backdrop_blur(20.0)}, by the backdrop: ${backdrop_state(platform.window)}")
-  println("blur gone: ${platform.set_backdrop_blur(0.0)}, ${backdrop_state(platform.window)}, opaque again: ${platform.set_see_through(false)}")
+  println("blur gone: ${platform.set_backdrop_blur(0.0)}, ${backdrop_state(platform.window)}")
+  // Two frosted panels, the second clipped away entirely: one region of the desktop blurred.
+  let frosted: []DrawOp = [
+    Backdrop(Rect { x: 20.0, y: 20.0, w: 100.0, h: 60.0 }, radius(8.0), 12.0),
+    PushClip(Rect { x: 0.0, y: 0.0, w: 300.0, h: 100.0 }, radius(0.0)),
+    Backdrop(Rect { x: 20.0, y: 150.0, w: 100.0, h: 40.0 }, radius(8.0), 12.0),
+    PopClip,
+  ]
+  renderer.draw(Color { r: 0, g: 0, b: 0, a: 0 }, frosted)
+  println("regions blurred: ${backdrop_regions_state(platform.window)}")
+  println("opaque again: ${platform.set_see_through(false)}")
+  renderer.draw(Color { r: 0, g: 0, b: 0, a: 0 }, frosted)
+  println("regions on an opaque window: ${backdrop_regions_state(platform.window)}")
   gpu.close(platform, renderer)
   0
 }
@@ -2546,7 +2560,7 @@ let main = () -> u8 => {
 	default:
 		t.Fatalf("exited %d\nstderr: %s", code, stderr)
 	}
-	want := "the clear background: a 0 r 0\na half-clear red: a 128 r 128\nthe content see-through, the title bar opaque: true\nblur taken: true, by the backdrop: 20\nblur gone: true, -1, opaque again: true\n"
+	want := "the clear background: a 0 r 0\na half-clear red: a 128 r 128\nthe content see-through, the title bar opaque: true\nblur taken: true, by the backdrop: 20\nblur gone: true, -1\nregions blurred: 1\nopaque again: true\nregions on an opaque window: 0\n"
 	if stdout != want {
 		t.Errorf("got\n%s\nwant\n%s", stdout, want)
 	}
@@ -3270,6 +3284,56 @@ off held: 0 events
 	}
 }
 
+// Edit's items handed to the focused field (Ui.edit_focused, Command.EditField), as the Mac's
+// bar takes their keys before a field hears them: all of a colour's text selected and copied,
+// another pasted over it — the field's edit raised — and nothing with no field focused.
+func TestRun_UiEditFocused(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new, FieldSelectAll, FieldCopy, FieldPaste }
+import ui.script.{ script_platform }
+import ui.backend.{ PointerMoved, PointerDown, PointerUp, Primary, Platform }
+import ui.draw.{ Size, Point }
+import ui.text.{ Fonts, fonts_new }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, text_input, FieldSpec, tight }
+
+data Ev = Edited(string)
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var ui = ui_new()
+  var cache: LayoutCache<Ev> = layout_cache()
+  var platform = script_platform([], Size { w: 300.0, h: 100.0 })
+  let unfocused = ui.edit_focused(frame(ui, cache, fonts), FieldCopy, platform)
+  println("nothing focused: ${unfocused.len()} events, the clipboard '${platform.clipboard()}'")
+  let laid = frame(ui, cache, fonts)
+  let field = laid.children[0]
+  let at = Point { x: field.at.x + field.laid.size.w / 2.0, y: field.at.y + field.laid.size.h / 2.0 }
+  for input in [PointerMoved(at), PointerDown(Primary, at, 1), PointerUp(Primary, at)] {
+    let _ = ui.handle(frame(ui, cache, fonts), input, platform)
+  }
+  let _ = ui.edit_focused(frame(ui, cache, fonts), FieldSelectAll, platform)
+  let _ = ui.edit_focused(frame(ui, cache, fonts), FieldCopy, platform)
+  println("all selected and copied: the clipboard '${platform.clipboard()}'")
+  platform.set_clipboard("#ffffff")
+  let _ = ui.edit_focused(frame(ui, cache, fonts), FieldSelectAll, platform)
+  let pasted = ui.edit_focused(frame(ui, cache, fonts), FieldPaste, platform)
+  let texts = [e in pasted | match e { Edited(t) => t }]
+  println("pasted over it: [${texts.join(", ")}]")
+  0
+}
+
+let frame = (ui: mut Ui, cache: mut LayoutCache<Ev>, fonts: mut Fonts) -> Laid<Ev> =>
+  ui.frame_within(view(), tight(Size { w: 300.0, h: 100.0 }), fonts, cache)
+
+let view = pure () -> Node<Ev> => column([text_input(FieldSpec { value: "#1a2b3c", on_edit: Edited })])
+`)
+	want := "nothing focused: 0 events, the clipboard ''\nall selected and copied: the clipboard '#1a2b3c'\npasted over it: [#ffffff]\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // A read-only field (read_only_input, lui's readonly): it takes the focus, moves its caret,
 // selects and copies, and raises no edit for typing, deleting, pasting, cutting or undo; the
 // cascade sees it :read-only.
@@ -3468,6 +3532,79 @@ let describe = pure (at: Maybe<Point>) -> string => match at {
 		t.Skipf("SDL could not open a dummy window here: %s", got)
 	}
 	want := "placed: true\nmoved: 120,80\noff every display: 120,80\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A select's options each in their own font family (SelectSpec.option_families, a font list
+// showing each font in itself): in the open list, and on the select for the chosen one; an
+// option given none, the select's own. The families need not be loaded: matching falls back.
+// The select is mapped to another event type, as a component's page is: the list is made at
+// layout from the spec, which mapping copies field by field, and Termina's had lost them.
+func TestRun_UiSelectOptionFamilies(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new }
+import ui.script.{ script_platform, ScriptPlatform }
+import ui.backend.{ InputEvent, PointerMoved, PointerDown, PointerUp, Primary }
+import ui.draw.{ Size, Point }
+import ui.text.{ Fonts, fonts_new }
+import ui.style.{ light_theme, Sheet }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, select, SelectSpec, themed, tight }
+
+struct Run {
+  ui: Ui,
+  cache: LayoutCache<i64>,
+  platform: ScriptPlatform,
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var run = Run { ui: ui_new(), cache: layout_cache(), platform: script_platform([], Size { w: 300.0, h: 400.0 }) }
+  let at = middle_of(laid_out(run, fonts), Point {}, "Select")
+  for input in [PointerMoved(at), PointerDown(Primary, at, 1), PointerUp(Primary, at)] {
+    let _ = run.ui.handle(laid_out(run, fonts), input, run.platform)
+  }
+  var faces: []string = []
+  var options: []string = []
+  families(laid_out(run, fonts), false, faces, options)
+  println("the list: ${options.join(", ")}")
+  println("the select, Menlo chosen: ${faces.join(", ")}")
+  0
+}
+
+let laid_out = (run: mut Run, fonts: mut Fonts) -> Laid<i64> =>
+  run.ui.frame_within(view(), tight(Size { w: 300.0, h: 400.0 }), fonts, run.cache)
+
+data Picked = Picked(i64)
+
+let view = pure () -> Node<i64> => themed::<i64>(light_theme(), Sheet {}, [
+  column([select(SelectSpec { options: ["Plain", "Menlo", "Courier"], selected: 1, on_change: Picked, option_families: ["", "Menlo", "Courier"] }).map(unpicked)]),
+])
+
+let unpicked = pure (p: Picked) -> i64 => match p { Picked(k) => k }
+
+/// The family each text was laid in: an option's, and the select face's seen one.
+let families = (laid: Laid<i64>, in_option: bool, faces: mut []string, options: mut []string) -> void => {
+  let inside = in_option || laid.tag == "Option"
+  if laid.tag == "Text" {
+    let family = if laid.style.font.family == "" { "the select's" } else { laid.style.font.family }
+    if inside { options.push(family) } else if laid.style.opacity > 0.5 { faces.push(family) }
+  }
+  for child in laid.children { families(child.laid, inside, faces, options) }
+}
+
+let middle_of = (laid: Laid<i64>, origin: Point, tag: string) -> Point => {
+  if laid.tag == tag { return Point { x: origin.x + laid.size.w / 2.0, y: origin.y + laid.size.h / 2.0 } }
+  for child in laid.children {
+    let p = middle_of(child.laid, Point { x: origin.x + child.at.x, y: origin.y + child.at.y }, tag)
+    if p.x >= 0.0 { return p }
+  }
+  Point { x: -1.0, y: -1.0 }
+}
+`)
+	want := "the list: the select's, Menlo, Courier\nthe select, Menlo chosen: Menlo\n"
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}

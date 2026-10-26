@@ -1445,6 +1445,12 @@ impl Writer {
       ShapeBare(builder) => {
         self.use(builder)
         if builder == "select" { return Ok(self.select_of(t)?) }
+        // A colour's picker holds the program's controls under its strips (`below`).
+        if builder == "swatch" || builder == "color_picker" {
+          let items = self.nodes_of(t.children, "${indent}  ")?
+          let below = if items.len() == 0 { "" } else { self.listed(items, indent) }
+          return self.bare_control(t, builder, below)
+        }
         if words_of(t.children).trim().len() > 0 || t.children.any((c) => match c {
           Element(_) => true,
           _ => false,
@@ -1488,8 +1494,6 @@ impl Writer {
             }
             "text_input(FieldSpec { ${fields.join(", ")} })"
           },
-          "swatch" => self.bare_control(t, builder)?,
-          "color_picker" => self.bare_control(t, builder)?,
           "window_buttons" => self.bare_control(t, builder)?,
           _ => {
             self.use("Size")
@@ -1819,9 +1823,18 @@ impl Writer {
     }
   }
 
-  /// `<Swatch>`, `<ColorPicker>` and `<WindowButtons/>`, controls of attributes alone.
-  let bare_control = (self: mut, t: Tag, builder: string) -> Result<string, string> => {
+  /// `<Swatch>`, `<ColorPicker>` and `<WindowButtons/>`: controls of attributes, a colour's
+  /// with `below` — its children, listed — under its picker's strips.
+  let bare_control = (
+    self: mut,
+    t: Tag,
+    builder: string,
+    below: string = ""
+  ) -> Result<string, string> => {
     self.use(builder)
+    // Positional after the alpha, which is then written out whether or not `opaque` was.
+    let alpha = opaque_arg(t)?
+    let tail = if below == "" { alpha } else { "${if alpha == "" { ", true" } else { alpha }}, ${below}" }
     match builder {
       "swatch" => {
         self.use("Color")
@@ -1833,11 +1846,11 @@ impl Writer {
           },
           None => return Err("${t.line}: <Swatch> needs open"),
         }
-        Ok("swatch(${required(t, "color")?}, ${open}, ${required(t, "on_open")?}, ${self.changes(t, "on_change", "Color")?}, ${required(t, "on_dismiss")?}${opaque_arg(t)?})")
+        Ok("swatch(${required(t, "color")?}, ${open}, ${required(t, "on_open")?}, ${self.changes(t, "on_change", "Color")?}, ${required(t, "on_dismiss")?}${tail})")
       },
       "color_picker" => {
         self.use("Color")
-        Ok("color_picker(${required(t, "color")?}, ${self.changes(t, "on_change", "Color")?}${opaque_arg(t)?})")
+        Ok("color_picker(${required(t, "color")?}, ${self.changes(t, "on_change", "Color")?}${tail})")
       },
       _ => Ok("window_buttons::<${self.event}>()"),
     }
@@ -1914,7 +1927,8 @@ impl Writer {
   /// A `<Select selected={…} on_change={…}>` and its options: `options={…}`, a Lyra
   /// `[]string`, or `<Option>`s inside it, each its text (`{…}` interpolated, as a button's
   /// label is) — one or the other — with `<Separator/>`s between groups of them, or
-  /// `separators={…}`, the indices a rule goes before. `on_change` takes the index chosen, an
+  /// `separators={…}`, the indices a rule goes before; `option_families={…}`, each option's font
+  /// family (a `[]string`, `""` for the select's own). `on_change` takes the index chosen, an
   /// `i64`.
   let select_of = (self: mut, t: Tag) -> Result<string, string> => {
     self.use("SelectSpec")
@@ -1968,6 +1982,7 @@ impl Writer {
       },
       None => if rules.len() > 0 { fields.push("separators: [${rules.join(", ")}]") },
     }
+    if let Some(code) = t.code_attr("option_families") { fields.push("option_families: ${code}") }
     Ok("select(SelectSpec { ${fields.join(", ")} })")
   }
 
@@ -2060,7 +2075,7 @@ let ui_kind = pure (tag: string) -> Maybe<(UiShape, []string)> => match tag {
   "Checkbox" => Some((ShapeLabelled("checkbox"), ["checked", "on_toggle"])),
   "Slider" => Some((ShapeBare("slider"), ["value", "min", "max", "step", "on_change"])),
   "Select" =>
-    Some((ShapeBare("select"), ["options", "selected", "on_change", "separators"])),
+    Some((ShapeBare("select"), ["options", "selected", "on_change", "separators", "option_families"])),
   "Popup" => Some((ShapePopup, ["open", "on_dismiss", "side"])),
   "TextInput" =>
     Some((ShapeBare("text_input"), ["value", "placeholder", "readonly", "on_edit"])),
