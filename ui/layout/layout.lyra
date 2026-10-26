@@ -56,6 +56,8 @@ module ui.layout
 //! an unbounded height.
 
 import ui.draw.{
+  Image,
+  PictureSource,
   Point,
   Size,
   Rect,
@@ -152,6 +154,8 @@ pub data Kind<e> =
   | Words(string)
   /// Part of a texture, at a natural size.
   | Texels(TextureId, Rect, Size)
+  /// A picture the program names, kept by the host, at a natural size ([picture]).
+  | Pictured(PictureSource, Size)
   /// A subtree in a theme, with a global sheet.
   | Theming(Theme, Sheet)
   /// A component: its tag is its name, and its sheet — made from the theme in force — is
@@ -275,6 +279,10 @@ pub data PaintOp =
   /// width (the first value), an amplitude above and below it, a thickness thick (the last),
   /// a wave every eight amplitudes.
   | PaintWave(Point, f32, f32, f32, Color)
+  /// A picture of the program's ([PictureSource], kept by the host as [picture]'s is): its
+  /// `texels` (the first rectangle, in the image's pixels) drawn into the second, at an
+  /// opacity — a canvas, or a background tiled or stretched.
+  | PaintPicture(PictureSource, Rect, Rect, f32)
 
 /// A slider's value between `min` and `max`, moved in steps of `step` (`0.0` for none) from
 /// the keyboard, and the event for a new value.
@@ -463,6 +471,23 @@ pub let text<e> = pure (content: string) -> Node<e> => {
 pub let image<e> = pure (texture: TextureId, texels: Rect, size: Size) -> Node<e> => {
   let kind: Kind<e> = Texels(texture, texels, size)
   Node { kind: kind, tag: "Image" }
+}
+
+/// A picture of the program's own (`Picture`): `image`, `size` units large where there is
+/// room, kept by the host as a texture under `key` and written again only when `revision`
+/// moves ([PictureSource]) — so a view names it every frame for nothing; drawn at the
+/// element's opacity. A key no view names is let go at the next frame.
+pub let picture<e> = pure (
+  key: string,
+  image: Image,
+  revision: i64,
+  size: Size
+) -> Node<e> => {
+  let kind: Kind<e> = Pictured(
+    PictureSource { key: key, image: image, revision: revision },
+    size
+  )
+  Node { kind: kind, tag: "Picture" }
 }
 
 /// An element drawn by `paint` ([Painter]) at the size it is given — its style's `width` and
@@ -695,6 +720,7 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
   Scrolls(axis, offset) => Scrolls(axis, offset),
   Words(content) => Words(content),
   Texels(texture, texels, size) => Texels(texture, texels, size),
+  Pictured(source, size) => Pictured(source, size),
   Theming(theme, sheet) => Theming(theme, sheet),
   Scope(sheet) => Scope(sheet),
   Pressable(event) => Pressable(f(event)),
@@ -955,7 +981,11 @@ const FLOAT_GAP: f32 = 2.0
 const FLOAT_MARGIN: f32 = 4.0
 
 /// What a node draws besides its box: nothing, a paragraph, or part of a texture at a size.
-pub data Content = Blank | Prose(TextBlock) | Bitmap(TextureId, Rect, Size)
+pub data Content = Blank | Prose(TextBlock) | Bitmap(
+  TextureId,
+  Rect,
+  Size
+) | Pixels(PictureSource, Size)
 
 /// How a text field is drawn: its text's colour (the placeholder's while it is empty), how
 /// far its text is scrolled, the caret's and the selection's ends across its text (each from
@@ -1335,6 +1365,8 @@ let same_kind<e> = (a: Kind<e>, b: Kind<e>, theme: Theme) -> bool => match (a, b
   (Scrolls(x1, o1), Scrolls(x2, o2)) => x1 == x2 && same_f32(o1, o2),
   (Words(t1), Words(t2)) => t1 == t2,
   (Texels(t1, r1, s1), Texels(t2, r2, s2)) => t1 == t2 && r1 == r2 && s1 == s2,
+  (Pictured(p1, s1), Pictured(p2, s2)) =>
+    p1.key == p2.key && p1.revision == p2.revision && s1 == s2,
   (Theming(t1, s1), Theming(t2, s2)) => t1 == t2 && s1 == s2,
   (Scope(f1), Scope(f2)) => f1(theme) == f2(theme),
   (Pressable(_), Pressable(_)) => true,
@@ -1480,6 +1512,8 @@ let lay_fresh<e> = (
         content: Bitmap(texture, texels, natural)
       }
     },
+    Pictured(source, natural) =>
+      Body::<e> { size: inner.constrain(natural), content: Pixels(source, natural) },
     Ranged(spec) => lay_slider(spec, inner, ctx, fonts, cache),
     Editable(spec) => lay_field(spec, inner, style, ctx, fonts),
     Choosing(spec) => lay_select(node.children, spec, inner, space, ctx, fonts, cache),
@@ -1927,6 +1961,7 @@ let role_of<e> = pure (kind: Kind<e>) -> Role => match kind {
   ColorAxis(_) => SliderRole,
   Tabbed(_) => TabRole,
   Texels(_, _, _) => ImageRole,
+  Pictured(_, _) => ImageRole,
   Scrolls(_, _) => ScrollRole,
   Flow(_, _, _) => GroupRole,
   Flexbox => GroupRole,
@@ -2531,8 +2566,81 @@ pub let paint<e, r> where r: Renderer = (
     paint_into(ops, f.laid, f.at, scale, fonts, atlas, renderer, floating, EVERYWHERE)
     k += 1
   }
+  // A picture no part of this frame drew is no view's now.
+  atlas.release_pictures(renderer)
   ops
 }
+
+/// How a picture fills a box larger or smaller than it: repeated at its own size from the box's
+/// corner, stretched to the box, or stretched until it covers the box and cut to its shape
+/// (CSS's `background-repeat`, and `background-size`'s `100% 100%` and `cover`).
+pub data Fit = FitTile | FitStretch | FitCover
+
+/// The most tiles a [FitTile] fill draws: a smaller picture's tile doubles until there are no
+/// more than these, so a pixel's pattern does not cost a million quads.
+pub const MOST_TILES: i64 = 4096
+
+/// `source` filling `box` as `fit` says, inside its rounded `corners`, at `opacity` — a
+/// painter's ops. Tiles are the picture's own pixels at `scale` pixels a unit (the painter's
+/// `PaintArea.scale`), so one is as sharp as the display.
+pub let picture_fill = pure (
+  source: PictureSource,
+  fit: Fit,
+  box: Rect,
+  corners: Radii,
+  opacity: f32,
+  scale: f32
+) -> []PaintOp => {
+  let pixels = source.image
+  if pixels.width <= 0 || pixels.height <= 0 || box.w <= 0.0 || box.h <= 0.0 { return [] }
+  let iw = f32(pixels.width)
+  let ih = f32(pixels.height)
+  let whole = whole_image(pixels)
+  var ops: []PaintOp = [PaintDraw(PushClip(box, corners))]
+  match fit {
+    FitStretch => ops.push(PaintPicture(source, whole, box, opacity)),
+    FitCover => {
+      // The middle of the picture, as wide or as tall as the box's shape allows.
+      let wide = iw / ih > box.w / box.h
+      let texels = if wide {
+        let w = ih * box.w / box.h
+        Rect { x: (iw - w) / 2.0, y: 0.0, w: w, h: ih }
+      } else {
+        let h = iw * box.h / box.w
+        Rect { x: 0.0, y: (ih - h) / 2.0, w: iw, h: h }
+      }
+      ops.push(PaintPicture(source, texels, box, opacity))
+    },
+    FitTile => {
+      var tw = iw / scale.max(0.01)
+      var th = ih / scale.max(0.01)
+      while (box.w / tw + 1.0) * (box.h / th + 1.0) > f32(MOST_TILES) {
+        tw = tw * 2.0
+        th = th * 2.0
+      }
+      var y = box.y
+      while y < box.y + box.h {
+        var x = box.x
+        while x < box.x + box.w {
+          ops.push(PaintPicture(
+            source,
+            whole,
+            Rect { x: x, y: y, w: tw, h: th },
+            opacity
+          ))
+          x += tw
+        }
+        y += th
+      }
+    },
+  }
+  ops.push(PaintDraw(PopClip))
+  ops
+}
+
+/// All of `image`'s pixels, as the texels a picture draws from.
+pub let whole_image = pure (image: Image) -> Rect =>
+  Rect { w: f32(image.width), h: f32(image.height) }
 
 /// The clip around what nothing clips: everywhere a display could show.
 const EVERYWHERE: Rect = Rect {
@@ -2661,8 +2769,19 @@ let paint_into<e, r> where r: Renderer = (
         ops.push(Picture(
           texture,
           texels,
-          Rect { x: at.x, y: at.y, w: natural.w, h: natural.h }
+          Rect { x: at.x, y: at.y, w: natural.w, h: natural.h },
+          1.0
         ))
+      },
+      Pixels(source, natural) => {
+        if let Some(texture) = atlas.picture(source, renderer) {
+          ops.push(Picture(
+            texture,
+            whole_image(source.image),
+            Rect { x: at.x, y: at.y, w: natural.w, h: natural.h },
+            s.opacity
+          ))
+        }
       },
       Blank => {},
     }
@@ -2754,6 +2873,16 @@ let paint_painter<e, r> where r: Renderer = (
           color
         ) { ops.push(drawn) }
       },
+      PaintPicture(source, texels, into, opacity) => {
+        if let Some(texture) = atlas.picture(source, renderer) {
+          ops.push(Picture(
+            texture,
+            texels,
+            Rect { into | x: into.x + at.x, y: into.y + at.y },
+            opacity
+          ))
+        }
+      },
       PaintWave(start, width, amplitude, thickness, color) => {
         for fill in wave(
           Point { x: at.x + start.x, y: at.y + start.y },
@@ -2828,7 +2957,8 @@ let moved_op = pure (op: DrawOp, by: Point) -> DrawOp => match op {
   Border(r, corners, width, color) => Border(moved_rect(r, by), corners, width, color),
   Glyphs(texture, quads, color) =>
     Glyphs(texture, [q in quads | GlyphQuad { q | at: moved_rect(q.at, by) }], color),
-  Picture(texture, texels, r) => Picture(texture, texels, moved_rect(r, by)),
+  Picture(texture, texels, r, opacity) =>
+    Picture(texture, texels, moved_rect(r, by), opacity),
   PushClip(r, corners) => PushClip(moved_rect(r, by), corners),
   PopClip => PopClip,
   Shadow(r, corners, shadow) => Shadow(moved_rect(r, by), corners, shadow),

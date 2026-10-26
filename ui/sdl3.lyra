@@ -354,7 +354,7 @@ pub let close = (platform: SdlPlatform, renderer: SdlRenderer) -> void => {
 
 /// The renderer's textures and the renderer itself put away.
 pub let release_renderer = (renderer: SdlRenderer) -> void => {
-  for texture in renderer.textures { destroy_texture(texture) }
+  for i, texture in renderer.textures { if renderer.live[i] { destroy_texture(texture) } }
   destroy_renderer(renderer.canvas)
 }
 
@@ -896,6 +896,8 @@ pub struct SdlRenderer {
   canvas: Canvas,
   window: Window,
   textures: []Texture = [],
+  /// Whether each texture is held still: a released one's id is taken by the next upload.
+  live: []bool = [],
 }
 
 impl Renderer for SdlRenderer {
@@ -915,12 +917,26 @@ impl Renderer for SdlRenderer {
         set_texture_scale_mode(texture, SCALE_NEAREST)
       }
     }
+    for i, held in self.live {
+      if !held {
+        self.textures[i] = texture
+        self.live[i] = true
+        return Some(TextureId(i))
+      }
+    }
     self.textures.push(texture)
+    self.live.push(true)
     Some(TextureId(self.textures.len() - 1))
+  }
+  release = (self, id) => {
+    let index = i64(id)
+    if index < 0 || index >= self.live.len() || !self.live[index] { return }
+    destroy_texture(self.textures[index])
+    self.live[index] = false
   }
   update = (self, id, at, image) => {
     let index = i64(id)
-    if index < 0 || index >= self.textures.len() {
+    if index < 0 || index >= self.textures.len() || !self.live[index] {
       return false
     }
     let area = PixelRect {
@@ -999,14 +1015,20 @@ let paint = (renderer: SdlRenderer, background: Color, ops: []DrawOp) -> i64 => 
           quad(batches[k].mesh, g.at.scaled(scale), in_texture(g.texels, texture), color)
         }
       },
-      Picture(id, texels, at) => {
+      Picture(id, texels, at, opacity) => {
         let Some(texture) = texture_of(renderer, id) else { continue }
         let k = batch_for(batches, i64(id), [at.scaled(scale)])
+        // The vertices' colour modulates the texture: its alpha the opacity.
         quad(
           batches[k].mesh,
           at.scaled(scale),
           in_texture(texels, texture),
-          Color { r: 255, g: 255, b: 255 }
+          Color {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: u8((opacity.clamp(0.0, 1.0) * 255.0).round())
+          }
         )
       },
       GradientFill(at, radii, gradient) => {
@@ -1179,7 +1201,9 @@ let vertices = pure (mesh: Mesh) -> []Vertex => [
 @borrowed
 let texture_of = pure (renderer: SdlRenderer, id: TextureId) -> Maybe<Texture> => {
   let index = i64(id)
-  if index < 0 || index >= renderer.textures.len() { None } else { Some(renderer.textures[index]) }
+  if index < 0 || index >= renderer.textures.len() || !renderer.live[index] { None } else {
+    Some(renderer.textures[index])
+  }
 }
 
 /// A rectangle in a texture's texels as texture coordinates, `0.0`–`1.0`.

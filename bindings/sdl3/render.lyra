@@ -6,8 +6,9 @@ module bindings.sdl3
 pub type Renderer = ^u8
 
 /// An `SDL_Surface *`, which only [save_screenshot] and [read_pixels] ever hold — so it
-/// stays private.
-type Surface = ^u8
+/// stays private. An `alias`, not a `type`, so a surface passes where `^u8` is taken:
+/// `SDL_DestroySurface` is declared over `^u8`, as `bindings.sdl3_image` declares it.
+alias Surface = ^u8
 
 /// `SDL_FRect` — the rectangle SDL draws, in floats.
 ///
@@ -177,8 +178,10 @@ unsafe extern sdl_read_surface_pixel: (
   a: ^mut u8,
 ) -> bool
 
+// Over `^u8`, not `Surface`: `bindings.sdl3_image` declares it so, and the backend compares two
+// declarations of one C symbol with an alias's name unexpanded (todo.md).
 @symbol("SDL_DestroySurface")
-unsafe extern sdl_destroy_surface: (surface: Surface) -> void
+unsafe extern sdl_destroy_surface: (surface: ^u8) -> void
 
 @symbol("SDL_RenderGeometry")
 unsafe extern sdl_render_geometry: (

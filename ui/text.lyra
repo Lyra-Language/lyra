@@ -66,7 +66,17 @@ import bindings.freetype.{
   HintFull,
 }
 import std.collections.{ HashMap, hashmap_new }
-import ui.draw.{ Point, Rect, Color, Image, TextureId, GlyphQuad, DrawOp, Glyphs }
+import ui.draw.{
+  Point,
+  Rect,
+  Color,
+  Image,
+  TextureId,
+  GlyphQuad,
+  DrawOp,
+  Glyphs,
+  PictureSource
+}
 import ui.backend.{ Renderer }
 
 /// Which font, and how large: a `family` added to [Fonts] — or several, comma-separated, as
@@ -675,6 +685,18 @@ pub struct GlyphAtlas {
   filling: i64 = -1,
   /// The frame being painted, counted by [GlyphAtlas.next_frame].
   frame: i64 = 0,
+  /// The pictures a view names ([PictureSource]), by key: the texture each is drawn from, as
+  /// of which revision, and the frame that last drew it.
+  pictures: HashMap<string, KeptPicture>,
+}
+
+/// A picture's texture as the atlas keeps it: its revision, size, and the frame last drawing it.
+struct KeptPicture {
+  texture: TextureId,
+  revision: i64,
+  width: i64,
+  height: i64,
+  frame: i64,
 }
 
 /// A page's texture is this many texels on a side.
@@ -684,17 +706,77 @@ pub const ATLAS_SIZE: i64 = 1024
 pub const ATLAS_PAGES: i64 = 4
 
 /// An empty atlas; a page's texture is uploaded the first time a glyph needs it.
-pub let glyph_atlas = pure () -> GlyphAtlas => GlyphAtlas { slots: hashmap_new() }
+pub let glyph_atlas = pure () -> GlyphAtlas =>
+  GlyphAtlas { slots: hashmap_new(), pictures: hashmap_new() }
 
 /// An empty atlas of pages `size` texels on a side, emptying one past `max_pages` — small
 /// ones, for a test to fill.
 pub let glyph_atlas_sized = pure (size: i64, max_pages: i64) -> GlyphAtlas =>
-  GlyphAtlas { slots: hashmap_new(), size: size, max_pages: max_pages.max(1) }
+  GlyphAtlas {
+    slots: hashmap_new(),
+    pictures: hashmap_new(),
+    size: size,
+    max_pages: max_pages.max(1)
+  }
 
 impl GlyphAtlas {
   /// A new frame begins: the pages the last one drew from may be emptied again. `ui.layout`'s
   /// `paint` calls it.
   pub let next_frame = (self: mut) -> void => { self.frame += 1 }
+
+  /// The texture `source` is drawn from, marked drawn this frame: uploaded through `renderer`
+  /// the first time its key is drawn, written again only when its revision moves — in place
+  /// where its size has not changed, else uploaded anew — and `None` where the renderer cannot
+  /// hold it.
+  pub let picture<r> where r: Renderer = (
+    self: mut,
+    source: PictureSource,
+    renderer: mut r
+  ) -> Maybe<TextureId> => {
+    let image = source.image
+    if let Some(kept) = self.pictures.get(source.key) {
+      if kept.revision == source.revision {
+        self.pictures.insert(source.key, KeptPicture { kept | frame: self.frame })
+        return Some(kept.texture)
+      }
+      let same_size = kept.width == image.width && kept.height == image.height
+      if same_size && renderer.update(kept.texture, Point {}, image) {
+        self.pictures.insert(
+          source.key,
+          KeptPicture { kept | revision: source.revision, frame: self.frame }
+        )
+        return Some(kept.texture)
+      }
+      renderer.release(kept.texture)
+      let _ = self.pictures.remove(source.key)
+    }
+    let Some(texture) = renderer.upload(image) else { return None }
+    self.pictures.insert(source.key, KeptPicture {
+      texture: texture,
+      revision: source.revision,
+      width: image.width,
+      height: image.height,
+      frame: self.frame,
+    })
+    Some(texture)
+  }
+
+  /// The pictures this frame did not draw let go through `renderer`: a key no view names now.
+  /// `ui.layout`'s `paint` calls it as a frame ends.
+  pub let release_pictures<r> where r: Renderer = (
+    self: mut,
+    renderer: mut r
+  ) -> void => {
+    for (key, kept) in self.pictures.entries() {
+      if kept.frame < self.frame {
+        renderer.release(kept.texture)
+        let _ = self.pictures.remove(key)
+      }
+    }
+  }
+
+  /// How many pictures the atlas holds a texture for — for a test.
+  pub let picture_count = pure (self) -> i64 => self.pictures.len()
 
   /// How many pages the atlas has, and how many times a page has been emptied for new glyphs.
   pub let page_count = pure (self) -> i64 => self.pages.len()

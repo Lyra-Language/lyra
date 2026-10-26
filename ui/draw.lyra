@@ -101,6 +101,16 @@ pub struct Image {
   pixelated: bool = false,
 }
 
+/// A picture a program names: its pixels, by a `key` that is its own, as of `revision`. The
+/// host keeps one texture a key and writes it again only when the revision moves — a program
+/// that changes the pixels moves it — so a view can name the same picture every frame for
+/// nothing (`ui.layout`'s `picture` and `PaintPicture`, `ui.text`'s [GlyphAtlas]).
+pub struct PictureSource {
+  key: string,
+  image: Image,
+  revision: i64 = 0,
+}
+
 /// A texture a renderer holds, named by the number its `upload` answered.
 pub type TextureId = i64
 
@@ -124,8 +134,9 @@ pub data DrawOp =
   /// coverage, drawn in the colour.
   | Glyphs(TextureId, []GlyphQuad, Color)
   /// The `texels` part of a texture (the second rectangle) drawn into `at` (the third),
-  /// stretched to fit.
-  | Picture(TextureId, Rect, Rect)
+  /// stretched to fit, at an opacity (0 to 1) — a background image faded as its colour would
+  /// be.
+  | Picture(TextureId, Rect, Rect, f32)
   /// Draw only inside the rectangle until the matching [PopClip]. Clips nest: each narrows
   /// the one around it.
   | PushClip(Rect, Radii)

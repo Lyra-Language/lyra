@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 10/26/26 — `ui`: pictures a program names, and fills of them; images decoded to pixels
+
+- **A program on `ui.app` can put its own pixels on screen** (`ui/VEGA.md` §2, built for
+  Termina's image backgrounds): `picture(key, image, revision, size)`, and `PaintPicture` for
+  a painter. The host keeps one texture a key in the `GlyphAtlas` that `paint` is handed —
+  the atlas being what every caller of `paint` already passes, where a new parameter would
+  have touched thirty-odd — uploading it the first frame a key is drawn, writing it again
+  only when the revision moves (in place where the size holds), and releasing it the frame no
+  view draws it (`Renderer.release`, a trait default that does nothing, so a renderer of
+  tests need not change; both real ones reuse a released texture's id). A painter's op
+  carries its `PictureSource` itself, where §2 had it name another element's key: a painter
+  then needs no element declaring its pictures. `TestRun_UiPictures`.
+- **`picture_fill`**: a picture tiled at its own pixels, stretched, or stretched and cropped
+  to cover a box, clipped to its corners. Tiles double past `MOST_TILES` (4096): a one-pixel
+  pattern would otherwise be a million quads. `ceil` and `sqrt` are not pure (they trap),
+  and the painters calling it are, so the doubling is plain arithmetic.
+- **`Picture` has an opacity**: the GPU multiplies the texture by the instance's colour, the
+  SDL renderer by its vertices' — a background image fades as its colour would.
+- **`bindings.sdl3_image` decodes to pixels** (`load_pixels`, `load_svg_pixels`) for `ui`'s
+  renderers, reading the converted surface through its leading fields. A program declares a C
+  symbol once, so its `SDL_IOFromFile` and `SDL_CloseIO` are `bindings.sdl3`'s `^^u8`, and
+  `bindings.sdl3`'s `SDL_DestroySurface` moved to `^u8` — the backend compares two
+  declarations with an alias's name unexpanded (todo.md). `TestRun_SdlImagePixels`.
+
 ### 10/26/26 — `ui.gpu`: the window's Metal layer pinned after the GPU claims it
 
 - **A GPU window's resize showed its last frame stretched**: `platform_for` pins the window's

@@ -706,8 +706,14 @@ buffer; `resize` (SIGWINCH); `exit_status()` reaps without waiting. macOS and Li
 
 SDL3_image, `@link("SDL3_image")` — its own module so a program that loads no image does
 not link it. `load_texture(renderer, path) -> Maybe<Texture>` answers `bindings.sdl3`'s
-`Texture` via `adopt_texture`. `brew install sdl3_image` (Debian `libsdl3-image-dev`);
-found through `pkg: "sdl3-image"`.
+`Texture` via `adopt_texture`. **`load_pixels(path)` and `load_svg_pixels(path, w, h)`
+answer the pixels themselves** (`Pixels`, `0xAARRGGBB` with straight alpha) — for `ui`'s
+renderers, which upload an `Image`: the surface converted to ARGB8888 and read row by row
+through its leading fields (`SurfaceHead`, as SDL lays them out), an SVG drawn at the size
+asked, anything past `LARGEST_SIDE` (8192) a side scaled down. One C symbol has one
+signature in a program, so `SDL_IOFromFile`, `SDL_CloseIO` and `SDL_DestroySurface` are
+declared exactly as `bindings.sdl3` declares them. `brew install sdl3_image` (Debian
+`libsdl3-image-dev`); found through `pkg: "sdl3-image"`.
 
 ## `bindings/jpeg.lyra`
 

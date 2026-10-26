@@ -95,6 +95,9 @@ pub let upload = (
   if id < 0 { None } else { Some(id) }
 }
 
+/// Texture `id` let go, its id free for the next upload; false where it is none.
+pub let release = (g: Gpu, id: i64) -> bool => unsafe { lyra_gpu_release(g, id) }
+
 /// `argb` written into texture `id` at texel (`x`, `y`).
 pub let update = (
   g: Gpu,
@@ -158,6 +161,7 @@ unsafe extern lyra_gpu_set_backdrop_regions: (
 ) -> bool
 unsafe extern lyra_gpu_backdrop_regions_state: (window: Window) -> i32
 unsafe extern lyra_gpu_destroy: (g: Gpu) -> void
+unsafe extern lyra_gpu_release: (g: Gpu, id: i64) -> bool
 unsafe extern lyra_gpu_upload: (
   g: Gpu,
   w: i64,

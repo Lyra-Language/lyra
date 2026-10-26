@@ -473,6 +473,7 @@ let intrinsic_width<e> = (
     Words(text) =>
       fonts.lay_out(text, style.font, if least { 0.0 } else { UNBOUNDED }).width,
     Texels(_, _, natural) => natural.w,
+    Pictured(_, natural) => natural.w,
     Measured(Some(w), _) => w,
     Flow(Horizontal, _, _) =>
       children_width(node, least, true, styled.within, fonts, ui, id, shrunk) + style.gap * gaps,

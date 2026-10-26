@@ -254,6 +254,9 @@ pub trait Renderer {
   /// Draw a frame: the window cleared to the colour, then the display list in order, then
   /// shown.
   draw: (mut Self, Color, []DrawOp) -> void
+  /// Let texture `id` go — a picture no view draws now ([GlyphAtlas]'s pictures); its id may
+  /// name another later. Nothing by default, for a renderer that keeps what it is given.
+  release: (mut Self, TextureId) -> void = (self, id) => {}
 }
 
 /// Something the user did, or the window had done to it, in logical units.

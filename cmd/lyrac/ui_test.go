@@ -3540,6 +3540,124 @@ let describe = pure (at: Maybe<Point>) -> string => match at {
 	}
 }
 
+// Pictures the program names, kept by the host (ui.layout's picture and PaintPicture,
+// ui.text's GlyphAtlas): uploaded the first frame a key is drawn, not again while its
+// revision holds, written in place when the revision moves at the same size, released and
+// uploaded anew at another, and released the frame no view names it; a painter's drawn at
+// its opacity, into its place, from the texels it names.
+func TestRun_UiPictures(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.backend.{ Renderer }
+import ui.draw.{ Size, Point, Rect, Image, TextureId, PictureSource, Picture }
+import ui.text.{ fonts_new, glyph_atlas }
+import ui.interact.{ ui_new }
+import ui.style.{ Style }
+import ui.layout.{ Node, LayoutCache, layout_cache, column, picture, painted, PaintArea, PaintOp, PaintPicture, PaintDraw, paint, tight, picture_fill, FitTile, FitStretch, FitCover, Fit }
+import ui.draw.{ radius, PushClip }
+
+/// A renderer that counts what it is asked to do with textures.
+struct Counting {
+  uploads: i64 = 0,
+  updates: i64 = 0,
+  releases: i64 = 0,
+  next: i64 = 0,
+}
+
+impl Renderer for Counting {
+  upload = (self, image) => {
+    self.uploads += 1
+    self.next += 1
+    Some(TextureId(self.next - 1))
+  }
+  update = (self, id, at, image) => {
+    self.updates += 1
+    true
+  }
+  release = (self, id) => { self.releases += 1 }
+  draw = (self, background, ops) => {}
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var ui = ui_new()
+  var cache: LayoutCache<i64> = layout_cache()
+  var atlas = glyph_atlas()
+  var r = Counting {}
+  let small = Image { width: 2, height: 2, argb: [0xFF0000FF, 0xFF00FF00, 0xFFFF0000, 0xFFFFFFFF] }
+  let large = Image { width: 3, height: 1, argb: [0xFF000000, 0xFF000000, 0xFF000000] }
+  let frames: [](string, Image, i64, bool) = [
+    ("first", small, 1, true),
+    ("the same revision", small, 1, true),
+    ("a new revision, same size", small, 2, true),
+    ("a new revision, a new size", large, 3, true),
+    ("not named", large, 3, false),
+  ]
+  for (name, image, revision, named) in frames {
+    let view = column::<i64>(if named { [picture::<i64>("art", image, revision, Size { w: 20.0, h: 20.0 })] } else { [] })
+    let laid = ui.frame_within(view, tight(Size { w: 100.0, h: 100.0 }), fonts, cache)
+    let _ = paint(laid, Point {}, 1.0, fonts, atlas, r)
+    println("${name}: ${r.uploads} uploads, ${r.updates} updates, ${r.releases} releases, ${atlas.picture_count()} kept")
+  }
+  // A painter's: half the image's texels, into its place moved to the painter's, half opaque.
+  let canvas = PictureSource { key: "canvas", image: small, revision: 1 }
+  let paints = (_: PaintArea) -> []PaintOp =>
+    [PaintPicture(canvas, Rect { w: 1.0, h: 2.0 }, Rect { x: 5.0, y: 5.0, w: 10.0, h: 20.0 }, 0.5)]
+  let view = column::<i64>([sized_painter(paints)])
+  let laid = ui.frame_within(view, tight(Size { w: 100.0, h: 100.0 }), fonts, cache)
+  for op in paint(laid, Point {}, 1.0, fonts, atlas, r) {
+    if let Picture(_, texels, at, opacity) = op {
+      println("painted: texels ${texels.w}x${texels.h} into ${at.x},${at.y} ${at.w}x${at.h} at ${opacity}")
+    }
+  }
+  // The fills: a 4x2 picture stretched, cut to cover a square, and tiled at two pixels a point;
+  // a single pixel tiled, its tile doubled until there are few enough.
+  let wide = PictureSource { key: "wide", image: Image { width: 4, height: 2, argb: [0, 0, 0, 0, 0, 0, 0, 0] } }
+  let dot = PictureSource { key: "dot", image: Image { width: 1, height: 1, argb: [0] } }
+  fill("stretched", picture_fill(wide, FitStretch, Rect { w: 100.0, h: 50.0 }, radius(8.0), 1.0, 2.0))
+  fill("covering a square", picture_fill(wide, FitCover, Rect { w: 100.0, h: 100.0 }, radius(8.0), 1.0, 2.0))
+  fill("tiled", picture_fill(wide, FitTile, Rect { w: 100.0, h: 50.0 }, radius(0.0), 1.0, 2.0))
+  fill("a pixel tiled", picture_fill(dot, FitTile, Rect { w: 400.0, h: 300.0 }, radius(0.0), 1.0, 2.0))
+  0
+}
+
+/// How many pictures a fill draws, the first one's texels and place, and whether it is clipped.
+let fill = (name: string, ops: []PaintOp) -> void => {
+  var pictures = 0
+  var first = ""
+  var clipped = false
+  for op in ops {
+    match op {
+      PaintPicture(_, texels, at, _) => {
+        if pictures == 0 { first = "texels ${texels.x},${texels.y} ${texels.w}x${texels.h} into ${at.w}x${at.h}" }
+        pictures += 1
+      },
+      PaintDraw(PushClip(_, corners)) => { clipped = corners.top_left > 0.0 },
+      _ => {},
+    }
+  }
+  println("${name}: ${pictures}, the first ${first}, rounded ${clipped}")
+}
+
+let sized_painter = pure (paints: (PaintArea) -> []PaintOp) -> Node<i64> =>
+  painted::<i64>(paints).with_style(Style { width: Some(50.0), height: Some(50.0) })
+`)
+	want := `first: 1 uploads, 0 updates, 0 releases, 1 kept
+the same revision: 1 uploads, 0 updates, 0 releases, 1 kept
+a new revision, same size: 1 uploads, 1 updates, 0 releases, 1 kept
+a new revision, a new size: 2 uploads, 1 updates, 1 releases, 1 kept
+not named: 2 uploads, 1 updates, 2 releases, 0 kept
+painted: texels 1x2 into 5,5 10x20 at 0.5
+stretched: 1, the first texels 0,0 4x2 into 100x50, rounded true
+covering a square: 1, the first texels 1,0 2x2 into 100x100, rounded true
+tiled: 2500, the first texels 0,0 4x2 into 2x1, rounded false
+a pixel tiled: 1900, the first texels 0,0 1x1 into 8x8, rounded false
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // A select's options each in their own font family (SelectSpec.option_families, a font list
 // showing each font in itself): in the open list, and on the select for the chosen one; an
 // option given none, the select's own. The families need not be loaded: matching falls back.

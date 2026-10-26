@@ -100,7 +100,7 @@ let scene = pure (size: Size, art: Art) -> []DrawOp => [
   Fill(Rect { x: 220.0, y: 130.0, w: 140.0, h: 110.0 }, radius(0.0), rgb(0xF0C85A)),
   PopClip,
   // The checkerboard, each of its 8 × 8 texels 8 units square and crisp: it is `pixelated`.
-  Picture(art.checker, Rect { x: 0.0, y: 0.0, w: 8.0, h: 8.0 }, Rect { x: 20.0, y: 160.0, w: 64.0, h: 64.0 }),
+  Picture(art.checker, Rect { x: 0.0, y: 0.0, w: 8.0, h: 8.0 }, Rect { x: 20.0, y: 160.0, w: 64.0, h: 64.0 }, 1.0),
   // Two "glyphs" in dark grey.
   Glyphs(art.glyph, [
     GlyphQuad { at: Rect { x: 100.0, y: 170.0, w: 16.0, h: 16.0 }, texels: Rect { x: 0.0, y: 0.0, w: 4.0, h: 4.0 } },

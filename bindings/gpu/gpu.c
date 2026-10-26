@@ -334,7 +334,9 @@ void lyra_gpu_destroy(LyraGpu *g) {
     if (!g) return;
     SDL_WaitForGPUIdle(g->device);
     release_targets(g);
-    for (int64_t i = 0; i < g->texture_count; i++) SDL_ReleaseGPUTexture(g->device, g->textures[i].texture);
+    for (int64_t i = 0; i < g->texture_count; i++) {
+        if (g->textures[i].texture) SDL_ReleaseGPUTexture(g->device, g->textures[i].texture);
+    }
     SDL_free(g->textures);
     if (g->white) SDL_ReleaseGPUTexture(g->device, g->white);
     if (g->instances) SDL_ReleaseGPUBuffer(g->device, g->instances);
@@ -363,16 +365,33 @@ int64_t lyra_gpu_upload(LyraGpu *g, int64_t w, int64_t h, const uint32_t *argb, 
     upload_region(g, cmd, t, 0, 0, (int)w, (int)h, bytes);
     SDL_SubmitGPUCommandBuffer(cmd);
     SDL_free(bytes);
+    struct Texture made = { t, pixelated ? g->nearest : g->linear, (int)w, (int)h };
+    // A released texture's place first, so a picture changed often does not grow the table.
+    for (int64_t i = 0; i < g->texture_count; i++) {
+        if (!g->textures[i].texture) {
+            g->textures[i] = made;
+            return i;
+        }
+    }
     if (g->texture_count == g->texture_cap) {
         g->texture_cap = g->texture_cap ? g->texture_cap * 2 : 8;
         g->textures = SDL_realloc(g->textures, (size_t)g->texture_cap * sizeof *g->textures);
     }
-    g->textures[g->texture_count] = (struct Texture){ t, pixelated ? g->nearest : g->linear, (int)w, (int)h };
+    g->textures[g->texture_count] = made;
     return g->texture_count++;
 }
 
+// Texture `id` let go, its place free for the next upload; false where it is none. The GPU
+// keeps it until the frames drawing from it are done (SDL's deferred release).
+bool lyra_gpu_release(LyraGpu *g, int64_t id) {
+    if (id < 0 || id >= g->texture_count || !g->textures[id].texture) return false;
+    SDL_ReleaseGPUTexture(g->device, g->textures[id].texture);
+    g->textures[id] = (struct Texture){ 0 };
+    return true;
+}
+
 bool lyra_gpu_update(LyraGpu *g, int64_t id, int64_t x, int64_t y, int64_t w, int64_t h, const uint32_t *argb) {
-    if (id < 0 || id >= g->texture_count || w <= 0 || h <= 0) return false;
+    if (id < 0 || id >= g->texture_count || !g->textures[id].texture || w <= 0 || h <= 0) return false;
     uint8_t *bytes = rgba_of(argb, w * h);
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(g->device);
     bool ok = upload_region(g, cmd, g->textures[id].texture, (int)x, (int)y, (int)w, (int)h, bytes);
@@ -383,7 +402,7 @@ bool lyra_gpu_update(LyraGpu *g, int64_t id, int64_t x, int64_t y, int64_t w, in
 
 // A texture's size in texels, for the uv of a quad drawn from it.
 bool lyra_gpu_texture_size(LyraGpu *g, int64_t id, int64_t *w, int64_t *h) {
-    if (id < 0 || id >= g->texture_count) return false;
+    if (id < 0 || id >= g->texture_count || !g->textures[id].texture) return false;
     *w = g->textures[id].width;
     *h = g->textures[id].height;
     return true;

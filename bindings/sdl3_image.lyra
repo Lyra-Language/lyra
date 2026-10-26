@@ -25,3 +25,112 @@ pub let load_texture = (renderer: Renderer, path: string) -> Maybe<Texture> => {
   let handle = path.with_cstring((p) => unsafe { img_load_texture(renderer, p) })
   unsafe { adopt_texture(handle) }
 }
+
+// ── Pixels ───────────────────────────────────────────────────────────────────
+
+/// An image's pixels: `width` × `height`, row by row, each `0xAARRGGBB` with straight alpha.
+pub struct Pixels {
+  width: i64,
+  height: i64,
+  argb: []u32,
+}
+
+/// The most pixels an image keeps on a side: a larger one is scaled down to it, as a texture
+/// any larger is refused by the GPU.
+pub const LARGEST_SIDE: i64 = 8192
+
+/// The image file at `path` decoded — PNG, JPEG, SVG (at its own size), or whatever else the
+/// SDL3_image it links decodes — or `None` where it cannot be read or decoded (`last_error()`
+/// says which).
+pub let load_pixels = (path: string) -> Maybe<Pixels> => {
+  let surface = path.with_cstring((p) => unsafe { img_load(p) })
+  pixels_of(surface)
+}
+
+/// The SVG file at `path` drawn `width` × `height` pixels (either 0 for what its shape gives
+/// the other), so it is as sharp as it will be shown; `None` where it cannot be read.
+pub let load_svg_pixels = (path: string, width: i64, height: i64) -> Maybe<Pixels> => {
+  let stream = path.with_cstring((p) => "rb".with_cstring((m) => unsafe { sdl_io_from_file(
+    p,
+    m
+  ) }))
+  if stream == nullptr { return None }
+  let surface = unsafe { img_load_sized_svg_io(stream, i32(width), i32(height)) }
+  let _ = unsafe { sdl_close_io(stream) }
+  pixels_of(surface)
+}
+
+/// An `SDL_Surface`'s leading fields, as SDL lays them out: what is read of a loaded one.
+struct SurfaceHead {
+  flags: u32,
+  format: u32,
+  w: i32,
+  h: i32,
+  pitch: i32,
+  pixels: ^u8,
+}
+
+/// `surface`'s pixels as `0xAARRGGBB`, the surface destroyed: converted to that format, scaled
+/// down to [LARGEST_SIDE] where it is larger; `None` for no surface.
+let pixels_of = (loaded: ^u8) -> Maybe<Pixels> => {
+  if loaded == nullptr { return None }
+  var surface = unsafe { sdl_convert_surface(loaded, PIXELFORMAT_ARGB8888) }
+  unsafe { sdl_destroy_surface(loaded) }
+  if surface == nullptr { return None }
+  let (w0, h0) = surface_size(surface)
+  let longest = w0.max(h0)
+  if longest > LARGEST_SIDE {
+    let w = (w0 * LARGEST_SIDE / longest).max(1)
+    let h = (h0 * LARGEST_SIDE / longest).max(1)
+    let scaled = unsafe { sdl_scale_surface(surface, i32(w), i32(h), SCALEMODE_LINEAR) }
+    unsafe { sdl_destroy_surface(surface) }
+    if scaled == nullptr { return None }
+    surface = scaled
+  }
+  let head: ^SurfaceHead = unsafe { pointer_at(surface.address()) }
+  let w = i64(unsafe { head^.w })
+  let h = i64(unsafe { head^.h })
+  let pitch = i64(unsafe { head^.pitch })
+  let first: ^u8 = unsafe { head^.pixels }
+  let base = first.address()
+  var argb: []u32 = [0; w * h]
+  for y in 0..<h {
+    let row: ^u32 = unsafe { pointer_at(base + u64(y * pitch)) }
+    for x in 0..<w { argb[y * w + x] = unsafe { row.offset(x)^ } }
+  }
+  unsafe { sdl_destroy_surface(surface) }
+  Some(Pixels { width: w, height: h, argb: argb })
+}
+
+/// A surface's width and height.
+let surface_size = pure (surface: ^u8) -> (i64, i64) => {
+  let head: ^SurfaceHead = unsafe { pointer_at(surface.address()) }
+  (i64(unsafe { head^.w }), i64(unsafe { head^.h }))
+}
+
+/// `SDL_PIXELFORMAT_ARGB8888`, and `SDL_SCALEMODE_LINEAR`.
+const PIXELFORMAT_ARGB8888: u32 = 0x16362004
+const SCALEMODE_LINEAR: i32 = 1
+
+@symbol("IMG_Load")
+unsafe extern img_load: (file: ^u8) -> ^u8
+
+// An `SDL_IOStream *` is `^^u8`, as `bindings.sdl3` declares these: one C symbol has one
+// signature in a program.
+@symbol("IMG_LoadSizedSVG_IO")
+unsafe extern img_load_sized_svg_io: (src: ^^u8, width: i32, height: i32) -> ^u8
+
+@symbol("SDL_IOFromFile")
+unsafe extern sdl_io_from_file: (file: ^u8, mode: ^u8) -> ^^u8
+
+@symbol("SDL_CloseIO")
+unsafe extern sdl_close_io: (stream: ^^u8) -> bool
+
+@symbol("SDL_ConvertSurface")
+unsafe extern sdl_convert_surface: (surface: ^u8, format: u32) -> ^u8
+
+@symbol("SDL_ScaleSurface")
+unsafe extern sdl_scale_surface: (surface: ^u8, width: i32, height: i32, mode: i32) -> ^u8
+
+@symbol("SDL_DestroySurface")
+unsafe extern sdl_destroy_surface: (surface: ^u8) -> void

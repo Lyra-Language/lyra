@@ -191,6 +191,19 @@ impl Renderer for AnyRenderer {
     var c = r
     c.update(id, at, image)
   }
+  release = (self, id) => {
+    if let Some(r) = self.gpu {
+      var g = r
+      g.release(id)
+      self.gpu = Some(g)
+      return
+    }
+    if let Some(r) = self.sdl {
+      var c = r
+      c.release(id)
+      self.sdl = Some(c)
+    }
+  }
   draw = (self, background, ops) => {
     if let Some(r) = self.gpu {
       var g = r
@@ -225,8 +238,15 @@ impl Renderer for GpuRenderer {
     ) else {
       return None
     }
-    self.sizes.push((f32(image.width), f32(image.height)))
+    // A released id is taken again: its size written where it was.
+    let size = (f32(image.width), f32(image.height))
+    if id < self.sizes.len() { self.sizes[id] = size } else { self.sizes.push(size) }
     Some(TextureId(id))
+  }
+  release = (self, id) => {
+    if gpu.release(self.gpu, i64(id)) && i64(id) < self.sizes.len() {
+      self.sizes[i64(id)] = (0.0, 0.0)
+    }
   }
   update = (self, id, at, image) =>
     gpu.update(
@@ -432,12 +452,14 @@ let frame_of = (renderer: GpuRenderer, ops: []DrawOp) -> Frame => {
           })
         }
       },
-      Picture(id, texels, at) => {
+      Picture(id, texels, at, opacity) => {
         let Some((tw, th)) = texture_size(renderer, i64(id)) else { continue }
         texture = i64(id)
         made.push(Instance {
           quad: at.scaled(scale),
           kind: 1,
+          // The texture times the colour: its alpha the opacity.
+          color: Color { r: 255, g: 255, b: 255, a: u8((opacity.clamp(0.0, 1.0) * 255.0).round()) },
           uv: (texels.x / tw, texels.y / th, (texels.x + texels.w) / tw, (texels.y + texels.h) / th),
         })
       },
@@ -625,7 +647,7 @@ let grown = pure (r: Radii, by: f32) -> Radii => Radii {
 
 /// Texture `id`'s size in texels, if the renderer holds it.
 let texture_size = pure (renderer: GpuRenderer, id: i64) -> Maybe<(f32, f32)> =>
-  if id >= 0 && id < renderer.sizes.len() { Some(renderer.sizes[id]) } else { None }
+  if id >= 0 && id < renderer.sizes.len() && renderer.sizes[id].0 > 0.0 { Some(renderer.sizes[id]) } else { None }
 
 /// The window's size in pixels: its points times its pixel density.
 let pixels_of = (window: Window) -> (f32, f32) => {
