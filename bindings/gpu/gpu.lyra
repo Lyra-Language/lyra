@@ -36,6 +36,10 @@ pub let create = (window: Window) -> Maybe<Gpu> => {
 pub let pin_contents = (window: Window) -> void =>
   unsafe { lyra_gpu_pin_contents(window) }
 
+/// Whether `window` has Metal layers and every one is pinned ([pin_contents]): for a test.
+pub let pinned_state = (window: Window) -> bool =>
+  unsafe { lyra_gpu_pinned_state(window) }
+
 /// Whether `window` shows what is behind it where a frame is translucent (`on`), or is opaque
 /// again: its window and Metal layers made non-opaque, which SDL's GPU API cannot ask for at
 /// creation. False off macOS — where a window is see-through only if made so — or where AppKit
@@ -142,6 +146,7 @@ pub let read = (g: Gpu, cap: i64) -> Maybe<(i64, i64, []u32)> => {
 
 unsafe extern lyra_gpu_create: (window: Window) -> Gpu
 unsafe extern lyra_gpu_pin_contents: (window: Window) -> void
+unsafe extern lyra_gpu_pinned_state: (window: Window) -> bool
 unsafe extern lyra_gpu_set_see_through: (window: Window, on: bool) -> bool
 unsafe extern lyra_gpu_set_backdrop_blur: (window: Window, radius: i32) -> bool
 unsafe extern lyra_gpu_see_through_state: (window: Window) -> bool

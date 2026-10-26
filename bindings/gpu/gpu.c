@@ -259,6 +259,9 @@ static uint8_t *rgba_of(const uint32_t *argb, int64_t count) {
     return out;
 }
 
+// window.m's: the window's Metal layers keep a frame at their top-left while a resize waits.
+void lyra_gpu_pin_contents(SDL_Window *window);
+
 LyraGpu *lyra_gpu_create(SDL_Window *window) {
     if (getenv("LYRA_UI_RENDERER") && strcmp(getenv("LYRA_UI_RENDERER"), "sdl") == 0) return NULL;
     SDL_GPUDevice *device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_MSL, false, NULL);
@@ -267,6 +270,10 @@ LyraGpu *lyra_gpu_create(SDL_Window *window) {
         SDL_DestroyGPUDevice(device);
         return NULL;
     }
+    // The claim makes the window's Metal layer, after the platform pinned what it had: pinned
+    // again, or a resize shows the last frame stretched to the window's new size until the next
+    // is drawn (window.m).
+    lyra_gpu_pin_contents(window);
     LyraGpu *g = SDL_calloc(1, sizeof *g);
     g->device = device;
     g->window = window;

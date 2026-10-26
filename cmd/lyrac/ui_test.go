@@ -2491,7 +2491,9 @@ hover #/0/1/0:
 // background keeps its alpha — the clear background none, a half-clear fill half, its colour
 // premultiplied as the window's layer composites it — nothing of its content opaque once SDL's
 // content view has updated its layer, which painted it black under the Metal layer, and its
-// title bar on an opaque backing, as an opaque window's; and the blur behind it is taken by a
+// title bar on an opaque backing, as an opaque window's; its Metal layer pinned, the GPU's
+// claim having made it after the platform pinned what there was (a resize showed the last
+// frame stretched); and the blur behind it is taken by a
 // backdrop layer inside the window, at the radius asked (the window server's blur, the fallback,
 // showed past the window's rounded corners), gone again at 0; a frame's backdrops are regions of
 // the desktop blurred (one clipped away is none), and opacity again is taken, after which a
@@ -2507,7 +2509,7 @@ func TestRun_UiGpuSeeThrough(t *testing.T) {
 import ui.gpu.{ keep_frames, read_frame }
 import ui.backend.{ Renderer, Platform }
 import ui.draw.{ Color, Rect, rgba, radius, Fill, DrawOp, Backdrop, PushClip, PopClip }
-import bindings.gpu.{ see_through_state, backdrop_state, backdrop_regions_state }
+import bindings.gpu.{ see_through_state, backdrop_state, backdrop_regions_state, pinned_state }
 
 let main = () -> u8 => {
   let Ok(window) = gpu.open("see", 300.0, 220.0, true) else { return 2 }
@@ -2532,6 +2534,7 @@ let main = () -> u8 => {
   println("the clear background: ${at(200.0, 150.0)}")
   println("a half-clear red: ${at(70.0, 50.0)}")
   println("the content see-through, the title bar opaque: ${see_through_state(platform.window)}")
+  println("the Metal layer pinned for a resize: ${pinned_state(platform.window)}")
   println("blur taken: ${platform.set_backdrop_blur(20.0)}, by the backdrop: ${backdrop_state(platform.window)}")
   println("blur gone: ${platform.set_backdrop_blur(0.0)}, ${backdrop_state(platform.window)}")
   // Two frosted panels, the second clipped away entirely: one region of the desktop blurred.
@@ -2560,7 +2563,7 @@ let main = () -> u8 => {
 	default:
 		t.Fatalf("exited %d\nstderr: %s", code, stderr)
 	}
-	want := "the clear background: a 0 r 0\na half-clear red: a 128 r 128\nthe content see-through, the title bar opaque: true\nblur taken: true, by the backdrop: 20\nblur gone: true, -1\nregions blurred: 1\nopaque again: true\nregions on an opaque window: 0\n"
+	want := "the clear background: a 0 r 0\na half-clear red: a 128 r 128\nthe content see-through, the title bar opaque: true\nthe Metal layer pinned for a resize: true\nblur taken: true, by the backdrop: 20\nblur gone: true, -1\nregions blurred: 1\nopaque again: true\nregions on an opaque window: 0\n"
 	if stdout != want {
 		t.Errorf("got\n%s\nwant\n%s", stdout, want)
 	}

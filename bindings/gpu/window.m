@@ -28,6 +28,25 @@ void lyra_gpu_pin_contents(SDL_Window *window) {
     if (ns && ns.contentView) pin(ns.contentView);
 }
 
+// How many of `view`'s Metal layers (it and below) are pinned, and how many there are.
+static void count_pinned(NSView *view, int *pinned, int *all) {
+    if ([view.layer isKindOfClass:[CAMetalLayer class]]) {
+        *all += 1;
+        if ([view.layer.contentsGravity isEqualToString:kCAGravityTopLeft]) *pinned += 1;
+    }
+    for (NSView *sub in view.subviews) count_pinned(sub, pinned, all);
+}
+
+// `pinned_state`: whether the window has Metal layers and every one is pinned — for a test of
+// `pin_contents` on a window as it is drawn into.
+bool lyra_gpu_pinned_state(SDL_Window *window) {
+    NSWindow *ns = cocoa_window(window);
+    if (!ns || !ns.contentView) return false;
+    int pinned = 0, all = 0;
+    count_pinned(ns.contentView, &pinned, &all);
+    return all > 0 && pinned == all;
+}
+
 static void layers_opaque(NSView *view, BOOL opaque) {
     if ([view.layer isKindOfClass:[CAMetalLayer class]]) view.layer.opaque = opaque;
     for (NSView *sub in view.subviews) layers_opaque(sub, opaque);

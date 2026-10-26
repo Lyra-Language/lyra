@@ -33,6 +33,7 @@ bool lyra_gpu_set_see_through(void *window, bool on) { (void)window; (void)on; r
 bool lyra_gpu_set_backdrop_blur(void *window, int32_t radius) { (void)window; (void)radius; return false; }
 bool lyra_gpu_see_through_state(void *window) { (void)window; return false; }
 int32_t lyra_gpu_backdrop_state(void *window) { (void)window; return -1; }
+bool lyra_gpu_pinned_state(void *window) { (void)window; return false; }
 bool lyra_gpu_set_backdrop_regions(void *window, const float *regions, int32_t count) {
     (void)window; (void)regions; (void)count;
     return false;

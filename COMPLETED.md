@@ -9,6 +9,15 @@ Newest first.
 
 ## Dated log
 
+### 10/26/26 — `ui.gpu`: the window's Metal layer pinned after the GPU claims it
+
+- **A GPU window's resize showed its last frame stretched**: `platform_for` pins the window's
+  Metal layers (`pin_contents`, a frame kept at the top-left while a resize waits for the next)
+  and only then does `gpu.create` claim the window, which makes the layer the GPU draws into —
+  never pinned. `lyra_gpu_create` pins again after the claim; `pinned_state` reads it back for
+  `TestRun_UiGpuSeeThrough`. The SDL renderer's path was pinned all along, and is why the
+  comment said both were.
+
 ### 10/26/26 — `ui`: a backdrop frosts the desktop too; a colour picker's own controls
 
 - **A `Backdrop` op on a see-through window blurs the desktop behind it as well** — CSS's
