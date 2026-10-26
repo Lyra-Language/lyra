@@ -4780,6 +4780,86 @@ heard: 4 tabs
 	}
 }
 
+// The tab strip's gap gives way before its tabs: the gap its style asks for (8 here) while the
+// tabs fit at the widths they want, narrowed toward TAB_GAP_LEAST where they do not — the tabs
+// keeping their widths — and only past that the tabs shrunk.
+func TestRun_UiTabsGapGivesWay(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ ui_new }
+import ui.draw.{ Size }
+import ui.text.{ Fonts, fonts_new }
+import ui.style.{ light_theme, Sheet, Rule, Style }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, themed, tight, TabsSpec, TabSpec, tab_bar, Tabbed, TabStrip, TAB_GAP_LEAST }
+
+data Ev = Selected(i64) | Closed(i64) | Moved(i64, i64)
+
+/// The gap between the first two tabs, and every tab's width together.
+struct Measure {
+  gap: f32 = 0.0,
+  tabs: f32 = 0.0,
+}
+
+/// The light theme's tab bar is padded 2 a side.
+const PADDING: f32 = 4.0
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  let room = measure(2000.0, fonts)
+  println("room: gap ${room.gap.round()}")
+  // Room for the tabs as wide as they want and gaps of 4.
+  let tighter = measure(PADDING + room.tabs + 3.0 * 4.0, fonts)
+  println("tighter: gap ${tighter.gap.round()}, shrunk ${tighter.tabs < room.tabs - 0.5}")
+  // Room for gaps of 1 only: the gap stops at its least, and the tabs give up the rest.
+  let tightest = measure(PADDING + room.tabs + 3.0 * 1.0, fonts)
+  println("tightest: gap at its least ${(tightest.gap - TAB_GAP_LEAST).abs() < 0.01}, shrunk ${tightest.tabs < room.tabs - 0.5}")
+  0
+}
+
+let measure = (w: f32, fonts: mut Fonts) -> Measure => {
+  var ui = ui_new()
+  var cache: LayoutCache<Ev> = layout_cache()
+  let laid = ui.frame_within(view(), tight(Size { w: w, h: 100.0 }), fonts, cache)
+  let Some(strip) = strip_of(laid) else { return Measure {} }
+  var tabs: f32 = 0.0
+  var ends: []f32 = []
+  var starts: []f32 = []
+  for child in strip.children {
+    if let Tabbed(_) = child.laid.kind {
+      tabs += child.laid.size.w
+      starts.push(child.at.x)
+      ends.push(child.at.x + child.laid.size.w)
+    }
+  }
+  Measure { gap: starts[1] - ends[0], tabs: tabs }
+}
+
+let strip_of = pure (laid: Laid<Ev>) -> Maybe<Laid<Ev>> => {
+  if let TabStrip = laid.kind { return Some(laid) }
+  for child in laid.children {
+    if let Some(s) = strip_of(child.laid) { return Some(s) }
+  }
+  None
+}
+
+let view = pure () -> Node<Ev> => themed::<Ev>(light_theme(), Sheet { rules: [Rule { selector: "TabBar", style: Style { gap: Some(8.0) } }] }, [
+  column([
+    tab_bar(TabsSpec {
+      tabs: [i in 0..<4 | TabSpec { label: "Document ${i}", key: "d${i}" }],
+      selected: 0,
+      on_select: Selected,
+      on_close: Closed,
+      on_move: Moved,
+    }),
+  ]),
+])
+`)
+	want := "room: gap 8\ntighter: gap 4, shrunk false\ntightest: gap at its least true, shrunk true\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // examples/ui/tabs.lyra played: a press selects Document 2, a drag moves Document 1 past it,
 // and Document 3's × closes it; then, from the keyboard, + pressed nine times, the strip shrinking
 // and then holding the rest in its more-tabs menu. The last frame is written.

@@ -324,8 +324,9 @@ layer — implements the two traits; the display list is the whole contract.
   the focused tab's Enter, Space, Left, Right, Home and End select. **A tab carries the spec's
   functions, not events** (`TabSpot`): a builder is pure, and may call none, so `ui.interact`
   calls them with its place. **Widths** (`lay_tab_strip`): as wide as it needs up to
-  `TAB_MOST`; where the strip is narrower, shrunk together in proportion to what each has above
-  `TAB_LEAST`, none below it; past that as many as fit show, the selected among them, beside a
+  `TAB_MOST`, the strip's `gap` apart; where the strip is narrower, the gap narrowed first, to
+  `TAB_GAP_LEAST` (2) at the least, then the tabs shrunk together in proportion to what each has
+  above `TAB_LEAST`, none below it; past that as many as fit show, the selected among them, beside a
   more-tabs button (`TabsMore`, the select's arrow, `more_tabs`) whose menu lists the rest, made
   at layout and made again from the fresh tab nodes when the strip comes from the cache
   (`strip_children`, through `refreshed`, which is no longer pure). Heard as a tab list of tabs.

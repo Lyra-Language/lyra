@@ -9,6 +9,14 @@ Newest first.
 
 ## Dated log
 
+### 10/26/26 — `ui`: a tab strip's gap gives way before its tabs
+
+- **The strip's gap is what its style asks while the tabs fit at the widths they want**, and
+  narrows toward `TAB_GAP_LEAST` (2 points, or the style's own where less) where they do not,
+  before any tab shrinks (`lay_tab_strip`). Termina wanted its tabs further apart without
+  losing room for them when there are many: a gap is a style's, and CSS has no least gap, so
+  the strip decides it, as it decides the tabs' least width. `TestRun_UiTabsGapGivesWay`.
+
 ### 10/26/26 — `ui`: a see-through window blurred inside its own corners
 
 - **The blur behind a see-through window is a backdrop layer inside it** (`bindings.gpu`'s

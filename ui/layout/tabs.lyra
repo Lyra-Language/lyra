@@ -8,12 +8,13 @@ module ui.layout
 //! moves neither its framework state nor its place in the cache; a tab that is not `movable`
 //! neither moves nor is passed by one that is.
 //!
-//! **Widths**: each tab as wide as its label (and its ×), up to [TAB_MOST]; past the strip's
-//! width they shrink together, each to no less than [TAB_LEAST]; and where even then they do
-//! not fit, **the strip shows as many as fit beside a more-tabs button** (`TabsMore`, an arrow,
-//! [more_tabs]) — the selected one always among them — whose menu lists the rest, an item
-//! choosing one as a press on it would (`ui/WINDOW.md`'s open question 2). A label too long for
-//! its tab is clipped, not wrapped.
+//! **Widths**: each tab as wide as its label (and its ×), up to [TAB_MOST], the strip's `gap`
+//! between them; past the strip's width **the gap gives way first**, down to [TAB_GAP_LEAST]
+//! (or the strip's own, where that is less); then they shrink together, each to no less than
+//! [TAB_LEAST]; and where even then they do not fit, **the strip shows as many as fit beside a
+//! more-tabs button** (`TabsMore`, an arrow, [more_tabs]) — the selected one always among them —
+//! whose menu lists the rest, an item choosing one as a press on it would (`ui/WINDOW.md`'s open
+//! question 2). A label too long for its tab is clipped, not wrapped.
 //!
 //! **The more-tabs menu is made at layout**, from the tabs hidden, as a select's list is; a
 //! strip from the cache makes it again from the fresh nodes of the same tabs ([strip_children]),
@@ -59,6 +60,8 @@ pub struct TabSpot<e> {
 /// The narrowest a tab shrinks to, and the widest it grows to.
 pub const TAB_LEAST: f32 = 64.0
 pub const TAB_MOST: f32 = 220.0
+/// The least the strip's gap gives way to, before its tabs shrink.
+pub const TAB_GAP_LEAST: f32 = 2.0
 
 /// A tab bar (`TabBar`): each tab (`Tab`, `:checked` the selected) its label and, closable, a ×
 /// (`TabClose`), then `spec.after`. A press on a tab selects it, on its × closes it, and a
@@ -104,10 +107,11 @@ let tab_node<e> = pure (spec: TabsSpec<e>, i: i64) -> Node<e> => {
   }
 }
 
-/// A strip's children along it: its tabs as wide as they need up to [TAB_MOST], shrunk together
-/// toward [TAB_LEAST] where the strip is narrower than they and what follows them, each as tall
-/// as the tallest; where even at their least they do not fit, as many as do — the selected one
-/// among them — and the more-tabs button holding the rest; then what follows, at its own width.
+/// A strip's children along it: its tabs as wide as they need up to [TAB_MOST], the gap between
+/// them narrowed toward [TAB_GAP_LEAST] and then they shrunk together toward [TAB_LEAST] where
+/// the strip is narrower than they and what follows them, each as tall as the tallest; where
+/// even at their least they do not fit, as many as do — the selected one among them — and the
+/// more-tabs button holding the rest; then what follows, at its own width.
 let lay_tab_strip<e> = (
   children: []Node<e>,
   c: Constraints,
@@ -115,7 +119,6 @@ let lay_tab_strip<e> = (
   fonts: mut Fonts,
   cache: mut LayoutCache<e>
 ) -> Body<e> => {
-  let gap = ctx.gap
   // Each as it would be with all the width it wants.
   var natural: []Laid<e> = []
   for i, child in children {
@@ -141,6 +144,15 @@ let lay_tab_strip<e> = (
     } else {
       others += natural[i].size.w
     }
+  }
+  // The gap the style asks for while everything fits at the width it wants; narrowed as far as
+  // [TAB_GAP_LEAST] where it does not, before any tab gives up width.
+  let n_gaps = (children.len() - 1).max(0)
+  let least_gap = ctx.gap.min(TAB_GAP_LEAST)
+  var wanted: f32 = others
+  for w in wants { wanted += w }
+  let gap = if !c.bounded_w() || n_gaps == 0 { ctx.gap } else {
+    ((c.max_w - wanted) / f32(n_gaps)).clamp(least_gap, ctx.gap)
   }
   // The tabs shown, by their place among the tabs; the rest go into the more-tabs menu.
   var shown: []i64 = [k in 0..<tabs.len() | k]
