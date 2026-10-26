@@ -9,6 +9,22 @@ Newest first.
 
 ## Dated log
 
+### 10/26/26 — `ui`: a see-through window blurred inside its own corners
+
+- **The blur behind a see-through window is a backdrop layer inside it** (`bindings.gpu`'s
+  shim, `set_backdrop_blur`): a view at the bottom of the content view whose layer is Core
+  Animation's `CABackdropLayer` — what `NSVisualEffectView` draws with — sampling what is
+  behind the window through a Gaussian `CAFilter`. Termina's translucent background showed a
+  border and a light background past the window's corners on macOS 26: the window server's
+  blur (`CGSSetWindowBackgroundBlurRadius`) covers a region whose corners are not the
+  window's 16-point ones and draws a rim round it. A capture of the window without the blur
+  showed AppKit's corner mask, the title bar and the content all cut to the same 16 points
+  (AppKit's `_cornerRadius`, its `_cornerMask`), so the window server's region was the odd one
+  out. A layer inside the window is cut by that same mask. The window server's call stays as the
+  fallback where the private classes are missing; `backdrop_state` reads the radius back for
+  `TestRun_UiGpuSeeThrough`. Such a window can be captured only with screen-recording
+  permission, which a shell without it noticed.
+
 ### 10/23/26 — Termina's releases built on `ui`, its ImGui front end gone
 
 - **`Termina.app` and the Linux releases are built from the `ui` front end** (`ui/WINDOW.md`

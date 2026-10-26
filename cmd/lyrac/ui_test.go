@@ -2491,9 +2491,9 @@ hover #/0/1/0:
 // background keeps its alpha — the clear background none, a half-clear fill half, its colour
 // premultiplied as the window's layer composites it — nothing of its content opaque once SDL's
 // content view has updated its layer, which painted it black under the Metal layer, and its
-// title bar on an opaque backing, as an opaque window's; and the
-// blur behind it and opacity again are taken (the blur through CoreGraphics' private function,
-// which this macOS has).
+// title bar on an opaque backing, as an opaque window's; and the blur behind it is taken by a
+// backdrop layer inside the window, at the radius asked (the window server's blur, the fallback,
+// showed past the window's rounded corners), gone again at 0, and opacity again is taken.
 func TestRun_UiGpuSeeThrough(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS != "darwin" {
@@ -2505,7 +2505,7 @@ func TestRun_UiGpuSeeThrough(t *testing.T) {
 import ui.gpu.{ keep_frames, read_frame }
 import ui.backend.{ Renderer, Platform }
 import ui.draw.{ Color, Rect, rgba, radius, Fill, DrawOp }
-import bindings.gpu.{ see_through_state }
+import bindings.gpu.{ see_through_state, backdrop_state }
 
 let main = () -> u8 => {
   let Ok(window) = gpu.open("see", 300.0, 220.0, true) else { return 2 }
@@ -2530,7 +2530,8 @@ let main = () -> u8 => {
   println("the clear background: ${at(200.0, 150.0)}")
   println("a half-clear red: ${at(70.0, 50.0)}")
   println("the content see-through, the title bar opaque: ${see_through_state(platform.window)}")
-  println("blur taken: ${platform.set_backdrop_blur(20.0)}, opaque again: ${platform.set_see_through(false)}")
+  println("blur taken: ${platform.set_backdrop_blur(20.0)}, by the backdrop: ${backdrop_state(platform.window)}")
+  println("blur gone: ${platform.set_backdrop_blur(0.0)}, ${backdrop_state(platform.window)}, opaque again: ${platform.set_see_through(false)}")
   gpu.close(platform, renderer)
   0
 }
@@ -2545,7 +2546,7 @@ let main = () -> u8 => {
 	default:
 		t.Fatalf("exited %d\nstderr: %s", code, stderr)
 	}
-	want := "the clear background: a 0 r 0\na half-clear red: a 128 r 128\nthe content see-through, the title bar opaque: true\nblur taken: true, opaque again: true\n"
+	want := "the clear background: a 0 r 0\na half-clear red: a 128 r 128\nthe content see-through, the title bar opaque: true\nblur taken: true, by the backdrop: 20\nblur gone: true, -1, opaque again: true\n"
 	if stdout != want {
 		t.Errorf("got\n%s\nwant\n%s", stdout, want)
 	}

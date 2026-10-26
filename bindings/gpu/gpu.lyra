@@ -48,11 +48,17 @@ pub let set_see_through = (window: Window, on: bool) -> bool =>
 pub let see_through_state = (window: Window) -> bool =>
   unsafe { lyra_gpu_see_through_state(window) }
 
-/// What is behind `window` blurred by `radius` points, 0 for none — the window server's own
-/// blur, which a see-through window shows. False where there is none (off macOS, or a macOS
-/// without the private function it is asked through).
+/// What is behind `window` blurred by `radius` points, 0 for none, which a see-through window
+/// shows: a backdrop layer under the window's content, cut to its rounded corners as the content
+/// is — the window server's own blur, the fallback, blurred past them. False where there is
+/// neither (off macOS, or a macOS without the private classes and function it is asked through).
 pub let set_backdrop_blur = (window: Window, radius: i32) -> bool =>
   unsafe { lyra_gpu_set_backdrop_blur(window, radius) }
+
+/// The radius `window`'s backdrop blurs by, -1 where it has none: for a test of
+/// [set_backdrop_blur].
+pub let backdrop_state = (window: Window) -> i32 =>
+  unsafe { lyra_gpu_backdrop_state(window) }
 
 /// The renderer put away, its textures and the window's claim with it.
 pub let destroy = (g: Gpu) -> void => unsafe { lyra_gpu_destroy(g) }
@@ -124,6 +130,7 @@ unsafe extern lyra_gpu_pin_contents: (window: Window) -> void
 unsafe extern lyra_gpu_set_see_through: (window: Window, on: bool) -> bool
 unsafe extern lyra_gpu_set_backdrop_blur: (window: Window, radius: i32) -> bool
 unsafe extern lyra_gpu_see_through_state: (window: Window) -> bool
+unsafe extern lyra_gpu_backdrop_state: (window: Window) -> i32
 unsafe extern lyra_gpu_destroy: (g: Gpu) -> void
 unsafe extern lyra_gpu_upload: (
   g: Gpu,

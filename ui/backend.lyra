@@ -80,8 +80,8 @@ pub trait Platform {
   /// (`ui.sdl3.open`'s `see_through`), which stays so, an opaque frame hiding what is behind.
   set_see_through: (mut Self, bool) -> bool
   /// What is behind a see-through window blurred by this many points (0 for none); false where
-  /// the system has no such blur (macOS's window server has one; Linux's desktops are asked
-  /// nothing yet).
+  /// the system has no such blur (macOS has: a backdrop layer under the window's content;
+  /// Linux's desktops are asked nothing yet).
   set_backdrop_blur: (mut Self, f32) -> bool
   /// Move the window's top-left corner there, if a display shows that place — one saved
   /// while another screen was plugged in may be on none, and is ignored. The system may

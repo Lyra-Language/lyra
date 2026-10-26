@@ -7,6 +7,7 @@
 @import QuartzCore;
 #include <SDL3/SDL.h>
 #include <dlfcn.h>
+#include <objc/message.h>
 #include <objc/runtime.h>
 
 static void pin(NSView *view) {
@@ -136,15 +137,83 @@ bool lyra_gpu_see_through_state(SDL_Window *window) {
     return !ns.opaque && !any_metal_opaque(content) && (!bg || CGColorGetAlpha(bg) == 0);
 }
 
-// `set_backdrop_blur`: what is behind the window blurred by `radius` points (0 for none) — the
-// window server's own blur, as iTerm2's and Warp's, through CoreGraphics' private
-// CGSSetWindowBackgroundBlurRadius, looked up at run time: false where it is not there.
+// What a see-through window's content is drawn over to blur what is behind it: a view at the
+// bottom of the content view whose layer is Core Animation's backdrop layer — what
+// NSVisualEffectView draws with — sampling what is behind the window, through a Gaussian.
+// Inside the window, it is cut to the window's rounded corners as everything in it is. The
+// window server's own blur (CGSSetWindowBackgroundBlurRadius, as iTerm2 and Warp use) blurred
+// a region whose corners are not the window's, and drew a rim round it: both showed past the
+// window's corners on macOS 26. It takes no clicks.
+@interface LyraBackdrop : NSView
+@end
+
+@implementation LyraBackdrop
+- (CALayer *)makeBackingLayer {
+    Class backdrop = NSClassFromString(@"CABackdropLayer");
+    return backdrop ? [backdrop new] : [CALayer layer];
+}
+- (NSView *)hitTest:(NSPoint)point { return nil; }
+@end
+
+static char backdrop_key;
+
+// The backdrop blurred by `radius` points, made where there is none; removed for 0. False where
+// Core Animation's private classes are not there.
+static bool backdrop_blur(NSWindow *ns, int32_t radius) {
+    Class backdrop_class = NSClassFromString(@"CABackdropLayer");
+    Class filter_class = NSClassFromString(@"CAFilter");
+    SEL make_filter = NSSelectorFromString(@"filterWithType:");
+    if (!backdrop_class || !filter_class || ![filter_class respondsToSelector:make_filter]) return false;
+    NSView *content = ns.contentView;
+    if (!content) return false;
+    LyraBackdrop *view = objc_getAssociatedObject(ns, &backdrop_key);
+    if (radius <= 0) {
+        [view removeFromSuperview];
+        objc_setAssociatedObject(ns, &backdrop_key, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        return true;
+    }
+    if (!view) {
+        view = [[LyraBackdrop alloc] initWithFrame:content.bounds];
+        view.wantsLayer = YES;
+        view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        [content addSubview:view positioned:NSWindowBelow relativeTo:nil];
+        objc_setAssociatedObject(ns, &backdrop_key, view, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    CALayer *layer = view.layer;
+    if (![layer isKindOfClass:backdrop_class]) return false;
+    @try {
+        // What is behind the window, not only what is behind the layer inside it.
+        [layer setValue:@YES forKey:@"windowServerAware"];
+        id (*make)(Class, SEL, NSString *) = (id (*)(Class, SEL, NSString *))objc_msgSend;
+        id filter = make(filter_class, make_filter, @"gaussianBlur");
+        [filter setValue:@(radius) forKey:@"inputRadius"];
+        layer.filters = @[filter];
+    } @catch (NSException *e) {
+        return false;
+    }
+    return true;
+}
+
+// `backdrop_state`: the radius the window's backdrop blurs by, -1 where it has none (a window
+// blurred by the window server has none): for a test of `set_backdrop_blur`.
+int32_t lyra_gpu_backdrop_state(SDL_Window *window) {
+    NSWindow *ns = cocoa_window(window);
+    LyraBackdrop *view = ns ? objc_getAssociatedObject(ns, &backdrop_key) : nil;
+    if (!view || view.superview != ns.contentView || view.layer.filters.count == 0) return -1;
+    return (int32_t)[[view.layer.filters[0] valueForKey:@"inputRadius"] intValue];
+}
+
+// `set_backdrop_blur`: what is behind the window blurred by `radius` points (0 for none), by the
+// backdrop above; where Core Animation has no backdrop layer, by the window server, through
+// CoreGraphics' private CGSSetWindowBackgroundBlurRadius, looked up at run time: false where
+// neither is there.
 typedef int32_t (*ConnectionFn)(void);
 typedef int32_t (*BlurFn)(int32_t connection, int32_t window, int32_t radius);
 
 bool lyra_gpu_set_backdrop_blur(SDL_Window *window, int32_t radius) {
     NSWindow *ns = cocoa_window(window);
     if (!ns) return false;
+    if (backdrop_blur(ns, radius < 0 ? 0 : radius)) return true;
     ConnectionFn connection = (ConnectionFn)dlsym(RTLD_DEFAULT, "CGSDefaultConnectionForThread");
     BlurFn blur = (BlurFn)dlsym(RTLD_DEFAULT, "CGSSetWindowBackgroundBlurRadius");
     if (!connection || !blur) return false;
