@@ -6171,6 +6171,89 @@ func TestRun_UiPaintedExample(t *testing.T) {
 	}
 }
 
+// examples/ui/pixels.lyra played headless: zoomed in a step by Primary and the wheel, a stroke
+// across the canvas in the starting colour, another colour chosen from the palette and a stroke
+// down in it; a press on a pixel already that colour changes nothing, so the picture's revision
+// moves only with the strokes' changes. In the frame the strokes' pixels are their colours, at
+// the zoom, and a pixel between them is the canvas's grey: the picture was written again as it
+// changed.
+func TestRun_UiPixelsExample(t *testing.T) {
+	t.Parallel()
+	skipWithoutText(t)
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "pixels")
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, filepath.Join(root, "examples", "ui", "pixels.lyra")); code != 0 {
+		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
+	}
+	shot := filepath.Join(dir, "frame.png")
+	script := "move:400,250 Primary+scroll:-1 down:300,150 move:420,150 up:420,150 click:30,60 " +
+		"down:400,300 move:400,360 up:400,360 down:400,300 up:400,300"
+	cmd := command(t, bin, "--script", script, "--png", shot)
+	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+	out, err := cmd.CombinedOutput()
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
+		t.Skipf("SDL could not open a dummy window here: %s", out)
+	} else if ok && exitErr.ExitCode() == 1 && strings.HasPrefix(string(out), "no font") {
+		t.Skipf("no font here: %s", out)
+	} else if err != nil {
+		t.Fatalf("playing: %v\n%s", err, out)
+	}
+	if !strings.HasPrefix(string(out), "32x32 at 13x, colour 2: ") || !strings.HasSuffix(strings.TrimSpace(string(out)), ", revision 5") {
+		t.Errorf("the picture as the program left it: %s", out)
+	}
+	f, err := os.Open(shot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	frame, err := png.Decode(f)
+	if err != nil {
+		t.Fatalf("the frame is not a PNG: %v", err)
+	}
+	// The canvas: where its grey starts, inside the grid's first lines.
+	field := [3]int{0xCF, 0xD2, 0xD8}
+	left, top := -1, -1
+	b := frame.Bounds()
+	for y := b.Min.Y; y < b.Max.Y && left < 0; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if near(rgbAt(frame, x, y), field, 1) {
+				left, top = x-1, y-1
+				break
+			}
+		}
+	}
+	if left < 0 {
+		t.Fatal("no canvas in the frame")
+	}
+	const zoom = 13
+	// The middle of the picture's pixel under the window's point x, y.
+	middle := func(x, y int) (int, int) {
+		return left + (x-left)/zoom*zoom + zoom/2, top + (y-top)/zoom*zoom + zoom/2
+	}
+	red, plum := [3]int{0xFF, 0x00, 0x4D}, [3]int{0x7E, 0x25, 0x53}
+	for _, c := range []struct {
+		x, y int
+		want [3]int
+		what string
+	}{
+		{300, 150, red, "the first stroke's start"},
+		{360, 150, red, "its middle"},
+		{420, 150, red, "its end"},
+		{400, 330, plum, "the second stroke, in the colour chosen"},
+		{360, 250, field, "a pixel no stroke reached"},
+	} {
+		x, y := middle(c.x, c.y)
+		if got := rgbAt(frame, x, y); !near(got, c.want, 2) {
+			t.Errorf("%s, at %d,%d, is %v, not %v", c.what, x, y, got, c.want)
+		}
+	}
+}
+
 // The glyph atlas's pages (`ui.text`'s `GlyphAtlas`), with pages of 48 texels and two of them,
 // so a capital at 40 pixels takes a page whatever the font: a glyph that fits nowhere opens a
 // page; past two, the page drawn from least recently is cleared and filled again (its glyphs

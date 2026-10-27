@@ -26,8 +26,8 @@ module ui.script
 //!   only [parse_steps] reads it.
 //! - `menu:N` — the item tagged `N` of the platform's own menu bar chosen ([MenuChosen]), as
 //!   on a Mac; a script platform has such a bar where its `native_menus` says.
-//! - a pointer input with modifiers, `Shift+click:X,Y` — held for its inputs alone
-//!   ([Platform.held]); only [parse_steps] reads it.
+//! - a pointer input with modifiers, `Shift+click:X,Y`, `Primary+scroll:-1` — held for its inputs
+//!   alone ([Platform.held]); only [parse_steps] reads it.
 //! - `move:X,Y`, `down:X,Y`, `up:X,Y` and `click:X,Y` (a move, a press and a release) — the
 //!   pointer, in logical units; `double:X,Y` and `triple:X,Y` are two and three clicks in a
 //!   row, the last press counting 2 or 3; `scroll:N` scrolls down `N` lines (up for a negative `N`), `scroll:X,Y` across and down.
@@ -395,12 +395,13 @@ pub let parse_steps = pure (script: string) -> Result<[]Step, string> => {
     let parts = token.split("+")
     // Modifiers on the pointer — `Shift+click:10,20` — are held for its inputs alone.
     if parts.len() > 1 {
-      if let Some((verb, place)) = pointer_token(parts[parts.len() - 1]) {
+      let last = parts[parts.len() - 1]
+      if pointer_token(last).is_some() || last.starts_with("scroll:") {
         let Some(held) = modifiers_named(parts.slice(0, parts.len() - 1)) else {
           return Err("not a modifier in ${token}")
         }
         inputs.push(Holding(held))
-        for step in parse_steps("${verb}:${place}")? { inputs.push(step) }
+        for step in parse_steps(last)? { inputs.push(step) }
         inputs.push(Holding(Modifiers {}))
         continue
       }

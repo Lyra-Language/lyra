@@ -9,6 +9,21 @@ Newest first.
 
 ## Dated log
 
+### 10/26/26 — `ui`: a pixel editor on pictures; a pure update's cost measured
+
+- **`examples/ui/pixels.lyra`** closes `ui/VEGA.md` §11's step 1: a 32×32 canvas (`--size`
+  any) drawn by `PaintPicture`, crisp at a zoom (−/+, Primary + the wheel), a grid, the pixel
+  under the pointer outlined, strokes joined between moves (Bresenham) by a pure update.
+  `TestRun_UiPixelsExample` plays one headless and reads the strokes' pixels back.
+- **§12's questions 3 and 4 answered by measuring, not guessing**: a pure update must copy
+  the pixels it changes, and a revision moved uploads the whole texture. For 512×512 the copy
+  is 0.13 ms and the upload 0.15 ms (SDL's 2D renderer) or 0.22 ms (the GPU), against an
+  8.3 ms frame. So no dirty rectangles, and Vega's state can stay as it is. The example's
+  first `--time` read 8.3 ms a pass at every size: `present` waits for the display, which
+  hid the work until it was timed apart.
+- **A script holds modifiers over the wheel** (`Primary+scroll:-1`), as over a click: a
+  canvas's zoom is Primary + the wheel.
+
 ### 10/26/26 — `ui`: pictures a program names, and fills of them; images decoded to pixels
 
 - **A program on `ui.app` can put its own pixels on screen** (`ui/VEGA.md` §2, built for

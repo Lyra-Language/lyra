@@ -693,6 +693,10 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 10/21] Phase 2, text and layout** — `ui.text` (HarfBuzz, a FreeType atlas),
   `ui.style` (themes, the five-layer cascade), `ui.layout` (constraints, `paint`); gate
   `examples/ui/settings.lyra` (COMPLETED.md, 10/21).
+- **[OPEN] What Vega needs of `ui`** — pictures the program changes, tooltips, modals, the
+  smaller controls, dropped files, docking and several windows, then Vega's front end on
+  them; designed in `ui/VEGA.md` (10/26), whose §11 is the order. Step 1 (pictures,
+  `examples/ui/pixels.lyra`) done 10/26; tooltips and modals next.
 - **[OPEN] What a terminal needs of `ui`** — an element the program paints, font faces and
   fallback, raw keys and pointer; designed in `ui/TERMINAL.md` (10/22), for Termina's move
   off ImGui. Steps 1 (`painted`, `PaintDraw`/`PaintText`, `on_size`), 2 (the atlas's pages)
@@ -945,6 +949,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   only at store. Wrapping-only is the cheap first slice.
 - **[DECIDED] Narrowing gets named methods** (`truncate`/`saturate`/`narrow`). **[OPEN]**
   they need return-type-from-context inference or a turbofish.
+- **[OPEN] An uppercase type parameter is reported as its bound** — `let f<R> where R:
+  Renderer = (r: mut R, …)` says "unknown type \"Renderer\"" (imported) and refuses `r.upload`.
+  It should say a type variable is lowercase (`<r>`), as LANGUAGE.md has it (10/26).
 
 ## Functional / imperative blend
 
