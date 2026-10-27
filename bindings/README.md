@@ -621,7 +621,8 @@ for back. `ui.sdl3` is its one caller; `ui.access` builds the tree it is handed.
   `SDL_EVENT_USER` pushed to wake a program waiting in `wait_event`; `next_request()` takes
   them. `bindings/menubar`'s pattern.
 - **Roles and actions are numbers** the shim maps (`RoleCode`, `ACTION_*`), `ui.backend`'s
-  `ACCESS_*` alike. A label's text is its *value*, as AccessKit has it. Bounds are in the
+  `ACCESS_*` alike. A label's text is its *value*, as AccessKit has it; a node's
+  `description` (`ui`'s tooltips) is AccessKit's, read after its label. Bounds are in the
   window's **pixels** (AccessKit divides by the backing scale), from the content's top left.
 - **`start(window)` subclasses SDL's `NSWindow`'s content view** (the subclassing adapter,
   with the focus forwarder on the window's class) and answers whether it could — `false`

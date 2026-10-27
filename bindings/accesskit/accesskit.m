@@ -28,6 +28,7 @@ typedef struct {
   int role;
   char *label;
   char *value;
+  char *description;
   double x, y, w, h;
   int toggled;
   int has_numeric;
@@ -84,6 +85,7 @@ static accesskit_tree_update *snapshot(void *userdata) {
     accesskit_node *node = accesskit_node_new(role_of(e->role));
     if (e->label[0]) accesskit_node_set_label(node, e->label);
     if (e->value[0]) accesskit_node_set_value(node, e->value);
+    if (e->description[0]) accesskit_node_set_description(node, e->description);
     accesskit_rect bounds = {e->x, e->y, e->x + e->w, e->y + e->h};
     accesskit_node_set_bounds(node, bounds);
     if (e->toggled >= 0) {
@@ -173,6 +175,7 @@ static void clear(void) {
   for (int64_t i = 0; i < element_count; i++) {
     free(elements[i].label);
     free(elements[i].value);
+    free(elements[i].description);
     free(elements[i].children);
   }
   element_count = 0;
@@ -186,7 +189,7 @@ void lyra_access_begin(uint64_t root, uint64_t focus) {
 }
 
 void lyra_access_node(uint64_t id, int32_t role, const char *label, const char *value,
-                      double x, double y, double w, double h, int32_t toggled,
+                      const char *description, double x, double y, double w, double h, int32_t toggled,
                       int32_t has_numeric, double numeric, double min, double max,
                       double step, int32_t actions, const uint64_t *children,
                       int64_t child_count) {
@@ -200,7 +203,7 @@ void lyra_access_node(uint64_t id, int32_t role, const char *label, const char *
     memcpy(kids, children, (size_t)child_count * sizeof(uint64_t));
   }
   elements[element_count++] = (element){
-      id, role, strdup(label), strdup(value), x, y, w, h, toggled, has_numeric,
+      id, role, strdup(label), strdup(value), strdup(description), x, y, w, h, toggled, has_numeric,
       numeric, min, max, step, actions, kids, child_count};
 }
 

@@ -47,7 +47,8 @@ pub let stop = () -> void => unsafe { lyra_access_stop() }
 pub let begin = (root: u64, focus: u64) -> void =>
   unsafe { lyra_access_begin(root, focus) }
 
-/// One node of the tree: what it is and says, where it is (in the window's pixels, from its content's top left), whether it
+/// One node of the tree: what it is and says (and, as `description`, more about it — its
+/// tooltip), where it is (in the window's pixels, from its content's top left), whether it
 /// is ticked (`-1` for neither), its number and range when it has one, the actions it offers,
 /// and its children's ids.
 pub let element = (
@@ -55,6 +56,7 @@ pub let element = (
   role: RoleCode,
   label: string,
   value: string,
+  description: string,
   x: f64,
   y: f64,
   w: f64,
@@ -70,12 +72,13 @@ pub let element = (
   }
   // No children is a null pointer: `data()` traps on an empty array.
   let kids: ^u64 = if children.len() == 0 { nullptr } else { unsafe { children.data() } }
-  label.with_cstring((l) => value.with_cstring((v) => unsafe {
+  label.with_cstring((l) => value.with_cstring((v) => description.with_cstring((d) => unsafe {
     lyra_access_node(
       id,
       role,
       l,
       v,
+      d,
       x,
       y,
       w,
@@ -90,7 +93,7 @@ pub let element = (
       kids,
       children.len()
     )
-  }))
+  })))
 }
 
 /// The tree to assistive technology, if it is listening.
@@ -130,6 +133,7 @@ unsafe extern lyra_access_node: (
   role: i32,
   label: ^u8,
   value: ^u8,
+  description: ^u8,
   x: f64,
   y: f64,
   w: f64,

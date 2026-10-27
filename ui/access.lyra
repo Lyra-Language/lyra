@@ -43,6 +43,7 @@ import ui.backend.{
 import ui.draw.{ Point, Rect }
 import ui.layout.{
   Laid,
+  is_tip,
   NoRole,
   GroupRole,
   TextRole,
@@ -108,6 +109,8 @@ let gather<e> = (laid: Laid<e>, origin: Point, nodes: mut []AccessNode) -> []u64
   // heard as its child.
   for child in laid.children {
     if focusable(laid.kind) && !child.laid.floats { continue }
+    // A tooltip showing is its element's description, not a node.
+    if is_tip(child.laid) { continue }
     let corner = Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
     for id in gather(child.laid, corner, nodes) { children.push(id) }
   }
@@ -149,6 +152,7 @@ let node_for<e> = pure (
     id: id,
     role: role,
     label: laid.label,
+    description: laid.description,
     bounds: bounds,
     actions: if focusable(laid.kind) { ACCESS_FOCUS } else { 0 },
     children: children,

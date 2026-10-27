@@ -9,6 +9,28 @@ Newest first.
 
 ## Dated log
 
+### 10/26/26 — `ui`: tooltips and modal dialogs
+
+- **`ui/VEGA.md` §11's step 2.** `.tooltip(text)`/`.tooltip_node(node)` on any node, shown by
+  the pointer once it rests 500 ms; `modal(under, open, content, on_dismiss)`, a dialog over a
+  scrim that alone takes input while open. `examples/ui/dialogs.lyra` shows both;
+  `TestRun_UiTooltip` and `TestRun_UiDialogsExample` hold them.
+- **Both ride the popup layer** — a float hit and painted after the tree — with two new
+  placements: below a point (`FloatPointer`, the pointer's rest) and the whole window
+  (`FloatWindow`, the scrim). The scrim covering the window is what keeps the pointer off
+  everything under it, so blocking needed only presses and the wheel outside the dialog
+  dropped, not a second hit-test.
+- **A tooltip's rest is timed from the first layout after the move**, not from the input:
+  `Ui.now` is the last frame's clock until the host lays out again, so timing from the
+  input would have started the rest early by however long the window sat idle.
+- **`modal` wraps what it is over**, as `popup` wraps its anchor, rather than VEGA.md's
+  `modal(open, content, on_dismiss)`: a node of its own would have taken a place, and a gap, in
+  whatever row held it. Its scrim and dialog are tags, not parts: making the modal a component
+  for its parts would have put the program's whole view inside it, and cut the view off from
+  its own scoped sheets.
+- **AccessKit nodes carry a description** (`AccessNode.description`, the shim's
+  `accesskit_node_set_description`): a tooltip is heard after its element's label.
+
 ### 10/26/26 — `ui`: a pixel editor on pictures; a pure update's cost measured
 
 - **`examples/ui/pixels.lyra`** closes `ui/VEGA.md` §11's step 1: a 32×32 canvas (`--size`

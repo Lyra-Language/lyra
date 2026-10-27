@@ -560,6 +560,7 @@ impl Platform for SdlPlatform {
         role_code(node.role),
         node.label,
         node.value,
+        node.description,
         f64(at.x),
         f64(at.y),
         f64(at.w),

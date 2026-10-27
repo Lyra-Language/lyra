@@ -695,8 +695,11 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   `examples/ui/settings.lyra` (COMPLETED.md, 10/21).
 - **[OPEN] What Vega needs of `ui`** — pictures the program changes, tooltips, modals, the
   smaller controls, dropped files, docking and several windows, then Vega's front end on
-  them; designed in `ui/VEGA.md` (10/26), whose §11 is the order. Step 1 (pictures,
-  `examples/ui/pixels.lyra`) done 10/26; tooltips and modals next.
+  them; designed in `ui/VEGA.md` (10/26), whose §11 is the order. Steps 1 (pictures) and 2
+  (tooltips, modals; `examples/ui/dialogs.lyra`) done 10/26; the smaller controls next.
+- **[OPEN] A modal is not heard as one, nor keeps the app's shortcuts out** — VoiceOver hears
+  its dialog as a group (AccessKit has a `Dialog` role and `set_modal`), and `App.shortcuts`
+  and drawn menus' shortcuts still reach the program while one is open (10/26).
 - **[OPEN] What a terminal needs of `ui`** — an element the program paints, font faces and
   fallback, raw keys and pointer; designed in `ui/TERMINAL.md` (10/22), for Termina's move
   off ImGui. Steps 1 (`painted`, `PaintDraw`/`PaintText`, `on_size`), 2 (the atlas's pages)

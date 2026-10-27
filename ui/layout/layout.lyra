@@ -128,6 +128,9 @@ pub struct Node<e> {
   /// Whether a press on it, where none of its controls takes the press, moves the window — a
   /// title bar the program draws ([Node.window_drag]).
   drags_window: bool = false,
+  /// Its tooltip ([Node.tooltip]): none, or the one node shown by the pointer once it rests
+  /// on this one.
+  tip: []Node<e> = [],
 }
 
 /// What an element does with its children, its space and its input. Built by the functions
@@ -174,6 +177,10 @@ pub data Kind<e> =
   /// open, floating from it on that side; and the event a press outside it, Escape or the
   /// window losing the focus raises.
   | PopsUp(bool, FloatSide, e)
+  /// A modal dialog ([modal]): its first child what it is over, laid out in its place; its
+  /// second, while open, centred in the window over a scrim, the only thing taking input; and
+  /// the event Escape raises.
+  | Modal(bool, e)
   /// A menu's opener ([menu_bar]'s titles, [menu_button], a submenu's item): its child its
   /// face, and while it is open (`Interaction.menus`) its entries' list floating from it.
   | Opens(MenuSpec<e>)
@@ -618,6 +625,21 @@ pub let popup<e> = pure (
 ) -> Node<e> =>
   Node { kind: PopsUp(open, side, on_dismiss), tag: "Popup", children: [anchor, content] }
 
+/// A modal dialog: `under` in its place, and while `open` — the program's to say — `content`
+/// centred in the window (`Dialog`, no larger than the window less the scrim's padding,
+/// scrolling past that) over a scrim dimming everything else (`ModalScrim`). While it is open nothing
+/// outside it takes input: a press elsewhere goes nowhere, and Tab keeps the focus inside it.
+/// It takes the focus when it opens, on its first control, and gives it back to what had it
+/// when it closes. Escape raises `on_dismiss`, which the program closes it for; a press outside
+/// it and the window losing the focus raise nothing.
+pub let modal<e> = pure (
+  under: Node<e>,
+  open: bool,
+  content: Node<e>,
+  on_dismiss: e
+) -> Node<e> =>
+  Node { kind: Modal(open, on_dismiss), tag: "Modal", children: [under, content] }
+
 /// The identity of option `index` in the list of the select identified as `select`.
 pub let option_id = pure (select: string, index: i64) -> string =>
   "${select}/:list/:${index}"
@@ -665,6 +687,17 @@ impl Node<e> {
   /// The node disabled while `off` holds: a control that takes no input, `:disabled`.
   pub let disabled_if = pure (self, off: bool) -> Node<e> => Node { self | disabled: off }
 
+  /// The node with a tooltip: `words` in a small box by the pointer once it rests on the node
+  /// for [TIP_DELAY_MS] (`Tooltip`), gone when it leaves the node or presses, and heard as the
+  /// node's description by assistive technology.
+  pub let tooltip = pure (self, words: string) -> Node<e> =>
+    Node { self | tip: [text::<e>(words)] }
+
+  /// The node with `tip` as its tooltip, as [tooltip] shows its text: a tip with structure — a
+  /// command's name and its shortcut. Nothing in it takes input.
+  pub let tooltip_node = pure (self, tip: Node<e>) -> Node<e> =>
+    Node { self | tip: [tip] }
+
   /// The node as a title bar the program draws (`ui.app`'s `DrawnTitleBar`): a press on it,
   /// but on one of its controls, moves the window, as the system's title bar's would.
   pub let window_drag = pure (self) -> Node<e> => Node { self | drags_window: true }
@@ -683,6 +716,7 @@ impl Node<e> {
     label: self.label,
     disabled: self.disabled,
     drags_window: self.drags_window,
+    tip: [t in self.tip | t.map(f)],
   }
 
   /// A painted element ([painted]) taking input raw ([RawInput]): every key and the text it
@@ -740,6 +774,7 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
     option_families: spec.option_families,
   }),
   PopsUp(open, side, dismissed) => PopsUp(open, side, f(dismissed)),
+  Modal(open, dismissed) => Modal(open, f(dismissed)),
   Opens(spec) => Opens(MenuSpec { entries: mapped_entries(spec.entries, f), side: spec.side, in_bar: spec.in_bar }),
   Spelled(chord) => Spelled(chord),
   TabStrip => TabStrip,
@@ -867,6 +902,10 @@ pub struct Interaction {
   /// The menus open, by their openers' identities: the one opened first, then each submenu
   /// open from it ([menu_bar], [menu_button]).
   menus: []string = [],
+  /// The element whose tooltip shows, by identity (`""` for none), and where in the window the
+  /// pointer rested on it.
+  tip: string = "",
+  tip_at: Point = Point {},
   /// The window as media queries see it; a size of nothing for the constraints' own.
   viewport: Viewport = Viewport {},
   /// What each element moving a property that changes sizes shows now (`ui.motion`), by
@@ -950,6 +989,10 @@ pub struct Laid<e> {
   floating: bool = false,
   /// Whether a press on it moves the window ([Node.window_drag]).
   drags_window: bool = false,
+  /// Whether it has a tooltip ([Node.tooltip]), and the tooltip's text, which assistive
+  /// technology reads as its description.
+  tipped: bool = false,
+  description: string = "",
   /// A colour picker's square's or strip's hue as it is drawn: the colour's own, or the one the
   /// picker holds while the colour is grey (`Interaction.hues`).
   hue: f32 = 0.0,
@@ -973,12 +1016,19 @@ pub struct Anchor {
 }
 
 /// Below the anchor (flipped above it where the window's foot leaves no room), or beside it
-/// (to its right, or its left where the window's right edge leaves none).
-pub data FloatSide = FloatBelow | FloatBeside
+/// (to its right, or its left where the window's right edge leaves none); or the framework's
+/// own two: below a point in the window, the pointer's (a tooltip's, flipped above it the same
+/// way), or over the whole window from its corner (a modal's scrim).
+pub data FloatSide = FloatBelow | FloatBeside | FloatPointer(Point) | FloatWindow
 
 /// How far a floating element stands from its anchor, and in from the window's edges.
 const FLOAT_GAP: f32 = 2.0
 const FLOAT_MARGIN: f32 = 4.0
+
+/// How far below the pointer a tooltip goes — clear of the arrow — and how long the pointer
+/// rests on an element before its tooltip shows, in milliseconds: macOS's half a second.
+const TIP_BELOW: f32 = 18.0
+pub const TIP_DELAY_MS: i64 = 500
 
 /// What a node draws besides its box: nothing, a paragraph, or part of a texture at a size.
 pub data Content = Blank | Prose(TextBlock) | Bitmap(
@@ -1095,6 +1145,11 @@ let float_spot = pure (anchor: Anchor, box: Rect, size: Size, window: Size) -> P
       x: flipped(box.x + box.w + anchor.gap, box.x - anchor.gap - size.w, size.w, window.w),
       y: within_edges(box.y, size.h, window.h),
     },
+    FloatPointer(at) => Point {
+      x: within_edges(at.x, size.w, window.w),
+      y: flipped(at.y + TIP_BELOW, at.y - anchor.gap - size.h, size.h, window.h),
+    },
+    FloatWindow => Point {},
   }
 
 /// Where something `length` long starts along an axis `room` long: at `after` (past the
@@ -1251,6 +1306,8 @@ let kept_draft<e> = pure (kind: Kind<e>, laid: Kind<e>) -> Kind<e> => match kind
 let laid_children<e> = pure (node: Node<e>) -> []Node<e> => match node.kind {
   PopsUp(_, _, _) =>
     if node.children.len() > 1 { [node.children[0], popup_holder(node.children[1])] } else { node.children },
+  Modal(_, _) =>
+    if node.children.len() > 1 { [node.children[0], modal_scrim(node.children[1])] } else { node.children },
   Opens(spec) =>
     if node.children.len() > 0 { [node.children[0], menu_list::<e>(spec.entries)] } else { node.children },
   // Its glyph's events are none, so whichever glyph it shows refreshes alike.
@@ -1271,6 +1328,7 @@ let state_under = pure (ui: Interaction, id: string) -> string => {
   for opened in ui.menus {
     if inside(opened) { out = "${out}|menu ${opened}" }
   }
+  if inside(ui.tip) { out = "${out}|tip ${ui.tip}@${ui.tip_at.x},${ui.tip_at.y}" }
   if ui.drafts.len() > 0 {
     for (key, typed) in ui.drafts.entries() {
       if inside(key) { out = "${out}|draft ${key}:${typed}" }
@@ -1348,6 +1406,10 @@ let same_node<e> = (a: Node<e>, b: Node<e>, theme: Theme) -> bool => {
   // none: not the same layout, though nothing else about it changed.
   if a.disabled != b.disabled || a.drags_window != b.drags_window { return false }
   if !same_kind(a.kind, b.kind, theme) { return false }
+  if a.tip.len() != b.tip.len() { return false }
+  for i in 0..<a.tip.len() {
+    if !same_node(a.tip[i], b.tip[i], theme) { return false }
+  }
   for i in 0..<a.children.len() {
     if !same_node(a.children[i], b.children[i], theme) { return false }
   }
@@ -1382,6 +1444,7 @@ let same_kind<e> = (a: Kind<e>, b: Kind<e>, theme: Theme) -> bool => match (a, b
   (Choosing(s1), Choosing(s2)) =>
     s1.selected == s2.selected && s1.options == s2.options && s1.separators == s2.separators,
   (PopsUp(open1, side1, _), PopsUp(open2, side2, _)) => open1 == open2 && side1 == side2,
+  (Modal(open1, _), Modal(open2, _)) => open1 == open2,
   (Opens(m1), Opens(m2)) =>
     m1.side == m2.side && m1.in_bar == m2.in_bar && same_entries(m1.entries, m2.entries),
   (Spelled(c1), Spelled(c2)) => c1 == c2,
@@ -1519,6 +1582,7 @@ let lay_fresh<e> = (
     Choosing(spec) => lay_select(node.children, spec, inner, space, ctx, fonts, cache),
     PopsUp(open, side, _) =>
       lay_popup(node.children, open, side, inner, ctx, fonts, cache),
+    Modal(open, _) => lay_modal(node.children, open, inner, ctx, fonts, cache),
     Opens(spec) => lay_opens(node.children, spec, inner, ctx, fonts, cache),
     TabStrip => lay_tab_strip(node.children, inner, ctx, fonts, cache),
     WindowControl(button) => lay_window_control(button, inner, ctx, fonts, cache),
@@ -1607,7 +1671,15 @@ let lay_fresh<e> = (
     h: shown.h + space.vertical(),
   })
   let corner = Point { x: space.left - offset.x, y: space.top - offset.y }
-  let children = moved(body.children, corner)
+  var children = moved(body.children, corner)
+  // A tooltip showing floats by the pointer, wherever the element scrolled its children.
+  if node.tip.len() > 0 && ui.tip == id { children.push(lay_tip(
+    node.tip[0],
+    ui.tip_at,
+    ctx,
+    fonts,
+    cache
+  )) }
   let role = role_of(node.kind)
   Laid {
     id: id,
@@ -1640,6 +1712,8 @@ let lay_fresh<e> = (
     floating: children.any((p) => p.laid.floats || p.laid.floating),
     disabled: node.disabled,
     drags_window: node.drags_window,
+    tipped: node.tip.len() > 0,
+    description: if node.tip.len() > 0 { words_in(node.tip[0]) } else { "" },
     hue: match node.kind {
       ColorAxis(spec) => axis_hue(spec.color, ui, id),
       _ => 0.0,
@@ -2122,6 +2196,116 @@ let popup_holder<e> = pure (content: Node<e>) -> Node<e> => {
     children: [content],
     key: "content",
   }
+}
+
+/// A modal's `under`, as a wrapper lays its child out, and — while `open` — its scrim
+/// floating over the whole window (placed at its corner by [place_floats]) with `content`
+/// centred in it, taking none of its size.
+let lay_modal<e> = (
+  children: []Node<e>,
+  open: bool,
+  c: Constraints,
+  ctx: Ctx,
+  fonts: mut Fonts,
+  cache: mut LayoutCache<e>
+) -> Body<e> => {
+  if children.len() == 0 { return Body::<e> { size: c.constrain(Size {}) } }
+  let under = lay(
+    children[0],
+    c,
+    ctx.cascade,
+    fonts,
+    ctx.ui,
+    child_id(ctx.id, children[0], 0),
+    cache
+  )
+  let laid_under = Placed { at: Point {}, laid: under }
+  if !open || children.len() < 2 { return Body {
+    size: under.size,
+    children: [laid_under]
+  } }
+  let scrim = modal_scrim(children[1])
+  // The whole window; with none known, as large as the constraints allow.
+  let window = ctx.ui.viewport.size
+  let whole = Constraints {
+    min_w: window.w,
+    max_w: if window.w > 0.0 { window.w } else { c.max_w },
+    min_h: window.h,
+    max_h: if window.h > 0.0 { window.h } else { c.max_h },
+  }
+  let laid = lay(
+    scrim,
+    whole,
+    ctx.cascade,
+    fonts,
+    ctx.ui,
+    child_id(ctx.id, scrim, 1),
+    cache
+  )
+  let floating = Placed {
+    at: Point {},
+    laid: Laid { laid | floats: true, anchor: Some(Anchor { side: FloatWindow }) },
+  }
+  Body { size: under.size, children: [laid_under, floating] }
+}
+
+/// The framework's scrim around a modal's `content` (`ModalScrim`), centring it, and its
+/// holder (`Dialog`): a scroller, so a long one scrolls. Tags of their own rather than parts,
+/// so the program's sheets reach `under` as they would without the modal.
+let modal_scrim<e> = pure (content: Node<e>) -> Node<e> => {
+  let centred: Kind<e> = Place(CENTER)
+  let wrapping: Kind<e> = Inset(Insets {})
+  let holder = Node {
+    kind: wrapping,
+    tag: "Dialog",
+    style: Style { overflow_y: Some(OverflowAuto) },
+    children: [content],
+    key: "content",
+  }
+  Node { kind: centred, tag: "ModalScrim", children: [holder], key: "scrim" }
+}
+
+/// An element's tooltip `tip` (`Tooltip`, as wide as it needs up to its style's `max-width`,
+/// and no larger than the window has room for), floating below `at`, the pointer's rest.
+let lay_tip<e> = (
+  tip: Node<e>,
+  at: Point,
+  ctx: Ctx,
+  fonts: mut Fonts,
+  cache: mut LayoutCache<e>
+) -> Placed<e> => {
+  let wrapping: Kind<e> = Inset(Insets {})
+  let holder = Node { kind: wrapping, tag: "Tooltip", children: [tip], key: "tip" }
+  let most = float_room(ctx.ui.viewport.size)
+  let laid = lay(
+    holder,
+    Constraints { max_w: most.w, max_h: most.h },
+    ctx.cascade,
+    fonts,
+    ctx.ui,
+    child_id(ctx.id, holder, 0),
+    cache
+  )
+  Placed {
+    at: Point {},
+    laid: Laid { laid | floats: true, anchor: Some(Anchor { side: FloatPointer(at) }) },
+  }
+}
+
+/// Whether `laid` is a tooltip showing: it floats by the pointer, and takes no input.
+pub let is_tip<e> = pure (laid: Laid<e>) -> bool => match laid.anchor {
+  Some(a) => match a.side {
+    FloatPointer(_) => true,
+    _ => false,
+  },
+  None => false,
+}
+
+/// The text of the paragraphs in `node`, a space between each — a tooltip's, as assistive
+/// technology reads it.
+let words_in<e> = pure (node: Node<e>) -> string => match node.kind {
+  Words(content) => content,
+  _ => [child in node.children | words_in(child)].filter((w) => w.len() > 0).join(" "),
 }
 
 /// `holder` — child `index` of the element being laid out, what floats from it — laid out

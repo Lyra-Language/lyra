@@ -672,6 +672,38 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
   },
   Rule { selector: "Swatch:hover, Swatch:focus", style: Style { border_color: Some(c.accent) } },
   Rule { selector: "ColorPatch", style: Style { radius: Some(3.0) } },
+  // A tooltip: small text on a raised panel, no wider than a short paragraph.
+  Rule {
+    selector: "Tooltip",
+    style: Style {
+      color: Some(c.text),
+      background: Some(c.surface),
+      border_color: Some(c.border),
+      border_width: Some(1.0),
+      radius: Some(4.0),
+      padding: Some(insets_xy(6.0, 3.0)),
+      font_size: Some(12.0),
+      max_width: Some(320.0),
+      box_shadow: Some([BoxShadow { x: 0.0, y: 2.0, blur: 6.0, spread: 0.0, color: faded(c.text, 0.15) }]),
+    },
+  },
+  // A modal: the window dimmed under it, a margin to its edges, and its dialog a raised panel.
+  Rule {
+    selector: "ModalScrim",
+    style: Style { background: Some(faded(rgb(0x000000), 0.35)), padding: Some(insets(24.0)) },
+  },
+  Rule {
+    selector: "Dialog",
+    style: Style {
+      color: Some(c.text),
+      background: Some(c.surface),
+      border_color: Some(c.border),
+      border_width: Some(1.0),
+      radius: Some(10.0),
+      padding: Some(insets(20.0)),
+      box_shadow: Some([BoxShadow { x: 0.0, y: 10.0, blur: 30.0, spread: 0.0, color: faded(rgb(0x000000), 0.3) }]),
+    },
+  },
   Rule {
     selector: "ColorPicker",
     style: Style {

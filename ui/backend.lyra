@@ -184,6 +184,8 @@ pub struct AccessNode {
   role: AccessRole,
   label: string = "",
   value: string = "",
+  /// More about it than its label — its tooltip.
+  description: string = "",
   bounds: Rect = Rect {},
   toggled: Maybe<bool> = None,
   numeric: Maybe<(f64, f64, f64, f64)> = None,

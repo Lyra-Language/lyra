@@ -106,6 +106,9 @@ import ui.layout.{
   Editable,
   Choosing,
   PopsUp,
+  Modal,
+  is_tip,
+  TIP_DELAY_MS,
   Opens,
   Tabbed,
   TabSpot,
@@ -187,6 +190,14 @@ pub struct Ui {
   /// Whether the deepest open menu's first item takes the focus once it is laid out — a menu
   /// opened from the keyboard.
   menu_first: bool = false,
+  /// The element with a tooltip the pointer is on, whose tooltip shows once it has rested
+  /// [TIP_DELAY_MS] (`Interaction.tip`): since when (the clock's, `-1` until the next frame
+  /// says) and where. A press, a key or the wheel spends its tooltip until the pointer leaves
+  /// it (`tip_spent`). `""` for none.
+  tip_wanted: string = "",
+  tip_since: i64 = -1,
+  tip_rest: Point = Point {},
+  tip_spent: string = "",
   /// The tabs selected at the last frame: one selected since is scrolled into view.
   tabs_selected: []string = [],
   /// The window's own buttons pressed and let go on since the host last took them
@@ -194,11 +205,14 @@ pub struct Ui {
   window_asked: []WindowButton = [],
 }
 
-/// A popup open at a frame, by its identity and its anchor's and content's.
+/// A popup open at a frame, by its identity and its anchor's and content's; and, for a modal,
+/// what had the focus when it opened, which it gives back.
 pub struct OpenPopup {
   id: string,
   anchor: string,
   content: string,
+  modal: bool = false,
+  returns: string = "",
 }
 
 /// What a press in a text field selected: the clicks it made (1 by rune, 2 by word, 3 all)
@@ -254,9 +268,13 @@ impl Ui {
     cache: mut LayoutCache<e>
   ) -> Laid<e> => {
     self.state.shown = self.sizes_shown()
+    self.tip_rested()
     var laid = layout_cached(view, c, fonts, self.state, cache)
     var present: HashMap<string, bool> = hashmap_new()
     note_ids(laid, present)
+    // A tooltip whose element is gone goes with it.
+    if !present.contains_key(self.tip_wanted) { self.tip_wanted = "" }
+    if !present.contains_key(self.state.tip) { self.state.tip = "" }
     // A focus asked for by key, once the element is there.
     if self.focus_wanted.len() > 0 {
       for id in present.keys() {
@@ -374,6 +392,48 @@ impl Ui {
     false
   }
 
+  /// How long from `now` until a tooltip shows, in milliseconds — the host draws then — or `-1`
+  /// for none waiting.
+  pub let tip_due = pure (self, now: i64) -> i64 => {
+    if self.tip_wanted.len() == 0 || self.state.tip.len() > 0 || self.tip_since < 0 { return -1 }
+    (self.tip_since + TIP_DELAY_MS - now).max(0)
+  }
+
+  /// The pointer's rest on an element with a tooltip timed from this frame's clock (`now`),
+  /// and its tooltip shown once it has rested long enough.
+  let tip_rested = (self: mut) -> void => {
+    if self.tip_wanted.len() == 0 || self.state.tip.len() > 0 { return }
+    if self.tip_since < 0 {
+      self.tip_since = self.now
+    } else if self.now - self.tip_since >= TIP_DELAY_MS {
+      self.state.tip = self.tip_wanted
+      self.state.tip_at = self.tip_rest
+    }
+  }
+
+  /// The tooltip showing or waiting hidden, and spent: the pointer did something on its
+  /// element, which shows it no more until the pointer leaves.
+  let tip_spend = (self: mut) -> void => {
+    if self.tip_wanted.len() > 0 { self.tip_spent = self.tip_wanted }
+    self.tip_wanted = ""
+    self.state.tip = ""
+  }
+
+  /// The pointer moved to `at`, over the elements on `path`: on the deepest with a tooltip it
+  /// rests anew while its tooltip is hidden, and leaving it hides it.
+  let tip_moved<e> = (self: mut, path: []Found<e>, at: Point) -> void => {
+    var over = ""
+    for f in path {
+      if f.laid.tipped { over = f.laid.id }
+    }
+    if over != self.tip_spent { self.tip_spent = "" }
+    if over == self.state.tip && over.len() > 0 { return }
+    self.state.tip = ""
+    self.tip_wanted = if over == self.tip_spent { "" } else { over }
+    self.tip_since = -1
+    self.tip_rest = at
+  }
+
   /// What each element moving a size shows at `now`, for the layout.
   let sizes_shown = pure (self) -> HashMap<string, Computed> => {
     var out: HashMap<string, Computed> = hashmap_new()
@@ -437,8 +497,32 @@ impl Ui {
     // Open popups hear it before anything: Escape dismisses the innermost (an open select's
     // list being the select's to close), the window losing the focus every one, and a press
     // each it falls outside of — and the press goes on.
-    var dismissed: []e = []
+    match input {
+      PointerDown(_, _, _) => self.tip_spend(),
+      KeyPressed(_, _) => self.tip_spend(),
+      Scrolled(_, _) => self.tip_spend(),
+      WindowUnfocused => self.tip_spend(),
+      _ => {},
+    }
+    // A modal open takes the pointer only over its dialog (and what floats from it): a press or
+    // the wheel elsewhere goes nowhere.
     let popups = open_popups(laid)
+    var modal: Maybe<Opened<e>> = None
+    for p in popups {
+      if p.modal { modal = Some(p) }
+    }
+    if let Some(m) = modal {
+      let outside = (at: Point) -> bool => !m.areas.any((r) => r.contains(at))
+      match input {
+        PointerDown(_, at, _) => if outside(at) { return [] },
+        Scrolled(_, _) => if outside(self.pointer) { return [] },
+        _ => {},
+      }
+    }
+    // Open popups hear it before anything: Escape dismisses the innermost (an open select's
+    // list being the select's to close), the window losing the focus every one but a modal,
+    // and a press each popup it falls outside of — and the press goes on.
+    var dismissed: []e = []
     if popups.len() > 0 {
       match input {
         KeyPressed(Escape, _) =>
@@ -446,11 +530,13 @@ impl Ui {
             return [popups[popups.len() - 1].dismissed]
           },
         WindowUnfocused => {
-          for p in popups { dismissed.push(p.dismissed) }
+          for p in popups {
+            if !p.modal { dismissed.push(p.dismissed) }
+          }
         },
         PointerDown(_, at, _) => {
           for p in popups {
-            if !p.anchor_box.contains(at) && !p.areas.any((r) => r.contains(at)) {
+            if !p.modal && !p.anchor_box.contains(at) && !p.areas.any((r) => r.contains(at)) {
               dismissed.push(p.dismissed)
             }
           }
@@ -764,22 +850,40 @@ impl Ui {
   /// with the focus inside gives it back to its anchor's.
   let popups_followed<e> = (self: mut, laid: Laid<e>) -> void => {
     let now = open_popups(laid)
+    var returns: HashMap<string, string> = hashmap_new()
     for p in now {
-      if self.popups.any((q) => q.id == p.id) { continue }
+      if self.popups.any((q) => q.id == p.id) {
+        for q in self.popups {
+          if q.id == p.id { returns.insert(p.id, q.returns) }
+        }
+        continue
+      }
+      // A modal takes the focus however it opened, and closes the menus and lists under it.
+      if p.modal {
+        returns.insert(p.id, self.state.focus)
+        self.state.focus = first_control(laid, p.content) ?? ""
+        self.state.menus = []
+        if !within_id(self.state.open, p.content) { self.state.open = "" }
+        continue
+      }
       if !self.state.keyboard_focus || !within_id(self.state.focus, p.anchor) { continue }
       if let Some(first) = first_control(laid, p.content) { self.state.focus = first }
     }
     for q in self.popups {
-      if now.any((p) => p.id == q.id) || !within_id(
-        self.state.focus,
-        q.content
-      ) { continue }
+      if now.any((p) => p.id == q.id) { continue }
+      if q.modal {
+        self.state.focus = q.returns
+        continue
+      }
+      if !within_id(self.state.focus, q.content) { continue }
       self.state.focus = first_control(laid, q.anchor) ?? ""
     }
     self.popups = [p in now | OpenPopup {
       id: p.id,
       anchor: p.anchor,
-      content: p.content
+      content: p.content,
+      modal: p.modal,
+      returns: returns.get(p.id) ?? "",
     }]
   }
 
@@ -1071,6 +1175,7 @@ impl Ui {
     // The deepest element under the pointer; those around it are hovered too (`with_state`).
     let path = hit(laid, at)
     self.state.hover = if path.len() > 0 { path[path.len() - 1].laid.id } else { "" }
+    self.tip_moved(path, at)
     // A thumb under the pointer is hovered itself.
     for i in (path.len() - 1)..>=0 {
       let Some(sc) = path[i].laid.scroller else { continue }
@@ -1502,8 +1607,15 @@ impl Ui {
   /// The focus to the next control in the tree's order, or the previous with `backwards`,
   /// wrapping at the ends. A text field it reaches has its text selected.
   let move_focus<e> = (self: mut, laid: Laid<e>, backwards: bool) -> void => {
+    // Inside the innermost modal open, if one is.
+    var within = laid
+    for p in open_popups(laid) {
+      if p.modal {
+        if let Some(found) = find(laid, p.content, Point {}) { within = found.laid }
+      }
+    }
     var order: []string = []
-    focus_order(laid, order)
+    focus_order(within, order)
     if order.len() == 0 { return }
     var at = -1
     for i, id in order {
@@ -1820,6 +1932,8 @@ let floating_in<e> = pure (laid: Laid<e>, origin: Point) -> []Found<e> => {
   var out: []Found<e> = []
   for child in laid.children {
     let corner = Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
+    // A tooltip takes no input: the pointer is over what is under it.
+    if is_tip(child.laid) { continue }
     if child.laid.floats { out.push(Found { laid: child.laid, origin: corner }) }
     out = [...out, ...floating_in(child.laid, corner)]
   }
@@ -1910,6 +2024,7 @@ pub struct Opened<e> {
   dismissed: e,
   anchor_box: Rect,
   areas: []Rect,
+  modal: bool,
 }
 
 /// The popups open in `laid`, each before those opened from inside it.
@@ -1939,6 +2054,32 @@ let gather_popups<e> = (laid: Laid<e>, origin: Point, out: mut []Opened<e>) -> v
         dismissed: dismissed,
         anchor_box: Rect { x: origin.x, y: origin.y, w: laid.size.w, h: laid.size.h },
         areas: areas,
+        modal: false,
+      })
+    }
+  }
+  // A modal's areas are its dialog's, inside the scrim, and what floats from it.
+  if let Modal(true, dismissed) = laid.kind {
+    if laid.children.len() > 1 {
+      let scrim = laid.children[1]
+      let corner = Point { x: origin.x + scrim.at.x, y: origin.y + scrim.at.y }
+      var areas: []Rect = []
+      for dialog in scrim.laid.children {
+        covered(
+          dialog.laid,
+          Point { x: corner.x + dialog.at.x, y: corner.y + dialog.at.y },
+          true,
+          areas
+        )
+      }
+      out.push(Opened {
+        id: laid.id,
+        anchor: laid.children[0].laid.id,
+        content: scrim.laid.id,
+        dismissed: dismissed,
+        anchor_box: Rect {},
+        areas: areas,
+        modal: true,
       })
     }
   }
@@ -1958,6 +2099,7 @@ let gather_popups<e> = (laid: Laid<e>, origin: Point, out: mut []Opened<e>) -> v
 let covered<e> = (laid: Laid<e>, origin: Point, own: bool, out: mut []Rect) -> void => {
   if own { out.push(Rect { x: origin.x, y: origin.y, w: laid.size.w, h: laid.size.h }) }
   for child in laid.children {
+    if is_tip(child.laid) { continue }
     if child.laid.floats || child.laid.floating {
       let corner = Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
       covered(child.laid, corner, child.laid.floats, out)
@@ -2114,7 +2256,9 @@ let moved_by = pure (r: Rect, by: Point) -> Rect =>
 /// The identities of the controls in `laid`, in the order Tab visits them: the tree's.
 pub let focus_order<e> = (laid: Laid<e>, order: mut []string) -> void => {
   if focusable(laid.kind) && !laid.disabled { order.push(laid.id) }
-  for child in laid.children { focus_order(child.laid, order) }
+  for child in laid.children {
+    if !is_tip(child.laid) { focus_order(child.laid, order) }
+  }
 }
 
 /// Every identity in `laid`.

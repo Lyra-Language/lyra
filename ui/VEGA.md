@@ -1,6 +1,7 @@
 # What Vega needs of `ui` — design
 
-**Status: proposed 10/26; step 1 (§2, pictures) built 10/26, the rest to come.** Vega, the game studio (the private `vega`
+**Status: proposed 10/26; steps 1 and 2 (§2–§4: pictures, tooltips, modals) built 10/26, the
+rest to come.** Vega, the game studio (the private `vega`
 repo), runs on Dear ImGui through `bindings.imgui`. This is the move onto `ui`, as Termina
 made its own (`TERMINAL.md`, `WINDOW.md`): §1 is what Vega's interface does today, §2–§9 what
 `ui` must gain for it, §10 Vega's new front end, §11 the order and §12 the questions left.
@@ -89,6 +90,12 @@ and `.tooltip_node(node)` for one with structure — the editors' bar's `New spr
 (⌘1)`. On the popup layer (`Laid.floats`), placed below the pointer and moved in from the
 window's edges; never takes input; heard as the element's accessible description.
 
+**Built 10/26** (`ui/README.md`): as above, but a move within the node keeps a tooltip showing —
+as a browser's `title` does — and only leaving the node hides it; a press, a key or the wheel
+hides it until the pointer leaves. The rest is timed on the host's clock (`Ui.tip_due`, which
+the loop waits for), the box is `Tooltip` (up to 320 wide), and the description reaches
+AccessKit through a new `description` on `AccessNode` and the shim.
+
 ## 4. Modal dialogs
 
 **`modal(open, content, on_dismiss)`**: while open, the window dimmed under it and nothing
@@ -96,6 +103,13 @@ else taking input; the focus moved into it and held there by Tab; Escape raises
 `on_dismiss`. Centred, at most the window less a margin, scrolling inside past it. Built on
 the popup layer. The unsaved-changes question, the import dialogs and the typed-path prompt
 are its users.
+
+**Built 10/26** as **`modal(under, open, content, on_dismiss)`** — wrapping what it is over, as
+`popup` wraps its anchor, so it needs no place of its own in a row or column. A press outside
+the dialog and the window losing the focus raise nothing (unlike a popup's); the focus goes
+back to what had it when the dialog closes. The scrim (`ModalScrim`, its padding the margin)
+and the dialog (`Dialog`) are tags, not parts, so the program's sheets reach `under` as before.
+Example `examples/ui/dialogs.lyra`.
 
 ## 5. The smaller controls
 
@@ -198,7 +212,7 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
 
 1. **Pictures** (§2), example `examples/ui/pixels.lyra`: a small pixel editor, its canvas a
    picture repainted per stroke and zoomed. **Done 10/26.**
-2. **Tooltips and modals** (§3, §4).
+2. **Tooltips and modals** (§3, §4), example `examples/ui/dialogs.lyra`. **Done 10/26.**
 3. **The smaller controls** (§5) and **dropped files** (§6).
 4. **Docking** in one window (§7), example `examples/ui/dock.lyra`.
 5. **Several windows** (§8), and tearing a dock tab off and back.

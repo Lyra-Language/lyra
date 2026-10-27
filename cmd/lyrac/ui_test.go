@@ -4241,6 +4241,139 @@ Escape: [Dismiss] open false, inner false, focus Toggle
 	}
 }
 
+// Tooltips (ui/VEGA.md §3), on the framework's clock: the pointer resting on an element with
+// one shows it after TIP_DELAY_MS — not a millisecond before, and tip_due says how long is
+// left — below the pointer; a move within the element keeps it, onto another hides it and
+// starts that one's rest; a press hides it and spends it until the pointer leaves the element;
+// it is heard as the element's description; and it takes no input — the pointer over it is
+// over what is under it.
+func TestRun_UiTooltip(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new, find, control_at, Found }
+import ui.backend.{ InputEvent, PointerMoved, PointerDown, PointerUp, Primary }
+import ui.draw.{ Size, Point }
+import ui.text.{ Fonts, fonts_new }
+import ui.style.{ light_theme, Sheet }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, row, text, button, themed, tight, Pressable }
+import ui.script.{ script_platform, ScriptPlatform }
+
+data Ev = A | B
+
+struct Run {
+  ui: Ui,
+  cache: LayoutCache<Ev>,
+  platform: ScriptPlatform,
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var run = Run { ui: ui_new(), cache: layout_cache(), platform: script_platform([], Size { w: 400.0, h: 300.0 }) }
+  let a = middle(at(run, fonts, 0), "A")
+  let b = middle(at(run, fonts, 0), "B")
+  input(run, fonts, PointerMoved(a), 0)
+  say(run, fonts, 0, "rested on A")
+  say(run, fonts, 499, "499 ms on")
+  say(run, fonts, 500, "500 ms on")
+  let laid = at(run, fonts, 500)
+  if let Some(tip) = tip_box(laid, Point {}) {
+    println("  below the pointer by ${tip.origin.y - a.y}, at its x ${tip.origin.x == a.x}")
+    let inside = Point { x: tip.origin.x + 4.0, y: tip.origin.y + 4.0 }
+    let over = match control_at(laid, inside) {
+      Some(f) => f.laid.tag,
+      None => "nothing",
+    }
+    println("  the control under the tooltip: ${over}")
+  }
+  input(run, fonts, PointerMoved(Point { x: a.x + 3.0, y: a.y }), 600)
+  say(run, fonts, 600, "moved within A")
+  input(run, fonts, PointerMoved(b), 700)
+  say(run, fonts, 700, "moved onto B")
+  say(run, fonts, 1200, "500 ms on")
+  input(run, fonts, PointerDown(Primary, b, 1), 1300)
+  input(run, fonts, PointerUp(Primary, b), 1300)
+  say(run, fonts, 1300, "pressed B")
+  input(run, fonts, PointerMoved(Point { x: b.x + 2.0, y: b.y }), 1400)
+  say(run, fonts, 2400, "moved within B, a second on")
+  input(run, fonts, PointerMoved(Point { x: 390.0, y: 290.0 }), 2500)
+  input(run, fonts, PointerMoved(b), 2600)
+  say(run, fonts, 3100, "left and came back, 500 ms on")
+  0
+}
+
+/// The window laid out at the clock's ms.
+let at = (run: mut Run, fonts: mut Fonts, ms: i64) -> Laid<Ev> => {
+  run.ui.now = ms
+  run.ui.frame_within(view(), tight(Size { w: 400.0, h: 300.0 }), fonts, run.cache)
+}
+
+/// An input on the frame at ms, and the frame after it, as the host lays one out.
+let input = (run: mut Run, fonts: mut Fonts, e: InputEvent, ms: i64) -> void => {
+  let laid = at(run, fonts, ms)
+  let _ = run.ui.handle(laid, e, run.platform)
+  let _ = at(run, fonts, ms)
+}
+
+/// Whose tooltip shows at ms, and how long until one does.
+let say = (run: mut Run, fonts: mut Fonts, ms: i64, name: string) -> void => {
+  let laid = at(run, fonts, ms)
+  let shows = match find(laid, run.ui.state.tip, Point {}) {
+    Some(f) => f.laid.description,
+    None => "none",
+  }
+  println("${name}: ${shows}, due ${run.ui.tip_due(ms)}")
+}
+
+let view = pure () -> Node<Ev> => themed::<Ev>(light_theme(), Sheet {}, [
+  row([button("A", A).tooltip("Does A"), button("B", B).tooltip("Does B"), text("plain")]),
+])
+
+let middle = pure (laid: Laid<Ev>, name: string) -> Point => button_at(laid, Point {}, name) ?? Point {}
+
+let button_at = pure (laid: Laid<Ev>, origin: Point, name: string) -> Maybe<Point> => {
+  if let Pressable(e) = laid.kind {
+    let n = match e {
+      A => "A",
+      B => "B",
+    }
+    if n == name { return Some(Point { x: origin.x + laid.size.w / 2.0, y: origin.y + laid.size.h / 2.0 }) }
+  }
+  for child in laid.children {
+    if let Some(p) = button_at(child.laid, Point { x: origin.x + child.at.x, y: origin.y + child.at.y }, name) {
+      return Some(p)
+    }
+  }
+  None
+}
+
+/// The tooltip showing in laid, and where.
+let tip_box = pure (laid: Laid<Ev>, origin: Point) -> Maybe<Found<Ev>> => {
+  if laid.tag == "Tooltip" { return Some(Found { laid: laid, origin: origin }) }
+  for child in laid.children {
+    if let Some(f) = tip_box(child.laid, Point { x: origin.x + child.at.x, y: origin.y + child.at.y }) {
+      return Some(f)
+    }
+  }
+  None
+}
+`)
+	want := `rested on A: none, due 500
+499 ms on: none, due 1
+500 ms on: Does A, due -1
+  below the pointer by 18, at its x true
+  the control under the tooltip: nothing
+moved within A: Does A, due -1
+moved onto B: none, due 500
+500 ms on: Does B, due -1
+pressed B: none, due -1
+moved within B, a second on: none, due -1
+left and came back, 500 ms on: Does B, due -1
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // A select's list (WINDOW.md §1, on the popups' placement): longer than the window, it is no
 // taller than the window and scrolls, opening with the chosen option in view and keeping the
 // option under the keys in view as they move it; at the window's foot it opens above the
@@ -6251,6 +6384,95 @@ func TestRun_UiPixelsExample(t *testing.T) {
 		if got := rgbAt(frame, x, y); !near(got, c.want, 2) {
 			t.Errorf("%s, at %d,%d, is %v, not %v", c.what, x, y, got, c.want)
 		}
+	}
+}
+
+// Tooltips and a modal (ui/VEGA.md §3–4), as the dialogs example plays them: the pointer
+// resting half a second on New shows its tooltip below the pointer; Close with the title
+// edited opens the dialog, which takes the focus on its field, cancels on Escape and gives the
+// focus back to Close, stays open when the window loses the focus, lets no press through to
+// the toolbar or the scrim, and keeps Tab
+// inside it, wrapping — seven Tabs from the field land on Save; and the window under it is
+// dimmed.
+func TestRun_UiDialogsExample(t *testing.T) {
+	t.Parallel()
+	skipWithoutText(t)
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "dialogs")
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, filepath.Join(root, "examples", "ui", "dialogs.lyra")); code != 0 {
+		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
+	}
+	play := func(script, shot string) (string, image.Image) {
+		cmd := command(t, bin, "--script", script, "--png", shot)
+		cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+		out, err := cmd.CombinedOutput()
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
+			t.Skipf("SDL could not open a dummy window here: %s", out)
+		} else if ok && exitErr.ExitCode() == 1 && strings.HasPrefix(string(out), "no font") {
+			t.Skipf("no font here: %s", out)
+		} else if err != nil {
+			t.Fatalf("playing: %v\n%s", err, out)
+		}
+		f, err := os.Open(shot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		frame, err := png.Decode(f)
+		if err != nil {
+			t.Fatalf("the frame is not a PNG: %v", err)
+		}
+		return string(out), frame
+	}
+	// Exactly white pixels in x0..x1, y0..y1 — a tooltip's or the dialog's surface; the page
+	// is F4F4F6, and dimmed under a modal.
+	white := func(frame image.Image, x0, y0, x1, y1 int) int {
+		n := 0
+		for y := y0; y <= y1; y++ {
+			for x := x0; x <= x1; x++ {
+				if rgbAt(frame, x, y) == [3]int{0xFF, 0xFF, 0xFF} {
+					n++
+				}
+			}
+		}
+		return n
+	}
+
+	out, frame := play("Tab Tab Tab Tab 'Notes' Shift+Tab Enter Escape Enter blur focus End ' v2' click:30,26 click:10,370 "+
+		"Tab Tab Tab Tab Tab Tab Tab Enter Enter move:36,26 wait:600", filepath.Join(dir, "tip.png"))
+	want := `asked
+cancelled
+asked
+saved as Notes v2
+closed
+tooltip: A new document
+`
+	if out != want {
+		t.Errorf("got\n%s\nwant\n%s", out, want)
+	}
+	// Just below and right of the pointer, left of the title's field: the tooltip.
+	if n := white(frame, 38, 47, 46, 58); n < 80 {
+		t.Errorf("below the pointer, %d white pixels of 108: no tooltip", n)
+	}
+
+	// Resting on New under the scrim shows nothing: the dialog takes the pointer.
+	out, frame = play("Tab Tab Tab Tab 'Notes' Shift+Tab Enter move:36,26 wait:600", filepath.Join(dir, "modal.png"))
+	if out != "asked\ntooltip: none\n" {
+		t.Errorf("with the dialog open, got\n%s", out)
+	}
+	if n := white(frame, 38, 47, 46, 58); n != 0 {
+		t.Errorf("left of the title's field, %d white pixels: the page is not dimmed", n)
+	}
+	if got := rgbAt(frame, 10, 370); got[0] > 0xB8 || got[0] < 0x80 {
+		t.Errorf("the window's corner under the scrim is %v, not dimmed", got)
+	}
+	if n := white(frame, 440, 140, 470, 160); n < 600 {
+		t.Errorf("inside the dialog, %d white pixels of 651: no dialog in the middle", n)
 	}
 }
 

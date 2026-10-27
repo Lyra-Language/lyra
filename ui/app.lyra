@@ -27,7 +27,7 @@ module ui.app
 //! input, an event, or the first pass), the view of the state laid out with the framework's
 //! state (`ui.interact`'s `Ui`) — each element unchanged since last frame given back from the
 //! layout cache — painted and drawn; then the platform's input, **waited for** when there is
-//! none, with no timeout unless a timer, an `Every` or an `EveryFrame` is due — so an idle
+//! none, with no timeout unless a timer, an `Every`, an `EveryFrame` or a tooltip is due — so an idle
 //! interface draws nothing and costs nothing while the user is away — each input routed to the
 //! events it raises, `update` applied to each in turn, and the view laid out again before the
 //! next input, so a key pressed after a click acts on what the click made.
@@ -576,8 +576,9 @@ impl Host<s, e> {
     // moment: the window shows, and its painters hear their size (a terminal's columns), first.
     let first = self.shown.len() == 0
     if !first { self.sync_menus(platform) }
-    // A transition moving draws every frame too, until it arrives.
-    if self.dirty || self.live || first || self.ui.animating() { self.redraw(
+    // A transition moving draws every frame too, until it arrives; and a tooltip draws when the
+    // pointer has rested long enough.
+    if self.dirty || self.live || first || self.ui.animating() || self.ui.tip_due(now) == 0 { self.redraw(
       platform,
       renderer,
       fonts
@@ -772,7 +773,8 @@ impl Host<s, e> {
   }
 
   /// How long the pass may wait for input from `now`: not at all while events wait, a frame
-  /// while a frame subscription is on or a transition moves, until the next timer or `Every`, else for good — never
+  /// while a frame subscription is on or a transition moves, until the next timer, `Every` or
+  /// tooltip, else for good — never
   /// past a tenth of a second under `--live`.
   let wait_ms = (self: mut, now: i64) -> i64 => {
     if self.waiting.len() > 0 || self.measures.len() > 0 { return 0 }
@@ -780,6 +782,8 @@ impl Host<s, e> {
       if readable(fd) { return 0 }
     }
     var wait: i64 = if self.ui.animating() { FRAME_MS } else { -1 }
+    let tip = self.ui.tip_due(now)
+    if tip >= 0 { wait = sooner(wait, tip) }
     for timer in self.timers { wait = sooner(wait, timer.at - now) }
     for sub in (self.app.subscriptions)(self.state) {
       match sub {

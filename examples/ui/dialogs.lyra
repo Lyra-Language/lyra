@@ -1,0 +1,205 @@
+// Tooltips and a modal dialog: `ui.layout`'s `.tooltip` and `modal`. The toolbar's buttons
+// each have a tooltip, shown once the pointer rests on one for half a second; Open's has a
+// shortcut in it. Close, with the title edited since it was saved, asks first: a dialog over
+// the dimmed window, which takes the focus — on its name field — keeps Tab inside it, lets no
+// press through to the window under it, and gives the focus back when it closes. Escape
+// cancels it.
+//
+//     lyrac run examples/ui/dialogs.lyra
+//     lyrac run examples/ui/dialogs.lyra -- --script "Tab Tab Tab Enter" [--png FILE]
+//
+// **The second form** plays a script (`ui.script`) headless, prints what happened and the
+// tooltip showing at its end, and with `--png FILE` writes the last frame.
+
+import ui.sdl3
+import ui.sdl3.{ SdlRenderer, capture }
+import ui.gpu
+import ui.app.{ sandbox, run, running, step_running }
+import ui.script.{ timed_platform, parse_steps }
+import ui.interact.{ find }
+import ui.backend.{ Chord, Modifiers, Character }
+import ui.draw.{ Point, Size, Color }
+import ui.text.{ Fonts, fonts_new, glyph_atlas }
+import ui.style.{ Style, Sheet, light_theme, insets }
+import ui.layout.{
+  Node,
+  Laid,
+  paint,
+  column,
+  row,
+  text,
+  button,
+  text_input,
+  FieldSpec,
+  modal,
+  spelled,
+  expanded,
+  padding,
+  themed,
+  MainEnd,
+  CrossCenter,
+}
+import std.collections.{ parse_args }
+import std.png.{ write_png }
+import std.io.{ write_bytes }
+
+const WIDTH: f32 = 560.0
+const HEIGHT: f32 = 380.0
+const BACKGROUND: Color = Color { r: 0xF4, g: 0xF4, b: 0xF6 }
+
+let main = () -> u8 => {
+  let args = parse_args(["--script", "--png"])
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let _ = fonts.add_system_fallbacks()
+  let app = sandbox(view, update, BACKGROUND)
+  if let Some(script) = args.value("--script") {
+    let Ok(steps) = parse_steps(script) else {
+      println("the script does not parse")
+      return 1
+    }
+    let window = match sdl3.open("Dialogs", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    let played = running(
+      app,
+      State {},
+      timed_platform(steps, Size { w: WIDTH, h: HEIGHT }),
+      window.renderer,
+      fonts
+    )
+    while step_running(played) {}
+    for line in played.host.state.log { println(line) }
+    let shown = played.host.shown[0]
+    let tip = match find(shown, played.host.ui.state.tip, Point {}) {
+      Some(f) => f.laid.description,
+      None => "none",
+    }
+    println("tooltip: ${tip}")
+    var status: u8 = 0
+    if let Some(path) = args.value("--png") {
+      if !save(played.renderer, played.fonts, shown, path) { status = 1 }
+    }
+    sdl3.close(window.platform, played.renderer)
+    fonts.close()
+    return status
+  }
+  let window = match gpu.open("Dialogs", WIDTH, HEIGHT) {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      fonts.close()
+      return 2
+    },
+  }
+  var platform = window.platform
+  var renderer = window.renderer
+  let _ = run(app, State {}, platform, renderer, fonts)
+  gpu.close(platform, renderer)
+  fonts.close()
+  0
+}
+
+/// The document's title and the one last saved; whether Close is asking, and the name the
+/// dialog will save under; and what happened, newest last.
+struct State {
+  title: string = "Untitled",
+  saved: string = "Untitled",
+  asking: bool = false,
+  name: string = "",
+  log: []string = [],
+}
+
+data Event = Did(string) | Edited(string) | Closed | Named(string) | Saved | Discarded | Cancelled
+
+let update = pure (state: State, event: Event) -> State => match event {
+  Did(what) => State { state | log: [...state.log, what] },
+  Edited(title) => State { state | title: title },
+  // Close asks first when the title has changed since it was saved.
+  Closed => if state.title == state.saved {
+    State { state | log: [...state.log, "closed"] }
+  } else {
+    State { state | asking: true, name: state.title, log: [...state.log, "asked"] }
+  },
+  Named(name) => State { state | name: name },
+  Saved => State {
+    state |
+    asking: false,
+    title: state.name,
+    saved: state.name,
+    log: [...state.log, "saved as ${state.name}"]
+  },
+  Discarded => State { state | asking: false, saved: state.title, log: [...state.log, "closed without saving"] },
+  Cancelled => State { state | asking: false, log: [...state.log, "cancelled"] },
+}
+
+/// The window, and over it while Close asks, the dialog.
+let view = pure (state: State) -> Node<Event> =>
+  themed::<Event>(light_theme(), Sheet {}, [
+    modal(page(state), state.asking, dialog(state), Cancelled),
+  ])
+
+/// The toolbar, each button with a tooltip, and the title.
+let page = pure (state: State) -> Node<Event> => padding(insets(12.0), column([
+  row([
+    button("New", Did("new")).tooltip("A new document"),
+    button("Open", Did("open")).tooltip_node(row([
+      text::<Event>("Open a document"),
+      spelled::<Event>(Chord { key: Character('o'), mods: Modifiers { primary: true } })
+        .with_style(Style { opacity: Some(0.6) }),
+    ]).with_style(Style { gap: Some(10.0) })),
+    button("Close", Closed).tooltip("Close the document, asking first if it has changed"),
+  ]).with_style(Style { gap: Some(8.0) }),
+  row([
+    text("Title"),
+    expanded(text_input(FieldSpec { value: state.title, on_edit: Edited })),
+  ]).aligned(MainEnd, CrossCenter).with_style(Style { gap: Some(10.0) }),
+  text(if state.title == state.saved { "Saved" } else { "Edited since it was saved" }),
+]).with_style(Style { gap: Some(12.0) }))
+
+/// The question Close asks: save under a name, close without saving, or cancel.
+let dialog = pure (state: State) -> Node<Event> => column([
+  text::<Event>("Save the changes before closing?").with_style(Style { font_size: Some(16.0) }),
+  text::<Event>("Closing without saving loses them."),
+  text_input(FieldSpec { value: state.name, placeholder: "Name", on_edit: Named }),
+  row([
+    button("Don’t Save", Discarded),
+    expanded(text::<Event>("")),
+    button("Cancel", Cancelled),
+    button("Save", Saved),
+  ]).with_style(Style { gap: Some(8.0) }),
+]).with_style(Style { gap: Some(12.0), width: Some(400.0) })
+
+/// `laid` — the window as the host last laid it out — drawn without showing it, and written to
+/// `path` as a PNG.
+let save = (
+  renderer: SdlRenderer,
+  fonts: Fonts,
+  laid: Laid<Event>,
+  path: string
+) -> bool => {
+  var r = renderer
+  var f = fonts
+  var atlas = glyph_atlas()
+  let ops = paint(laid, Point {}, 1.0, f, atlas, r)
+  let Some(frame) = capture(r, BACKGROUND, ops) else { return false }
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(u8((p >> 24) & 0xFF))
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(png) => write_bytes(path, png),
+    Err(_) => false,
+  }
+}
