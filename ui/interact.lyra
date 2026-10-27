@@ -127,6 +127,12 @@ import ui.layout.{
   DragSpec,
   Radio,
   OneOf,
+  Docked,
+  DockLeaf,
+  DockDrop,
+  dock_aim,
+  dock_dropped,
+  DOCK_TEAR,
   RawInput,
   KeyInput,
   TextInput,
@@ -208,6 +214,9 @@ pub struct Ui {
   /// then: a drag moves it from there.
   drag_from: Point = Point {},
   drag_value: f64 = 0.0,
+  /// What a unit of the pointer's travel is worth to it: `1.0`, or for a share
+  /// ([DragSpec.share]) one over the room its parent shares out.
+  drag_scale: f64 = 1.0,
   /// The tabs selected at the last frame: one selected since is scrolled into view.
   tabs_selected: []string = [],
   /// The window's own buttons pressed and let go on since the host last took them
@@ -901,8 +910,55 @@ impl Ui {
   /// press moved by how far the pointer has gone along its axis, held to its range.
   let dragged<e> = (self, spec: DragSpec<e>, at: Point) -> []e => {
     let gone = if spec.axis == Horizontal { at.x - self.drag_from.x } else { at.y - self.drag_from.y }
-    let value = (self.drag_value + f64(gone) * spec.per_unit).clamp(spec.min, spec.max)
+    let value = (self.drag_value + f64(gone) * spec.per_unit * self.drag_scale).clamp(
+      spec.min,
+      spec.max
+    )
     [(spec.on_drag)(value)]
+  }
+
+  /// The pointer at `at` while the tab `tab` is held. In a dock, off its strip — or once it has
+  /// been — it is docking, aimed where the pointer is ([dock_aim]); else it moves along its
+  /// strip.
+  let tab_moved<e> = (
+    self: mut,
+    laid: Laid<e>,
+    tab: Found<e>,
+    spot: TabSpot<e>,
+    at: Point
+  ) -> []e => {
+    let docking = self.state.dock_drop.dock.len() > 0
+    let holders = dock_holding(laid, tab.laid.id)
+    if holders.len() == 2 && (docking || spot.movable) {
+      let dock = holders[0]
+      let group = holders[1]
+      if docking || off_strip(laid, tab, group, at) {
+        let DockLeaf(path, keys) = group.laid.kind else { return [] }
+        if spot.index >= keys.len() || dock.laid.children.len() == 0 { return [] }
+        let tree = dock.laid.children[0]
+        let start = if docking { self.state.dock_drop } else {
+          DockDrop { dock: dock.laid.id, key: keys[spot.index], from: path }
+        }
+        let local = Point {
+          x: at.x - dock.origin.x - tree.at.x,
+          y: at.y - dock.origin.y - tree.at.y,
+        }
+        self.state.dock_drop = dock_aim(tree.laid, local, start)
+        return []
+      }
+    }
+    tab_dragged(laid, tab, spot, at)
+  }
+
+  /// A tab being docked let go of: the tree with it where it was aimed, raised by its dock —
+  /// nothing where it was aimed nowhere.
+  let docked<e> = (self: mut, laid: Laid<e>) -> []e => {
+    let drop = self.state.dock_drop
+    self.state.dock_drop = DockDrop {}
+    if !drop.aimed { return [] }
+    let Some(dock) = find(laid, drop.dock, Point {}) else { return [] }
+    let Docked(spec) = dock.laid.kind else { return [] }
+    [(spec.on_change)(dock_dropped(spec.tree, drop))]
   }
 
   /// A key for a focused radio button, or a table's row: Up or Left chooses the one before it
@@ -983,6 +1039,7 @@ impl Ui {
     AccessAction(id, request) => self.access_action(laid, id, request),
     WindowUnfocused => {
       self.state.menus = []
+      self.state.dock_drop = DockDrop {}
       []
     },
     _ => [],
@@ -1257,7 +1314,7 @@ impl Ui {
     match held.laid.kind {
       Ranged(spec) => slide_to(held, spec, at),
       Drags(spec) => self.dragged(spec, at),
-      Tabbed(spot) => tab_dragged(laid, held, spot, at),
+      Tabbed(spot) => self.tab_moved(laid, held, spot, at),
       ColorAxis(spec) => self.axis_moved(held, spec, at),
       Editable(_) => {
         // A drag extends what the press picked by the same unit: a rune, a word, or (after a
@@ -1316,6 +1373,11 @@ impl Ui {
         let _ = self.state.drafts.remove(self.state.focus)
         self.drag_from = at
         self.drag_value = spec.value
+        self.drag_scale = if spec.share { share_scale(
+          laid,
+          edge,
+          spec.axis
+        ) } else { 1.0 }
         return []
       }
     }
@@ -1367,6 +1429,7 @@ impl Ui {
     self.pointer = at
     let held = self.state.pressed
     self.state.pressed = ""
+    if self.state.dock_drop.dock.len() > 0 { return self.docked(laid) }
     if let Some(button) = window_control_at(laid, at) {
       if button.laid.id == held {
         if let WindowControl(b) = button.laid.kind { self.window_asked.push(b) }
@@ -1630,6 +1693,14 @@ impl Ui {
   ) -> []e => {
     if self.state.menus.len() > 0 {
       if let Some(events) = self.menu_key(laid, key, mods.shift) { return events }
+    }
+    // A tab being docked: Escape puts it back.
+    if self.state.dock_drop.dock.len() > 0 {
+      if key == Escape {
+        self.state.dock_drop = DockDrop {}
+        self.state.pressed = ""
+      }
+      return []
     }
     // An open select's list: Escape closes it, and Tab closes it and moves on.
     if self.state.open.len() > 0 && (key == Escape || key == Tab) {
@@ -2238,6 +2309,52 @@ let tab_dragged<e> = (
     }
   }
   []
+}
+
+/// The dock and the group of it holding the element identified as `id`, each where it is; none
+/// where it is in no dock.
+let dock_holding<e> = pure (laid: Laid<e>, id: string) -> []Found<e> => {
+  let path = along_path(laid, id)
+  var i = path.len() - 1
+  while i >= 0 {
+    if let DockLeaf(_, _) = path[i].laid.kind {
+      var j = i - 1
+      while j >= 0 {
+        if let Docked(_) = path[j].laid.kind { return [path[j], path[i]] }
+        j -= 1
+      }
+      return []
+    }
+    i -= 1
+  }
+  []
+}
+
+/// Whether `at` is off the strip of the tab `tab`, in the dock's group `group`: above or below
+/// it by more than [DOCK_TEAR], or beside the group.
+let off_strip<e> = pure (
+  laid: Laid<e>,
+  tab: Found<e>,
+  group: Found<e>,
+  at: Point
+) -> bool => {
+  let Some(strip) = find(laid, parent_of(tab.laid.id), Point {}) else { return false }
+  let top = strip.origin.y - DOCK_TEAR
+  let bottom = strip.origin.y + strip.laid.size.h + DOCK_TEAR
+  at.y < top ||
+    at.y > bottom ||
+    at.x < group.origin.x ||
+    at.x > group.origin.x + group.laid.size.w
+}
+
+/// What a unit of the pointer's travel along `axis` is worth to `edge`, a share: one over the
+/// room its parent shares out — the parent's length less the edge's own.
+let share_scale<e> = pure (laid: Laid<e>, edge: Found<e>, axis: Axis) -> f64 => {
+  let Some(parent) = find(laid, parent_of(edge.laid.id), Point {}) else { return 1.0 }
+  let room = if axis == Horizontal { parent.laid.size.w - edge.laid.size.w } else {
+    parent.laid.size.h - edge.laid.size.h
+  }
+  if room > 0.0 { 1.0 / f64(room) } else { 1.0 }
 }
 
 /// A middle click at `at`: on a closable tab, its closing.

@@ -9,6 +9,29 @@ Newest first.
 
 ## Dated log
 
+### 10/27/26 — `ui`: docking
+
+- **`ui/VEGA.md` §11's step 4**: `dock(tree, panel, on_change, on_close)` over a `DockTree`
+  the program keeps (`ui/layout/dock.lyra`) — tab groups split and rearranged, a tab dragged
+  off its strip docked among another group's tabs, beside a group or along the dock's edge,
+  with a preview of where it lands. `examples/ui/dock.lyra` is a studio's editors and panels;
+  `TestRun_UiDockExample` plays every kind of drop, the preview, an edge, Escape and reopening.
+- **The tree is the program's, and the dock's edits are public functions.** A drop raises
+  `on_change(dock_dropped(tree, drop))`; `dock_with`, `dock_without` and the rest are the same
+  edits for the program's own use, so Vega opens an editor beside another and saves the tree.
+- **A drop keeps its paths valid by renaming before moving.** The target group is named by its
+  path in the tree as it was laid out, which removing the tab first could collapse; the tab is
+  renamed to a marker where it was, put at the target, and the marker taken out.
+- **A split's share is a `Drags` with `share`.** Its edge moves a fraction, so the press
+  records one over the room the parent shares out (`Ui.drag_scale`); grow factors give each
+  part its exact share, the parts being laid out from zero.
+- **The preview is laid out, not painted aside**: `Interaction.dock_drop` keys the dock into
+  the layout cache (`state_under`), and the dock adds `DockPreview` over its tree.
+- **The design's `DockSplit(Axis, f32, DockTree, DockTree)` has no size** (E014) — a type
+  holding itself needs a box, and an array is one — so a split's parts are a `[]DockTree`.
+- lyrafmt is not idempotent on a match arm over a struct literal holding a lambda (todo.md);
+  the arm is written as the formatter keeps it.
+
 ### 10/26/26 — `ui`: the smaller controls, and files dropped on the window
 
 - **`ui/VEGA.md` §11's step 3**: `number_field`, `radio_group`/`radio`, `disclosure`,

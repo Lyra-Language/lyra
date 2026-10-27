@@ -1,0 +1,234 @@
+// Docking (ui/VEGA.md §7): a studio's editors and panels in tab groups, split and rearranged.
+// A tab is selected by a click, moved along its strip, closed by its ×, and dragged off its
+// strip to dock it — among another group's tabs, beside a group, or along the window's edge —
+// where the preview shows it would land. A split's edge is dragged to share the room anew. The
+// arrangement is the program's (`State.tree`), printed by the second form; the toolbar opens a
+// closed panel again beside the sprite editor.
+//
+//     lyrac run examples/ui/dock.lyra
+//     lyrac run examples/ui/dock.lyra -- --script "down:330,47 move:330,300 up:330,300" [--png FILE]
+//
+// **The second form** plays a script (`ui.script`) headless, prints the arrangement it leaves,
+// and with `--png FILE` writes the last frame.
+
+import ui.sdl3
+import ui.sdl3.{ SdlRenderer, capture }
+import ui.gpu
+import ui.app.{ App, Command, Subscription, run, running, step_running }
+import ui.script.{ timed_platform, parse_steps }
+import ui.draw.{ Point, Size, Color }
+import ui.text.{ Fonts, fonts_new, glyph_atlas }
+import ui.style.{ Style, Sheet, light_theme, insets, OverflowVisible }
+import ui.layout.{
+  Node,
+  Laid,
+  paint,
+  column,
+  row,
+  text,
+  button,
+  expanded,
+  padding,
+  themed,
+  dock,
+  dock_tabs,
+  dock_split,
+  dock_with,
+  dock_without,
+  dock_keys,
+  DockTree,
+  DockTabs,
+  DockSplit,
+  DockPanel,
+  DockCenter,
+  Horizontal,
+  Vertical,
+  MainStart,
+  CrossCenter,
+  CrossStretch,
+}
+import std.collections.{ parse_args }
+import std.png.{ write_png }
+import std.io.{ write_bytes }
+
+const WIDTH: f32 = 800.0
+const HEIGHT: f32 = 500.0
+const BACKGROUND: Color = Color { r: 0xE8, g: 0xE8, b: 0xEC }
+
+/// Every panel the studio has, by key.
+const PANELS: []string = ["sprite", "tiles", "map", "palettes", "problems", "console"]
+
+let main = () -> u8 => {
+  let args = parse_args(["--script", "--png"])
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let _ = fonts.add_system_fallbacks()
+  let app = App {
+    view: view,
+    update: update,
+    subscriptions: (_: State) -> []Subscription<Event> => [],
+    background: BACKGROUND,
+    window_overflow: OverflowVisible,
+  }
+  if let Some(script) = args.value("--script") {
+    let Ok(steps) = parse_steps(script) else {
+      println("the script does not parse")
+      return 1
+    }
+    let window = match sdl3.open("Dock", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    let played = running(
+      app,
+      State {},
+      timed_platform(steps, Size { w: WIDTH, h: HEIGHT }),
+      window.renderer,
+      fonts
+    )
+    while step_running(played) {}
+    let s = played.host.state
+    println(described(s.tree))
+    println("strokes ${s.strokes}")
+    var status: u8 = 0
+    if let Some(path) = args.value("--png") {
+      if !save(played.renderer, played.fonts, played.host.shown[0], path) { status = 1 }
+    }
+    sdl3.close(window.platform, played.renderer)
+    fonts.close()
+    return status
+  }
+  let window = match gpu.open("Dock", WIDTH, HEIGHT) {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      fonts.close()
+      return 2
+    },
+  }
+  var platform = window.platform
+  var renderer = window.renderer
+  let _ = run(app, State {}, platform, renderer, fonts)
+  gpu.close(platform, renderer)
+  fonts.close()
+  0
+}
+
+/// The arrangement — the palettes and problems down the left, the editors over the console —
+/// and the strokes painted, the sprite editor's stand-in for work.
+struct State {
+  tree: DockTree = dock_split(
+    Horizontal,
+    0.3,
+    dock_tabs(["palettes", "problems"]),
+    dock_split(
+      Vertical,
+      0.65,
+      dock_tabs(["sprite", "tiles", "map"]),
+      dock_tabs(["console"])
+    )
+  ),
+  strokes: i64 = 0,
+}
+
+data Event = Arranged(DockTree) | Closed(string) | Opened(string) | Paint
+
+let update = pure (state: State, event: Event) -> (State, []Command<Event>) => {
+  let next = match event {
+    Arranged(tree) => State { state | tree: tree },
+    Closed(key) => State { state | tree: dock_without(state.tree, key) },
+    // A panel opened again goes among the sprite editor's tabs — or, with that closed, in the
+    // first group.
+    Opened(key) =>
+      State { state | tree: dock_with(state.tree, key, "sprite", DockCenter) },
+    Paint => State { state | strokes: state.strokes + 1 },
+  }
+  (next, [])
+}
+
+/// The window: a toolbar of the panels closed, over the dock.
+let view = pure (state: State) -> Node<Event> => {
+  let open = dock_keys(state.tree)
+  let closed = [k in PANELS | !open.contains(k) | button::<Event>(
+    "Open ${title_of(k)}",
+    Opened(k)
+  )]
+  let bar = row::<Event>([text::<Event>("Studio"), ...closed]).aligned(
+    MainStart,
+    CrossCenter
+  ).with_style(Style { gap: Some(8.0), height: Some(30.0) })
+  themed::<Event>(light_theme(), Sheet {}, [
+    padding(insets(8.0), column([
+      bar,
+      expanded(dock(state.tree, (k: string) -> DockPanel<Event> => panel(state, k), Arranged, Closed)),
+    ]).aligned(MainStart, CrossStretch).with_style(Style { gap: Some(8.0) })),
+  ])
+}
+
+/// What the panel `key` shows.
+let panel = pure (state: State, key: string) -> DockPanel<Event> => {
+  let body: []Node<Event> = if key == "sprite" {
+    [text("Strokes: ${state.strokes}"), button("Paint", Paint)]
+  } else { [text("The ${title_of(key)} panel.")] }
+  DockPanel {
+    title: title_of(key),
+    content: padding(insets(12.0), column(body).with_style(Style { gap: Some(8.0) })),
+    closable: key != "sprite",
+  }
+}
+
+/// A panel's title.
+let title_of = pure (key: string) -> string => match key {
+  "sprite" => "Sprite",
+  "tiles" => "Tile set",
+  "map" => "Map",
+  "palettes" => "Palettes",
+  "problems" => "Problems",
+  "console" => "Console",
+  _ => key,
+}
+
+/// `tree` written out: a group as its keys, the shown one starred; a split as its axis (`H`
+/// side by side, `V` one over the other) and share, and its parts in brackets.
+let described = pure (tree: DockTree) -> string => match tree {
+  DockTabs(group) =>
+    [k in group.keys | if k == group.selected { "${k}*" } else { k }].join(" "),
+  DockSplit(split) => {
+    let axis = if split.axis == Horizontal { "H" } else { "V" }
+    let share = (split.at * 100.0 + 0.5).floor()
+    "${axis}${share}[${[p in split.parts | described(p)].join(" | ")}]"
+  },
+}
+
+/// `laid` — the window as the host last laid it out — drawn without showing it, and written to
+/// `path` as a PNG.
+let save = (
+  renderer: SdlRenderer,
+  fonts: Fonts,
+  laid: Laid<Event>,
+  path: string
+) -> bool => {
+  var r = renderer
+  var f = fonts
+  var atlas = glyph_atlas()
+  let ops = paint(laid, Point {}, 1.0, f, atlas, r)
+  let Some(frame) = capture(r, BACKGROUND, ops) else { return false }
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(u8((p >> 24) & 0xFF))
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(png) => write_bytes(path, png),
+    Err(_) => false,
+  }
+}

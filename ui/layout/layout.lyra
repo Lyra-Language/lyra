@@ -218,16 +218,24 @@ pub data Kind<e> =
   /// A group of [Radio]s with one stop for Tab — the one chosen, else the first — among which
   /// the arrow keys move the choice ([radio_group], a [table]'s rows).
   | OneOf
+  /// A dock ([dock]): its child the tree's groups and splits; while a tab is docked into it
+  /// (`Interaction.dock_drop`), where it would land shown over them (`DockPreview`).
+  | Docked(DockSpec<e>)
+  /// A dock's group of tabs: its path in the dock's tree, and its panels' keys.
+  | DockLeaf(string, []string)
 
 /// A number dragged along `axis`: `value` as the press found it, changed by `per_unit` for
 /// each unit the pointer goes — right or down more — and held between `min` and `max`;
-/// `on_drag` with each new value.
+/// `on_drag` with each new value. With `share`, `per_unit` is for the whole of the room its
+/// parent shares out along the axis — the parent's length less the dragged element's own — so
+/// the value is a share of that room (a dock's split).
 pub struct DragSpec<e> {
   axis: Axis = Horizontal,
   value: f64,
   per_unit: f64 = 1.0,
   min: f64 = -1.0e15,
   max: f64 = 1.0e15,
+  share: bool = false,
   on_drag: (f64) -> e,
 }
 
@@ -879,10 +887,16 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
     per_unit: spec.per_unit,
     min: spec.min,
     max: spec.max,
+    share: spec.share,
     on_drag: (v: f64) -> b => f((spec.on_drag)(v)),
   }),
   Radio(chosen, event) => Radio(chosen, f(event)),
   OneOf => OneOf,
+  Docked(spec) => Docked(DockSpec {
+    tree: spec.tree,
+    on_change: (t: DockTree) -> b => f((spec.on_change)(t)),
+  }),
+  DockLeaf(path, keys) => DockLeaf(path, keys),
 }
 
 // ── Constraints ──────────────────────────────────────────────────────────────
@@ -971,6 +985,9 @@ pub struct Interaction {
   /// says none, by the picker's (`ui/layout/swatch.lyra`).
   drafts: HashMap<string, string>,
   hues: HashMap<string, f32>,
+  /// The tab being docked, and where it would land ([dock]): `dock` its dock's identity, `""`
+  /// while none is.
+  dock_drop: DockDrop = DockDrop {},
 }
 
 /// What the framework keeps for one element: a scroll's offset once the user has scrolled
@@ -1384,6 +1401,9 @@ let state_under = pure (ui: Interaction, id: string) -> string => {
     if inside(opened) { out = "${out}|menu ${opened}" }
   }
   if inside(ui.tip) { out = "${out}|tip ${ui.tip}@${ui.tip_at.x},${ui.tip_at.y}" }
+  if ui.dock_drop.dock.len() > 0 && inside(ui.dock_drop.dock) {
+    out = "${out}|${dock_drop_key(ui.dock_drop)}"
+  }
   if ui.drafts.len() > 0 {
     for (key, typed) in ui.drafts.entries() {
       if inside(key) { out = "${out}|draft ${key}:${typed}" }
@@ -1516,6 +1536,9 @@ let same_kind<e> = (a: Kind<e>, b: Kind<e>, theme: Theme) -> bool => match (a, b
   (Drags(d1), Drags(d2)) => d1.axis == d2.axis,
   (Radio(c1, _), Radio(c2, _)) => c1 == c2,
   (OneOf, OneOf) => true,
+  // What a dock lays out is its child's; the tree is for its events.
+  (Docked(_), Docked(_)) => true,
+  (DockLeaf(p1, k1), DockLeaf(p2, k2)) => p1 == p2 && k1 == k2,
   _ => false,
 }
 
@@ -1642,6 +1665,7 @@ let lay_fresh<e> = (
     PopsUp(open, side, _) =>
       lay_popup(node.children, open, side, inner, ctx, fonts, cache),
     Modal(open, _) => lay_modal(node.children, open, inner, ctx, fonts, cache),
+    Docked(_) => lay_docked(node.children, inner, ctx, fonts, cache),
     Opens(spec) => lay_opens(node.children, spec, inner, ctx, fonts, cache),
     TabStrip => lay_tab_strip(node.children, inner, ctx, fonts, cache),
     WindowControl(button) => lay_window_control(button, inner, ctx, fonts, cache),
@@ -2310,6 +2334,49 @@ let lay_modal<e> = (
     laid: Laid { laid | floats: true, anchor: Some(Anchor { side: FloatWindow }) },
   }
   Body { size: under.size, children: [laid_under, floating] }
+}
+
+/// A dock's tree laid out in `c` — and, while a tab is docked into it, where the tab would
+/// land (`DockPreview`) over it, taking no input.
+let lay_docked<e> = (
+  children: []Node<e>,
+  c: Constraints,
+  ctx: Ctx,
+  fonts: mut Fonts,
+  cache: mut LayoutCache<e>
+) -> Body<e> => {
+  if children.len() == 0 { return Body::<e> { size: c.constrain(Size {}) } }
+  let tree = lay(
+    children[0],
+    c,
+    ctx.cascade,
+    fonts,
+    ctx.ui,
+    child_id(ctx.id, children[0], 0),
+    cache
+  )
+  let placed = [Placed { at: Point {}, laid: tree }]
+  let drop = ctx.ui.dock_drop
+  if drop.dock != ctx.id { return Body { size: tree.size, children: placed } }
+  let Some(box) = dock_drop_box(
+    tree,
+    drop
+  ) else { return Body { size: tree.size, children: placed } }
+  let shown: Kind<e> = Measured(Some(box.w), Some(box.h))
+  let preview = Node { kind: shown, tag: "DockPreview", key: "preview" }
+  let laid = lay(
+    preview,
+    tight(Size { w: box.w, h: box.h }),
+    ctx.cascade,
+    fonts,
+    ctx.ui,
+    child_id(ctx.id, preview, 1),
+    cache
+  )
+  Body {
+    size: tree.size,
+    children: [...placed, Placed { at: Point { x: box.x, y: box.y }, laid: laid }]
+  }
 }
 
 /// The framework's scrim around a modal's `content` (`ModalScrim`), centring it, and its

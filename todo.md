@@ -696,7 +696,11 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] What Vega needs of `ui`** — pictures the program changes, tooltips, modals, the
   smaller controls, dropped files, docking and several windows, then Vega's front end on
   them; designed in `ui/VEGA.md` (10/26), whose §11 is the order. Steps 1–3 (pictures;
-  tooltips, modals; the smaller controls, dropped files) done 10/26; docking next.
+  tooltips, modals; the smaller controls, dropped files) done 10/26, 4 (docking) 10/27; several
+  windows next.
+- **[OPEN] A docked panel's framework state does not follow it** — identities are paths, so a
+  panel docked elsewhere (or whose group a split moves) starts with no scroll, focus or caret.
+  Keying a dock's panels by their keys needs identities that are not wholly hierarchical (10/27).
 - **[OPEN] A modal is not heard as one, nor keeps the app's shortcuts out** — VoiceOver hears
   its dialog as a group (AccessKit has a `Dialog` role and `set_modal`), and `App.shortcuts`
   and drawn menus' shortcuts still reach the program while one is open (10/26).
@@ -897,7 +901,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   `sized`'s `e`: elements are inferred one by one, before the array's type is joined.
 - **[OPEN] lyrafmt is not idempotent on a long struct literal holding a lambda**: `App { view:
   (f: Form) -> Node<Ev> => view(theme, f), update: update, background: … }` past 90 columns is
-  re-indented differently on a second `-w`, so `--check` fails right after a format.
+  re-indented differently on a second `-w`, so `--check` fails right after a format. A match
+  arm `Docked(spec) =>` over one such literal (`Docked(Spec { tree: …, on_change: (t: i64) ->
+  i64 => f(…) })`) does it too: its lambda's body goes in 8 columns, then 6 (10/27).
 - **[OPEN] `ui.sdl3`'s platform half is untested.** Nothing headless sends it input: bind
   `SDL_PushEvent` and script events, as `std.game`'s `--hold` scripts a pad.
 - **[OPEN] A rounded clip is square on SDL's renderer** (`PushClip`'s radii are ignored):

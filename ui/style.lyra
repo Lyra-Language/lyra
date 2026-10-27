@@ -588,6 +588,20 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
   Rule { selector: "TableRow.odd", style: Style { background: Some(faded(c.text, 0.03)) } },
   Rule { selector: "TableRow:hover", style: Style { background: Some(faded(c.text, 0.07)) } },
   Rule { selector: "TableRow:checked", style: Style { background: Some(faded(c.accent, 0.2)) } },
+  // A dock: each group framed, and where a tab being docked would land lit in the accent.
+  Rule {
+    selector: "DockGroup",
+    style: Style { background: Some(c.surface), border_color: Some(c.border), border_width: Some(1.0), radius: Some(6.0) },
+  },
+  Rule {
+    selector: "DockPreview",
+    style: Style {
+      background: Some(faded(c.accent, 0.22)),
+      border_color: Some(c.accent),
+      border_width: Some(2.0),
+      radius: Some(6.0),
+    },
+  },
   Rule {
     selector: "Slider::track",
     style: Style { background: Some(c.border), radius: Some(2.0) },

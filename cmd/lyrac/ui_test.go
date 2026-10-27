@@ -6576,6 +6576,82 @@ sprites hero.png slime.png coin.png bat.png ghost.png, selected 3
 	}
 }
 
+// examples/ui/dock.lyra, played headless (ui/VEGA.md §7): a tab selected; Tile set dragged off
+// its strip into the console's group; the split's edge dragged; Palettes docked along the
+// dock's right edge; Console closed by its ×; Problems docked below Palettes, its emptied group
+// going; a drag of Map put back by Escape; Console opened again by the toolbar, among the
+// sprite editor's tabs; the sprite editor's button pressed; and Console moved along its strip,
+// before Map. The arrangement it leaves is printed. A second play stops mid-drag, where the preview shows below Palettes.
+func TestRun_UiDockExample(t *testing.T) {
+	t.Parallel()
+	skipWithoutText(t)
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "dock")
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, filepath.Join(root, "examples", "ui", "dock.lyra")); code != 0 {
+		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
+	}
+	play := func(script, shot string) string {
+		cmd := command(t, bin, "--script", script, "--png", shot)
+		cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+		out, err := cmd.CombinedOutput()
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
+			t.Skipf("SDL could not open a dummy window here: %s", out)
+		} else if ok && exitErr.ExitCode() == 1 && strings.HasPrefix(string(out), "no font") {
+			t.Skipf("no font here: %s", out)
+		} else if err != nil {
+			t.Fatalf("playing: %v\n%s", err, out)
+		}
+		return string(out)
+	}
+	frame := func(shot string) image.Image {
+		f, err := os.Open(shot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		img, err := png.Decode(f)
+		if err != nil {
+			t.Fatalf("the frame is not a PNG: %v", err)
+		}
+		return img
+	}
+	// The accent is blue: what it fills or tints is bluer than it is red.
+	blue := func(img image.Image, x, y int) bool {
+		c := rgbAt(img, x, y)
+		return c[2] > c[0]+20
+	}
+	upToDrag := "click:145,62 down:340,62 move:340,130 move:520,420 up:520,420 " +
+		"down:244,250 move:284,250 up:284,250 down:45,62 move:45,150 move:785,250 up:785,250 " +
+		"click:294,354 down:50,62 move:50,150 move:700,420"
+	mid := filepath.Join(dir, "mid.png")
+	want := "H75[H35[problems* | V65[sprite map* | tiles*]] | palettes*]\nstrokes 0\n"
+	if got := play(upToDrag, mid); got != want {
+		t.Errorf("mid-drag: got\n%s\nwant\n%s", got, want)
+	}
+	img := frame(mid)
+	if !blue(img, 700, 420) {
+		t.Errorf("the preview below Palettes, at 700,420 (%v): not blue", rgbAt(img, 700, 420))
+	}
+	if blue(img, 700, 200) {
+		t.Errorf("Palettes' own half, at 700,200 (%v): blue", rgbAt(img, 700, 200))
+	}
+	end := filepath.Join(dir, "end.png")
+	want = "H75[V65[sprite console* map | tiles*] | V50[palettes* | problems*]]\nstrokes 1\n"
+	script := upToDrag + " up:700,420 down:100,62 move:100,300 Escape up:100,300 click:114,23 click:38,62 " +
+		"click:40,131 down:175,62 move:80,62 up:80,62"
+	if got := play(script, end); got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+	if img := frame(end); blue(img, 700, 420) {
+		t.Errorf("no preview once dropped, at 700,420 (%v): blue", rgbAt(img, 700, 420))
+	}
+}
+
 // The glyph atlas's pages (`ui.text`'s `GlyphAtlas`), with pages of 48 texels and two of them,
 // so a capital at 40 pixels takes a page whatever the font: a glyph that fits nowhere opens a
 // page; past two, the page drawn from least recently is cleared and filled again (its glyphs
