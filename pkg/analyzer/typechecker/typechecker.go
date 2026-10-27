@@ -5577,9 +5577,11 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 
 	tc.applyDefaultFields(expr, structType)
 
-	// Build a quick name->type lookup for the declared fields.
+	// Build a quick name->type lookup for the declared fields, as declared and substituted.
 	fieldTypes := make(map[string]types.Type, len(structType.Fields))
+	declaredFieldTypes := make(map[string]types.Type, len(structType.Fields))
 	for _, f := range structType.Fields {
+		declaredFieldTypes[f.Name] = f.Type
 		// Substituted *structurally*, not by looking the field's type name up in the
 		// substitution: that only ever rewrote a field declared as a bare parameter, so
 		// a field declared `Maybe<t>` kept its raw type variable and this check compared
@@ -5606,7 +5608,14 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		// and the context may yet supply it (propagateInstantiation re-checks the
 		// field once it does). Asked of the whole type, not just its name, so a
 		// partly-substituted `Maybe<t>` is covered as well as a bare `t`.
-		if mentionsGenericParam(expected, genericParamNames) {
+		//
+		// **Asked of the declared type, about the parameters left unsolved** — never of
+		// the substituted one by name. A parameter solved to the enclosing function's own
+		// variable of the same name (`Spec { on: Some(f) }` building a `Spec<e>` inside
+		// `make<e>`) substitutes to a type still spelled `e`, which read as unsolved: the
+		// field went unchecked, and the backend refused the store the check would have
+		// settled (10/27).
+		if mentionsGenericParam(declaredFieldTypes[name], unsolvedParams(genericParamNames, typeSubst)) {
 			tc.elaborateLambda(f.Value, expected, nil)
 			tc.inferExprType(f.Value) // still record the value's type
 			continue

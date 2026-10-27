@@ -14,7 +14,16 @@
 
 import ui.sdl3
 import ui.sdl3.{ SdlRenderer, capture }
-import ui.backend.{ Platform, Renderer, InputEvent, CloseRequested, KeyPressed, Escape }
+import ui.backend.{
+  MAIN_WINDOW,
+  WindowId,
+  Platform,
+  Renderer,
+  InputEvent,
+  CloseRequested,
+  KeyPressed,
+  Escape
+}
 import ui.draw.{ DrawOp, Point, Color }
 import ui.text.{ fonts_new, glyph_atlas }
 import ui.style.{ Style, Sheet, Rule, Theme, insets, insets_xy, light_theme, dark_theme }
@@ -70,8 +79,8 @@ let main = () -> u8 => {
   var drawn = 0
   var status: u8 = 0
   loop {
-    let laid = layout(view(theme), loose(platform.window_size()), fonts)
-    let list = paint(laid, Point {}, platform.scale(), fonts, atlas, renderer)
+    let laid = layout(view(theme), loose(platform.window_size(MAIN_WINDOW)), fonts)
+    let list = paint(laid, Point {}, platform.scale(MAIN_WINDOW), fonts, atlas, renderer)
     drawn += 1
     if frames > 0 && drawn >= frames {
       if args.has("--boxes") { print_boxes(laid, Point {}) }
@@ -80,7 +89,7 @@ let main = () -> u8 => {
       }
       break
     }
-    renderer.draw(theme.colors.background, list)
+    renderer.draw(MAIN_WINDOW, theme.colors.background, list)
     if wants_to_close(platform.next_events(if frames > 0 { 0 } else { -1 })) { break }
   }
   sdl3.close(platform, renderer)
@@ -196,8 +205,8 @@ let print_boxes = (laid: Laid<NoEvent>, origin: Point) -> void => {
 }
 
 /// Whether the user asked to close the window, or pressed Escape.
-let wants_to_close = pure (events: []InputEvent) -> bool =>
-  events.any((e) => match e {
+let wants_to_close = pure (events: [](WindowId, InputEvent)) -> bool =>
+  events.any((e) => match e.1 {
     CloseRequested => true,
     KeyPressed(Escape, _) => true,
     _ => false,

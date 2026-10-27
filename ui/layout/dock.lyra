@@ -11,6 +11,12 @@ module ui.layout
 //! land (`DockPreview`) — a group's middle (its tabs) or a side of it (a split of that group),
 //! or the dock's own edge (a split of the whole) — and letting go there moves it ([DockDrop],
 //! [dock_aim]). Escape, or letting go over nothing, leaves the tree as it was.
+//!
+//! **Across windows** (`ui/VEGA.md` §8): dragged out of its window, a tab aims at the dock of
+//! another of the program's windows under the pointer, as at its own (`DockDrop.foreign`);
+//! let go there, that dock raises its tree with the panel and this one its tree without
+//! (`ui.app`'s host carries the drag). Let go outside every window, a dock that
+//! [Node.tears_off] raises a [DockTear], and the program opens a window for the panel.
 
 import ui.style.{ Style }
 
@@ -42,17 +48,31 @@ pub struct DockPanel<e> {
   closable: bool = true,
 }
 
-/// What a dock is to the framework ([Docked]): the tree it shows, and the event a drop raises
-/// with the tree rearranged.
+/// What a dock is to the framework ([Docked]): the tree it shows, the event a drop raises
+/// with the tree rearranged, and the one a tab torn off raises ([Node.tears_off]) — none
+/// where its tabs do not tear off.
 pub struct DockSpec<e> {
   tree: DockTree,
   on_change: (DockTree) -> e,
+  on_tear: Maybe<(DockTear) -> e>,
+}
+
+/// A tab let go outside every window of the program ([Node.tears_off]): its panel's key, where
+/// a window of its own would put its top-left corner on the screens — under the pointer, in the
+/// system's coordinates ([Platform.window_position]); `None` where the system does not say where
+/// windows are — and the size of the group it was torn from, in logical units.
+pub struct DockTear {
+  key: string,
+  place: Maybe<Point> = None,
+  size: Size = Size {},
 }
 
 /// A tab being docked (`Interaction.dock_drop`): the dock's identity, the panel's key and the
 /// group it came from (a path of a split's parts, `"0"` and `"1"`, from the root `""`); and
 /// where it would land — a group by its path and a side of it, or the dock's own edge on
-/// `side` — and whether a drop there changes anything (`aimed`).
+/// `side` — and whether a drop there changes anything (`aimed`). `foreign` for a tab of
+/// another window's dock, aimed at this one: `dock` this window's dock, `from` none of its
+/// groups.
 pub struct DockDrop {
   dock: string = "",
   key: string = "",
@@ -61,6 +81,7 @@ pub struct DockDrop {
   side: DockSide = DockCenter,
   edge: bool = false,
   aimed: bool = false,
+  foreign: bool = false,
 }
 
 /// How far the pointer goes off a tab's strip before the tab is docking rather than moving
@@ -98,7 +119,14 @@ pub let dock<e> = pure (
   on_change: pure (DockTree) -> e,
   on_close: pure (string) -> e
 ) -> Node<e> => {
-  let kind: Kind<e> = Docked(DockSpec { tree: tree, on_change: on_change })
+  // Written, not left to a default: a `None` in a field of a generic literal is not typed
+  // from the field yet (todo.md).
+  let stays: Maybe<(DockTear) -> e> = None
+  let kind: Kind<e> = Docked(DockSpec {
+    tree: tree,
+    on_change: on_change,
+    on_tear: stays
+  })
   Node {
     kind: kind,
     tag: "Dock",
@@ -395,13 +423,14 @@ struct GroupBox {
 /// `drop` aimed at `at`, in the coordinates of `dock`, the dock's tree laid out (its child):
 /// the dock's edge where the pointer is near it, else the group under it — its strip or middle
 /// among its tabs, nearer a side beside it. Aimed only where a drop moves something: not the middle of
-/// the group it came from, nor anywhere for a group's only tab when that is all there is.
+/// the group it came from, nor anywhere for a group's only tab when that is all there is — but
+/// anywhere for a tab of another window's dock (`foreign`).
 pub let dock_aim<e> = pure (dock: Laid<e>, at: Point, drop: DockDrop) -> DockDrop => {
   let none = DockDrop { drop | group: "", side: DockCenter, edge: false, aimed: false }
   let whole = Rect { x: 0.0, y: 0.0, w: dock.size.w, h: dock.size.h }
   if !whole.contains(at) { return none }
   let groups = group_boxes(dock)
-  let alone = groups.len() == 1 && groups[0].keys.len() <= 1
+  let alone = !drop.foreign && groups.len() == 1 && groups[0].keys.len() <= 1
   let (edge_side, edge_gone) = nearest_side(whole, at)
   if edge_gone <= DOCK_EDGE && !alone {
     return DockDrop { drop | group: "", side: edge_side, edge: true, aimed: true }
@@ -413,7 +442,7 @@ pub let dock_aim<e> = pure (dock: Laid<e>, at: Point, drop: DockDrop) -> DockDro
       let across = if near == DockLeft || near == DockRight { g.box.w } else { g.box.h }
       if gone > across * 0.25 { DockCenter } else { near }
     }
-    let own = g.path == drop.from
+    let own = !drop.foreign && g.path == drop.from
     let moves = if own { side != DockCenter && g.keys.len() > 1 } else { true }
     return DockDrop { drop | group: g.path, side: side, edge: false, aimed: moves }
   }
@@ -433,6 +462,15 @@ pub let dock_drop_box<e> = pure (dock: Laid<e>, drop: DockDrop) -> Maybe<Rect> =
   }
   for g in group_boxes(dock) {
     if g.path == drop.group { return Some(side_of(g.box, drop.side, 0.5)) }
+  }
+  None
+}
+
+/// The box of the group at `path` of `dock`, the dock's tree laid out, in its coordinates — if
+/// it has one there.
+pub let dock_group_box<e> = pure (dock: Laid<e>, path: string) -> Maybe<Rect> => {
+  for g in group_boxes(dock) {
+    if g.path == path { return Some(g.box) }
   }
   None
 }
@@ -506,7 +544,7 @@ let strip_end<e> = pure (laid: Laid<e>, top: f32) -> Maybe<f32> => {
 
 /// The share of a laid-out dock's identity's state that its drop shows: what lays it out anew.
 pub let dock_drop_key = pure (drop: DockDrop) -> string =>
-  "dock ${drop.key}>${drop.group}:${side_name(drop.side)}:${drop.edge}:${drop.aimed}"
+  "dock ${drop.key}>${drop.group}:${side_name(drop.side)}:${drop.edge}:${drop.aimed}:${drop.foreign}"
 
 let side_name = pure (side: DockSide) -> string => match side {
   DockCenter => "center",

@@ -1,6 +1,8 @@
 package llvm
 
 import (
+	"sort"
+
 	"github.com/llir/llvm/ir"
 )
 
@@ -38,6 +40,50 @@ type domTree struct {
 	// root is the index the tree is rooted at: the entry block for a finished
 	// function, a statement's start block for newDomTreeFrom.
 	root int
+	// enter and leave number each block as a depth-first walk of the tree first and
+	// last visits it, so `a` dominates `b` exactly when b's interval nests in a's —
+	// answered at once, where walking b's dominators up to a cost the tree's depth. In
+	// a long function that walk, asked of every block for each temporary produced on a
+	// branch (regionExits), was minutes of a build (`ui.app`'s host, 10/27). -1 for a
+	// block the root does not reach.
+	enter, leave []int
+}
+
+// number gives each block reached from the root its interval ([domTree.enter],
+// [domTree.leave]), walking the tree from the root without recursion.
+func (d *domTree) number() {
+	n := len(d.doms)
+	d.enter = make([]int, n)
+	d.leave = make([]int, n)
+	children := make([][]int, n)
+	for i := range n {
+		d.enter[i], d.leave[i] = -1, -1
+		if i != d.root && d.doms[i] >= 0 && d.doms[i] != i {
+			children[d.doms[i]] = append(children[d.doms[i]], i)
+		}
+	}
+	if d.root < 0 || d.root >= n {
+		return
+	}
+	clock := 0
+	type frame struct{ node, next int }
+	stack := []frame{{d.root, 0}}
+	d.enter[d.root] = clock
+	clock++
+	for len(stack) > 0 {
+		top := &stack[len(stack)-1]
+		if top.next < len(children[top.node]) {
+			child := children[top.node][top.next]
+			top.next++
+			d.enter[child] = clock
+			clock++
+			stack = append(stack, frame{child, 0})
+			continue
+		}
+		d.leave[top.node] = clock
+		clock++
+		stack = stack[:len(stack)-1]
+	}
 }
 
 // newDomTree computes the dominator tree of fn with the classic iterative
@@ -87,10 +133,22 @@ func newDomTreeFrom(fn *ir.Func, root *ir.Block) *domTree {
 			}
 		}
 	}
-	// The root stands in for the entry (blocks[0] for a whole function — llir's
-	// layout guarantees that). The traversal order is the block order, which for a body built front-to-back
-	// is close enough to reverse postorder that the fixpoint settles in a pass or
-	// two; correctness does not depend on the order, only speed.
+	// The root stands in for the entry (blocks[0] for a whole function — llir's layout
+	// guarantees that). **Cooper, Harvey and Kennedy's algorithm needs the postorder of a
+	// walk from the root**, both to visit blocks in reverse postorder and for intersect to
+	// tell which of two blocks is nearer the root. It took the block order for both until
+	// 10/27 — close to reverse postorder for a body built front to back, but not for every
+	// CFG, and where it was not an immediate dominator came out too high: a block reported as
+	// not dominating one it does, which here is a temporary released early
+	// (TestDomTreeAgreesWithItsDefinition).
+	post := postorder(r, blocks, idx)
+	order := make([]int, 0, len(blocks))
+	for i := range blocks {
+		if post[i] >= 0 {
+			order = append(order, i)
+		}
+	}
+	sort.Slice(order, func(x, y int) bool { return post[order[x]] > post[order[y]] })
 	doms := make([]int, len(blocks))
 	for i := range doms {
 		doms[i] = -1
@@ -98,20 +156,20 @@ func newDomTreeFrom(fn *ir.Func, root *ir.Block) *domTree {
 	doms[r] = r
 	for changed := true; changed; {
 		changed = false
-		for i := range blocks {
+		for _, i := range order {
 			if i == r {
 				continue
 			}
 			newIdom := -1
 			for _, p := range preds[i] {
 				if doms[p] == -1 {
-					continue // not yet reachable from entry
+					continue // not yet reached from the root
 				}
 				if newIdom == -1 {
 					newIdom = p
 					continue
 				}
-				newIdom = intersect(doms, p, newIdom)
+				newIdom = intersect(doms, post, p, newIdom)
 			}
 			if newIdom != -1 && doms[i] != newIdom {
 				doms[i] = newIdom
@@ -119,24 +177,60 @@ func newDomTreeFrom(fn *ir.Func, root *ir.Block) *domTree {
 			}
 		}
 	}
-	return &domTree{idx: idx, doms: doms, root: r}
+	d := &domTree{idx: idx, doms: doms, root: r}
+	d.number()
+	return d
 }
 
-// intersect walks two nodes up the dominator tree until they meet — the standard
-// helper of the iterative algorithm, relying on the index order being a topological
-// approximation.
-func intersect(doms []int, a, b int) int {
-	for a != b {
-		for a > b {
-			if doms[a] == a || doms[a] == -1 {
-				return b
+// postorder numbers each block reached from root by when a depth-first walk along the
+// terminators' successors finishes it — the root last; -1 for a block not reached.
+func postorder(root int, blocks []*ir.Block, idx map[*ir.Block]int) []int {
+	post := make([]int, len(blocks))
+	for i := range post {
+		post[i] = -1
+	}
+	seen := make([]bool, len(blocks))
+	type frame struct {
+		node  int
+		succs []*ir.Block
+		next  int
+	}
+	succsOf := func(i int) []*ir.Block {
+		if blocks[i].Term == nil {
+			return nil
+		}
+		return blocks[i].Term.Succs()
+	}
+	clock := 0
+	seen[root] = true
+	stack := []frame{{root, succsOf(root), 0}}
+	for len(stack) > 0 {
+		top := &stack[len(stack)-1]
+		if top.next < len(top.succs) {
+			s := top.succs[top.next]
+			top.next++
+			if j, ok := idx[s]; ok && !seen[j] {
+				seen[j] = true
+				stack = append(stack, frame{j, succsOf(j), 0})
 			}
+			continue
+		}
+		post[top.node] = clock
+		clock++
+		stack = stack[:len(stack)-1]
+	}
+	return post
+}
+
+// intersect walks two blocks up the dominator tree until they meet, the one finished earlier
+// in the walk ([postorder]) — farther from the root — stepping up first: the standard helper
+// of the iterative algorithm.
+func intersect(doms, post []int, a, b int) int {
+	for a != b {
+		for post[a] < post[b] {
 			a = doms[a]
 		}
-		for b > a {
-			if doms[b] == b || doms[b] == -1 {
-				return a
-			}
+		for post[b] < post[a] {
 			b = doms[b]
 		}
 	}
@@ -156,20 +250,8 @@ func (d *domTree) dominates(a, b *ir.Block) bool {
 	if !ok {
 		return false
 	}
-	if d.doms[bi] == -1 {
+	if d.doms[bi] == -1 || d.enter[ai] < 0 || d.enter[bi] < 0 {
 		return false // b is unreachable from entry; claim nothing about it
 	}
-	for {
-		if ai == bi {
-			return true
-		}
-		if bi == d.root {
-			return false // walked to the root without meeting a
-		}
-		next := d.doms[bi]
-		if next == bi || next == -1 {
-			return false
-		}
-		bi = next
-	}
+	return d.enter[ai] <= d.enter[bi] && d.leave[bi] <= d.leave[ai]
 }

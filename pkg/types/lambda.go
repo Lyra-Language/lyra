@@ -130,3 +130,61 @@ func (p ParameterType) GetName() string {
 func (p ParameterType) String() string {
 	return p.GetName()
 }
+
+// WidensEffects reports whether a value of type `from` may be taken as `to` because the two
+// differ, if at all, only in function types whose declared effect bounds `from` makes stronger
+// than `to` asks — `Maybe<pure (i64) -> string>` as `Maybe<(i64) -> string>` — in the positions
+// a value is read from: a type argument, an element, a function's return. A function's
+// parameters must be equal, a parameter being where a function is handed values, not read.
+//
+// **Only for a value nothing else holds yet** — a construction a context is choosing the
+// instantiation of. A slot already holding one is another matter: through a `shared` alias,
+// widening a `Box<pure F>` to `Box<F>` would let an impure function be written where the
+// other holder still reads a pure one.
+func WidensEffects(from, to Type) bool {
+	switch f := from.(type) {
+	case *LambdaType:
+		t, ok := to.(*LambdaType)
+		if !ok || f == nil || t == nil || len(f.Parameters) != len(t.Parameters) ||
+			f.IsVariadic != t.IsVariadic || !f.EffectBoundsSatisfy(t) {
+			return false
+		}
+		for i := range f.Parameters {
+			if !TypesEqual(f.Parameters[i].Type, t.Parameters[i].Type) {
+				return false
+			}
+		}
+		return WidensEffects(f.ReturnType.Type, t.ReturnType.Type)
+	case ParameterizedType:
+		t, ok := to.(ParameterizedType)
+		if !ok || f.Name != t.Name || len(f.TypeArguments) != len(t.TypeArguments) {
+			return false
+		}
+		for i := range f.TypeArguments {
+			if !WidensEffects(f.TypeArguments[i], t.TypeArguments[i]) {
+				return false
+			}
+		}
+		return true
+	case DynamicArrayType:
+		t, ok := to.(DynamicArrayType)
+		return ok && WidensEffects(f.ElementType, t.ElementType)
+	case StaticArrayType:
+		t, ok := to.(StaticArrayType)
+		return ok && f.Size == t.Size && f.SizeVar == t.SizeVar &&
+			WidensEffects(f.ElementType, t.ElementType)
+	case TupleType:
+		t, ok := to.(TupleType)
+		if !ok || !IsAnonymousTupleName(f.Name) || !IsAnonymousTupleName(t.Name) ||
+			len(f.Elements) != len(t.Elements) {
+			return TypesEqual(from, to)
+		}
+		for i := range f.Elements {
+			if !WidensEffects(f.Elements[i], t.Elements[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	return TypesEqual(from, to)
+}

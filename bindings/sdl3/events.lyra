@@ -200,6 +200,11 @@ const EVENT_TEXT_INPUT: u32 = 0x303
 const EVENT_WINDOW_FOCUS_GAINED: u32 = 0x20E
 const EVENT_WINDOW_FOCUS_LOST: u32 = 0x20F
 const EVENT_WINDOW_RESIZED: u32 = 0x206
+const EVENT_WINDOW_MOVED: u32 = 0x205
+const EVENT_WINDOW_CLOSE_REQUESTED: u32 = 0x210
+/// The window events' range: each a `SDL_WindowEvent`, its window's number at the same place.
+const EVENT_WINDOW_FIRST: u32 = 0x202
+const EVENT_WINDOW_LAST: u32 = 0x2FF
 const EVENT_DROP_FILE: u32 = 0x1000
 const EVENT_DROP_BEGIN: u32 = 0x1002
 const EVENT_DROP_COMPLETE: u32 = 0x1003
@@ -269,6 +274,12 @@ pub data Event =
   /// The window was resized, to a width and height in its own coordinates (points, which
   /// a high-density display shows at more than one pixel each).
   | WindowResized(i32, i32)
+  /// The window was moved, its top-left corner now at `x`, `y` on the screens (screen
+  /// coordinates).
+  | WindowMoved(i32, i32)
+  /// The user asked to close the window — its close button, or the system's shortcut. With
+  /// one window open SDL sends [Quit] after it; with several, only this.
+  | WindowCloseRequested
   /// The window's display scale changed ([window_display_scale]): it moved to another
   /// display, or the user changed the scale of this one.
   | WindowScaleChanged
@@ -316,6 +327,54 @@ pub let wait_event_with_modifiers = (timeout_ms: i64) -> Maybe<(Event, u16)> => 
   if !unsafe { sdl_wait_event_timeout(&mut raw, wait) } { return None }
   Some((classify(raw), key_modifiers_of(raw)))
 }
+
+/// An event, the modifiers held as a key event was made ([poll_event_with_modifiers]), and
+/// the number of the window it is about ([window_id]) — 0 for one about none (a [Quit], a
+/// gamepad).
+pub struct WindowedEvent {
+  event: Event,
+  modifiers: u16,
+  window: u32,
+}
+
+/// [poll_event_with_modifiers], with the window the event is about: what a program with
+/// several windows routes it by.
+pub let poll_window_event = () -> Maybe<WindowedEvent> => {
+  var raw = RawEvent { padding: #[0; 128] }
+  if !unsafe { sdl_poll_event(&mut raw) } { return None }
+  Some(WindowedEvent {
+    event: classify(raw),
+    modifiers: key_modifiers_of(raw),
+    window: window_of(raw),
+  })
+}
+
+/// [poll_window_event], waiting up to `timeout_ms` milliseconds as [wait_event] does.
+pub let wait_window_event = (timeout_ms: i64) -> Maybe<WindowedEvent> => {
+  var raw = RawEvent { padding: #[0; 128] }
+  let wait = i32(timeout_ms.clamp(-1, 2147483647))
+  if !unsafe { sdl_wait_event_timeout(&mut raw, wait) } { return None }
+  Some(WindowedEvent {
+    event: classify(raw),
+    modifiers: key_modifiers_of(raw),
+    window: window_of(raw),
+  })
+}
+
+/// The number of the window an event is about: every keyboard, text, mouse, drop and window
+/// event carries it at the same offset (after the tag and the timestamp); 0 for the rest.
+let window_of = pure (raw: RawEvent) -> u32 => {
+  let kind = unsafe { raw.kind }
+  let windowed = (kind >= EVENT_WINDOW_FIRST && kind <= EVENT_WINDOW_LAST) ||
+    (kind >= EVENT_KEY_DOWN && kind <= EVENT_TEXT_INPUT) ||
+    (kind >= EVENT_MOUSE_MOTION && kind <= EVENT_MOUSE_WHEEL) ||
+    (kind >= EVENT_DROP_FILE && kind <= EVENT_DROP_COMPLETE)
+  if windowed { unsafe { raw.window.window_id } } else { 0 }
+}
+
+/// The number of the window `event`, as an event watch is handed it ([add_event_watch]), is
+/// about — a window event's, the fifth 32-bit word.
+pub let watched_window = pure (event: ^u32) -> u32 => unsafe { event.offset(4)^ }
 
 /// A key event's own modifiers; 0 for any other event.
 let key_modifiers_of = pure (raw: RawEvent) -> u16 => {
@@ -404,6 +463,10 @@ let classify = pure (raw: RawEvent) -> Event => {
     DropComplete
   } else if kind == EVENT_WINDOW_RESIZED {
     WindowResized(unsafe { raw.window.data1 }, unsafe { raw.window.data2 })
+  } else if kind == EVENT_WINDOW_MOVED {
+    WindowMoved(unsafe { raw.window.data1 }, unsafe { raw.window.data2 })
+  } else if kind == EVENT_WINDOW_CLOSE_REQUESTED {
+    WindowCloseRequested
   } else if kind == EVENT_WINDOW_DISPLAY_SCALE_CHANGED {
     WindowScaleChanged
   } else if kind == EVENT_TERMINATING {

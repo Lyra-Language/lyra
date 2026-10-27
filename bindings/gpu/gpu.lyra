@@ -9,7 +9,8 @@ module bindings.gpu
 import std.ffi
 import bindings.sdl3.{ Window }
 
-/// A device, its pipelines and textures, drawing into one window.
+/// A device, its pipelines and textures, drawing into the window it was created for and any
+/// other it claims ([claim]).
 pub type Gpu = ^u8
 
 /// How many floats one instance takes, and how many words one command.
@@ -130,6 +131,32 @@ pub let frame = (
   unsafe { lyra_gpu_frame(g, r, green, b, a, ins, count, cmds, words) }
 }
 
+/// Another window drawn by `g`, with a swapchain of its own; the textures are `g`'s, drawn in
+/// either. False where it cannot be.
+pub let claim = (g: Gpu, window: Window) -> bool => unsafe { lyra_gpu_claim(g, window) }
+
+/// A window [claim]ed let go — before it closes.
+pub let unclaim = (g: Gpu, window: Window) -> void =>
+  unsafe { lyra_gpu_unclaim(g, window) }
+
+/// [frame] in `window`: the one `g` was created for, or one claimed. False for another.
+pub let frame_in = (
+  g: Gpu,
+  window: Window,
+  r: f32,
+  green: f32,
+  b: f32,
+  a: f32,
+  instances: []f32,
+  commands: []i64
+) -> bool => {
+  let count = instances.len() / FLOATS_PER_INSTANCE
+  let words = commands.len() / COMMAND_WORDS
+  let ins: ^f32 = if instances.len() == 0 { nullptr } else { unsafe { instances.data() } }
+  let cmds: ^i64 = if commands.len() == 0 { nullptr } else { unsafe { commands.data() } }
+  unsafe { lyra_gpu_frame_in(g, window, r, green, b, a, ins, count, cmds, words) }
+}
+
 /// Keep the frames drawn from now on for [read] — a test reading what the GPU drew.
 pub let keep_frames = (g: Gpu, keep: bool) -> void =>
   unsafe { lyra_gpu_keep_frames(g, keep) }
@@ -180,6 +207,20 @@ unsafe extern lyra_gpu_update: (
 ) -> bool
 unsafe extern lyra_gpu_frame: (
   g: Gpu,
+  r: f32,
+  green: f32,
+  b: f32,
+  a: f32,
+  instances: ^f32,
+  instance_count: i64,
+  commands: ^i64,
+  command_count: i64
+) -> bool
+unsafe extern lyra_gpu_claim: (g: Gpu, window: Window) -> bool
+unsafe extern lyra_gpu_unclaim: (g: Gpu, window: Window) -> void
+unsafe extern lyra_gpu_frame_in: (
+  g: Gpu,
+  window: Window,
   r: f32,
   green: f32,
   b: f32,

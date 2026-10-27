@@ -237,3 +237,32 @@ pub let window_pixel_density = (window: Window) -> f32 => {
   let density = unsafe { sdl_get_window_pixel_density(window) }
   if density > 0.0 { density } else { 1.0 }
 }
+
+@symbol("SDL_GetWindowID")
+unsafe extern sdl_get_window_id: (window: Window) -> u32
+
+@symbol("SDL_GetWindowFromID")
+unsafe extern sdl_get_window_from_id: (id: u32) -> Window
+
+@symbol("SDL_RaiseWindow")
+unsafe extern sdl_raise_window: (window: Window) -> bool
+
+/// The number SDL knows the window by, which each event about it carries
+/// ([poll_window_event]); never 0 for a window.
+pub let window_id = (window: Window) -> u32 => unsafe { sdl_get_window_id(window) }
+
+/// The window SDL numbers `id` ([window_id]), if one is open.
+pub let window_from_id = (id: u32) -> Maybe<Window> => {
+  let window = unsafe { sdl_get_window_from_id(id) }
+  if window == nullptr { None } else { Some(window) }
+}
+
+/// Bring the window in front of the others and give it the keyboard's focus — which the
+/// system may refuse to an app that is not in front.
+pub let raise_window = (window: Window) -> bool => unsafe { sdl_raise_window(window) }
+
+@symbol("SDL_ShowWindow")
+unsafe extern sdl_show_window: (window: Window) -> bool
+
+/// Show a window made hidden ([WINDOW_HIDDEN]) — placed first, so it never shows elsewhere.
+pub let show_window = (window: Window) -> bool => unsafe { sdl_show_window(window) }

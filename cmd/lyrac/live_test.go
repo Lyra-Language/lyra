@@ -345,7 +345,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = pure (self, background, ops) => {}
+  draw = pure (self, window, background, ops) => {}
 }
 
 data Ev = Tick
@@ -362,7 +362,7 @@ let main = () => {
   var host = host_of(app, State {}, platform)
   var n = 0
   while n < 100000 && host.step(platform, renderer, fonts) {
-    if host.shown.len() > 0 { println("${host.state.count} ${host.shown[0].label}") }
+    if host.windows[0].shown.len() > 0 { println("${host.state.count} ${host.main_laid().label}") }
     n += 1
     unsafe { usleep(20000) }
   }

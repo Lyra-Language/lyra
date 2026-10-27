@@ -487,9 +487,15 @@ func (tc *TypeChecker) stampableDataType(node ast.Expression, inst types.Paramet
 	case types.ParameterizedType:
 		// Re-stampable when this expression's own defaults decided it, or when an argument
 		// is still open: `Some(Ok(5))` records `Maybe<Result>`, the inner construction
-		// having left `e` for a context, and only this push can bring one (09/28).
+		// having left `e` for a context, and only this push can bring one (09/28). And when
+		// the context asks only for weaker effect bounds on a function it holds: `Some(f)`
+		// with `f` a `pure (i64) -> e` in a `Maybe<(i64) -> e>` field kept the instantiation
+		// its payload decided, which the field refused — or, generic, let through to a
+		// backend that refused the store of one `Maybe` into the other (10/27). A fresh
+		// construction is the one place that widening is safe (types.WidensEffects).
 		if r.Name != inst.Name ||
-			(!tc.defaultedCtors[node] && !tc.leavesArgumentOpen(r, node.GetLocation())) {
+			(!tc.defaultedCtors[node] && !tc.leavesArgumentOpen(r, node.GetLocation()) &&
+				!types.WidensEffects(r, inst)) {
 			return types.DataType{}, false
 		}
 		// The constructors come from the declaration: an instantiation carries its
@@ -613,6 +619,17 @@ func constructionName(node ast.Expression) string {
 // lowercase by lexer rule and a nominal type name is not, so the two name spaces do not
 // meet. That is also what the old switch's trailing `params[t.GetName()]` fallback was
 // reaching for, less precisely.
+// unsolvedParams is the parameters of `params` a substitution leaves unbound.
+func unsolvedParams(params map[string]bool, subst map[string]types.Type) map[string]bool {
+	out := make(map[string]bool, len(params))
+	for name := range params {
+		if _, solved := subst[name]; !solved {
+			out[name] = true
+		}
+	}
+	return out
+}
+
 func mentionsGenericParam(t types.Type, params map[string]bool) bool {
 	if t == nil || len(params) == 0 {
 		return false

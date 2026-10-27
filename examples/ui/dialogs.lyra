@@ -78,8 +78,8 @@ let main = () -> u8 => {
     )
     while step_running(played) {}
     for line in played.host.state.log { println(line) }
-    let shown = played.host.shown[0]
-    let tip = match find(shown, played.host.ui.state.tip, Point {}) {
+    let shown = played.host.main_laid()
+    let tip = match find(shown, played.host.windows[0].ui.state.tip, Point {}) {
       Some(f) => f.laid.description,
       None => "none",
     }

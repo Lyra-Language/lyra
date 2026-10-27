@@ -1,0 +1,343 @@
+// Several windows (ui/VEGA.md §8): the dock example's studio, its tabs torn off into windows
+// of their own and docked back. A tab dragged out of the main window and let go outside it opens
+// a window holding a dock of that panel, where it was let go; a tab dragged from one window over
+// another's dock lands there, as within one. A window torn off is the program's
+// (`State.torn`): its dock tree, its place and size — kept as the user moves it — and its close,
+// which puts its panels back in the main window.
+//
+//     lyrac run examples/ui/windows.lyra
+//     lyrac run examples/ui/windows.lyra -- --script "down:340,62 move:340,300 move:900,200 up:900,200"
+//
+// **The second form** plays a script (`ui.script`) headless — `window:N` sending what follows
+// to the window numbered `N`, the main window `0` and those torn off from `1` — and prints the
+// windows it leaves, and those showing where a tab being dragged would land.
+
+import ui.sdl3
+import ui.gpu
+import ui.app.{
+  App,
+  Command,
+  Subscription,
+  Windows,
+  WindowSpec,
+  WindowPlacement,
+  run,
+  running,
+  step_running,
+}
+import ui.script.{ timed_platform, parse_steps }
+import ui.draw.{ Point, Size, Color }
+import ui.text.{ fonts_new }
+import ui.style.{ Style, Sheet, light_theme, insets, OverflowVisible }
+import ui.layout.{
+  Node,
+  Laid,
+  column,
+  row,
+  text,
+  button,
+  expanded,
+  padding,
+  themed,
+  dock,
+  dock_tabs,
+  dock_split,
+  dock_with,
+  dock_without,
+  dock_keys,
+  DockTree,
+  DockTabs,
+  DockSplit,
+  DockPanel,
+  DockTear,
+  DockCenter,
+  Horizontal,
+  Vertical,
+  MainStart,
+  CrossCenter,
+  CrossStretch,
+}
+import std.collections.{ parse_args }
+
+const WIDTH: f32 = 800.0
+const HEIGHT: f32 = 500.0
+const BACKGROUND: Color = Color { r: 0xE8, g: 0xE8, b: 0xEC }
+
+/// Every panel the studio has, by key.
+const PANELS: []string = ["sprite", "tiles", "map", "palettes", "problems", "console"]
+
+let main = () -> u8 => {
+  let args = parse_args(["--script"])
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let _ = fonts.add_system_fallbacks()
+  let app = App {
+    view: view,
+    update: update,
+    subscriptions: (_: State) -> []Subscription<Event> => [],
+    background: BACKGROUND,
+    window_overflow: OverflowVisible,
+    windows: [Windows {
+      of: torn_windows,
+      view: torn_view,
+      on_close: TornClosed,
+      on_moved: TornMoved,
+    }],
+  }
+  if let Some(script) = args.value("--script") {
+    let Ok(steps) = parse_steps(script) else {
+      println("the script does not parse")
+      return 1
+    }
+    let window = match sdl3.open("Windows", WIDTH, HEIGHT) {
+      Ok(w) => w,
+      Err(why) => {
+        println(why)
+        fonts.close()
+        return 2
+      },
+    }
+    let played = running(
+      app,
+      State {},
+      timed_platform(steps, Size { w: WIDTH, h: HEIGHT }),
+      window.renderer,
+      fonts
+    )
+    while step_running(played) {}
+    let s = played.host.state
+    println("main: ${described(s.tree)}")
+    for w in s.torn {
+      let at = match w.place {
+        Some(p) => "${p.x},${p.y}",
+        None => "-",
+      }
+      println("${w.key} at ${at} ${w.size.w}x${w.size.h}: ${described(w.tree)}")
+    }
+    println("open: ${[k in 0..<played.host.windows.len() | played.host.windows[k].key].join(" ")}")
+    let previews = [
+      w in played.host.windows | w.shown.len() > 0 && previewing(w.shown[0]) | if w.key.len() == 0 { "main" } else { w.key }
+    ]
+    println("preview: ${previews.join(" ")}")
+    sdl3.close(window.platform, played.renderer)
+    fonts.close()
+    return 0
+  }
+  let window = match gpu.open("Windows", WIDTH, HEIGHT) {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      fonts.close()
+      return 2
+    },
+  }
+  var platform = window.platform
+  var renderer = window.renderer
+  let _ = run(app, State {}, platform, renderer, fonts)
+  gpu.close(platform, renderer)
+  fonts.close()
+  0
+}
+
+/// The main window's arrangement — the palettes and problems down the left, the editors over
+/// the console — the windows torn off, the number the next one is keyed by, and the strokes
+/// painted, the sprite editor's stand-in for work.
+struct State {
+  tree: DockTree = dock_split(
+    Horizontal,
+    0.3,
+    dock_tabs(["palettes", "problems"]),
+    dock_split(
+      Vertical,
+      0.65,
+      dock_tabs(["sprite", "tiles", "map"]),
+      dock_tabs(["console"])
+    )
+  ),
+  torn: []Torn = [],
+  next: i64 = 1,
+  strokes: i64 = 0,
+}
+
+/// A window torn off: its key, its dock's arrangement, and where it is.
+struct Torn {
+  key: string,
+  tree: DockTree,
+  place: Maybe<Point> = None,
+  size: Size = Size { w: 400.0, h: 300.0 },
+}
+
+data Event =
+  Arranged(DockTree)
+  | TornArranged(string, DockTree)
+  | Closed(string)
+  | Opened(string)
+  | TornOff(DockTear)
+  | TornClosed(string)
+  | TornMoved(string, WindowPlacement)
+  | Paint
+
+let update = pure (state: State, event: Event) -> (State, []Command<Event>) => {
+  let next = match event {
+    Arranged(tree) => State { state | tree: tree },
+    // A window whose last panel has gone — docked elsewhere — closes.
+    TornArranged(key, tree) => State {
+      state |
+      torn: [w in state.torn | w.key != key || dock_keys(tree).len() > 0 | if w.key == key { Torn {
+        w |
+        tree: tree
+      } } else { w }]
+    },
+    Closed(panel) => without(state, panel),
+    // A panel opened again goes among the sprite editor's tabs — or, with that closed, in the
+    // first group.
+    Opened(key) =>
+      State { state | tree: dock_with(state.tree, key, "sprite", DockCenter) },
+    TornOff(tear) => {
+      let rest = without(state, tear.key)
+      State {
+        rest |
+        torn: [
+          ...rest.torn,
+          Torn {
+            key: "w${state.next}",
+            tree: dock_tabs([tear.key]),
+            place: tear.place,
+            size: tear.size,
+          }
+        ],
+        next: state.next + 1,
+      }
+    },
+    // Closing a window puts its panels back among the sprite editor's tabs.
+    TornClosed(key) => {
+      var tree = state.tree
+      for w in state.torn {
+        if w.key != key { continue }
+        for k in dock_keys(w.tree) { tree = dock_with(tree, k, "sprite", DockCenter) }
+      }
+      State { state | tree: tree, torn: [w in state.torn | w.key != key | w] }
+    },
+    TornMoved(key, at) => State {
+      state |
+      torn: [w in state.torn | if w.key == key { Torn {
+        w |
+        place: at.place,
+        size: at.size
+      } } else { w }]
+    },
+    Paint => State { state | strokes: state.strokes + 1 },
+  }
+  (next, [])
+}
+
+/// `state` without the panel `key`, wherever it is — and without a window it leaves empty.
+let without = pure (state: State, key: string) -> State => {
+  let torn = [w in state.torn | Torn { w | tree: dock_without(w.tree, key) }]
+  State {
+    state |
+    tree: dock_without(state.tree, key),
+    torn: [w in torn | dock_keys(w.tree).len() > 0 | w]
+  }
+}
+
+/// The main window: a toolbar of the panels closed, over the dock.
+let view = pure (state: State) -> Node<Event> => {
+  var open = dock_keys(state.tree)
+  for w in state.torn { open = [...open, ...dock_keys(w.tree)] }
+  let closed = [k in PANELS | !open.contains(k) | button::<Event>(
+    "Open ${title_of(k)}",
+    Opened(k)
+  )]
+  let bar = row::<Event>([text::<Event>("Studio"), ...closed]).aligned(
+    MainStart,
+    CrossCenter
+  ).with_style(Style { gap: Some(8.0), height: Some(30.0) })
+  themed::<Event>(light_theme(), Sheet {}, [
+    padding(insets(8.0), column([
+      bar,
+      expanded(studio_dock(state, state.tree, Arranged)),
+    ]).aligned(MainStart, CrossStretch).with_style(Style { gap: Some(8.0) })),
+  ])
+}
+
+/// The windows torn off, as the host opens them.
+let torn_windows = pure (state: State) -> []WindowSpec => [
+  w in state.torn | WindowSpec {
+    key: w.key,
+    title: [k in dock_keys(w.tree) | title_of(k)].join(", "),
+    size: w.size,
+    place: w.place,
+    overflow: OverflowVisible,
+  }
+]
+
+/// What the window torn off as `key` shows: a dock of its panels.
+let torn_view = pure (state: State, key: string) -> Node<Event> => {
+  for w in state.torn {
+    if w.key != key { continue }
+    let arranged = (tree: DockTree) -> Event => TornArranged(key, tree)
+    return themed::<Event>(light_theme(), Sheet {}, [
+      padding(insets(8.0), studio_dock(state, w.tree, arranged)),
+    ])
+  }
+  column::<Event>([])
+}
+
+/// A dock of `tree`'s panels whose tabs tear off, raising `arranged` with the tree a drop
+/// leaves.
+let studio_dock = pure (
+  state: State,
+  tree: DockTree,
+  arranged: pure (DockTree) -> Event
+) -> Node<Event> =>
+  dock(
+    tree,
+    (k: string) -> DockPanel<Event> => panel(state, k),
+    arranged,
+    Closed
+  ).tears_off(
+    TornOff
+  )
+
+/// What the panel `key` shows.
+let panel = pure (state: State, key: string) -> DockPanel<Event> => {
+  let body: []Node<Event> = if key == "sprite" {
+    [text("Strokes: ${state.strokes}"), button("Paint", Paint)]
+  } else { [text("The ${title_of(key)} panel.")] }
+  DockPanel {
+    title: title_of(key),
+    content: padding(insets(12.0), column(body).with_style(Style { gap: Some(8.0) })),
+    closable: key != "sprite",
+  }
+}
+
+/// A panel's title.
+let title_of = pure (key: string) -> string => match key {
+  "sprite" => "Sprite",
+  "tiles" => "Tile set",
+  "map" => "Map",
+  "palettes" => "Palettes",
+  "problems" => "Problems",
+  "console" => "Console",
+  _ => key,
+}
+
+/// Whether `laid` shows where a tab being docked would land.
+let previewing = pure (laid: Laid<Event>) -> bool =>
+  laid.tag == "DockPreview" || laid.children.any((c) => previewing(c.laid))
+
+/// `tree` written out: a group as its keys, the shown one starred; a split as its axis (`H`
+/// side by side, `V` one over the other) and share, and its parts in brackets.
+let described = pure (tree: DockTree) -> string => match tree {
+  DockTabs(group) =>
+    [k in group.keys | if k == group.selected { "${k}*" } else { k }].join(" "),
+  DockSplit(split) => {
+    let axis = if split.axis == Horizontal { "H" } else { "V" }
+    let share = (split.at * 100.0 + 0.5).floor()
+    "${axis}${share}[${[p in split.parts | described(p)].join(" | ")}]"
+  },
+}

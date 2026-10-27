@@ -44,6 +44,8 @@ module ui.interact
 
 import ui.backend.{
   Platform,
+  WindowId,
+  MAIN_WINDOW,
   InputEvent,
   PointerMoved,
   PointerDown,
@@ -130,8 +132,12 @@ import ui.layout.{
   Docked,
   DockLeaf,
   DockDrop,
+  DockTear,
   dock_aim,
   dock_dropped,
+  dock_without,
+  dock_keys,
+  dock_group_box,
   DOCK_TEAR,
   RawInput,
   KeyInput,
@@ -169,10 +175,13 @@ import std.collections.{ HashMap, hashmap_new }
 /// selection copied or cut, the clipboard pasted, the last edit undone.
 pub data FieldEdit = FieldSelectAll | FieldCopy | FieldCut | FieldPaste | FieldUndo
 
-/// The framework's state between frames: the [Interaction] the layout reads, where the pointer
-/// was last, and the text field the platform was last told text input is for, and where.
+/// The framework's state between frames, of one window: the [Interaction] the layout reads,
+/// where the pointer was last, and the text field the platform was last told text input is for,
+/// and where.
 pub struct Ui {
   state: Interaction,
+  /// The window it is the state of — the one the platform is told about text input in.
+  window: WindowId = MAIN_WINDOW,
   pointer: Point = Point {},
   /// What the press in a text field picked, for a drag to extend: by rune (a click), by word
   /// (a double click) or the whole text (a triple), and the runes it first selected.
@@ -955,6 +964,54 @@ impl Ui {
   let docked<e> = (self: mut, laid: Laid<e>) -> []e => {
     let drop = self.state.dock_drop
     self.state.dock_drop = DockDrop {}
+    // A tab of another window's, which its window's host lands ([Ui.land_away_dock]).
+    if !drop.aimed || drop.foreign { return [] }
+    let Some(dock) = find(laid, drop.dock, Point {}) else { return [] }
+    let Docked(spec) = dock.laid.kind else { return [] }
+    [(spec.on_change)(dock_dropped(spec.tree, drop))]
+  }
+
+  /// A tab of another window's dock, being docked (`drop`), aimed at `at` in this window's
+  /// `laid`: at the dock under the pointer, as [dock_aim] aims one of its own (`foreign`), its
+  /// preview shown there — or at none. Whether what this window shows changed.
+  pub let aim_away_dock<e> = (
+    self: mut,
+    laid: Laid<e>,
+    at: Point,
+    drop: DockDrop
+  ) -> bool => {
+    let was = self.state.dock_drop
+    var aimed = DockDrop {}
+    for dock in docks_in(laid, Point {}) {
+      if dock.laid.children.len() == 0 { continue }
+      let tree = dock.laid.children[0]
+      let local = Point {
+        x: at.x - dock.origin.x - tree.at.x,
+        y: at.y - dock.origin.y - tree.at.y
+      }
+      let box = Rect { x: 0.0, y: 0.0, w: tree.laid.size.w, h: tree.laid.size.h }
+      if !box.contains(local) { continue }
+      let start = DockDrop { dock: dock.laid.id, key: drop.key, from: "", foreign: true }
+      aimed = dock_aim(tree.laid, local, start)
+      break
+    }
+    self.state.dock_drop = aimed
+    aimed != was
+  }
+
+  /// Another window's tab no longer aimed here ([Ui.aim_away_dock]); whether one was.
+  pub let clear_away_dock = (self: mut) -> bool => {
+    if !self.state.dock_drop.foreign { return false }
+    self.state.dock_drop = DockDrop {}
+    true
+  }
+
+  /// Another window's tab let go where [Ui.aim_away_dock] aimed it in `laid`: the tree of the
+  /// dock it landed in with it there, raised by that dock — nothing where it was aimed nowhere.
+  pub let land_away_dock<e> = (self: mut, laid: Laid<e>) -> []e => {
+    let drop = self.state.dock_drop
+    if !drop.foreign { return [] }
+    self.state.dock_drop = DockDrop {}
     if !drop.aimed { return [] }
     let Some(dock) = find(laid, drop.dock, Point {}) else { return [] }
     let Docked(spec) = dock.laid.kind else { return [] }
@@ -1227,7 +1284,7 @@ impl Ui {
         if let Some(caret) = raw.caret {
           let at = Rect { caret | x: f.origin.x + caret.x, y: f.origin.y + caret.y }
           if self.typing_into != f.laid.id || self.typing_at != at {
-            platform.set_text_input(Some(at))
+            platform.set_text_input(self.window, Some(at))
             self.typing_into = f.laid.id
             self.typing_at = at
           }
@@ -1244,7 +1301,7 @@ impl Ui {
           h: look.line_height,
         }
         if self.typing_into != f.laid.id || self.typing_at != at {
-          platform.set_text_input(Some(at))
+          platform.set_text_input(self.window, Some(at))
           self.typing_into = f.laid.id
           self.typing_at = at
         }
@@ -1253,7 +1310,7 @@ impl Ui {
     }
     if self.typing_into.len() > 0 {
       let nowhere: Maybe<Rect> = None
-      platform.set_text_input(nowhere)
+      platform.set_text_input(self.window, nowhere)
       self.typing_into = ""
     }
   }
@@ -2345,6 +2402,47 @@ let off_strip<e> = pure (
     at.y > bottom ||
     at.x < group.origin.x ||
     at.x > group.origin.x + group.laid.size.w
+}
+
+/// The tab `drop` docks gone from its dock in `laid` — landed in another window's: the dock's
+/// tree without it, raised by the dock.
+pub let dock_away<e> = (laid: Laid<e>, drop: DockDrop) -> []e => {
+  let Some(dock) = find(laid, drop.dock, Point {}) else { return [] }
+  let Docked(spec) = dock.laid.kind else { return [] }
+  [(spec.on_change)(dock_without(spec.tree, drop.key))]
+}
+
+/// The tab `drop` docks let go outside every window: torn off ([DockTear]) — its window's top-left
+/// corner at `place` and the size of the group it came from — where its dock in `laid` tears
+/// off and holds another panel besides; nothing elsewhere.
+pub let dock_torn<e> = (laid: Laid<e>, drop: DockDrop, place: Maybe<Point>) -> []e => {
+  let Some(dock) = find(laid, drop.dock, Point {}) else { return [] }
+  let Docked(spec) = dock.laid.kind else { return [] }
+  let Some(tear) = spec.on_tear else { return [] }
+  if dock_keys(spec.tree).len() < 2 { return [] }
+  let size = if dock.laid.children.len() == 0 { Size {} } else {
+    match dock_group_box(dock.laid.children[0].laid, drop.from) {
+      Some(box) => Size { w: box.w, h: box.h },
+      None => Size {},
+    }
+  }
+  [tear(DockTear { key: drop.key, place: place, size: size })]
+}
+
+/// The docks in `laid` (at `origin`), each where it is — one inside another's panel before
+/// that one.
+let docks_in<e> = pure (laid: Laid<e>, origin: Point) -> []Found<e> => {
+  var out: []Found<e> = []
+  for child in laid.children {
+    for d in docks_in(
+      child.laid,
+      Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
+    ) {
+      out.push(d)
+    }
+  }
+  if let Docked(_) = laid.kind { out.push(Found { laid: laid, origin: origin }) }
+  out
 }
 
 /// What a unit of the pointer's travel along `axis` is worth to `edge`, a share: one over the

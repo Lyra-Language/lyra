@@ -81,7 +81,12 @@ let main = () -> u8 => {
     println([i in 0..<s.docs.len() | if i == s.selected { "[${s.docs[i].name}]" } else { s.docs[i].name }].join(" "))
     var status: u8 = 0
     if let Some(path) = args.value("--png") {
-      if !save(played.renderer, played.fonts, played.host.shown[0], path) { status = 1 }
+      if !save(
+        played.renderer,
+        played.fonts,
+        played.host.main_laid(),
+        path
+      ) { status = 1 }
     }
     sdl3.close(window.platform, played.renderer)
     fonts.close()

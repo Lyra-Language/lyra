@@ -52,8 +52,13 @@ import bindings.sdl3.{
   set_window_maximum_size,
   set_window_resizable,
   set_window_title,
+  window_id,
+  window_from_id,
+  show_window,
+  WINDOW_HIDDEN,
   add_event_watch,
   live_resize,
+  watched_window,
   window_size,
   window_display_scale,
   window_pixel_density,
@@ -76,6 +81,8 @@ import bindings.sdl3.{
   Event,
   Quit as SdlQuit,
   WindowResized as SdlResized,
+  WindowMoved as SdlMoved,
+  WindowCloseRequested as SdlCloseRequested,
   WindowScaleChanged as SdlScaleChanged,
   MouseMotion as SdlMouseMotion,
   MouseDown as SdlMouseDown,
@@ -90,8 +97,8 @@ import bindings.sdl3.{
   DropBegin as SdlDropBegin,
   DropFile as SdlDropFile,
   DropComplete as SdlDropComplete,
-  poll_event_with_modifiers,
-  wait_event_with_modifiers,
+  poll_window_event,
+  wait_window_event,
   modifiers,
   MOD_SHIFT,
   MOD_CTRL,
@@ -152,6 +159,8 @@ import bindings.sdl3.{
 }
 import ui.backend.{
   Platform,
+  WindowId,
+  MAIN_WINDOW,
   NativeMenu,
   NativeEntry,
   NativeItem,
@@ -173,7 +182,9 @@ import ui.backend.{
   DarkMode,
   AppearanceChanged,
   CloseRequested,
+  QuitRequested,
   Resized,
+  WindowPlaced,
   ScaleChanged,
   PointerMoved,
   PointerDown,
@@ -290,7 +301,7 @@ pub let open = (
   height: f32,
   see_through: bool = false
 ) -> Result<SdlWindow, string> => {
-  let window = open_window(title, width, height, see_through)?
+  let window = first_window(title, width, height, see_through)?
   let Some(renderer) = renderer_for(window) else {
     let why = last_error()
     destroy_window(window)
@@ -298,15 +309,16 @@ pub let open = (
     return Err("SDL could not make a renderer: ${why}")
   }
   var system = platform_for(window)
-  if see_through { let _ = system.set_see_through(true) }
+  if see_through { let _ = system.set_see_through(MAIN_WINDOW, true) }
   Ok(SdlWindow { platform: system, renderer: renderer })
 }
 
 /// SDL started and a window `width` × `height` logical units opened, with nothing drawing
-/// into it yet — what [open] and `ui.gpu`'s `open` begin with. `see_through` makes it SDL's
-/// transparent window off macOS, the only time SDL takes it; on macOS it is made so after its
-/// renderer claims it ([Platform.set_see_through]), since SDL's GPU API refuses one made so.
-pub let open_window = (
+/// into it yet — what [open] and `ui.gpu`'s `open` begin with: the platform's main window.
+/// `see_through` makes it SDL's transparent window off macOS, the only time SDL takes it; on
+/// macOS it is made so after its renderer claims it ([Platform.set_see_through]), since SDL's
+/// GPU API refuses one made so.
+pub let first_window = (
   title: string,
   width: f32,
   height: f32,
@@ -316,16 +328,29 @@ pub let open_window = (
     return Err("SDL could not start: ${last_error()}")
   }
   let transparent = if see_through && !apple() { WINDOW_TRANSPARENT } else { 0 }
-  let flags = WINDOW_RESIZABLE | WINDOW_HIGH_PIXEL_DENSITY | transparent
+  let Some(window) = sized_window(title, width, height, transparent) else {
+    let why = last_error()
+    quit()
+    return Err("SDL could not open a window: ${why}")
+  }
+  Ok(window)
+}
+
+/// A resizable window at the display's full density, `width` × `height` logical units, with
+/// `flags` besides — or `None`, and [last_error] says why.
+let sized_window = (
+  title: string,
+  width: f32,
+  height: f32,
+  flags: u64
+) -> Maybe<Window> => {
   let Some(window) = create_window(
     title,
     i32(width.round()),
     i32(height.round()),
-    flags
+    WINDOW_RESIZABLE | WINDOW_HIGH_PIXEL_DENSITY | flags
   ) else {
-    let why = last_error()
-    quit()
-    return Err("SDL could not open a window: ${why}")
+    return None
   }
   // Opened in points, which is a logical unit only on a display whose scale is its density.
   let per_point = units_per_point(window)
@@ -336,7 +361,7 @@ pub let open_window = (
       i32((height / per_point).round())
     )
   }
-  Ok(window)
+  Some(window)
 }
 
 /// SDL's 2D renderer for `window`, with vsync — or `None`, and [last_error] says why.
@@ -346,11 +371,12 @@ pub let renderer_for = (window: Window) -> Maybe<SdlRenderer> => {
   Some(SdlRenderer { canvas: canvas, window: window })
 }
 
-/// The platform of `window` — its input, its cursor, and assistive technology told about it —
-/// once a renderer draws into it: its Metal layer is pinned (`bindings.gpu`'s
-/// `pin_contents`), so a resize never shows the last frame stretched.
+/// The platform of `window`, its main window — its input, its cursor, and assistive
+/// technology told about it — once a renderer draws into it: its Metal layer is pinned
+/// (`bindings.gpu`'s `pin_contents`), so a resize never shows the last frame stretched.
 pub let platform_for = (window: Window) -> SdlPlatform => {
   pin_contents(window)
+  main_number = window_id(window)
   SdlPlatform {
     window: window,
     look: system_look(),
@@ -362,36 +388,41 @@ pub let platform_for = (window: Window) -> SdlPlatform => {
 /// Close the window: its textures, its renderer, the window, and SDL.
 pub let close = (platform: SdlPlatform, renderer: SdlRenderer) -> void => {
   release_renderer(renderer)
-  close_window(platform)
+  close_platform(platform)
 }
 
-/// The renderer's textures and the renderer itself put away.
+/// The renderer's textures and the renderer itself put away — every window's.
 pub let release_renderer = (renderer: SdlRenderer) -> void => {
+  for other in renderer.others { release_canvas(other, renderer.live) }
   for i, texture in renderer.textures { if renderer.live[i] { destroy_texture(texture) } }
   destroy_renderer(renderer.canvas)
 }
 
-/// The platform's cursor and window put away, and SDL.
-pub let close_window = (platform: SdlPlatform) -> void => {
+/// The platform's cursor and windows put away — the main one last — and SDL.
+pub let close_platform = (platform: SdlPlatform) -> void => {
   if let Some(shown) = platform.cursor { destroy_cursor(shown) }
   if platform.listening { accesskit.stop() }
+  for other in platform.others { destroy_window(other.window) }
   destroy_window(platform.window)
   quit()
 }
 
 // ── The platform ─────────────────────────────────────────────────────────────
 
-/// An SDL window and the input it receives.
+/// SDL's windows and the input they receive: the main window, and the ones opened beside it
+/// ([Platform.open_window]).
 pub struct SdlPlatform {
   window: Window,
+  /// The windows opened beside the main one, each by its number — SDL's own for it.
+  others: []OtherWindow = [],
   /// The cursor shown, made from the platform's own shapes, and which shape it is.
   cursor: Maybe<SystemCursor> = None,
   shape: Cursor = Arrow,
   /// The system's look as last reported, to say when it changes.
   look: Appearance = LightMode,
-  /// The window's state as last said ([WindowStateChanged]).
+  /// The main window's state as last said ([WindowStateChanged]).
   state: WindowState = WindowState {},
-  /// Whether assistive technology can be told about the window (AccessKit's adapter is on
+  /// Whether assistive technology can be told about the main window (AccessKit's adapter is on
   /// it — macOS), and the element each node of the tree it was last told stands for.
   listening: bool = false,
   access_keys: HashMap<u64, string>,
@@ -402,50 +433,63 @@ pub struct SdlPlatform {
   dropping: []string = [],
 }
 
+/// A window opened beside the main one: its number, the window, and its state as last said.
+pub struct OtherWindow {
+  id: WindowId,
+  window: Window,
+  state: WindowState = WindowState {},
+}
+
 impl Platform for SdlPlatform {
   next_events = (self, wait_ms) => {
-    var events: []InputEvent = []
-    let per_point = units_per_point(self.window)
-    var next = if wait_ms == 0 { poll_event_with_modifiers() } else {
-      wait_event_with_modifiers(wait_ms)
-    }
-    while let Some((event, held)) = next {
+    var events: [](WindowId, InputEvent) = []
+    var next = if wait_ms == 0 { poll_window_event() } else { wait_window_event(wait_ms) }
+    while let Some(got) = next {
+      next = poll_window_event()
+      // An event of a window this platform does not have — one just closed — goes nowhere.
+      let Some(id) = self.id_of(got.window) else { continue }
       // A drop's files, gathered into one input when it completes.
-      match event {
+      match got.event {
         SdlDropBegin => { self.dropping = [] },
         SdlDropFile(path) => { self.dropping.push(path) },
         SdlDropComplete => {
-          if self.dropping.len() > 0 { events.push(FilesDropped(self.dropping)) }
+          if self.dropping.len() > 0 { events.push((id, FilesDropped(self.dropping))) }
           self.dropping = []
         },
         _ => {
-          if let Some(input) = translate(event, held, per_point) { events.push(input) }
+          let Some(window) = self.window_of(id) else { continue }
+          let per_point = units_per_point(window)
+          if let Some(input) = translate(got.event, got.modifiers, per_point) {
+            events.push((id, input))
+          }
         },
       }
-      next = poll_event_with_modifiers()
     }
     // The items of the Mac's own bar chosen — by click or key equivalent, during SDL's pump —
     // whose choice woke the wait above (`bindings.menubar` pushes an event for it).
-    while let Some(tag) = menubar.poll_menu() { events.push(MenuChosen(tag)) }
+    while let Some(tag) = menubar.poll_menu() { events.push((
+      MAIN_WINDOW,
+      MenuChosen(tag)
+    )) }
     // File dialogs answered — possibly from another thread, during SDL's pump or between — whose
     // answer woke the wait (`bindings.dialog` pushes an event for it). A dialog SDL could not
     // show is no choice, and says why.
     while let Some(answer) = dialog.poll() {
-      events.push(match answer {
+      events.push((MAIN_WINDOW, match answer {
         PathChosen(tag, path) => FileAnswered(tag, Some(path)),
         ChoiceCancelled(tag) => FileAnswered(tag, None),
         ChoiceFailed(tag, why) => {
           println("ui.sdl3: the file dialog could not be shown: ${why}")
           FileAnswered(tag, None)
         },
-      })
+      }))
     }
     // What assistive technology asked for; its request woke the wait above.
     while let Some(raw) = accesskit.next_request() {
       let Some(element) = self.access_keys.get(raw.target) else { continue }
-      if let Some(request) = access_request(raw) { events.push(AccessAction(
-        element,
-        request
+      if let Some(request) = access_request(raw) { events.push((
+        MAIN_WINDOW,
+        AccessAction(element, request)
       )) }
     }
     // SDL's own theme event wakes the wait above; the look is read rather than the event
@@ -453,13 +497,20 @@ impl Platform for SdlPlatform {
     let look = system_look()
     if look != self.look {
       self.look = look
-      events.push(AppearanceChanged(look))
+      events.push((MAIN_WINDOW, AppearanceChanged(look)))
     }
     // Minimized, maximized or fullscreen: read as the look is, said once a change.
     let state = state_of(window_flags(self.window))
     if state != self.state {
       self.state = state
-      events.push(WindowStateChanged(state))
+      events.push((MAIN_WINDOW, WindowStateChanged(state)))
+    }
+    for i, other in self.others {
+      let now = state_of(window_flags(other.window))
+      if now != other.state {
+        self.others[i].state = now
+        events.push((other.id, WindowStateChanged(now)))
+      }
     }
     events
   }
@@ -467,21 +518,28 @@ impl Platform for SdlPlatform {
   wake_for = (self, fds) => {
     let _ = wake.watch(fds)
   }
-  window_size = (self) => {
-    let (w, h) = window_size(self.window)
-    let per_point = units_per_point(self.window)
+  window_size = (self, id) => {
+    let Some(window) = self.window_of(id) else { return Size {} }
+    let (w, h) = window_size(window)
+    let per_point = units_per_point(window)
     Size { w: f32(w) * per_point, h: f32(h) * per_point }
   }
-  scale = (self) => window_display_scale(self.window)
-  set_text_input = (self, field) => match field {
-    Some(area) => {
-      let per_point = units_per_point(self.window)
-      set_text_input_area(self.window, pixel_rect(area.scaled(1.0 / per_point)), 0)
-      start_text_input(self.window)
-    },
-    None => {
-      stop_text_input(self.window)
-    },
+  scale = (self, id) => match self.window_of(id) {
+    Some(window) => window_display_scale(window),
+    None => 1.0,
+  }
+  set_text_input = (self, id, field) => {
+    let Some(window) = self.window_of(id) else { return }
+    match field {
+      Some(area) => {
+        let per_point = units_per_point(window)
+        set_text_input_area(window, pixel_rect(area.scaled(1.0 / per_point)), 0)
+        start_text_input(window)
+      },
+      None => {
+        stop_text_input(window)
+      },
+    }
   }
   clipboard = (self) => clipboard_text()
   set_clipboard = (self, text) => {
@@ -501,63 +559,93 @@ impl Platform for SdlPlatform {
   appearance = pure (self) => self.look
   apple = (self) => apple()
   open_url = (self, url) => open_url(url)
-  set_size_limits = (self, least, most) => {
-    let per_point = units_per_point(self.window)
+  set_size_limits = (self, id, least, most) => {
+    let Some(window) = self.window_of(id) else { return }
+    let per_point = units_per_point(window)
     let points = (units: f32) -> i32 => i32((units / per_point).round())
     let (least_w, least_h) = (points(least.w), points(least.h))
     let (most_w, most_h) = (points(most.w), points(most.h))
-    let _ = set_window_minimum_size(self.window, least_w, least_h)
-    let _ = set_window_maximum_size(self.window, most_w, most_h)
+    let _ = set_window_minimum_size(window, least_w, least_h)
+    let _ = set_window_maximum_size(window, most_w, most_h)
     // Held to one size both ways, the window does not offer to resize at all — no resizing
     // edges, no zoom button.
     let fixed = least_w > 0 && least_w == most_w && least_h > 0 && least_h == most_h
-    let _ = set_window_resizable(self.window, !fixed)
+    let _ = set_window_resizable(window, !fixed)
   }
-  set_window_size = (self, size) => {
-    let per_point = units_per_point(self.window)
+  set_window_size = (self, id, size) => {
+    let Some(window) = self.window_of(id) else { return }
+    let per_point = units_per_point(window)
     let points = (units: f32) -> i32 => i32((units / per_point).round())
-    let _ = set_window_size(self.window, points(size.w), points(size.h))
+    let _ = set_window_size(window, points(size.w), points(size.h))
   }
-  set_see_through = (self, on) =>
-    if apple() { set_see_through(self.window, on) } else {
+  set_see_through = (self, id, on) => {
+    let Some(window) = self.window_of(id) else { return false }
+    if apple() { set_see_through(window, on) } else {
       // Made so or not as it opened: an opaque frame hides what is behind a see-through one.
-      (window_flags(self.window) & WINDOW_TRANSPARENT) != 0 || !on
+      (window_flags(window) & WINDOW_TRANSPARENT) != 0 || !on
     }
-  set_backdrop_blur = (self, radius) =>
-    set_backdrop_blur(self.window, i32(radius.round()))
-  window_position = (self) => match window_position(self.window) {
-    Some((x, y)) => Some(Point { x: f32(x), y: f32(y) }),
-    None => None,
   }
-  set_window_position = (self, at) => {
+  set_backdrop_blur = (self, id, radius) => match self.window_of(id) {
+    Some(window) => set_backdrop_blur(window, i32(radius.round())),
+    None => false,
+  }
+  window_position = (self, id) => {
+    let Some(window) = self.window_of(id) else { return None }
+    match window_position(window) {
+      Some((x, y)) => Some(Point { x: f32(x), y: f32(y) }),
+      None => None,
+    }
+  }
+  set_window_position = (self, id, at) => {
+    let Some(window) = self.window_of(id) else { return }
     let x = i32(at.x.round())
     let y = i32(at.y.round())
-    if on_a_display(x, y) { let _ = set_window_position(self.window, x, y) }
+    if on_a_display(x, y) { let _ = set_window_position(window, x, y) }
   }
-  set_title = (self, title) => {
-    let _ = set_window_title(self.window, title)
+  to_screen = (self, id, at) => {
+    let Some(window) = self.window_of(id) else { return None }
+    let Some((x, y)) = window_position(window) else { return None }
+    let per_point = units_per_point(window)
+    Some(Point { x: f32(x) + at.x / per_point, y: f32(y) + at.y / per_point })
   }
-  window_state = (self) => state_of(window_flags(self.window))
-  change_window = (self, change) => {
+  from_screen = (self, id, at) => {
+    let Some(window) = self.window_of(id) else { return None }
+    let Some((x, y)) = window_position(window) else { return None }
+    let per_point = units_per_point(window)
+    Some(Point { x: (at.x - f32(x)) * per_point, y: (at.y - f32(y)) * per_point })
+  }
+  set_title = (self, id, title) => {
+    let Some(window) = self.window_of(id) else { return }
+    let _ = set_window_title(window, title)
+  }
+  window_state = (self, id) => match self.window_of(id) {
+    Some(window) => state_of(window_flags(window)),
+    None => WindowState {},
+  }
+  change_window = (self, id, change) => {
+    let Some(window) = self.window_of(id) else { return }
     let _ = match change {
-      ToMinimized => minimize_window(self.window),
-      ToMaximized => maximize_window(self.window),
-      ToRestored => restore_window(self.window),
+      ToMinimized => minimize_window(window),
+      ToMaximized => maximize_window(window),
+      ToRestored => restore_window(window),
     }
   }
   // A Mac's title bar stays the system's, its buttons where macOS puts them (`ui/WINDOW.md`).
-  choose_file = (self, tag, d) => {
-    let _ = dialog.show(self.window, tag, d.save, d.filters, d.start)
+  choose_file = (self, id, tag, d) => {
+    let window = self.window_of(id) ?? self.window
+    let _ = dialog.show(window, tag, d.save, d.filters, d.start)
   }
-  set_decorated = (self, on) => {
-    if !apple() { let _ = set_window_bordered(self.window, on) }
+  set_decorated = (self, id, on) => {
+    let Some(window) = self.window_of(id) else { return }
+    if !apple() { let _ = set_window_bordered(window, on) }
   }
-  set_window_areas = (self, drags, keeps, margin) => {
+  set_window_areas = (self, id, drags, keeps, margin) => {
     if apple() { return }
+    let Some(window) = self.window_of(id) else { return }
     // The window's coordinates: SDL's points, not the interface's logical units.
-    let per_point = units_per_point(self.window)
+    let per_point = units_per_point(window)
     let _ = hittest.set_areas(
-      self.window,
+      window,
       flat_areas(drags, per_point),
       flat_areas(keeps, per_point),
       margin / per_point
@@ -573,9 +661,10 @@ impl Platform for SdlPlatform {
       watching = unsafe { add_event_watch(on_event, nullptr) }
     }
   }
-  update_access = (self, tree) => {
-    if !self.listening { return }
-    let pixels = self.scale()
+  update_access = (self, id, tree) => {
+    // AccessKit's adapter is on the main window alone, for now (todo.md).
+    if !self.listening || id != MAIN_WINDOW { return }
+    let pixels = self.scale(MAIN_WINDOW)
     self.access_keys = hashmap_new::<u64, string>()
     accesskit.begin(tree.root, tree.focus)
     for node in tree.nodes {
@@ -601,6 +690,60 @@ impl Platform for SdlPlatform {
       )
     }
     accesskit.commit()
+  }
+  // Opened hidden, placed, then shown, so it never shows where the system first put it; at
+  // its size in logical units, as the main window is.
+  open_window = (self, spec) => {
+    let Some(window) = sized_window(
+      spec.title,
+      spec.size.w,
+      spec.size.h,
+      WINDOW_HIDDEN
+    ) else {
+      println("ui.sdl3: SDL could not open a window: ${last_error()}")
+      return None
+    }
+    if let Some(at) = spec.place {
+      let x = i32(at.x.round())
+      let y = i32(at.y.round())
+      if on_a_display(x, y) { let _ = set_window_position(window, x, y) }
+    }
+    let _ = show_window(window)
+    pin_contents(window)
+    let id = WindowId(i64(window_id(window)))
+    self.others.push(OtherWindow {
+      id: id,
+      window: window,
+      state: state_of(window_flags(window))
+    })
+    Some(id)
+  }
+  close_window = (self, id) => {
+    for other in self.others {
+      if other.id == id { destroy_window(other.window) }
+    }
+    self.others = [o in self.others | o.id != id | o]
+  }
+}
+
+impl SdlPlatform {
+  /// The window numbered `id`: the main window, or one opened beside it — `None` for one that
+  /// is not open.
+  pub let window_of = pure (self, id: WindowId) -> Maybe<Window> => {
+    if id == MAIN_WINDOW { return Some(self.window) }
+    for other in self.others {
+      if other.id == id { return Some(other.window) }
+    }
+    None
+  }
+
+  /// The window SDL numbers `sdl` ([window_id]) as this platform numbers it: the main window
+  /// [MAIN_WINDOW], and an event about no window the main one's — `None` for one that is not
+  /// this platform's.
+  let id_of = (self, sdl: u32) -> Maybe<WindowId> => {
+    if sdl == 0 || sdl == main_number { return Some(MAIN_WINDOW) }
+    let id = WindowId(i64(sdl))
+    if self.others.any((o) => o.id == id) { Some(id) } else { None }
   }
 }
 
@@ -650,17 +793,23 @@ let access_request = pure (raw: AccessRequestRaw) -> Maybe<AccessRequest> =>
 /// The live-resize hook a program handed its platform, whether SDL's event watch is installed,
 /// and whether the hook is drawing now — presenting a frame during a live resize can make
 /// AppKit ask for another, which must not reach the hook from inside its own frame.
-var live_hook: Maybe<() -> void> = None
+var live_hook: Maybe<(WindowId) -> void> = None
 var watching: bool = false
 var hook_running: bool = false
 
-/// SDL's event watch: each frame a live resize asks for, handed to the hook — never from
-/// inside the hook. (A C callback, so a top-level function; the hook is the program's.)
+/// SDL's number for the main window ([window_id]): the window [MAIN_WINDOW] stands for, where
+/// another window's [WindowId] is SDL's own number for it.
+var main_number: u32 = 0
+
+/// SDL's event watch: each frame a live resize asks for, handed to the hook with its window —
+/// never from inside the hook. (A C callback, so a top-level function; the hook is the
+/// program's.)
 let on_event = (_: ^u8, event: ^u32) -> u8 => {
   if !live_resize(event) || hook_running { return 1 }
   if let Some(hook) = live_hook {
+    let sdl = watched_window(event)
     hook_running = true
-    hook()
+    hook(if sdl == main_number { MAIN_WINDOW } else { WindowId(i64(sdl)) })
     hook_running = false
   }
   1
@@ -679,9 +828,11 @@ let units_per_point = (window: Window) -> f32 =>
 /// ones `held` as it was made — or `None` for one it has no use for.
 let translate = (event: Event, held: u16, per_point: f32) -> Maybe<InputEvent> =>
   match event {
-    SdlQuit => Some(CloseRequested),
+    SdlQuit => Some(QuitRequested),
+    SdlCloseRequested => Some(CloseRequested),
     SdlResized(w, h) =>
       Some(Resized(Size { w: f32(w) * per_point, h: f32(h) * per_point })),
+    SdlMoved(x, y) => Some(WindowPlaced(Point { x: f32(x), y: f32(y) })),
     SdlScaleChanged => Some(ScaleChanged),
     SdlMouseMotion(x, y) =>
       Some(PointerMoved(Point { x: x * per_point, y: y * per_point })),
@@ -924,49 +1075,77 @@ let cursor_id = pure (shape: Cursor) -> i32 => match shape {
 
 // ── The renderer ─────────────────────────────────────────────────────────────
 
-/// SDL's 2D renderer for one window, and the textures uploaded to it, a [TextureId] the
-/// index of each.
+/// SDL's 2D renderer for the main window, and the textures uploaded to it, a [TextureId] the
+/// index of each — and for each other window it has drawn, an SDL renderer of its own.
+///
+/// **A texture is drawn in any window**, as a [Renderer]'s is; SDL's textures belong to one
+/// renderer, so each other window holds a copy of every one, made from what the texture holds
+/// (`images`, kept for it) the first time the window is drawn, and written whenever the
+/// texture is.
 pub struct SdlRenderer {
   canvas: Canvas,
   window: Window,
   textures: []Texture = [],
   /// Whether each texture is held still: a released one's id is taken by the next upload.
   live: []bool = [],
+  /// What each live texture holds, for a copy of it in another window.
+  images: []Image = [],
+  /// The other windows drawn, each by its number.
+  others: []OtherCanvas = [],
+}
+
+/// Another window [SdlRenderer] draws: its number, the window, its SDL renderer, and its copy
+/// of each texture — whether made, where the renderer's is live.
+struct OtherCanvas {
+  id: WindowId,
+  window: Window,
+  canvas: Canvas,
+  textures: []Texture = [],
+  made: []bool = [],
 }
 
 impl Renderer for SdlRenderer {
   upload = (self, image) => {
-    let Some(texture) = create_texture(
-      self.canvas,
-      image.width,
-      image.height,
-      image.argb
-    ) else {
-      return None
-    }
-    if image.pixelated {
-      // SDL 3.4's pixel-art mode stays crisp at a scale like 1.5 too, where nearest
-      // sampling makes some texels wider than others; an older SDL refuses it.
-      if !set_texture_scale_mode(texture, SCALE_PIXELART) {
-        set_texture_scale_mode(texture, SCALE_NEAREST)
-      }
-    }
+    let Some(texture) = made_texture(self.canvas, image) else { return None }
+    var index = self.live.len()
     for i, held in self.live {
       if !held {
-        self.textures[i] = texture
-        self.live[i] = true
-        return Some(TextureId(i))
+        index = i
+        break
       }
     }
-    self.textures.push(texture)
-    self.live.push(true)
-    Some(TextureId(self.textures.len() - 1))
+    if index == self.live.len() {
+      self.textures.push(texture)
+      self.live.push(true)
+      self.images.push(image)
+    } else {
+      self.textures[index] = texture
+      self.live[index] = true
+      self.images[index] = image
+    }
+    for k, other in self.others {
+      let copy = made_texture(other.canvas, image)
+      while self.others[k].made.len() <= index {
+        self.others[k].textures.push(texture)
+        self.others[k].made.push(false)
+      }
+      self.others[k].made[index] = copy.is_some()
+      if let Some(t) = copy { self.others[k].textures[index] = t }
+    }
+    Some(TextureId(index))
   }
   release = (self, id) => {
     let index = i64(id)
     if index < 0 || index >= self.live.len() || !self.live[index] { return }
     destroy_texture(self.textures[index])
     self.live[index] = false
+    self.images[index] = Image { width: 0, height: 0, argb: [] }
+    for k, other in self.others {
+      if index < other.made.len() && other.made[index] {
+        destroy_texture(other.textures[index])
+        self.others[k].made[index] = false
+      }
+    }
   }
   update = (self, id, at, image) => {
     let index = i64(id)
@@ -979,24 +1158,139 @@ impl Renderer for SdlRenderer {
       w: i32(image.width),
       h: i32(image.height),
     }
-    update_texture_area(self.textures[index], area, image.argb)
+    if !update_texture_area(self.textures[index], area, image.argb) { return false }
+    self.images[index] = written(self.images[index], area, image)
+    for other in self.others {
+      if index < other.made.len() && other.made[index] {
+        let _ = update_texture_area(other.textures[index], area, image.argb)
+      }
+    }
+    true
   }
-  draw = (self, background, ops) => {
-    let _ = paint(self, background, ops)
-    self.canvas.present()
+  draw = (self, window, background, ops) => {
+    if window == MAIN_WINDOW {
+      let _ = paint(self.canvas, self.window, self.textures, self.live, background, ops)
+      self.canvas.present()
+      return
+    }
+    let Some(k) = self.canvas_of(window) else { return }
+    let other = self.others[k]
+    let _ = paint(other.canvas, other.window, other.textures, other.made, background, ops)
+    other.canvas.present()
+  }
+  window_closed = (self, window) => {
+    for other in self.others {
+      if other.id == window { release_canvas(other, self.live) }
+    }
+    self.others = [o in self.others | o.id != window | o]
   }
 }
 
-/// The frame [Renderer.draw] would show, read back rather than shown — what a test compares
-/// with the picture it expected. `None` if SDL cannot read it.
+impl SdlRenderer {
+  /// The index among `others` of the window numbered `window` — an SDL renderer made for it,
+  /// and a copy of each live texture, the first time it is drawn; `None` for a window SDL does
+  /// not have, or one it cannot make a renderer for.
+  let canvas_of = (self: mut, window: WindowId) -> Maybe<i64> => {
+    for k, other in self.others {
+      if other.id == window { return Some(k) }
+    }
+    // A number SDL has no window for, or the main window's own — a script's platform numbers
+    // its windows without SDL — is drawn nowhere.
+    let number = u32(i64(window))
+    if number == window_id(self.window) { return None }
+    let Some(sdl_window) = window_from_id(number) else { return None }
+    let Some(canvas) = sdl_window.create_renderer() else {
+      println("ui.sdl3: SDL could not make a renderer for another window: ${last_error()}")
+      return None
+    }
+    canvas.set_vsync(true)
+    var other = OtherCanvas { id: window, window: sdl_window, canvas: canvas }
+    for i, held in self.live {
+      let copy = if held { made_texture(canvas, self.images[i]) } else { None }
+      other.textures.push(copy ?? self.textures[i])
+      other.made.push(copy.is_some())
+    }
+    self.others.push(other)
+    Some(self.others.len() - 1)
+  }
+}
+
+/// A texture on `canvas` holding `image` — sampled pixel for pixel where it is pixelated — or
+/// `None`.
+let made_texture = (canvas: Canvas, image: Image) -> Maybe<Texture> => {
+  let Some(texture) = create_texture(canvas, image.width, image.height, image.argb) else {
+    return None
+  }
+  if image.pixelated {
+    // SDL 3.4's pixel-art mode stays crisp at a scale like 1.5 too, where nearest
+    // sampling makes some texels wider than others; an older SDL refuses it.
+    if !set_texture_scale_mode(texture, SCALE_PIXELART) {
+      set_texture_scale_mode(texture, SCALE_NEAREST)
+    }
+  }
+  Some(texture)
+}
+
+/// `image` with `patch` written into it at `area` — what a texture holds after an update.
+let written = pure (image: Image, area: PixelRect, patch: Image) -> Image => {
+  if area.x == 0 && area.y == 0 && patch.width == image.width && patch.height == image.height {
+    return Image { patch | pixelated: image.pixelated }
+  }
+  var argb = [...image.argb]
+  for row in 0..<patch.height {
+    let y = i64(area.y) + row
+    if y < 0 || y >= image.height { continue }
+    for col in 0..<patch.width {
+      let x = i64(area.x) + col
+      if x < 0 || x >= image.width { continue }
+      argb[y * image.width + x] = patch.argb[row * patch.width + col]
+    }
+  }
+  Image { image | argb: argb }
+}
+
+/// Another window's SDL renderer and its copies of the textures put away.
+let release_canvas = (other: OtherCanvas, live: []bool) -> void => {
+  for i,
+  made in other.made { if made && i < live.len() { destroy_texture(other.textures[i]) } }
+  destroy_renderer(other.canvas)
+}
+
+/// The frame [Renderer.draw] would show in the main window, read back rather than shown — what
+/// a test compares with the picture it expected. `None` if SDL cannot read it.
 pub let capture = (
   renderer: SdlRenderer,
   background: Color,
   ops: []DrawOp
 ) -> Maybe<Image> => {
-  let _ = paint(renderer, background, ops)
+  let _ = paint(
+    renderer.canvas,
+    renderer.window,
+    renderer.textures,
+    renderer.live,
+    background,
+    ops
+  )
   let Some(frame) = renderer.canvas.read_pixels() else { return None }
   Some(Image { width: frame.width, height: frame.height, argb: frame.argb })
+}
+
+/// [capture] in the window numbered `window` — one the renderer has drawn before; `None` for
+/// another.
+pub let capture_in = (
+  renderer: SdlRenderer,
+  window: WindowId,
+  background: Color,
+  ops: []DrawOp
+) -> Maybe<Image> => {
+  if window == MAIN_WINDOW { return capture(renderer, background, ops) }
+  for other in renderer.others {
+    if other.id != window { continue }
+    let _ = paint(other.canvas, other.window, other.textures, other.made, background, ops)
+    let Some(frame) = other.canvas.read_pixels() else { return None }
+    return Some(Image { width: frame.width, height: frame.height, argb: frame.argb })
+  }
+  None
 }
 
 /// Clear to `background` and draw `ops`, scaled to pixels, without showing them; how many
@@ -1007,9 +1301,15 @@ pub let capture = (
 /// after that one overlaps it, which it would then be drawn under instead of over; else it
 /// starts a batch of its own. A screen of boxes with labels in them is two calls, the boxes and
 /// the labels, whatever their number. A clip ends every batch.
-let paint = (renderer: SdlRenderer, background: Color, ops: []DrawOp) -> i64 => {
-  let canvas = renderer.canvas
-  let scale = window_display_scale(renderer.window)
+let paint = (
+  canvas: Canvas,
+  window: Window,
+  textures: []Texture,
+  live: []bool,
+  background: Color,
+  ops: []DrawOp
+) -> i64 => {
+  let scale = window_display_scale(window)
   canvas.clear_clip()
   canvas.set_draw_color(CanvasColor {
     r: background.r,
@@ -1039,7 +1339,7 @@ let paint = (renderer: SdlRenderer, background: Color, ops: []DrawOp) -> i64 => 
         )
       },
       Glyphs(id, glyphs, color) => {
-        let Some(texture) = texture_of(renderer, id) else { continue }
+        let Some(texture) = texture_of(textures, live, id) else { continue }
         let k = batch_for(
           batches,
           i64(id),
@@ -1050,7 +1350,7 @@ let paint = (renderer: SdlRenderer, background: Color, ops: []DrawOp) -> i64 => 
         }
       },
       Picture(id, texels, at, opacity) => {
-        let Some(texture) = texture_of(renderer, id) else { continue }
+        let Some(texture) = texture_of(textures, live, id) else { continue }
         let k = batch_for(batches, i64(id), [at.scaled(scale)])
         // The vertices' colour modulates the texture: its alpha the opacity.
         quad(
@@ -1102,14 +1402,14 @@ let paint = (renderer: SdlRenderer, background: Color, ops: []DrawOp) -> i64 => 
       PushLayer(_, effect) => { if effect.blur > 0.0 { unblurred("filter: blur()") } },
       PopLayer => {},
       PushClip(at, _) => {
-        calls += flush(renderer, batches)
+        calls += flush(canvas, textures, live, batches)
         let inside = at.scaled(scale)
         let narrowed = if clips.len() == 0 { inside } else { clips[clips.len() - 1].intersect(inside) }
         clips.push(narrowed)
         canvas.set_clip(pixel_rect(narrowed))
       },
       PopClip => {
-        calls += flush(renderer, batches)
+        calls += flush(canvas, textures, live, batches)
         if clips.len() > 0 {
           clips = clips.slice(0, clips.len() - 1)
         }
@@ -1121,7 +1421,7 @@ let paint = (renderer: SdlRenderer, background: Color, ops: []DrawOp) -> i64 => 
       },
     }
   }
-  calls + flush(renderer, batches)
+  calls + flush(canvas, textures, live, batches)
 }
 
 /// Whether a blur this renderer cannot draw has been said: once a run.
@@ -1142,7 +1442,14 @@ pub let geometry_calls = (
   background: Color,
   ops: []DrawOp
 ) -> i64 =>
-  paint(renderer, background, ops)
+  paint(
+    renderer.canvas,
+    renderer.window,
+    renderer.textures,
+    renderer.live,
+    background,
+    ops
+  )
 
 /// Triangles drawn in one call: from texture number `texture` (`-1` for none), the pixel
 /// rectangles its pieces cover — a run of glyphs as one — and their union, to rule most
@@ -1200,16 +1507,26 @@ let union_of = pure (rects: []Rect) -> Rect => {
 let overlaps = pure (a: []Rect, b: []Rect) -> bool =>
   a.any((x) => b.any((y) => !x.intersect(y).is_empty()))
 
-/// Draw `batches` in order, each in one call, and empty them; how many calls that was.
-let flush = (renderer: SdlRenderer, batches: mut []Batch) -> i64 => {
+/// Draw `batches` in order on `canvas`, each in one call, and empty them; how many calls that
+/// was.
+let flush = (
+  canvas: Canvas,
+  textures: []Texture,
+  live: []bool,
+  batches: mut []Batch
+) -> i64 => {
   var calls = 0
   for b in batches {
     if b.mesh.indices.len() == 0 { continue }
     if b.texture < 0 {
-      renderer.canvas.draw_geometry(vertices(b.mesh), b.mesh.indices)
+      canvas.draw_geometry(vertices(b.mesh), b.mesh.indices)
     } else {
-      let Some(texture) = texture_of(renderer, TextureId(b.texture)) else { continue }
-      renderer.canvas.draw_textured_geometry(texture, vertices(b.mesh), b.mesh.indices)
+      let Some(texture) = texture_of(
+        textures,
+        live,
+        TextureId(b.texture)
+      ) else { continue }
+      canvas.draw_textured_geometry(texture, vertices(b.mesh), b.mesh.indices)
     }
     calls += 1
   }
@@ -1231,12 +1548,17 @@ let vertices = pure (mesh: Mesh) -> []Vertex => [
   }
 ]
 
-/// Texture `id`, lent: the renderer still owns it, and [close] destroys it.
+/// Texture `id` of `textures`, where `live` says it is held, lent: the renderer still owns it,
+/// and [close] destroys it.
 @borrowed
-let texture_of = pure (renderer: SdlRenderer, id: TextureId) -> Maybe<Texture> => {
+let texture_of = pure (
+  textures: []Texture,
+  live: []bool,
+  id: TextureId
+) -> Maybe<Texture> => {
   let index = i64(id)
-  if index < 0 || index >= renderer.textures.len() || !renderer.live[index] { None } else {
-    Some(renderer.textures[index])
+  if index < 0 || index >= textures.len() || index >= live.len() || !live[index] { None } else {
+    Some(textures[index])
   }
 }
 

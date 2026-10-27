@@ -23,6 +23,14 @@ bool lyra_gpu_frame(void *g, float r, float gr, float b, float a, const float *i
   (void)commands; (void)command_count;
   return false;
 }
+bool lyra_gpu_claim(void *g, void *window) { (void)g; (void)window; return false; }
+void lyra_gpu_unclaim(void *g, void *window) { (void)g; (void)window; }
+bool lyra_gpu_frame_in(void *g, void *window, float r, float gr, float b, float a, const float *instances,
+                       int64_t instance_count, const int64_t *commands, int64_t command_count) {
+  (void)g; (void)window; (void)r; (void)gr; (void)b; (void)a; (void)instances; (void)instance_count;
+  (void)commands; (void)command_count;
+  return false;
+}
 void lyra_gpu_keep_frames(void *g, bool keep) { (void)g; (void)keep; }
 bool lyra_gpu_read(void *g, uint32_t *out, int64_t cap, int64_t *w, int64_t *h) {
   (void)g; (void)out; (void)cap; (void)w; (void)h;

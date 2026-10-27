@@ -93,7 +93,12 @@ let main = () -> u8 => {
     println("drag areas ${played.platform.drag_areas.len()}, controls in them ${played.platform.keep_areas.len()}, the system's frame ${played.platform.decorated}")
     var status: u8 = 0
     if let Some(path) = args.value("--png") {
-      if !save(played.renderer, played.fonts, played.host.shown[0], path) { status = 1 }
+      if !save(
+        played.renderer,
+        played.fonts,
+        played.host.main_laid(),
+        path
+      ) { status = 1 }
     }
     sdl3.close(window.platform, played.renderer)
     fonts.close()

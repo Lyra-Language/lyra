@@ -10,6 +10,7 @@
 // **The second form** draws one frame headless, prints the cell's size and where the screen
 // starts, and with `--png FILE` writes the frame.
 
+import ui.backend.{ MAIN_WINDOW }
 import ui.sdl3
 import ui.sdl3.{ SdlRenderer, capture }
 import ui.gpu
@@ -73,7 +74,7 @@ let main = () -> u8 => {
           if !save(
             played.renderer,
             played.fonts,
-            played.host.shown[0],
+            played.host.main_laid(),
             path
           ) { status = 1 }
         }
@@ -98,7 +99,13 @@ let main = () -> u8 => {
     }
     var platform = window.platform
     var renderer = window.renderer
-    let _ = run(app, grid_of(fonts, platform.scale()), platform, renderer, fonts)
+    let _ = run(
+      app,
+      grid_of(fonts, platform.scale(MAIN_WINDOW)),
+      platform,
+      renderer,
+      fonts
+    )
     gpu.close(platform, renderer)
   }
   fonts.close()

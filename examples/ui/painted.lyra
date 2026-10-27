@@ -82,7 +82,7 @@ let main = () -> u8 => {
           if !save(
             played.renderer,
             played.fonts,
-            played.host.shown[0],
+            played.host.main_laid(),
             background,
             path
           ) {

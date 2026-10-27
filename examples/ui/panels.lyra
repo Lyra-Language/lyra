@@ -92,7 +92,12 @@ let main = () -> u8 => {
     println("sprites ${s.sprites.join(" ")}, selected ${s.selected}")
     var status: u8 = 0
     if let Some(path) = args.value("--png") {
-      if !save(played.renderer, played.fonts, played.host.shown[0], path) { status = 1 }
+      if !save(
+        played.renderer,
+        played.fonts,
+        played.host.main_laid(),
+        path
+      ) { status = 1 }
     }
     sdl3.close(window.platform, played.renderer)
     fonts.close()

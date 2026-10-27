@@ -13,7 +13,7 @@
 import ui.gpu
 import ui.gpu.{ keep_frames, read_frame }
 import ui.app.{ App, sandbox, run }
-import ui.backend.{ Renderer }
+import ui.backend.{ MAIN_WINDOW, Renderer }
 import ui.draw.{ Color, Point, Image }
 import ui.text.{ fonts_new }
 import ui.text.{ glyph_atlas }
@@ -50,10 +50,17 @@ let main = () -> u8 => {
       Some(g) => {
         keep_frames(g)
         var atlas = glyph_atlas()
-        let laid = layout(view(State {}), loose(platform.window_size()), fonts)
-        let ops = paint(laid, Point {}, platform.scale(), fonts, atlas, renderer)
+        let laid = layout(view(State {}), loose(platform.window_size(MAIN_WINDOW)), fonts)
+        let ops = paint(
+          laid,
+          Point {},
+          platform.scale(MAIN_WINDOW),
+          fonts,
+          atlas,
+          renderer
+        )
         // A few frames, so the window's swapchain is up before the one read.
-        for _ in 0..<3 { renderer.draw(background, ops) }
+        for _ in 0..<3 { renderer.draw(MAIN_WINDOW, background, ops) }
         let Some(frame) = read_frame(g) else { return 4 }
         if !save(frame, path) { status = 1 }
       },

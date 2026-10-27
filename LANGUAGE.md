@@ -703,6 +703,12 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
   is charged every effect even when its type says `pure`, because a function type's bound
   is checked only where a function is passed straight to a bounded parameter — `[noisy]`
   reaches a `[]pure () -> i64` unchecked.
+- **A construction takes the weaker bound its context declares.** A function with a stronger
+  bound is usable where a weaker one is declared, and so is one wrapped fresh: `Some(f)`, `f` a
+  `pure (i64) -> string`, is a `Maybe<(i64) -> string>` in a field, argument or binding
+  declared so. A value already held keeps its type — a `Maybe<pure F>` binding is not a
+  `Maybe<F>` — since through a `shared` alias the weaker type would let an impure function be
+  written where the other holder reads a pure one. Until 10/27 a field refused the fresh one.
 - **A parameter's storage flavor is concrete even when unwritten, and a call across the
   `shared`/stack boundary is refused** (`lyra-E018`). A *binding* is polymorphic — `let q: E = s`
   inherits the flavor and the value is unboxed for it — but a function is compiled once and

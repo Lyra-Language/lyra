@@ -779,6 +779,19 @@ impl Node<e> {
     _ => self,
   }
 
+  /// A dock ([dock]) whose tabs tear off: one let go outside every window of the program
+  /// raises `on_tear` with where a window of its own would go ([DockTear]) — the program opens
+  /// one there, holding a dock of that panel (`ui.app`'s `App.windows`). A dock's only panel
+  /// does not tear off: its window is already its own. Any other node unchanged.
+  pub let tears_off = pure (self, on_tear: pure (DockTear) -> e) -> Node<e> =>
+    match self.kind {
+      Docked(spec) => {
+        let kind: Kind<e> = Docked(DockSpec { spec | on_tear: Some(on_tear) })
+        Node { self | kind: kind }
+      },
+      _ => self,
+    }
+
   /// A row or column with its children placed by `main` and `cross`; any other node unchanged.
   pub let aligned = pure (self, main: MainAlign, cross: CrossAlign) -> Node<e> =>
     match self.kind {
@@ -895,6 +908,10 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
   Docked(spec) => Docked(DockSpec {
     tree: spec.tree,
     on_change: (t: DockTree) -> b => f((spec.on_change)(t)),
+    on_tear: match spec.on_tear {
+      Some(tear) => Some((torn: DockTear) -> b => f(tear(torn))),
+      None => None,
+    },
   }),
   DockLeaf(path, keys) => DockLeaf(path, keys),
 }

@@ -9,6 +9,72 @@ Newest first.
 
 ## Dated log
 
+### 10/27/26 — `ui`: several windows
+
+- **`ui/VEGA.md` §11's step 5**: `App.windows: [Windows { of, view, on_close, on_moved }]` —
+  windows beside the main one as the state says, each keyed — and a dock's tab carried between
+  windows: dragged over another window's dock it aims there, let go there it lands, let go
+  outside every window it tears off into one (`.tears_off(on_tear)`, a `DockTear`).
+  `examples/ui/windows.lyra` is the dock example's studio with its tabs torn off and docked back;
+  `TestRun_UiWindowsExample` plays tearing, aiming, landing both ways, Escape, a window's last
+  panel leaving it, a move, a resize and a close; `TestRun_UiGpuSecondWindow` draws a second real
+  window with each renderer.
+- **The windows beside the main one are the program's data, the main window not.** `of(state)`
+  answers them as a tab bar's tabs are answered, and the host opens, closes and follows them —
+  so a program saves where they are (`on_moved`) and opens them where they were, and closing
+  one is its event, not the framework's. The main window stays `App.view`'s: every program
+  written so far has one, and its close ends the program.
+- **One platform with window ids, one renderer drawing any window.** Each `Platform` call
+  about a window names it, each input says its window, and a window beside the main one is
+  numbered by SDL's own id, so the renderer finds it (`window_from_id`) without the generic host
+  handing it a handle. The GPU claims a new window on its one device and swaps that window's
+  offscreen targets in while drawing it; SDL's 2D renderer cannot share a texture between
+  windows, so it keeps what each texture holds and copies it into another window's renderer —
+  the fallback, and the headless tests', paying memory for the one-renderer seam.
+- **The atlas is shared, and a picture is a window's until no window shows it.** `paint` lets
+  go of the pictures its frame did not draw; with several windows each painted on its own,
+  window B's frame would have dropped window A's picture and A re-uploaded it next frame. A kept
+  picture records the windows whose last frame drew it.
+- **Every window is drawn again after an event, the input's window alone after an input that
+  raised none.** Any event may change any window's view; a window laid out before the latest
+  event is laid out again before it takes input (`Host.version`), so a press acts on what it
+  shows.
+- **The drag is carried by the host, not the dock.** The pointer stays with the window the
+  press was in (SDL captures it), so the host converts its place through the screens
+  (`to_screen`/`from_screen`) to the window under it and asks that window's `Ui` to aim
+  (`DockDrop.foreign`: any group, its own path matching none); letting go lands it there and
+  raises the tree without it from its own dock — two events, the program's trees both updated.
+- **Three compiler bugs, each fixed:**
+  - *A nested destructuring loop took apart the outer loop's element.* `for (k, v) in xs`
+    binds a holder (`for$elem`) at the pattern's span and reads it at the same span; the
+    lookup wants the latest binding *ending before* its use, so it passed over the inner loop's
+    holder to the outer's — wrong types, or with types that fit, IR clang refused. The read now
+    sits at the pattern's end. The test of nested loops iterated one array in both, so the types
+    agreed and it passed.
+  - *`Some(f)`, `f` a `pure` function, refused where `Maybe<(T) -> e>` was declared* — a struct
+    field, a record update — though an annotated `let` took it: a construction whose payload
+    decided its type was never re-stamped from its context. A fresh construction now is, where
+    the context asks only weaker effect bounds (`types.WidensEffects`); a value already held
+    still is not, since a `shared` alias could then write an impure function where a pure one is
+    read.
+  - *A generic struct literal's field went unchecked* where the struct's parameter was solved to
+    the enclosing function's variable of the same name (`Spec<e>` inside `make<e>`): "still
+    mentions an unsolved parameter" was asked of the substituted type by name. It reached the
+    backend, which refused the store. It is now asked of the declared type, about the parameters
+    the substitution left unbound.
+- **And a compile-time cliff.** `regionExits` asked dominance of every block for each
+  temporary produced on a branch, each answer walking the dominator tree — in the new
+  `Host.step` that was over ten minutes a `ui` program at `-O0`, and the suite timed out. Blocks
+  are now numbered on the tree (entry and exit order), so dominance is two comparisons: the same
+  build is under ten seconds.
+- **The test written for that numbering found the tree itself wrong.** Cooper–Harvey–Kennedy's
+  `intersect` compared *block indices* as though they were postorder numbers, and the fixpoint
+  visited blocks in block order: right for a body laid out front to back, but on other CFGs an
+  immediate dominator came out too high — a block reported as not dominating one it does, which
+  for a statement's temporaries means a release before its last use. Latent (no failing program
+  is known); the tree is now built from a real postorder of a walk from the root, and
+  `TestDomTreeAgreesWithItsDefinition` holds it to the definition on 300 random CFGs.
+
 ### 10/27/26 — `ui`: docking
 
 - **`ui/VEGA.md` §11's step 4**: `dock(tree, panel, on_change, on_close)` over a `DockTree`

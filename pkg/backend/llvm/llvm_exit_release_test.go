@@ -1,6 +1,7 @@
 package llvm
 
 import (
+	"math/rand"
 	"strings"
 	"testing"
 
@@ -179,5 +180,75 @@ func TestDomTree(t *testing.T) {
 	other := ir.NewFunc("g", lltypes.Void).NewBlock("x")
 	if dt.dominates(other, c) || dt.dominates(entry, other) {
 		t.Error("a block outside the function must not be reported as dominating or dominated")
+	}
+}
+
+// Dominance answered by the tree's numbering (domTree.number) against its definition, on
+// random CFGs with loops, unreachable blocks and roots other than the entry: `a` dominates `b`
+// when `b` is reachable from the root and every path there passes `a` — `b` is unreachable
+// with `a` taken out. The numbering replaced a walk up the tree (10/27), and a false "dominates"
+// is a double free.
+func TestDomTreeAgreesWithItsDefinition(t *testing.T) {
+	t.Parallel()
+	rng := rand.New(rand.NewSource(27))
+	for round := 0; round < 300; round++ {
+		n := 2 + rng.Intn(14)
+		fn := ir.NewFunc("f", lltypes.Void)
+		blocks := make([]*ir.Block, n)
+		for i := range blocks {
+			blocks[i] = fn.NewBlock("")
+		}
+		succs := make([][]int, n)
+		for i, b := range blocks {
+			switch rng.Intn(4) {
+			case 0:
+				b.NewRet(nil)
+			case 1:
+				j := rng.Intn(n)
+				succs[i] = []int{j}
+				b.NewBr(blocks[j])
+			default:
+				j, k := rng.Intn(n), rng.Intn(n)
+				succs[i] = []int{j, k}
+				b.NewCondBr(constant.True, blocks[j], blocks[k])
+			}
+		}
+		root := 0
+		if round%3 == 0 {
+			root = rng.Intn(n)
+		}
+		// Whether `to` is reachable from the root without passing `without` (-1 for none).
+		reaches := func(to, without int) bool {
+			if root == without {
+				return false
+			}
+			seen := make([]bool, n)
+			stack := []int{root}
+			seen[root] = true
+			for len(stack) > 0 {
+				x := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				if x == to {
+					return true
+				}
+				for _, y := range succs[x] {
+					if y != without && !seen[y] {
+						seen[y] = true
+						stack = append(stack, y)
+					}
+				}
+			}
+			return false
+		}
+		dt := newDomTreeFrom(fn, blocks[root])
+		for a := 0; a < n; a++ {
+			for b := 0; b < n; b++ {
+				want := reaches(b, -1) && (a == b || !reaches(b, a))
+				if got := dt.dominates(blocks[a], blocks[b]); got != want {
+					t.Fatalf("round %d (root %d, edges %v): dominates(%d, %d) = %v, want %v",
+						round, root, succs, a, b, got, want)
+				}
+			}
+		}
 	}
 }

@@ -77,7 +77,7 @@ import ui.draw.{
   Glyphs,
   PictureSource
 }
-import ui.backend.{ Renderer }
+import ui.backend.{ Renderer, WindowId, MAIN_WINDOW }
 
 /// Which font, and how large: a `family` added to [Fonts] — or several, comma-separated, as
 /// CSS's `font-family` lists them, each tried in turn for a character the ones before lack,
@@ -688,15 +688,21 @@ pub struct GlyphAtlas {
   /// The pictures a view names ([PictureSource]), by key: the texture each is drawn from, as
   /// of which revision, and the frame that last drew it.
   pictures: HashMap<string, KeptPicture>,
+  /// The window the frame being painted is of: **one atlas serves every window** of a program
+  /// — a renderer's textures are drawn in any — so a picture is let go only when the last
+  /// frame of every window showing it no longer does. The host sets it before it paints.
+  window: WindowId = MAIN_WINDOW,
 }
 
-/// A picture's texture as the atlas keeps it: its revision, size, and the frame last drawing it.
+/// A picture's texture as the atlas keeps it: its revision, size, the frame last drawing it,
+/// and the windows whose last frame drew it.
 struct KeptPicture {
   texture: TextureId,
   revision: i64,
   width: i64,
   height: i64,
   frame: i64,
+  shown_in: []WindowId = [],
 }
 
 /// A page's texture is this many texels on a side.
@@ -735,15 +741,25 @@ impl GlyphAtlas {
   ) -> Maybe<TextureId> => {
     let image = source.image
     if let Some(kept) = self.pictures.get(source.key) {
+      let shown_in = if kept.shown_in.contains(self.window) { kept.shown_in } else {
+        [...kept.shown_in, self.window]
+      }
       if kept.revision == source.revision {
-        self.pictures.insert(source.key, KeptPicture { kept | frame: self.frame })
+        self.pictures.insert(
+          source.key,
+          KeptPicture { kept | frame: self.frame, shown_in: shown_in }
+        )
         return Some(kept.texture)
       }
       let same_size = kept.width == image.width && kept.height == image.height
       if same_size && renderer.update(kept.texture, Point {}, image) {
         self.pictures.insert(
           source.key,
-          KeptPicture { kept | revision: source.revision, frame: self.frame }
+          KeptPicture {
+            kept | revision: source.revision,
+            frame: self.frame,
+            shown_in: shown_in
+          }
         )
         return Some(kept.texture)
       }
@@ -757,22 +773,50 @@ impl GlyphAtlas {
       width: image.width,
       height: image.height,
       frame: self.frame,
+      shown_in: [self.window],
     })
     Some(texture)
   }
 
-  /// The pictures this frame did not draw let go through `renderer`: a key no view names now.
+  /// The pictures this frame of its window did not draw, and its last frame did, let go
+  /// through `renderer` where no other window's last frame drew them: a key no view names now.
   /// `ui.layout`'s `paint` calls it as a frame ends.
   pub let release_pictures<r> where r: Renderer = (
     self: mut,
     renderer: mut r
   ) -> void => {
     for (key, kept) in self.pictures.entries() {
-      if kept.frame < self.frame {
-        renderer.release(kept.texture)
-        let _ = self.pictures.remove(key)
-      }
+      if kept.frame >= self.frame || !kept.shown_in.contains(self.window) { continue }
+      self.unshown(key, kept, self.window, renderer)
     }
+  }
+
+  /// A window closed: the pictures only it showed let go through `renderer`.
+  pub let window_closed<r> where r: Renderer = (
+    self: mut,
+    window: WindowId,
+    renderer: mut r
+  ) -> void => {
+    for (key, kept) in self.pictures.entries() {
+      if kept.shown_in.contains(window) { self.unshown(key, kept, window, renderer) }
+    }
+  }
+
+  /// The picture `key`, `kept`, no longer shown in `window`: let go where that was the last.
+  let unshown<r> where r: Renderer = (
+    self: mut,
+    key: string,
+    kept: KeptPicture,
+    window: WindowId,
+    renderer: mut r
+  ) -> void => {
+    let rest = [w in kept.shown_in | w != window | w]
+    if rest.len() > 0 {
+      self.pictures.insert(key, KeptPicture { kept | shown_in: rest })
+      return
+    }
+    renderer.release(kept.texture)
+    let _ = self.pictures.remove(key)
   }
 
   /// How many pictures the atlas holds a texture for — for a test.

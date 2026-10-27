@@ -43,6 +43,11 @@ module ui.app
 //! so a subscription is on exactly while the state says so — and the loop waits for input only
 //! while no `EveryFrame` is on, and no longer than the next timer.
 //!
+//! **Several windows** ([App.windows], `ui/VEGA.md` §8): the windows beside the main one are
+//! the state's to say, each by its key, and the host opens, closes and follows them; each has
+//! the framework's state of its own ([HostWindow]), input goes to the window it happened in, and
+//! a dock's tab is carried between them — or torn off into a new one ([Node.tears_off]).
+//!
 //! **A program's own `main` can hold the loop** — `while host.step(platform, renderer, fonts)
 //! {}` — which is what `lyrac run --live` needs: it swaps changed code in only at a loop of
 //! `main`'s, and calls `view` and `update` through the function values in [App], which reach
@@ -54,7 +59,15 @@ module ui.app
 import ui.backend.{
   Platform,
   Renderer,
+  WindowId,
+  MAIN_WINDOW,
+  NewWindow,
+  InputEvent,
   CloseRequested,
+  QuitRequested,
+  WindowPlaced,
+  PointerMoved,
+  PointerUp,
   Resized,
   AppearanceChanged,
   Appearance,
@@ -103,8 +116,10 @@ import ui.layout.{
   MenuSeparator,
   menu_shortcuts,
   entries_shortcuts,
+  DockDrop,
+  column,
 }
-import ui.interact.{ Ui, ui_new, FieldEdit }
+import ui.interact.{ Ui, ui_new, FieldEdit, dock_away, dock_torn }
 import ui.access.{ access_tree }
 import std.io.{ read_file, write_file, readable }
 import std.collections.{ HashMap, hashmap_new }
@@ -151,8 +166,37 @@ pub struct App<s, e> {
   /// The window's title bar: the system's (`SystemTitleBar`), or the program's own
   /// (`DrawnTitleBar`) — the window without the system's frame, moved from what the view marks
   /// [Node.window_drag] and resized from its edges, its buttons `window_buttons`. A Mac keeps
-  /// the system's title bar either way, for now (`ui/WINDOW.md`).
+  /// the system's title bar either way, for now (`ui/WINDOW.md`). The main window's: the
+  /// others keep the system's.
   title_bar: TitleBar = SystemTitleBar,
+  /// The windows beside the main one, a function of the state ([Windows]), or none. (An array of
+  /// at most one, as `shortcuts` is.)
+  windows: []Windows<s, e> = [],
+}
+
+/// The windows a program opens beside its main one (`ui/VEGA.md` §8) — a dock's tabs torn off
+/// into windows of their own, an inspector — **as its state says**, as a tab bar's tabs are:
+/// `of` answers them, each by its key ([WindowSpec.key]); the host opens one the state gains and
+/// closes one it loses, and makes a change to one's title, size or place to the open window.
+/// `view` is what the window keyed so shows. The user's close of one raises `on_close` with its
+/// key — the program takes it out of `of`, or keeps it — and their move or resize of one raises
+/// `on_moved` with where it is now, for the program to keep (and save) with it.
+///
+/// Each window has the framework's state of its own (focus, hover, scroll); input goes to the
+/// window it happens in, and an event any window's view raises goes through the one `update`.
+/// The program's menus and shortcuts are every window's.
+pub struct Windows<s, e> {
+  of: (s) -> []WindowSpec,
+  view: (s, string) -> Node<e>,
+  on_close: (string) -> e,
+  on_moved: (string, WindowPlacement) -> e,
+}
+
+/// Where a window is: its top-left corner on the screens, in the system's coordinates (`None`
+/// where the system does not say — Wayland), and its size in logical units.
+pub struct WindowPlacement {
+  place: Maybe<Point> = None,
+  size: Size = Size {},
 }
 
 /// Whose a window's title bar is ([App.title_bar]).
@@ -194,8 +238,13 @@ pub let chord_matches = pure (want: Modifiers, got: Modifiers) -> bool => {
 
 /// A window as markup describes it — lui's `<window>`, generated as `window_spec`: its title, the
 /// size it opens at, the least and greatest size the user may make it (nothing for no limit),
-/// which ways it resizes, and what it does with a view that does not fit.
+/// which ways it resizes, and what it does with a view that does not fit. A window beside the
+/// main one ([Windows]) has a `key` its program knows it by, and a `place` — its top-left
+/// corner on the screens, in the system's coordinates (the system's choice for `None`) —
+/// both unread for the main window.
 pub struct WindowSpec {
+  key: string = "",
+  place: Maybe<Point> = None,
   title: string = "",
   size: Size = Size { w: 800.0, h: 600.0 },
   min_size: Size = Size {},
@@ -305,9 +354,9 @@ pub let sandbox<s, e> = pure (
   background: background,
 }
 
-/// Run `app` from `state` until the user closes the window or `update` asks to quit, drawing
-/// through `renderer`, its input from `platform` and its text in `fonts`; answer the last
-/// state.
+/// Run `app` from `state` until the user closes the main window or `update` asks to quit,
+/// drawing through `renderer`, its input from `platform` and its text in `fonts`; answer the
+/// last state.
 pub let run<s, e, p, r> where p: Platform, r: Renderer = (
   app: App<s, e>,
   state: s,
@@ -325,7 +374,7 @@ pub let run<s, e, p, r> where p: Platform, r: Renderer = (
   window.host.state
 }
 
-/// A program running in a window: its host and what it draws with, in one `shared` box —
+/// A program running in its windows: its host and what it draws with, in one `shared` box —
 /// the loop steps it, and the platform's live-resize hook ([follow_resizes]) redraws the same
 /// one while the system holds the loop in a resize.
 pub struct Running<s, e, p, r> {
@@ -335,7 +384,7 @@ pub struct Running<s, e, p, r> {
   fonts: Fonts,
 }
 
-/// `app` at `state`, ready to run in `platform`'s window, drawn by `renderer` in `fonts`.
+/// `app` at `state`, ready to run in `platform`'s windows, drawn by `renderer` in `fonts`.
 pub let running<s, e, p, r> where p: Platform, r: Renderer = (
   app: App<s, e>,
   state: s,
@@ -349,36 +398,39 @@ pub let running<s, e, p, r> where p: Platform, r: Renderer = (
   fonts: fonts,
 }
 
-/// One pass of `window`'s loop (`Host.step`); whether the program goes on. A program whose
+/// One pass of the program's loop (`Host.step`); whether the program goes on. A program whose
 /// loop is `main`'s own — as `lyrac run --live` needs — calls this.
 pub let step_running<s, e, p, r> where p: Platform, r: Renderer = (
   window: shared Running<s, e, p, r>
 ) -> bool =>
   window.host.step(window.platform, window.renderer, window.fonts)
 
-/// Have `window`'s platform redraw it, at its new size, each time the system asks for a
-/// frame while the window is resized by dragging — on macOS AppKit holds the main thread, and
-/// so the loop, until the drag ends. Drawn only at a size not yet shown: the system asks
-/// sixty times a second however long the resize lasts, moved or not.
+/// Have the platform redraw a window, at its new size, each time the system asks for a frame
+/// while it is resized by dragging — on macOS AppKit holds the main thread, and so the loop,
+/// until the drag ends. Drawn only at a size not yet shown: the system asks sixty times a second
+/// however long the resize lasts, moved or not.
 pub let follow_resizes<s, e, p, r> where p: Platform, r: Renderer = (
   window: shared Running<s, e, p, r>
 ) -> void => {
-  let hook = () -> void => {
-    let size = window.platform.window_size()
-    if size == window.host.drawn_at { return }
-    window.host.redraw(window.platform, window.renderer, window.fonts)
+  let hook = (id: WindowId) -> void => {
+    let Some(k) = window.host.window_index(id) else { return }
+    let size = window.platform.window_size(id)
+    if size == window.host.windows[k].drawn_at { return }
+    window.host.redraw(id, window.platform, window.renderer, window.fonts)
   }
   window.platform.on_live_resize(hook)
 }
 
-/// What a running program's loop holds between passes: the program, its state, the
-/// framework's state and glyphs, the events waiting to be delivered and the timers waiting to
-/// be due, when each `Every` period last fired, when the last frame was drawn, whether the
-/// program is still running, and the tree it last showed.
+/// What a running program's loop holds between passes: the program, its state, its windows,
+/// the glyphs they share, the events waiting to be delivered and the timers waiting to be due,
+/// when each `Every` period last fired, when the last pass began, and whether the program is
+/// still running.
 pub struct Host<s, e> {
   app: App<s, e>,
   state: s,
-  ui: Ui,
+  /// The program's windows: the main window first, then each of [App.windows] open, in the
+  /// order they opened.
+  windows: []HostWindow<e>,
   atlas: GlyphAtlas,
   waiting: []e = [],
   /// Fonts asked to be measured ([MeasureFont]), answered at the next pass, where the fonts are;
@@ -392,8 +444,6 @@ pub struct Host<s, e> {
   menu_events: []e = [],
   native_menus: bool = false,
   native_chords: []Chord = [],
-  /// Whether the system's frame has been taken away, for a drawn title bar.
-  undecorated: bool = false,
   /// The file dialogs open, each by the tag it was asked with and what its answer makes, and the
   /// next tag.
   dialogs: [](i32, (Maybe<string>) -> e) = [],
@@ -403,23 +453,56 @@ pub struct Host<s, e> {
   live: bool = false,
   /// The window as `App.window` last described it, to tell a reload's change from none.
   window_seen: Maybe<WindowSpec> = None,
-  /// Each element's last layout, for the next pass to give back what has not changed.
-  cache: LayoutCache<e>,
-  /// Whether something has happened since the last frame was drawn, so the next pass draws.
-  dirty: bool = true,
-  /// How many frames have been drawn, and how many times the view has been laid out — for a
+  /// The window that last gained the keyboard's focus: where an edit of the focused field and
+  /// a file dialog go.
+  focused: WindowId = MAIN_WINDOW,
+  /// How many events `update` has had: a window laid out at fewer shows an older state.
+  version: i64 = 0,
+  /// The keys of windows the platform could not open, not asked for again.
+  unopened: []string = [],
+  /// How many frames have been drawn, and how many times a view has been laid out — for a
   /// test that an idle program does neither.
   frames: i64 = 0,
   layouts: i64 = 0,
-  /// The tree as last laid out, after the last input of the last pass — none before the
-  /// first. (An array of at most one: a generic struct's `None` default is not settled yet,
-  /// todo.md.)
+}
+
+/// One of a program's windows as its host keeps it: the platform's number for it, its key
+/// ([WindowSpec.key], `""` for the main window) and its description as last made to it, the
+/// framework's state of it, each element's last layout, the tree as last laid out (after the last
+/// input of the last pass — none before the first; an array of at most one), the events `update`
+/// had when it was, the size it was last drawn at, whether something has happened since that
+/// frame, each painted element with an `on_size` at the size it was last laid out at, and
+/// whether the system's frame has been taken away for a drawn title bar.
+pub struct HostWindow<e> {
+  id: WindowId,
+  key: string = "",
+  spec: WindowSpec = WindowSpec {},
+  ui: Ui,
+  cache: LayoutCache<e>,
   shown: []Laid<e> = [],
-  /// The window's size at the last frame drawn.
+  laid_at: i64 = -1,
   drawn_at: Size = Size {},
-  /// Each painted element with an `on_size`, by identity, at the size it was last laid out
-  /// at — to tell a new size from the same.
+  dirty: bool = true,
   painted_sizes: HashMap<string, Size>,
+  undecorated: bool = false,
+}
+
+/// The window numbered `id` as a host keeps it, before its first frame.
+let host_window<e> = pure (
+  id: WindowId,
+  key: string,
+  spec: WindowSpec
+) -> HostWindow<e> => {
+  var ui = ui_new()
+  ui.window = id
+  HostWindow {
+    id: id,
+    key: key,
+    spec: spec,
+    ui: ui,
+    cache: layout_cache::<e>(),
+    painted_sizes: hashmap_new::<string, Size>(),
+  }
 }
 
 /// `view` as the window's root: filling it, and overflowing it as `overflow` says on each
@@ -491,14 +574,14 @@ let native_entries<e> = (
   out
 }
 
-/// The window as a sheet's media rules ask of it: its size and the system's look — and whether
-/// it is Apple's, which a menu's shortcuts are spelled by.
-let viewport_of<p> where p: Platform = (platform: p) -> Viewport =>
+/// The window numbered `id` as a sheet's media rules ask of it: its size and the system's look
+/// — and whether it is Apple's, which a menu's shortcuts are spelled by.
+let viewport_of<p> where p: Platform = (platform: p, id: WindowId) -> Viewport =>
   Viewport {
-    size: platform.window_size(),
+    size: platform.window_size(id),
     appearance: platform.appearance(),
     apple: platform.apple(),
-    maximized: platform.window_state().maximized,
+    maximized: platform.window_state(id).maximized,
   }
 
 /// The sooner of a wait (`-1` for none) and `delay` milliseconds, never below none at all.
@@ -506,6 +589,10 @@ let sooner = pure (wait: i64, delay: i64) -> i64 => {
   let d = delay.max(0)
   if wait < 0 { d } else { wait.min(d) }
 }
+
+/// Whether `at` is inside a window `size` large.
+let within = pure (at: Point, size: Size) -> bool =>
+  at.x >= 0.0 && at.y >= 0.0 && at.x < size.w && at.y < size.h
 
 /// A font to measure, and the event its measurements come back as.
 pub struct Measure<e> {
@@ -525,7 +612,7 @@ pub struct Timer<e> {
   event: e,
 }
 
-/// A host for `app` at `state`, on `platform`'s clock.
+/// A host for `app` at `state`, on `platform`'s clock, its main window the platform's.
 pub let host_of<s, e, p> where p: Platform = (
   app: App<s, e>,
   state: s,
@@ -534,10 +621,8 @@ pub let host_of<s, e, p> where p: Platform = (
   Host {
     app: app,
     state: state,
-    ui: ui_new(),
+    windows: [host_window::<e>(MAIN_WINDOW, "", WindowSpec {})],
     atlas: glyph_atlas(),
-    cache: layout_cache::<e>(),
-    painted_sizes: hashmap_new::<string, Size>(),
     last_frame: platform.now_ms(),
     live: lookup("LYRA_LIVE_PID") == Some("${process_id()}"),
   }
@@ -551,9 +636,14 @@ pub const FRAME_MS: i64 = 16
 /// as it is.
 pub const SIZE_ROUNDS: i64 = 3
 
+/// Where a tab torn off puts its window's top-left corner, from the pointer: up and to the
+/// left of it, so the window opens with the pointer over its tab, as it was over the tab torn.
+pub const TEAR_GRAB: Point = Point { x: 40.0, y: 12.0 }
+
 impl Host<s, e> {
-  /// One pass of the loop: what is due, delivered; the view drawn; input waited for and
-  /// routed. Whether the program goes on.
+  /// One pass of the loop: what is due, delivered; the windows the state has opened and
+  /// closed; each window that may have changed drawn; input waited for and routed to the window
+  /// it happened in. Whether the program goes on.
   pub let step<p, r> where p: Platform, r: Renderer = (
     self: mut,
     platform: mut p,
@@ -572,55 +662,72 @@ impl Host<s, e> {
     }
     self.deliver_due(now, platform)
     if !self.running { return false }
-    // Drawn only when something may have changed — an input, an event, the first pass — or
-    // every pass under `--live`, where the code itself may have.
-    if self.shown.len() == 0 { self.limit_size(platform, platform.window_size()) }
+    let first = self.windows[0].shown.len() == 0
+    if first { self.limit_size(0, platform, platform.window_size(MAIN_WINDOW)) }
+    self.sync_windows(platform, renderer)
     if self.live { self.follow_window(platform) }
     // The first pass draws before the menus are installed, which on a Mac takes AppKit a
     // moment: the window shows, and its painters hear their size (a terminal's columns), first.
-    let first = self.shown.len() == 0
     if !first { self.sync_menus(platform) }
-    // A transition moving draws every frame too, until it arrives; and a tooltip draws when the
-    // pointer has rested long enough.
-    if self.dirty || self.live || first || self.ui.animating() || self.ui.tip_due(now) == 0 { self.redraw(
-      platform,
-      renderer,
-      fonts
-    ) }
+    // Each window drawn only when something may have changed in it ([Host.wants_frame]).
+    for k in 0..<self.windows.len() {
+      if self.wants_frame(
+        k,
+        now
+      ) { self.redraw(self.windows[k].id, platform, renderer, fonts) }
+    }
     if first { self.sync_menus(platform) }
     // From the layout just drawn, before the wait the next press comes in.
     self.sync_title_bar(platform)
-    var laid = self.shown[0]
     // The descriptors the state reads, which wake the wait when they have data.
     platform.wake_for(self.watched())
-    for input in platform.next_events(self.wait_ms(now)) {
-      self.dirty = true
+    for (id, input) in platform.next_events(self.wait_ms(now)) {
       let at = platform.now_ms()
+      // Input of a window closed since is no one's.
+      let Some(k) = self.window_index(id) else { continue }
+      self.windows[k].dirty = true
       match input {
         CloseRequested => {
+          if k == 0 {
+            self.running = false
+            return false
+          }
+          // A window beside the main one is the program's to close.
+          let Some(list) = self.beside() else { continue }
+          self.dispatch((list.on_close)(self.windows[k].key), at, platform)
+        },
+        QuitRequested => {
           self.running = false
           return false
         },
-        Resized(size) => self.heard(at, platform, (sub) => match sub {
+        Resized(size) => if k == 0 { self.heard(at, platform, (sub) => match sub {
           OnResize(make) => Some(make(size)),
           _ => None,
-        }),
-        AppearanceChanged(look) => self.heard(at, platform, (sub) => match sub {
-          OnAppearance(make) => Some(make(look)),
-          _ => None,
-        }),
-        WindowFocused => self.heard(at, platform, (sub) => match sub {
-          OnFocus(make) => Some(make(true)),
-          _ => None,
-        }),
-        WindowUnfocused => self.heard(at, platform, (sub) => match sub {
+        }) } else { self.moved(k, at, platform) },
+        WindowPlaced(_) => if k > 0 { self.moved(k, at, platform) },
+        AppearanceChanged(look) => {
+          for j in 0..<self.windows.len() { self.windows[j].dirty = true }
+          self.heard(at, platform, (sub) => match sub {
+            OnAppearance(make) => Some(make(look)),
+            _ => None,
+          })
+        },
+        WindowFocused => {
+          self.focused = id
+          if k == 0 { self.heard(at, platform, (sub) => match sub {
+            OnFocus(make) => Some(make(true)),
+            _ => None,
+          }) }
+        },
+        WindowUnfocused => if k == 0 { self.heard(at, platform, (sub) => match sub {
           OnFocus(make) => Some(make(false)),
           _ => None,
-        }),
-        WindowStateChanged(state) => self.heard(at, platform, (sub) => match sub {
-          OnWindowState(make) => Some(make(state)),
-          _ => None,
-        }),
+        }) },
+        WindowStateChanged(state) =>
+          if k == 0 { self.heard(at, platform, (sub) => match sub {
+            OnWindowState(make) => Some(make(state)),
+            _ => None,
+          }) },
         FilesDropped(paths) => self.heard(at, platform, (sub) => match sub {
           OnFilesDropped(make) => Some(make(paths)),
           _ => None,
@@ -645,6 +752,13 @@ impl Host<s, e> {
         },
         _ => {},
       }
+      if !self.running { return false }
+      // The window as the state is now, if an event since it was laid out changed it — a
+      // press acts on what is shown.
+      if self.windows[k].laid_at != self.version || self.windows[k].shown.len() == 0 {
+        self.windows[k].shown = [self.lay_out(k, platform, fonts)]
+      }
+      let laid = self.windows[k].shown[0]
       // A key the system's own menu bar holds is the bar's: AppKit chooses its item, and SDL
       // hears the key as well.
       let barred = match input {
@@ -653,80 +767,124 @@ impl Host<s, e> {
       }
       // A shortcut is the program's before any element hears the key.
       let taken = match input {
-        KeyPressed(key, mods) => if barred { None } else { self.shortcut_for(key, mods) },
+        KeyPressed(key, mods) =>
+          if barred { None } else { self.shortcut_for(key, mods, laid) },
         _ => None,
       }
+      let docking = self.windows[k].ui.state.dock_drop
       let events = if barred { [] } else {
         match taken {
           Some(event) => [event],
-          None => self.ui.handle(laid, input, platform),
+          None => self.windows[k].ui.handle(laid, input, platform),
         }
       }
-      for event in events { self.dispatch(event, at, platform) }
+      // A tab of this window's dock dragged out of it: aimed at another window's dock, landed
+      // there, or torn off.
+      let carried = self.carry_dock(k, docking, input, platform, fonts)
+      for event in [...events, ...carried] { self.dispatch(event, at, platform) }
+      self.settle_docks()
       // The window's own buttons, the framework's to carry out: close as the system's does.
-      for button in self.ui.take_window_buttons() {
+      for button in self.windows[k].ui.take_window_buttons() {
         match button {
-          MinimizeButton => platform.change_window(ToMinimized),
-          MaximizeButton => platform.change_window(if platform.window_state().maximized { ToRestored } else { ToMaximized }),
+          MinimizeButton => platform.change_window(id, ToMinimized),
+          MaximizeButton => platform.change_window(id, if platform.window_state(id).maximized { ToRestored } else { ToMaximized }),
           CloseButton => {
-            self.running = false
-            return false
+            if k == 0 {
+              self.running = false
+              return false
+            }
+            if let Some(list) = self.beside() {
+              self.dispatch((list.on_close)(self.windows[k].key), at, platform)
+            }
           },
         }
       }
       self.deliver_due(at, platform)
       if !self.running { return false }
-      laid = self.lay_out_view(platform, fonts)
-      self.shown = [laid]
+      self.windows[k].shown = [self.lay_out(k, platform, fonts)]
     }
     self.running
   }
 
-  /// The view laid out at the window's size now and drawn — what a pass does when something
-  /// may have changed, and what a program's live-resize watch calls while the system holds
-  /// its loop (`bindings.sdl3`'s `add_event_watch`, `examples/ui/layouts.lyra`), so the
-  /// contents follow the window's edge as it is dragged.
+  /// Whether window `k` is drawn this pass: something has happened in it since its last
+  /// frame, or it has none yet, or a transition in it moves, or a tooltip's rest is over — or
+  /// every pass under `--live`, where the code itself may have changed.
+  let wants_frame = pure (self, k: i64, now: i64) -> bool => {
+    let w = self.windows[k]
+    w.dirty ||
+      self.live ||
+      w.shown.len() == 0 ||
+      w.ui.animating() ||
+      w.ui.tip_due(now) == 0
+  }
+
+  /// The program's windows beside the main one, if it has any ([App.windows]).
+  let beside = pure (self) -> Maybe<Windows<s, e>> =>
+    if self.app.windows.len() > 0 { Some(self.app.windows[0]) } else { None }
+
+  /// The main window as last laid out — what a test or a program's own loop reads of it.
+  pub let main_laid = pure (self) -> Laid<e> => self.windows[0].shown[0]
+
+  /// The index among [Host.windows] of the window numbered `id`, if it is open.
+  pub let window_index = pure (self, id: WindowId) -> Maybe<i64> => {
+    for k, w in self.windows {
+      if w.id == id { return Some(k) }
+    }
+    None
+  }
+
+  /// The window numbered `id`'s view laid out at its size now and drawn — what a pass does when
+  /// something may have changed in it, and what a program's live-resize watch calls while the
+  /// system holds its loop (`bindings.sdl3`'s `add_event_watch`, `examples/ui/layouts.lyra`),
+  /// so the contents follow the window's edge as it is dragged.
   pub let redraw<p, r> where p: Platform, r: Renderer = (
     self: mut,
+    id: WindowId,
     platform: mut p,
     renderer: mut r,
     fonts: mut Fonts
   ) -> void => {
-    let fresh = self.lay_out_view(platform, fonts)
-    self.ui.place_text_input(fresh, platform)
-    let ops = paint(fresh, Point {}, platform.scale(), fonts, self.atlas, renderer)
-    renderer.draw(self.app.background, ops)
-    platform.update_access(access_tree(fresh, self.ui.state.focus))
+    let Some(k) = self.window_index(id) else { return }
+    let fresh = self.lay_out(k, platform, fonts)
+    self.windows[k].ui.place_text_input(fresh, platform)
+    self.atlas.window = id
+    let ops = paint(fresh, Point {}, platform.scale(id), fonts, self.atlas, renderer)
+    renderer.draw(id, self.app.background, ops)
+    platform.update_access(id, access_tree(fresh, self.windows[k].ui.state.focus))
     self.frames += 1
-    self.shown = [fresh]
-    self.drawn_at = platform.window_size()
-    self.dirty = false
+    self.windows[k].shown = [fresh]
+    self.windows[k].drawn_at = platform.window_size(id)
+    self.windows[k].dirty = false
   }
 
-  /// The view of the state laid out at the window's size, with the framework's state — and
-  /// laid out again after the events of painted elements whose size it changed, so a frame
-  /// never shows what a painter drew for its last size (at most [SIZE_ROUNDS] times, so a
-  /// size that changes with every event cannot hold the loop).
-  let lay_out_view<p> where p: Platform = (
+  /// The view of window `k` laid out at its size, with its framework's state — and laid out
+  /// again after the events of painted elements whose size it changed, so a frame never shows
+  /// what a painter drew for its last size (at most [SIZE_ROUNDS] times, so a size that changes
+  /// with every event cannot hold the loop).
+  let lay_out<p> where p: Platform = (
     self: mut,
+    k: i64,
     platform: mut p,
     fonts: mut Fonts
   ) -> Laid<e> => {
+    let id = self.windows[k].id
     var rounds = 0
     loop {
-      self.ui.state.viewport = viewport_of(platform)
-      self.ui.now = platform.now_ms()
-      let laid = self.ui.frame_within(
-        in_window((self.app.view)(self.state), self.app.window_overflow),
-        tight(platform.window_size()),
+      self.windows[k].ui.state.viewport = viewport_of(platform, id)
+      self.windows[k].ui.now = platform.now_ms()
+      let laid_at = self.version
+      let laid = self.windows[k].ui.frame_within(
+        in_window(self.view_of(k), self.overflow_of(k)),
+        tight(platform.window_size(id)),
         fonts,
-        self.cache
+        self.windows[k].cache
       )
       self.layouts += 1
+      self.windows[k].laid_at = laid_at
       var sizes = hashmap_new::<string, Size>()
       var events: []e = []
-      sized_events(laid, self.painted_sizes, sizes, events)
-      self.painted_sizes = sizes
+      sized_events(laid, self.windows[k].painted_sizes, sizes, events)
+      self.windows[k].painted_sizes = sizes
       if events.len() == 0 || rounds >= SIZE_ROUNDS { return laid }
       let now = platform.now_ms()
       for event in events { self.dispatch(event, now, platform) }
@@ -734,23 +892,238 @@ impl Host<s, e> {
     }
   }
 
-  /// `App`'s least and greatest size handed to the platform — the first pass's — with a side
-  /// that may not resize held at both to the size the window has, within them.
-  let limit_size<p> where p: Platform = (self, platform: mut p, size: Size) -> void => {
-    let held = size.held(self.app.min_size, self.app.max_size)
-    let least = Size {
-      w: if self.app.resize_x { self.app.min_size.w } else { held.w },
-      h: if self.app.resize_y { self.app.min_size.h } else { held.h },
-    }
-    let most = Size {
-      w: if self.app.resize_x { self.app.max_size.w } else { held.w },
-      h: if self.app.resize_y { self.app.max_size.h } else { held.h },
-    }
-    platform.set_size_limits(least, most)
+  /// What window `k` shows of the state: the program's view for the main window, else the view
+  /// of the window's key.
+  let view_of = (self, k: i64) -> Node<e> => {
+    if k == 0 { return (self.app.view)(self.state) }
+    let Some(list) = self.beside() else { return column::<e>([]) }
+    (list.view)(self.state, self.windows[k].key)
   }
 
-  /// Under `--live`, the window as the program's newest code describes it (`App.window`): a
-  /// change since the last pass — a reload — made to the open window. The limits are lifted
+  /// What window `k` does with a view that does not fit it.
+  let overflow_of = pure (self, k: i64) -> Overflow =>
+    if k == 0 { self.app.window_overflow } else { self.windows[k].spec.overflow }
+
+  /// The windows [App.windows] says the state has, made so: one it no longer has closed, one it
+  /// has gained opened — at its place and size, held to its limits — and a change to the
+  /// title, size or place of one open made to it.
+  let sync_windows<p, r> where p: Platform, r: Renderer = (
+    self: mut,
+    platform: mut p,
+    renderer: mut r
+  ) -> void => {
+    let Some(list) = self.beside() else { return }
+    let specs = (list.of)(self.state)
+    var k = self.windows.len() - 1
+    while k >= 1 {
+      let key = self.windows[k].key
+      if !specs.any((spec) => spec.key == key) { self.close_window(
+        k,
+        platform,
+        renderer
+      ) }
+      k -= 1
+    }
+    var keys: []string = []
+    for spec in specs {
+      if keys.contains(spec.key) || self.unopened.contains(spec.key) { continue }
+      keys.push(spec.key)
+      if let Some(k) = self.window_keyed(spec.key) {
+        self.follow_spec(k, spec, platform)
+        continue
+      }
+      let size = spec.size.held(spec.min_size, spec.max_size)
+      let asked = NewWindow { title: spec.title, size: size, place: spec.place }
+      let Some(id) = platform.open_window(asked) else {
+        self.unopened.push(spec.key)
+        continue
+      }
+      self.windows.push(host_window::<e>(id, spec.key, spec))
+      self.limit_size(self.windows.len() - 1, platform, size)
+    }
+  }
+
+  /// Window `k`, beside the main one, closed: what its renderer made for it, the pictures only
+  /// it showed, and the window.
+  let close_window<p, r> where p: Platform, r: Renderer = (
+    self: mut,
+    k: i64,
+    platform: mut p,
+    renderer: mut r
+  ) -> void => {
+    let id = self.windows[k].id
+    renderer.window_closed(id)
+    self.atlas.window_closed(id, renderer)
+    platform.close_window(id)
+    self.windows = [w in self.windows | w.id != id | w]
+    if self.focused == id { self.focused = MAIN_WINDOW }
+  }
+
+  /// The index of the window keyed `key` beside the main one, if it is open.
+  let window_keyed = pure (self, key: string) -> Maybe<i64> => {
+    for k, w in self.windows {
+      if k > 0 && w.key == key { return Some(k) }
+    }
+    None
+  }
+
+  /// Window `k` as `spec` describes it now: a change since it was last described made to it —
+  /// its title, its size (held to its limits), its place, its limits — and its view's overflow
+  /// laid out anew.
+  let follow_spec<p> where p: Platform = (
+    self: mut,
+    k: i64,
+    spec: WindowSpec,
+    platform: mut p
+  ) -> void => {
+    let was = self.windows[k].spec
+    if spec == was { return }
+    let id = self.windows[k].id
+    self.windows[k].spec = spec
+    self.windows[k].dirty = true
+    if spec.title != was.title { platform.set_title(id, spec.title) }
+    if let Some(at) = spec.place {
+      if spec.place != was.place { platform.set_window_position(id, at) }
+    }
+    var size = platform.window_size(id)
+    let limits = spec.min_size != was.min_size || spec.max_size != was.max_size ||
+      spec.resize_x != was.resize_x || spec.resize_y != was.resize_y
+    if spec.size != was.size {
+      platform.set_size_limits(id, Size {}, Size {})
+      size = spec.size.held(spec.min_size, spec.max_size)
+      platform.set_window_size(id, size)
+    }
+    if limits || spec.size != was.size { self.limit_size(k, platform, size) }
+  }
+
+  /// Window `k`, beside the main one, moved or resized by the user: where it is now, through
+  /// its `on_moved`.
+  let moved<p> where p: Platform = (
+    self: mut,
+    k: i64,
+    now: i64,
+    platform: mut p
+  ) -> void => {
+    let Some(list) = self.beside() else { return }
+    let id = self.windows[k].id
+    let place = WindowPlacement {
+      place: platform.window_position(id),
+      size: platform.window_size(id)
+    }
+    self.dispatch((list.on_moved)(self.windows[k].key, place), now, platform)
+  }
+
+  /// A tab of window `k`'s dock being docked (`drop`, as it was before `input`) carried past the
+  /// window's edge: while the pointer moves, aimed at the dock of the window under it ([Ui.aim_away_dock])
+  /// and at no other's; let go there, landed — that dock raising its tree with the panel, and
+  /// window `k`'s its tree without — and let go outside every window, torn off ([dock_torn]).
+  /// The events it raises.
+  let carry_dock<p> where p: Platform = (
+    self: mut,
+    k: i64,
+    drop: DockDrop,
+    input: InputEvent,
+    platform: mut p,
+    fonts: mut Fonts
+  ) -> []e => {
+    // A program with no windows beside the main one has nowhere to carry a tab.
+    if drop.dock.len() == 0 || drop.foreign || self.app.windows.len() == 0 { return [] }
+    let (at, up) = match input {
+      PointerMoved(p) => (p, false),
+      PointerUp(_, p) => (p, true),
+      _ => return [],
+    }
+    let id = self.windows[k].id
+    let inside = within(at, platform.window_size(id))
+    let screen = platform.to_screen(id, at)
+    // The window under the pointer, among the others, and where in it.
+    var target = -1
+    var there = Point {}
+    if !inside {
+      if let Some(spot) = screen {
+        for j, w in self.windows {
+          if j == k { continue }
+          let Some(local) = platform.from_screen(w.id, spot) else { continue }
+          if within(local, platform.window_size(w.id)) {
+            target = j
+            there = local
+            break
+          }
+        }
+      }
+    }
+    for j in 0..<self.windows.len() {
+      if j != target && self.windows[j].ui.clear_away_dock() { self.windows[j].dirty = true }
+    }
+    if target >= 0 && (self.windows[target].laid_at != self.version || self.windows[target].shown.len() == 0) {
+      self.windows[target].shown = [self.lay_out(target, platform, fonts)]
+    }
+    if !up {
+      if target >= 0 && self.windows[target].ui.aim_away_dock(
+        self.windows[target].shown[0],
+        there,
+        drop
+      ) {
+        self.windows[target].dirty = true
+      }
+      return []
+    }
+    let from = self.windows[k].shown[0]
+    if target >= 0 {
+      let landed = self.windows[target].ui.land_away_dock(self.windows[target].shown[0])
+      self.windows[target].dirty = true
+      if landed.len() == 0 { return [] }
+      return [...landed, ...dock_away(from, drop)]
+    }
+    if inside { return [] }
+    let place = match screen {
+      Some(p) => Some(Point { x: p.x - TEAR_GRAB.x, y: p.y - TEAR_GRAB.y }),
+      None => None,
+    }
+    dock_torn(from, drop, place)
+  }
+
+  /// Another window's tab aimed at a window's dock let go of everywhere once no window is
+  /// docking a tab of its own — Escape put it back, or it landed.
+  let settle_docks = (self: mut) -> void => {
+    for w in self.windows {
+      let drop = w.ui.state.dock_drop
+      if drop.dock.len() > 0 && !drop.foreign { return }
+    }
+    for j in 0..<self.windows.len() {
+      if self.windows[j].ui.clear_away_dock() { self.windows[j].dirty = true }
+    }
+  }
+
+  /// Window `k`'s least and greatest size handed to the platform — the program's for the main
+  /// window, its description's for another — with a side that may not resize held at both to
+  /// `size`, within them.
+  let limit_size<p> where p: Platform = (
+    self,
+    k: i64,
+    platform: mut p,
+    size: Size
+  ) -> void => {
+    let (min_size, max_size, resize_x, resize_y) = if k == 0 {
+      (self.app.min_size, self.app.max_size, self.app.resize_x, self.app.resize_y)
+    } else {
+      let spec = self.windows[k].spec
+      (spec.min_size, spec.max_size, spec.resize_x, spec.resize_y)
+    }
+    let held = size.held(min_size, max_size)
+    let least = Size {
+      w: if resize_x { min_size.w } else { held.w },
+      h: if resize_y { min_size.h } else { held.h },
+    }
+    let most = Size {
+      w: if resize_x { max_size.w } else { held.w },
+      h: if resize_y { max_size.h } else { held.h },
+    }
+    platform.set_size_limits(self.windows[k].id, least, most)
+  }
+
+  /// Under `--live`, the main window as the program's newest code describes it (`App.window`):
+  /// a change since the last pass — a reload — made to the open window. The limits are lifted
   /// first, so a new size is not held to the old ones, and set again at the new size.
   let follow_window<p> where p: Platform = (self: mut, platform: mut p) -> void => {
     let Some(describe) = self.app.window else { return }
@@ -761,7 +1134,7 @@ impl Host<s, e> {
     }
     if spec == was { return }
     self.window_seen = Some(spec)
-    if spec.title != was.title { platform.set_title(spec.title) }
+    if spec.title != was.title { platform.set_title(MAIN_WINDOW, spec.title) }
     self.app = App {
       self.app |
       min_size: spec.min_size,
@@ -770,28 +1143,30 @@ impl Host<s, e> {
       resize_y: spec.resize_y,
       window_overflow: spec.overflow,
     }
-    var size = platform.window_size()
+    var size = platform.window_size(MAIN_WINDOW)
     if spec.size != was.size {
-      platform.set_size_limits(Size {}, Size {})
+      platform.set_size_limits(MAIN_WINDOW, Size {}, Size {})
       size = spec.size.held(spec.min_size, spec.max_size)
-      platform.set_window_size(size)
+      platform.set_window_size(MAIN_WINDOW, size)
     }
-    self.limit_size(platform, size)
-    self.dirty = true
+    self.limit_size(0, platform, size)
+    for k in 0..<self.windows.len() { self.windows[k].dirty = true }
   }
 
   /// How long the pass may wait for input from `now`: not at all while events wait, a frame
-  /// while a frame subscription is on or a transition moves, until the next timer, `Every` or
-  /// tooltip, else for good — never
-  /// past a tenth of a second under `--live`.
+  /// while a frame subscription is on or a transition moves in any window, until the next
+  /// timer, `Every` or tooltip, else for good — never past a tenth of a second under `--live`.
   let wait_ms = (self: mut, now: i64) -> i64 => {
     if self.waiting.len() > 0 || self.measures.len() > 0 { return 0 }
     for fd in self.watched() {
       if readable(fd) { return 0 }
     }
-    var wait: i64 = if self.ui.animating() { FRAME_MS } else { -1 }
-    let tip = self.ui.tip_due(now)
-    if tip >= 0 { wait = sooner(wait, tip) }
+    var wait: i64 = -1
+    for w in self.windows {
+      if w.ui.animating() { wait = sooner(wait, FRAME_MS) }
+      let tip = w.ui.tip_due(now)
+      if tip >= 0 { wait = sooner(wait, tip) }
+    }
     for timer in self.timers { wait = sooner(wait, timer.at - now) }
     for sub in (self.app.subscriptions)(self.state) {
       match sub {
@@ -836,14 +1211,16 @@ impl Host<s, e> {
     }
   }
 
-  /// `event` through `update`, and the commands it answers carried out.
+  /// `event` through `update`, and the commands it answers carried out. Every window may show
+  /// what it changed, so each is drawn again.
   let dispatch<p> where p: Platform = (
     self: mut,
     event: e,
     now: i64,
     platform: mut p
   ) -> void => {
-    self.dirty = true
+    for k in 0..<self.windows.len() { self.windows[k].dirty = true }
+    self.version += 1
     let (next, commands) = (self.app.update)(self.state, event)
     self.state = next
     for command in commands {
@@ -857,33 +1234,44 @@ impl Host<s, e> {
           let _ = platform.open_url(url)
         },
         QuitApp => { self.running = false },
-        WindowMinimize => platform.change_window(ToMinimized),
-        WindowSeeThrough(on) => { let _ = platform.set_see_through(on) },
-        WindowBlur(radius) => { let _ = platform.set_backdrop_blur(radius) },
-        WindowMaximize => platform.change_window(ToMaximized),
-        WindowRestore => platform.change_window(ToRestored),
+        WindowMinimize => platform.change_window(MAIN_WINDOW, ToMinimized),
+        WindowSeeThrough(on) => { let _ = platform.set_see_through(MAIN_WINDOW, on) },
+        WindowBlur(radius) => { let _ = platform.set_backdrop_blur(MAIN_WINDOW, radius) },
+        WindowMaximize => platform.change_window(MAIN_WINDOW, ToMaximized),
+        WindowRestore => platform.change_window(MAIN_WINDOW, ToRestored),
         ChooseFile(d, make) => {
           let tag = self.next_dialog
           self.next_dialog += 1
           self.dialogs.push((tag, make))
-          platform.choose_file(tag, d)
+          platform.choose_file(self.focused, tag, d)
         },
         MeasureFont(font, done) => self.measures.push(Measure { font: font, done: done }),
         LoadFonts(files, done) => self.loads.push(FontLoad { files: files, done: done }),
-        FocusKeyed(key) => self.ui.focus_keyed(key),
-        EditField(edit) => if self.shown.len() > 0 {
-          let raised = self.ui.edit_focused(self.shown[0], edit, platform)
-          for edited in raised { self.waiting.push(edited) }
+        FocusKeyed(key) => {
+          for k in 0..<self.windows.len() { self.windows[k].ui.focus_keyed(key) }
         },
-        ScrollTo(key, y) => self.ui.scroll_keyed(key, y),
+        EditField(edit) => {
+          let k = self.window_index(self.focused) ?? 0
+          if self.windows[k].shown.len() > 0 {
+            let raised = self.windows[k].ui.edit_focused(
+              self.windows[k].shown[0],
+              edit,
+              platform
+            )
+            for edited in raised { self.waiting.push(edited) }
+          }
+        },
+        ScrollTo(key, y) => {
+          for k in 0..<self.windows.len() { self.windows[k].ui.scroll_keyed(key, y) }
+        },
       }
     }
   }
 
   /// The event of the program's shortcut for `key` held with `mods`, if it has one: one of
-  /// [App.shortcuts], else an enabled item's of a menu the window draws (`menu_shortcuts`), so
-  /// a menu's shortcut is written once, on its item.
-  let shortcut_for = (self, key: Key, mods: Modifiers) -> Maybe<e> => {
+  /// [App.shortcuts], else an enabled item's of a menu `laid` — the window the key is in —
+  /// draws (`menu_shortcuts`), so a menu's shortcut is written once, on its item.
+  let shortcut_for = (self, key: Key, mods: Modifiers, laid: Laid<e>) -> Maybe<e> => {
     for list in self.app.shortcuts {
       for s in (list.of)(self.state) {
         if s.key == key && chord_matches(s.mods, mods) { return Some(s.event) }
@@ -898,28 +1286,26 @@ impl Host<s, e> {
         }
       }
     }
-    for laid in self.shown {
-      for (chord, event) in menu_shortcuts(laid) {
-        if chord.key == key && chord_matches(chord.mods, mods) { return Some(event) }
-      }
+    for (chord, event) in menu_shortcuts(laid) {
+      if chord.key == key && chord_matches(chord.mods, mods) { return Some(event) }
     }
     None
   }
 
-  /// A drawn title bar ([App.title_bar]): the system's frame taken away once, and each pass the
-  /// platform told what of the window as last laid out moves it — what the view marks
-  /// [Node.window_drag] — and, inside that, what keeps a press: its controls and the window's
-  /// buttons.
+  /// A drawn title bar ([App.title_bar]): the main window's system frame taken away once, and
+  /// each pass the platform told what of the window as last laid out moves it — what the view
+  /// marks [Node.window_drag] — and, inside that, what keeps a press: its controls and the
+  /// window's buttons.
   let sync_title_bar<p> where p: Platform = (self: mut, platform: mut p) -> void => {
     if self.app.title_bar != DrawnTitleBar { return }
-    if !self.undecorated {
-      platform.set_decorated(false)
-      self.undecorated = true
+    if !self.windows[0].undecorated {
+      platform.set_decorated(MAIN_WINDOW, false)
+      self.windows[0].undecorated = true
     }
     var drags: []Rect = []
     var keeps: []Rect = []
-    for laid in self.shown { press_areas(laid, Point {}, drags, keeps) }
-    platform.set_window_areas(drags, keeps, RESIZE_MARGIN)
+    for laid in self.windows[0].shown { press_areas(laid, Point {}, drags, keeps) }
+    platform.set_window_areas(MAIN_WINDOW, drags, keeps, RESIZE_MARGIN)
   }
 
   /// The program's menus ([App.menus]) as the state has them now, handed to the platform for
@@ -965,7 +1351,8 @@ impl Host<s, e> {
     }
   }
 
-  /// The fonts asked to be measured, measured: their events waiting for the next delivery.
+  /// The fonts asked to be measured, measured — at the main window's scale: their events
+  /// waiting for the next delivery.
   let measure<p> where p: Platform = (
     self: mut,
     platform: p,
@@ -980,7 +1367,10 @@ impl Host<s, e> {
     }
     self.loads = []
     for asked in self.measures {
-      self.waiting.push((asked.done)(fonts.metrics(asked.font, platform.scale())))
+      self.waiting.push((asked.done)(fonts.metrics(
+        asked.font,
+        platform.scale(MAIN_WINDOW)
+      )))
     }
     self.measures = []
   }

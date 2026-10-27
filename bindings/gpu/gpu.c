@@ -10,6 +10,11 @@
 // a clip and a shadow are exact at any scale; a shadow is the analytic Gaussian of a rounded
 // box (Evan Wallace's erf method). A frame is drawn into a scene texture and blitted to the
 // window, so a backdrop can sample what is behind it and a test can read the frame back.
+//
+// One device draws every window of a program: the first is the one it was created for, and
+// each other is claimed (`lyra_gpu_claim`) for a swapchain of its own. The pipelines and the
+// textures are the device's, drawn in any window; the scene, the layers and the blur's
+// textures are a window's (`struct Targets`), swapped in while its frame is drawn.
 
 #include <SDL3/SDL.h>
 #include <math.h>
@@ -140,9 +145,22 @@ struct Texture {
     int width, height;
 };
 
+// What a frame of one window draws into besides its swapchain, at its size.
+struct Targets {
+    SDL_Window *window;
+    SDL_GPUTexture *scene;
+    SDL_GPUTexture *layers[MAX_LAYERS];
+    SDL_GPUTexture *half_a, *half_b;
+    int width, height;
+};
+
 typedef struct LyraGpu {
     SDL_GPUDevice *device;
     SDL_Window *window;
+    SDL_GPUPresentMode mode;
+    // The other windows claimed, each with its targets while it is not being drawn.
+    struct Targets *others;
+    int other_count, other_cap;
     SDL_GPUGraphicsPipeline *quads;
     SDL_GPUGraphicsPipeline *blur;
     SDL_GPUSampler *linear, *nearest, *clamped;
@@ -286,6 +304,7 @@ LyraGpu *lyra_gpu_create(SDL_Window *window) {
         else if (SDL_WindowSupportsGPUPresentMode(device, window, SDL_GPU_PRESENTMODE_MAILBOX)) mode = SDL_GPU_PRESENTMODE_MAILBOX;
     }
     SDL_SetGPUSwapchainParameters(device, window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, mode);
+    g->mode = mode;
     SDL_GPUShader *qv = shader(g, "quad_vs", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 1);
     SDL_GPUShader *qf = shader(g, "quad_fs", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1, 0);
     SDL_GPUShader *bv = shader(g, "full_vs", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 0);
@@ -330,9 +349,25 @@ static void release_targets(LyraGpu *g) {
     memset(g->layers, 0, sizeof g->layers);
 }
 
+// The targets of `t` let go.
+static void release_window_targets(LyraGpu *g, struct Targets *t) {
+    if (t->scene) SDL_ReleaseGPUTexture(g->device, t->scene);
+    if (t->half_a) SDL_ReleaseGPUTexture(g->device, t->half_a);
+    if (t->half_b) SDL_ReleaseGPUTexture(g->device, t->half_b);
+    for (int i = 0; i < MAX_LAYERS; i++)
+        if (t->layers[i]) SDL_ReleaseGPUTexture(g->device, t->layers[i]);
+    memset(t, 0, sizeof *t);
+}
+
 void lyra_gpu_destroy(LyraGpu *g) {
     if (!g) return;
     SDL_WaitForGPUIdle(g->device);
+    for (int i = 0; i < g->other_count; i++) {
+        SDL_Window *w = g->others[i].window;
+        release_window_targets(g, &g->others[i]);
+        SDL_ReleaseWindowFromGPUDevice(g->device, w);
+    }
+    SDL_free(g->others);
     release_targets(g);
     for (int64_t i = 0; i < g->texture_count; i++) {
         if (g->textures[i].texture) SDL_ReleaseGPUTexture(g->device, g->textures[i].texture);
@@ -587,6 +622,78 @@ bool lyra_gpu_frame(LyraGpu *g, float r, float gr, float b, float a, const float
     g->kept_w = (int)sw;
     g->kept_h = (int)sh;
     return true;
+}
+
+// Another window drawn by the device: claimed for a swapchain of its own, its layer pinned as
+// the first window's is. False where it cannot be, or its swapchain's format is not the one
+// the pipelines were made for.
+bool lyra_gpu_claim(LyraGpu *g, SDL_Window *window) {
+    if (window == g->window) return true;
+    for (int i = 0; i < g->other_count; i++)
+        if (g->others[i].window == window) return true;
+    if (!SDL_ClaimWindowForGPUDevice(g->device, window)) return false;
+    lyra_gpu_pin_contents(window);
+    if (SDL_GetGPUSwapchainTextureFormat(g->device, window) != g->format) {
+        SDL_ReleaseWindowFromGPUDevice(g->device, window);
+        return false;
+    }
+    SDL_SetGPUSwapchainParameters(g->device, window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, g->mode);
+    if (g->other_count == g->other_cap) {
+        g->other_cap = g->other_cap ? g->other_cap * 2 : 4;
+        g->others = SDL_realloc(g->others, (size_t)g->other_cap * sizeof *g->others);
+    }
+    memset(&g->others[g->other_count], 0, sizeof *g->others);
+    g->others[g->other_count++].window = window;
+    return true;
+}
+
+// A window `lyra_gpu_claim` claimed let go, with its targets — before it closes.
+void lyra_gpu_unclaim(LyraGpu *g, SDL_Window *window) {
+    for (int i = 0; i < g->other_count; i++) {
+        if (g->others[i].window != window) continue;
+        SDL_WaitForGPUIdle(g->device);
+        release_window_targets(g, &g->others[i]);
+        SDL_ReleaseWindowFromGPUDevice(g->device, window);
+        g->others[i] = g->others[--g->other_count];
+        return;
+    }
+}
+
+// `lyra_gpu_frame` in `window` — the first window, or one claimed: its targets swapped in
+// while its frame is drawn. False for a window not claimed.
+bool lyra_gpu_frame_in(LyraGpu *g, SDL_Window *window, float r, float gr, float b, float a,
+                       const float *instances, int64_t instance_count, const int64_t *commands,
+                       int64_t command_count) {
+    if (window == g->window)
+        return lyra_gpu_frame(g, r, gr, b, a, instances, instance_count, commands, command_count);
+    struct Targets *t = NULL;
+    for (int i = 0; i < g->other_count; i++)
+        if (g->others[i].window == window) t = &g->others[i];
+    if (!t) return false;
+    struct Targets first = { g->window, g->scene, { 0 }, g->half_a, g->half_b, g->width, g->height };
+    memcpy(first.layers, g->layers, sizeof g->layers);
+    g->window = t->window;
+    g->scene = t->scene;
+    memcpy(g->layers, t->layers, sizeof g->layers);
+    g->half_a = t->half_a;
+    g->half_b = t->half_b;
+    g->width = t->width;
+    g->height = t->height;
+    bool drawn = lyra_gpu_frame(g, r, gr, b, a, instances, instance_count, commands, command_count);
+    t->scene = g->scene;
+    memcpy(t->layers, g->layers, sizeof g->layers);
+    t->half_a = g->half_a;
+    t->half_b = g->half_b;
+    t->width = g->width;
+    t->height = g->height;
+    g->window = first.window;
+    g->scene = first.scene;
+    memcpy(g->layers, first.layers, sizeof g->layers);
+    g->half_a = first.half_a;
+    g->half_b = first.half_b;
+    g->width = first.width;
+    g->height = first.height;
+    return drawn;
 }
 
 // Keep the next frames' pixels for `lyra_gpu_read`, or stop.

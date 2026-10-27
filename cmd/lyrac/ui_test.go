@@ -702,7 +702,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = (self, id, at, image) => true
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 data Ev = Pick(string) | Toggle | Slide(f32) | Typed(string)
@@ -1068,7 +1068,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = (self, id, at, image) => true
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 data Msg =
@@ -1287,7 +1287,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => { self.drawn += 1 }
+  draw = (self, window, background, ops) => { self.drawn += 1 }
 }
 
 let main = () -> u8 => {
@@ -1468,7 +1468,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 struct Form {
@@ -1893,7 +1893,7 @@ func TestRun_UiMediaQueries(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ host_of, sandbox }
 import ui.script.{ timed_platform, Played }
-import ui.backend.{ Renderer, Resized, DarkMode }
+import ui.backend.{ MAIN_WINDOW, Renderer, Resized, DarkMode }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new }
 import ui.style.{ Style, Sheet, Rule, Media, Viewport, Landscape, light_theme, fr, repeat_tracks }
@@ -1909,7 +1909,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 let main = () -> u8 => {
@@ -1960,8 +1960,8 @@ let resizing = () -> void => {
   var fonts = fonts_new()
   var host = host_of(sandbox(view, (n: i64, _: NoEvent) => n, Color { r: 0, g: 0, b: 0 }), 0, platform)
   while host.step(platform, renderer, fonts) {
-    let size = platform.window_size()
-    println("resized to ${size.w}x${size.h}: ${describe(the_grid(host.shown[0]))}, laid out ${host.cache.laid_out}, given back ${host.cache.reused}")
+    let size = platform.window_size(MAIN_WINDOW)
+    println("resized to ${size.w}x${size.h}: ${describe(the_grid(host.main_laid()))}, laid out ${host.windows[0].cache.laid_out}, given back ${host.windows[0].cache.reused}")
   }
 }
 
@@ -1995,7 +1995,7 @@ func TestRun_UiWindowSizeLimits(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ App, host_of, sandbox }
 import ui.script.{ timed_platform, Played }
-import ui.backend.{ Renderer, Resized }
+import ui.backend.{ MAIN_WINDOW, Renderer, Resized }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new }
 import ui.layout.{ Node, NoEvent, sized }
@@ -2010,7 +2010,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 /// A window opened below its least size grows to it; resized below or above its limits, it
@@ -2030,7 +2030,7 @@ let main = () -> u8 => {
   }
   var host = host_of(app, 0, platform)
   while host.step(platform, renderer, fonts) {
-    let size = platform.window_size()
+    let size = platform.window_size(MAIN_WINDOW)
     println("${size.w}x${size.h}")
   }
   0
@@ -2055,7 +2055,7 @@ func TestRun_UiWindowFollowsItsDescription(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ App, WindowSpec, host_of, sandbox }
 import ui.script.{ timed_platform, Waited }
-import ui.backend.{ Renderer }
+import ui.backend.{ MAIN_WINDOW, Renderer }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new }
 import ui.layout.{ Node, NoEvent, sized }
@@ -2070,7 +2070,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 var width: f32 = 200.0
@@ -2093,7 +2093,7 @@ let main = () -> u8 => {
   host.live = true
   var pass = 0
   while pass < 3 && host.step(platform, renderer, fonts) {
-    let size = platform.window_size()
+    let size = platform.window_size(MAIN_WINDOW)
     println("pass ${pass}: ${size.w}x${size.h} '${platform.title}', least ${platform.least.w}x${platform.least.h}, most ${platform.most.w}x${platform.most.h}")
     pass += 1
     if pass == 1 {
@@ -2120,7 +2120,7 @@ func TestRun_UiWindowResizeAxes(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ App, host_of, sandbox }
 import ui.script.{ timed_platform, Played }
-import ui.backend.{ Renderer, Resized }
+import ui.backend.{ MAIN_WINDOW, Renderer, Resized }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new }
 import ui.layout.{ Node, NoEvent, sized }
@@ -2135,7 +2135,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 /// Opened at 300x300 below a least width of 360: across, it is held at 360 and only its
@@ -2157,7 +2157,7 @@ let show = (app: App<i64, NoEvent>) -> void => {
   var fonts = fonts_new()
   var host = host_of(app, 0, platform)
   while host.step(platform, renderer, fonts) {
-    let size = platform.window_size()
+    let size = platform.window_size(MAIN_WINDOW)
     println("${size.w}x${size.h}")
   }
 }
@@ -2190,7 +2190,7 @@ func TestRun_UiResizeSettles(t *testing.T) {
 	}
 	for name, src := range map[string]string{"stress": `import ui.app.{ host_of, sandbox }
 import ui.script.{ timed_platform, Played, Step }
-import ui.backend.{ Renderer, Resized }
+import ui.backend.{ MAIN_WINDOW, Renderer, Resized }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new }
 import layouts_view.{ State, view, update }
@@ -2205,7 +2205,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 let main = () -> u8 => {
@@ -2228,7 +2228,7 @@ let main = () -> u8 => {
   while host.step(platform, renderer, fonts) {
     passes += 1
     if passes % 500 == 0 {
-      let s = platform.window_size()
+      let s = platform.window_size(MAIN_WINDOW)
       println("${passes} passes, at ${s.w}x${s.h}")
     }
   }
@@ -2424,7 +2424,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 /// The ops an element with every effect paints, in order; a compound selector against a
@@ -2535,7 +2535,7 @@ func TestRun_UiGpuSeeThrough(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "main.lyra")
 	if err := os.WriteFile(src, []byte(`import ui.gpu
 import ui.gpu.{ keep_frames, read_frame }
-import ui.backend.{ Renderer, Platform }
+import ui.backend.{ MAIN_WINDOW, Renderer, Platform }
 import ui.draw.{ Color, Rect, rgba, radius, Fill, DrawOp, Backdrop, PushClip, PopClip }
 import bindings.gpu.{ see_through_state, backdrop_state, backdrop_regions_state, pinned_state }
 
@@ -2549,7 +2549,7 @@ let main = () -> u8 => {
   }
   keep_frames(g)
   let ops: []DrawOp = [Fill(Rect { x: 20.0, y: 20.0, w: 100.0, h: 60.0 }, radius(0.0), rgba(0xFF000080))]
-  for _ in 0..<3 { renderer.draw(Color { r: 0, g: 0, b: 0, a: 0 }, ops) }
+  for _ in 0..<3 { renderer.draw(MAIN_WINDOW, Color { r: 0, g: 0, b: 0, a: 0 }, ops) }
   let Some(frame) = read_frame(g) else {
     println("no frame")
     return 4
@@ -2563,8 +2563,8 @@ let main = () -> u8 => {
   println("a half-clear red: ${at(70.0, 50.0)}")
   println("the content see-through, the title bar opaque: ${see_through_state(platform.window)}")
   println("the Metal layer pinned for a resize: ${pinned_state(platform.window)}")
-  println("blur taken: ${platform.set_backdrop_blur(20.0)}, by the backdrop: ${backdrop_state(platform.window)}")
-  println("blur gone: ${platform.set_backdrop_blur(0.0)}, ${backdrop_state(platform.window)}")
+  println("blur taken: ${platform.set_backdrop_blur(MAIN_WINDOW, 20.0)}, by the backdrop: ${backdrop_state(platform.window)}")
+  println("blur gone: ${platform.set_backdrop_blur(MAIN_WINDOW, 0.0)}, ${backdrop_state(platform.window)}")
   // Two frosted panels, the second clipped away entirely: one region of the desktop blurred.
   let frosted: []DrawOp = [
     Backdrop(Rect { x: 20.0, y: 20.0, w: 100.0, h: 60.0 }, radius(8.0), 12.0),
@@ -2572,10 +2572,10 @@ let main = () -> u8 => {
     Backdrop(Rect { x: 20.0, y: 150.0, w: 100.0, h: 40.0 }, radius(8.0), 12.0),
     PopClip,
   ]
-  renderer.draw(Color { r: 0, g: 0, b: 0, a: 0 }, frosted)
+  renderer.draw(MAIN_WINDOW, Color { r: 0, g: 0, b: 0, a: 0 }, frosted)
   println("regions blurred: ${backdrop_regions_state(platform.window)}")
-  println("opaque again: ${platform.set_see_through(false)}")
-  renderer.draw(Color { r: 0, g: 0, b: 0, a: 0 }, frosted)
+  println("opaque again: ${platform.set_see_through(MAIN_WINDOW, false)}")
+  renderer.draw(MAIN_WINDOW, Color { r: 0, g: 0, b: 0, a: 0 }, frosted)
   println("regions on an opaque window: ${backdrop_regions_state(platform.window)}")
   gpu.close(platform, renderer)
   0
@@ -2611,7 +2611,7 @@ func TestRun_UiGpuReadback(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "main.lyra")
 	if err := os.WriteFile(src, []byte(`import ui.gpu
 import ui.gpu.{ keep_frames, read_frame }
-import ui.backend.{ Renderer }
+import ui.backend.{ MAIN_WINDOW, Renderer }
 import ui.draw.{ Color, Point, Rect, rgb, rgba, radius, Fill, Shadow, GradientFill, PushLayer, PopLayer, BoxShadow, Gradient, ColorStop, LinearGradient, LayerEffect, DrawOp }
 
 let main = () -> u8 => {
@@ -2632,7 +2632,7 @@ let main = () -> u8 => {
     PopLayer,
   ]
   // A couple of frames, so the swapchain is up.
-  for _ in 0..<3 { renderer.draw(rgb(0xFFFFFF), ops) }
+  for _ in 0..<3 { renderer.draw(MAIN_WINDOW, rgb(0xFFFFFF), ops) }
   let Some(frame) = read_frame(g) else {
     println("no frame")
     return 4
@@ -2727,7 +2727,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => { self.drawn += 1 }
+  draw = (self, window, background, ops) => { self.drawn += 1 }
 }
 
 /// A window dragged while its loop is held: each step at a new size draws a frame laid out at
@@ -2748,8 +2748,8 @@ let main = () -> u8 => {
   var passes = 0
   while step_running(window) {
     passes += 1
-    let at = window.host.drawn_at
-    println("pass ${passes}: ${window.renderer.drawn} frames, last at ${at.w}x${at.h}, root ${window.host.shown[0].size.w} wide, ${window.platform.dragged} drags")
+    let at = window.host.windows[0].drawn_at
+    println("pass ${passes}: ${window.renderer.drawn} frames, last at ${at.w}x${at.h}, root ${window.host.main_laid().size.w} wide, ${window.platform.dragged} drags")
   }
   0
 }
@@ -2790,7 +2790,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 data Ev = Pressed(i64)
@@ -2843,8 +2843,8 @@ let main = () -> u8 => {
     let window = running(sandbox(view, pressed, Color { r: 0, g: 0, b: 0 }), -1, platform, renderer, fonts)
     while step_running(window) {}
     let state = window.host.state
-    println("${name}: ${offsets(window.host.shown[0])}${if state >= 0 { "; pressed ${state}" } else { "" }}")
-    if name == "start" { println("  sizes: ${sizes(window.host.shown[0])}") }
+    println("${name}: ${offsets(window.host.main_laid())}${if state >= 0 { "; pressed ${state}" } else { "" }}")
+    if name == "start" { println("  sizes: ${sizes(window.host.main_laid())}") }
   }
   0
 }
@@ -2932,7 +2932,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 data Ev = Go | Typed(string)
@@ -2951,7 +2951,7 @@ let main = () -> u8 => {
     var fonts = fonts_new()
     let window = running(sandbox(view, (s: Maybe<f32>, _: Ev) => s, Color { r: 0, g: 0, b: 0 }), least, platform, renderer, fonts)
     while step_running(window) {}
-    let laid = window.host.shown[0]
+    let laid = window.host.main_laid()
     let Some(sc) = laid.scroller else { return 1 }
     let field = laid.children[0]
     let count = laid.children[1]
@@ -3129,7 +3129,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 /// A box fading on hover over 200 ms: the host draws a frame a pass while it moves and none
@@ -3145,7 +3145,7 @@ let main = () -> u8 => {
     let c = window.platform.clock
     if c != said && (c == 1000 || c == 1100 || c == 3100) {
       said = c
-      println("t=${c}: ${window.host.frames} frames, opacity ${find(window.host.shown[0], "box").style.opacity}")
+      println("t=${c}: ${window.host.frames} frames, opacity ${find(window.host.main_laid(), "box").style.opacity}")
     }
   }
   println("end: ${window.host.frames} frames")
@@ -3533,7 +3533,7 @@ func TestRun_UiWindowPosition(t *testing.T) {
 	setenv(t, "SDL_VIDEODRIVER", "dummy")
 	setenv(t, "SDL_RENDER_DRIVER", "software")
 	got := runUiProgram(t, `import ui.sdl3
-import ui.backend.{ Platform }
+import ui.backend.{ MAIN_WINDOW, Platform }
 import ui.draw.{ Point }
 
 let main = () -> u8 => {
@@ -3545,11 +3545,11 @@ let main = () -> u8 => {
     },
   }
   var p = window.platform
-  println("placed: ${p.window_position().is_some()}")
-  p.set_window_position(Point { x: 120.0, y: 80.0 })
-  println("moved: ${describe(p.window_position())}")
-  p.set_window_position(Point { x: 100000.0, y: 100000.0 })
-  println("off every display: ${describe(p.window_position())}")
+  println("placed: ${p.window_position(MAIN_WINDOW).is_some()}")
+  p.set_window_position(MAIN_WINDOW, Point { x: 120.0, y: 80.0 })
+  println("moved: ${describe(p.window_position(MAIN_WINDOW))}")
+  p.set_window_position(MAIN_WINDOW, Point { x: 100000.0, y: 100000.0 })
+  println("off every display: ${describe(p.window_position(MAIN_WINDOW))}")
   sdl3.close(p, window.renderer)
   0
 }
@@ -3602,7 +3602,7 @@ impl Renderer for Counting {
     true
   }
   release = (self, id) => { self.releases += 1 }
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 let main = () -> u8 => {
@@ -4861,7 +4861,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 data Ev = Added(i64) | Undone
@@ -5345,7 +5345,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 data Ev = Changed(WindowState) | Max
@@ -5358,7 +5358,7 @@ let main = () -> u8 => {
     var fonts = fonts_new()
     var host = host_of(app(), "", platform)
     let _ = host.step(platform, renderer, fonts)
-    let laid = host.shown[0]
+    let laid = host.main_laid()
     if apple {
       println("on Apple's systems: the buttons ${width_of(laid, Point {}, 0.0)} wide")
       continue
@@ -5371,14 +5371,14 @@ let main = () -> u8 => {
     ]
     for (name, at) in steps {
       press(platform, host, renderer, fonts, at)
-      println("${name}: heard '${host.state}', maximized ${platform.window.maximized}, the maximize glyph's boxes ${frames(host.shown[0])}")
+      println("${name}: heard '${host.state}', maximized ${platform.window.maximized}, the maximize glyph's boxes ${frames(host.main_laid())}")
     }
     platform.steps = [...platform.steps, Played(WindowStateChanged(WindowState {})), Waited(1)]
     while platform.next < platform.steps.len() { let _ = host.step(platform, renderer, fonts) }
     println("the system restores it: heard '${host.state}'")
-    press(platform, host, renderer, fonts, middle_of(host.shown[0], MinimizeButton))
+    press(platform, host, renderer, fonts, middle_of(host.main_laid(), MinimizeButton))
     println("minimize: heard '${host.state}', minimized ${platform.window.minimized}")
-    let at = middle_of(host.shown[0], CloseButton)
+    let at = middle_of(host.main_laid(), CloseButton)
     platform.steps = [...platform.steps, Played(PointerMoved(at)), Played(PointerDown(Primary, at, 1)), Played(PointerUp(Primary, at)), Waited(1)]
     var passes = 0
     while host.step(platform, renderer, fonts) { passes += 1 }
@@ -5576,7 +5576,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 data Ev = Open | SaveAs | Chosen(Maybe<string>)
@@ -6130,7 +6130,7 @@ impl Renderer for Recorder {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => {
+  draw = (self, window, background, ops) => {
     println("  frame: ${[op in ops | is_fill(op) | described(op)].join(", ")}")
   }
 }
@@ -6652,6 +6652,167 @@ func TestRun_UiDockExample(t *testing.T) {
 	}
 }
 
+// examples/ui/windows.lyra played headless (ui/VEGA.md §8): a tab let go outside the main
+// window tears off into a window of its own, opened where it was let go and the size of the
+// group it left; a tab dragged over another window's dock shows where it would land there —
+// in that window alone, back in the main one when the pointer returns, nowhere after Escape or
+// over no window — and lands there, its own dock losing it; a window's last panel docked
+// elsewhere closes it, and the system's close puts its panels back; a window moved and
+// resized is where the program keeps it; and a window's only tab does not tear off.
+func TestRun_UiWindowsExample(t *testing.T) {
+	t.Parallel()
+	skipWithoutText(t)
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	bin := filepath.Join(t.TempDir(), "windows")
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, filepath.Join(root, "examples", "ui", "windows.lyra")); code != 0 {
+		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
+	}
+	play := func(script string) string {
+		cmd := command(t, bin, "--script", script)
+		cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+		out, err := cmd.CombinedOutput()
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
+			t.Skipf("SDL could not open a dummy window here: %s", out)
+		} else if ok && exitErr.ExitCode() == 1 && strings.HasPrefix(string(out), "no font") {
+			t.Skipf("no font here: %s", out)
+		} else if err != nil {
+			t.Fatalf("playing: %v\n%s", err, out)
+		}
+		return string(out)
+	}
+	// The tile set's tab, dragged off its strip and out past the main window's right edge.
+	tear := "down:340,62 move:340,300 move:900,200 up:900,200"
+	// The map's tab, from the main window to the torn-off window's dock, left of its group.
+	mapOver := "down:340,62 move:340,300 move:900,300"
+	torn := "w1 at 860,188 544.6x286: tiles*\n"
+	for _, c := range []struct{ name, script, want string }{
+		{"torn off", tear,
+			"main: H30[palettes* problems | V65[sprite map* | console*]]\n" + torn + "open:  w1\npreview: \n"},
+		{"aimed at another window", tear + " " + mapOver,
+			"main: H30[palettes* problems | V65[sprite map* | console*]]\n" + torn + "open:  w1\npreview: w1\n"},
+		{"aimed back at its own", tear + " " + mapOver + " move:340,300",
+			"main: H30[palettes* problems | V65[sprite map* | console*]]\n" + torn + "open:  w1\npreview: main\n"},
+		{"put back by Escape", tear + " " + mapOver + " Escape up:900,300",
+			"main: H30[palettes* problems | V65[sprite map* | console*]]\n" + torn + "open:  w1\npreview: \n"},
+		{"over no window", tear + " " + mapOver + " move:2000,300",
+			"main: H30[palettes* problems | V65[sprite map* | console*]]\n" + torn + "open:  w1\npreview: \n"},
+		{"landed in another window", tear + " " + mapOver + " up:900,300",
+			"main: H30[palettes* problems | V65[sprite* | console*]]\nw1 at 860,188 544.6x286: H50[map* | tiles*]\nopen:  w1\npreview: \n"},
+		{"docked back from it", tear + " " + mapOver + " up:900,300 window:1 down:40,23 move:40,120 move:-300,100 up:-300,100",
+			"main: H30[palettes* problems | V65[V50[sprite* | map*] | console*]]\n" + torn + "open:  w1\npreview: \n"},
+		{"its last panel docked back", tear + " window:1 down:40,23 move:40,120 move:-300,100 up:-300,100",
+			"main: H30[palettes* problems | V65[V50[sprite map* | tiles*] | console*]]\nopen: \npreview: \n"},
+		{"a lone tab stays", tear + " window:1 down:40,23 move:40,120 move:700,100 up:700,100",
+			"main: H30[palettes* problems | V65[sprite map* | console*]]\n" + torn + "open:  w1\npreview: \n"},
+		{"moved and resized", tear + " window:1 place:100,120 resize:300,200",
+			"main: H30[palettes* problems | V65[sprite map* | console*]]\nw1 at 100,120 300x200: tiles*\nopen:  w1\npreview: \n"},
+		{"closed", tear + " window:1 close",
+			"main: H30[palettes* problems | V65[sprite map tiles* | console*]]\nopen: \npreview: \n"},
+	} {
+		if got := play(c.script); got != c.want {
+			t.Errorf("%s: got\n%s\nwant\n%s", c.name, got, c.want)
+		}
+	}
+}
+
+// A second window drawn by the one renderer `ui.gpu.open` makes (macOS; skipped elsewhere) —
+// the GPU's, a swapchain of its own on the device, and SDL's 2D renderer (`LYRA_UI_RENDERER=sdl`),
+// a renderer of its own with a copy of each texture: opened at its size in logical units, drawn
+// in without disturbing the first window's frames, and let go and closed, the first drawn on.
+func TestRun_UiGpuSecondWindow(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "darwin" {
+		t.Skip("ui.gpu's shaders are Metal's")
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	src := filepath.Join(t.TempDir(), "main.lyra")
+	if err := os.WriteFile(src, []byte(`import ui.gpu
+import ui.gpu.{ keep_frames, read_frame, AnyRenderer }
+import ui.sdl3.{ capture_in }
+import ui.backend.{ MAIN_WINDOW, WindowId, NewWindow, Renderer, Platform }
+import ui.draw.{ Color, Rect, Point, Size, Image, rgb, radius, Fill, DrawOp }
+
+let main = () -> u8 => {
+  let Ok(window) = gpu.open("first", 300.0, 220.0) else { return 2 }
+  var platform = window.platform
+  var renderer = window.renderer
+  let Some(second) = platform.open_window(NewWindow {
+    title: "second",
+    size: Size { w: 200.0, h: 120.0 },
+    place: Some(Point { x: 400.0, y: 300.0 }),
+  }) else { return 3 }
+  let size = platform.window_size(second)
+  println("another window: ${second != MAIN_WINDOW}, ${size.w}x${size.h}")
+  let red: []DrawOp = [Fill(Rect { x: 10.0, y: 10.0, w: 50.0, h: 50.0 }, radius(0.0), rgb(0xFF0000))]
+  let blue: []DrawOp = [Fill(Rect { x: 10.0, y: 10.0, w: 50.0, h: 50.0 }, radius(0.0), rgb(0x0000FF))]
+  let white = rgb(0xFFFFFF)
+  if let Some(g) = renderer.gpu { keep_frames(g) }
+  // A few frames, so each window's swapchain is up before the one read.
+  for _ in 0..<3 {
+    renderer.draw(MAIN_WINDOW, white, red)
+    renderer.draw(second, white, blue)
+  }
+  let Some(s) = frame_of(renderer, second, white, blue) else { return 4 }
+  let scale = s.width / 200
+  println("second: ${describe(s, 20 * scale, 20 * scale)} in its box, ${describe(s, 150 * scale, 100 * scale)} past it")
+  renderer.draw(MAIN_WINDOW, white, red)
+  let Some(f) = frame_of(renderer, MAIN_WINDOW, white, red) else { return 4 }
+  println("first: ${describe(f, 20 * scale, 20 * scale)} in its box")
+  renderer.window_closed(second)
+  platform.close_window(second)
+  println("closed: ${platform.window_size(second).w}")
+  renderer.draw(MAIN_WINDOW, white, blue)
+  let Some(after) = frame_of(renderer, MAIN_WINDOW, white, blue) else { return 4 }
+  println("first after: ${describe(after, 20 * scale, 20 * scale)} in its box")
+  gpu.close(platform, renderer)
+  0
+}
+
+/// The frame last drawn in the window: read back from the GPU, or captured from SDL's renderer.
+let frame_of = (
+  renderer: AnyRenderer,
+  window: WindowId,
+  background: Color,
+  ops: []DrawOp
+) -> Maybe<Image> => {
+  if let Some(g) = renderer.gpu { return read_frame(g) }
+  let Some(s) = renderer.sdl else { return None }
+  capture_in(s, window, background, ops)
+}
+
+/// The colour at x, y of the frame, in pixels.
+let describe = pure (f: Image, x: i64, y: i64) -> string => {
+  let p = f.argb[y * f.width + x]
+  let r = (p >> 16) & 0xFF
+  let b = p & 0xFF
+  if r > 200 && b < 50 { "red" } else if b > 200 && r < 50 { "blue" } else if r > 200 && b > 200 { "white" } else { "${r},${b}" }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := "another window: true, 200x120\nsecond: blue in its box, white past it\nfirst: red in its box\nclosed: 0\nfirst after: blue in its box\n"
+	for _, renderer := range []string{"gpu", "sdl"} {
+		if renderer == "sdl" {
+			setenv(t, "LYRA_UI_RENDERER", "sdl")
+		}
+		stdout, stderr, code := captureRunUnoptimized(t, "run", src)
+		switch code {
+		case 2, 3, 4:
+			t.Skipf("%s: no second window's frame here (%d): %s", renderer, code, stdout)
+		case 0:
+		default:
+			t.Fatalf("%s: exited %d\nstderr: %s", renderer, code, stderr)
+		}
+		if stdout != want {
+			t.Errorf("%s: got\n%s\nwant\n%s", renderer, stdout, want)
+		}
+	}
+}
+
 // The glyph atlas's pages (`ui.text`'s `GlyphAtlas`), with pages of 48 texels and two of them,
 // so a capital at 40 pixels takes a page whatever the font: a glyph that fits nowhere opens a
 // page; past two, the page drawn from least recently is cleared and filled again (its glyphs
@@ -6682,7 +6843,7 @@ impl Renderer for Counter {
     if image.width == PAGE { self.clears += 1 } else { self.glyphs += 1 }
     true
   }
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 const PAGE: i64 = 48
@@ -6767,7 +6928,7 @@ impl Renderer for Widths {
     if image.width < 1024 { self.widths.push(image.width) }
     true
   }
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 /// The face each spec is drawn in, by number: 0–3 as added, 4 and on made.
@@ -6939,7 +7100,7 @@ impl Renderer for Counter {
     if image.width < 1024 { self.glyphs += 1 }
     true
   }
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 /// The characters of text, each with the byte it starts at.
@@ -7058,7 +7219,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 data Ev = Nothing
@@ -7265,7 +7426,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 data Ev = Heard(string) | Pressed | Focus(bool) | NewTab
@@ -7405,7 +7566,7 @@ impl Renderer for Blank {
     Some(TextureId(self.textures - 1))
   }
   update = pure (self, id, at, image) => true
-  draw = (self, background, ops) => {}
+  draw = (self, window, background, ops) => {}
 }
 
 @symbol("pipe")

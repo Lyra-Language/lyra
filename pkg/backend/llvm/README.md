@@ -124,6 +124,13 @@ An owned temporary is released after its statement:
 - An exit that is also a back-edge into the region leaks; `break`/`continue` blocks are
   left to exit releases. Temps of an enclosing in-flight statement are protected by
   `pendingBase`.
+- **Dominance is two comparisons**: the tree numbers each block as a depth-first walk enters
+  and leaves it (`domTree.number`). `regionExits` asks it of every block for each temporary,
+  and walking the tree up each time made a long function (`ui.app`'s `Host.step`) minutes to
+  lower (10/27). The tree is Cooper–Harvey–Kennedy's **over a real postorder** from the root
+  (`postorder`); block order is not one, and `intersect` comparing indices put immediate
+  dominators too high. `TestDomTreeAgreesWithItsDefinition` checks random CFGs against the
+  definition.
 
 **Exit releases**: `break`/`continue` owe the pending temps of every statement they skip.
 Dominance is only final once the CFG is, so `lowerBreak`/`lowerContinue` record the

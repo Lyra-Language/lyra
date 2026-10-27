@@ -1,7 +1,8 @@
 # What Vega needs of `ui` — design
 
 **Status: proposed 10/26; steps 1–3 (§2–§6: pictures, tooltips, modals, the smaller controls,
-dropped files) built 10/26, step 4 (§7, docking in one window) 10/27, the rest to come.** Vega, the game studio (the private `vega`
+dropped files) built 10/26, steps 4 and 5 (§7, docking in one window, and §8, several windows)
+10/27, the rest to come.** Vega, the game studio (the private `vega`
 repo), runs on Dear ImGui through `bindings.imgui`. This is the move onto `ui`, as Termina
 made its own (`TERMINAL.md`, `WINDOW.md`): §1 is what Vega's interface does today, §2–§9 what
 `ui` must gain for it, §10 Vega's new front end, §11 the order and §12 the questions left.
@@ -198,6 +199,24 @@ window's dock.
   gone is ignored as `set_window_position` already does.
 - **Wayland cannot place windows**, so a tear-off lands where the compositor puts it there.
 
+**Built 10/27** (`ui/app.lyra`, `ui/backend.lyra`, `ui/README.md`). Changed on the way: the
+windows are beside the main one, not including it — `App.windows: [Windows { of, view,
+on_close, on_moved }]` (an array of at most one, as `App.menus` is), `of` answering a
+`WindowSpec` with a `key` and a `place`, `on_moved` hearing a `WindowPlacement` the program
+keeps; the main window stays `App.view`'s. Every `Platform` call about one window takes a
+`WindowId` (`MAIN_WINDOW` the one it opened with), the cursor and the clipboard staying the
+platform's; `next_events` answers `(WindowId, InputEvent)` pairs, `CloseRequested` is a window's
+close and `QuitRequested` the program's, and `to_screen`/`from_screen` carry a point between
+windows. The renderer is told the window (`draw(window, …)`, `window_closed`) and takes a new
+one on at its first frame: the GPU claims it on its one device; SDL's 2D renderer, which cannot
+share a texture between windows, makes it a renderer of its own and copies every texture into
+it. The atlas is shared as proposed, a picture let go only when no window's last frame showed
+it. A tab is carried between windows by the host, aimed at the dock under the pointer as a
+`foreign` `DockDrop`; it tears off only where the dock says so (`.tears_off(on_tear)`, a
+`DockTear` — what Vega's View menu needs no more than a dock does), and never a dock's only
+panel. Not done: AccessKit hears the main window alone, and `OnResize`/`OnFocus`/
+`OnWindowState` are the main window's. Example `examples/ui/windows.lyra`.
+
 ## 9. lui
 
 `<Picture>`, `.tooltip`, `<Modal>`, `<NumberField>`, `<Radio>`, `<Disclosure>`,
@@ -238,7 +257,8 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
 3. **The smaller controls** (§5) and **dropped files** (§6), example `examples/ui/panels.lyra`.
    **Done 10/26.**
 4. **Docking** in one window (§7), example `examples/ui/dock.lyra`. **Done 10/27.**
-5. **Several windows** (§8), and tearing a dock tab off and back.
+5. **Several windows** (§8), and tearing a dock tab off and back, example
+   `examples/ui/windows.lyra`. **Done 10/27.**
 6. **lui's elements** (§9).
 7. **Vega's front end** (§10): the shell first, then editor by editor, each with its
    checks.

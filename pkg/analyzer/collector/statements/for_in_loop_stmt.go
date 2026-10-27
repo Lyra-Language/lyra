@@ -97,7 +97,8 @@ func collectForInCondition(node *sitter.Node, ctx *collector_ctx.Ctx) (key, valu
 			// identifier token's character set, so nothing in the body can refer to the
 			// element as a whole, which is exactly what the spelling promises. It is a
 			// fixed name rather than a counter because each loop pushes its own scope, so
-			// a nested loop shadows rather than collides.
+			// a nested loop shadows rather than collides — provided its use is placed after
+			// the holder (below).
 			//
 			// **Which slot it sits in decides what it takes apart.** The two-binding form
 			// is `for <index>, <element> in …` (`for i, c in s`), so the element is the
@@ -122,12 +123,19 @@ func collectForInCondition(node *sitter.Node, ctx *collector_ctx.Ctx) (key, valu
 			if pattern == nil {
 				continue
 			}
+			// The holder's use sits at the pattern's end, after the holder's own span (the
+			// pattern's): a name is resolved to the latest binding that ends before its use
+			// (`lookupAt`), so a use spanning the pattern too passed over this loop's holder to
+			// an enclosing destructuring loop's, and the inner loop took apart the outer one's
+			// element — its types, and in the backend its value.
+			at := ctx.NodeLocation(child)
+			at.StartLine, at.StartCol = at.EndLine, at.EndCol
 			destructure = &ast.DestructuringDeclStmt{
 				AstBase: ast.AstBase{Location: ctx.NodeLocation(child)},
 				Keyword: "let",
 				Pattern: pattern,
 				Value: &ast.IdentifierExpr{
-					ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: ctx.NodeLocation(child)}},
+					ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: at}},
 					Name:     forInElementName,
 				},
 			}

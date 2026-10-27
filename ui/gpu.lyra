@@ -38,7 +38,7 @@ module ui.gpu
 //! `filter: blur()` and `backdrop-filter: blur()` — each a layer or the scene so far, blurred
 //! at half size in two passes (σ half the blur radius, as CSS has it).
 
-import ui.backend.{ Renderer }
+import ui.backend.{ Renderer, WindowId, MAIN_WINDOW }
 import ui.app.{ App, WindowSpec, Running, Command, Subscription, running, app_in }
 import ui.text.{ fonts_new }
 import ui.layout.{ Node }
@@ -67,11 +67,11 @@ import ui.draw.{
 import ui.sdl3.{
   SdlPlatform,
   SdlRenderer,
-  open_window,
+  first_window,
   renderer_for,
   platform_for,
   release_renderer,
-  close_window
+  close_platform
 }
 import bindings.gpu
 import bindings.gpu.{ Gpu, DRAW, PUSH_LAYER, POP_LAYER, BACKDROP }
@@ -80,6 +80,7 @@ import bindings.sdl3.{
   window_size,
   window_pixel_density,
   window_display_scale,
+  window_from_id,
   last_error,
   destroy_window,
   quit
@@ -105,10 +106,10 @@ pub let open = (
   height: f32,
   see_through: bool = false
 ) -> Result<GpuWindow, string> => {
-  let window = open_window(title, width, height, see_through)?
+  let window = first_window(title, width, height, see_through)?
   var system = platform_for(window)
   if let Some(g) = gpu.create(window) {
-    if see_through { let _ = system.set_see_through(true) }
+    if see_through { let _ = system.set_see_through(MAIN_WINDOW, true) }
     return Ok(GpuWindow {
       platform: system,
       renderer: AnyRenderer { gpu: Some(GpuRenderer { gpu: g, window: window }) },
@@ -120,15 +121,15 @@ pub let open = (
     quit()
     return Err("SDL could not make a renderer: ${why}")
   }
-  if see_through { let _ = system.set_see_through(true) }
+  if see_through { let _ = system.set_see_through(MAIN_WINDOW, true) }
   Ok(GpuWindow { platform: system, renderer: AnyRenderer { sdl: Some(canvas) } })
 }
 
-/// Close the window: the renderer, the window, and SDL.
+/// Close the windows: the renderer, the windows, and SDL.
 pub let close = (platform: SdlPlatform, renderer: AnyRenderer) -> void => {
   if let Some(r) = renderer.gpu { gpu.destroy(r.gpu) }
   if let Some(r) = renderer.sdl { release_renderer(r) }
-  close_window(platform)
+  close_platform(platform)
 }
 
 /// `view`, `update` and `subscriptions` at `state`, in a window opened as `window` describes
@@ -204,27 +205,43 @@ impl Renderer for AnyRenderer {
       self.sdl = Some(c)
     }
   }
-  draw = (self, background, ops) => {
+  draw = (self, window, background, ops) => {
     if let Some(r) = self.gpu {
       var g = r
-      g.draw(background, ops)
+      g.draw(window, background, ops)
+      self.gpu = Some(g)
       return
     }
     if let Some(r) = self.sdl {
       var c = r
-      c.draw(background, ops)
+      c.draw(window, background, ops)
+      self.sdl = Some(c)
+    }
+  }
+  window_closed = (self, window) => {
+    if let Some(r) = self.gpu {
+      var g = r
+      g.window_closed(window)
+      self.gpu = Some(g)
+    }
+    if let Some(r) = self.sdl {
+      var c = r
+      c.window_closed(window)
+      self.sdl = Some(c)
     }
   }
 }
 
 // ── The GPU renderer ─────────────────────────────────────────────────────────
 
-/// The GPU's renderer for one window, and the size of each texture it holds, for the texels
-/// a quad samples.
+/// The GPU's renderer for the main window and the others it has drawn ([gpu.claim]), and the
+/// size of each texture it holds, for the texels a quad samples.
 pub struct GpuRenderer {
   gpu: Gpu,
   window: Window,
   sizes: [](f32, f32) = [],
+  /// The other windows claimed, each by its number.
+  claimed: [](WindowId, Window) = [],
 }
 
 impl Renderer for GpuRenderer {
@@ -258,12 +275,14 @@ impl Renderer for GpuRenderer {
       image.height,
       image.argb
     )
-  draw = (self, background, ops) => {
-    let frame = frame_of(self, ops)
+  draw = (self, id, background, ops) => {
+    let Some(window) = self.claim(id) else { return }
+    let frame = frame_of(self, window, ops)
     // Premultiplied, as everything the GPU draws is: what a see-through window's layer shows.
     let a = unit(background.a)
-    let _ = gpu.frame(
+    let _ = gpu.frame_in(
       self.gpu,
+      window,
       unit(background.r) * a,
       unit(background.g) * a,
       unit(background.b) * a,
@@ -273,7 +292,34 @@ impl Renderer for GpuRenderer {
     )
     // What the backdrops blur of the desktop, which the GPU never sees: the window's own
     // drawing behind them it blurs itself (kind 7).
-    let _ = gpu.set_backdrop_regions(self.window, frame.regions)
+    let _ = gpu.set_backdrop_regions(window, frame.regions)
+  }
+  window_closed = (self, id) => {
+    for (claimed, window) in self.claimed {
+      if claimed == id { gpu.unclaim(self.gpu, window) }
+    }
+    self.claimed = [c in self.claimed | c.0 != id | c]
+  }
+}
+
+impl GpuRenderer {
+  /// The window numbered `id` — the main window, or another, claimed the first time it is
+  /// drawn — or `None` for one SDL does not have or the GPU cannot draw in.
+  let claim = (self: mut, id: WindowId) -> Maybe<Window> => {
+    if id == MAIN_WINDOW { return Some(self.window) }
+    for (claimed, window) in self.claimed {
+      if claimed == id { return Some(window) }
+    }
+    // A number SDL has no window for, or the main window's own — a script's platform numbers
+    // its windows without SDL — is drawn nowhere.
+    let Some(window) = window_from_id(u32(i64(id))) else { return None }
+    if window == self.window { return None }
+    if !gpu.claim(self.gpu, window) {
+      println("ui.gpu: the GPU could not draw in another window: ${last_error()}")
+      return None
+    }
+    self.claimed.push((id, window))
+    Some(window)
   }
 }
 
@@ -294,7 +340,7 @@ pub let read_frame = (renderer: GpuRenderer) -> Maybe<Image> => {
 /// How many instances and commands `ops` make for `renderer` — what preparing a frame costs,
 /// for a measurement, without drawing it.
 pub let prepare = (renderer: GpuRenderer, ops: []DrawOp) -> (i64, i64) => {
-  let frame = frame_of(renderer, ops)
+  let frame = frame_of(renderer, renderer.window, ops)
   (frame.instances.len() / 80, frame.commands.len() / 6)
 }
 
@@ -360,11 +406,11 @@ struct Instance {
   places: []f32 = [],
 }
 
-/// `ops` as a frame for `renderer`'s window: each op in pixels, as instances in runs of one
+/// `ops` as a frame of `renderer`'s in `window`: each op in pixels, as instances in runs of one
 /// texture, the clips carried on each instance, and the layers and backdrops as commands.
-let frame_of = (renderer: GpuRenderer, ops: []DrawOp) -> Frame => {
-  let scale = window_display_scale(renderer.window)
-  let (vw, vh) = pixels_of(renderer.window)
+let frame_of = (renderer: GpuRenderer, window: Window, ops: []DrawOp) -> Frame => {
+  let scale = window_display_scale(window)
+  let (vw, vh) = pixels_of(window)
   var out = Frame {}
   var run_texture: i64 = -1
   var run_first: i64 = 0

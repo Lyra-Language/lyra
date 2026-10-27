@@ -696,8 +696,17 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] What Vega needs of `ui`** — pictures the program changes, tooltips, modals, the
   smaller controls, dropped files, docking and several windows, then Vega's front end on
   them; designed in `ui/VEGA.md` (10/26), whose §11 is the order. Steps 1–3 (pictures;
-  tooltips, modals; the smaller controls, dropped files) done 10/26, 4 (docking) 10/27; several
-  windows next.
+  tooltips, modals; the smaller controls, dropped files) done 10/26, 4 and 5 (docking, several
+  windows) 10/27; lui's elements (§9) next.
+- **[OPEN] Several windows: what is still the main window's** — AccessKit hears it alone,
+  `OnResize`/`OnFocus`/`OnWindowState` are its, and a drawn title bar (`App.title_bar`) is its
+  only; a window beside it keeps the system's frame (10/27).
+- **[OPEN] `TestRun_UiResizeSettles` runs near its one-minute budget** — 45–48 s alone at
+  `-O0` on an M-series Mac (10/27), so a loaded parallel suite can time it out. Measure a pass
+  and set the budget from it, or play fewer resizes.
+- **[OPEN] Several windows on Linux are unverified** — X11 placing a torn-off window where
+  the tab was let go, SDL's capture carrying the drag past the window, and Wayland, where no
+  window is placed and so no tab crosses windows. Play `examples/ui/windows.lyra` in the VM.
 - **[OPEN] A docked panel's framework state does not follow it** — identities are paths, so a
   panel docked elsewhere (or whose group a split moves) starts with no scroll, focus or caret.
   Keying a dock's panels by their keys needs identities that are not wholly hierarchical (10/27).
@@ -913,9 +922,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   (`constructorAliasCollisions`) rather than silently confused.
 - **[OPEN] An install carries `ui/`** beside `std/` and `bindings/` once a shipped program
   uses it — Vega's release copies those two into its lyra.
-- **[OPEN] Vega: `bindings.sdl3.Event` grew `TextInput`, `WindowResized` and
-  `WindowScaleChanged`.** A `match` over it with no wildcard arm (none in this repo) is no
-  longer exhaustive.
+- **[OPEN] Vega: `bindings.sdl3.Event` grew `TextInput`, `WindowResized`,
+  `WindowScaleChanged`, `WindowMoved` and `WindowCloseRequested`.** A `match` over it with no
+  wildcard arm (none in this repo) is no longer exhaustive.
 
 ## Array comprehensions
 
@@ -981,6 +990,9 @@ Item numbers (#3–#8) are cited from code comments.
   ran. Now charged (a literal by its own body, the rest `AllEffects`). This entry used to
   claim all three were already `AllEffects`, which is how the hole survived being read.
   (COMPLETED.md, 09/22.)
+- **[OPEN] A `let` binding's declared bound is lost.** `let f: pure (i64) -> string = …`
+  reads back as `(i64) -> string`, so `Some(f)` is refused where `Maybe<pure (i64) -> string>`
+  is declared; a parameter keeps its bound (10/27).
 - **[OPEN] A declared callback bound is not inferred.** Forwarding an unconstrained
   parameter into a bounded slot is rejected instead of propagating the bound outward.
 - **[IDEA] A suppression syntax** (`#[allow]`-like). Becomes a gap once a second

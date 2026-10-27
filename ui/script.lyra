@@ -23,6 +23,14 @@ module ui.script
 //! - `drop:PATH` — a file dropped on the window ([FilesDropped]); `drop:A|B` two in one drop.
 //! - `maximize`, `minimize`, `restore` — the system did that to the window
 //!   ([WindowStateChanged]).
+//! - `window:N` — the inputs after it are in the window numbered `N`: `0` the main window
+//!   ([MAIN_WINDOW]), and the ones the program opens numbered from `1` in the order they open
+//!   ([Platform.open_window]). The pointer's places are in that window's units.
+//! - `close` — the user asked to close the window ([CloseRequested]); `quit` — to quit the
+//!   program ([QuitRequested]).
+//! - `place:X,Y` — the user moved the window, its top-left corner now there on the screens
+//!   ([WindowPlaced]). The main window starts at `0,0`; another where the program put it, or
+//!   `40,40` a window after the last.
 //! - `choose:PATH` — the oldest file dialog asked for answers `PATH` (`choose:` alone, a cancel);
 //!   only [parse_steps] reads it.
 //! - `menu:N` — the item tagged `N` of the platform's own menu bar chosen ([MenuChosen]), as
@@ -40,13 +48,17 @@ module ui.script
 //!   is [parse_script]'s.
 //!
 //! Every input is one pass of a program's loop: the platform answers one at a time, then
-//! [CloseRequested] once they are spent. Its clock stands still but for `wait:`, so a timer's
+//! [CloseRequested] in the main window once they are spent. Its clock stands still but for `wait:`, so a timer's
 //! firing is exact.
 
 import ui.backend.{
   Platform,
+  WindowId,
+  MAIN_WINDOW,
   InputEvent,
   CloseRequested,
+  QuitRequested,
+  WindowPlaced,
   PointerMoved,
   PointerDown,
   PointerUp,
@@ -128,7 +140,7 @@ pub struct ScriptPlatform {
   drag_areas: []Rect = [],
   keep_areas: []Rect = [],
   resize_margin: f32 = 0.0,
-  answers: []InputEvent = [],
+  answers: [](WindowId, InputEvent) = [],
   /// The file dialogs asked for and not yet answered, oldest first, each by its tag.
   dialogs: [](i32, FileDialog) = [],
   opened: []string = [],
@@ -140,13 +152,33 @@ pub struct ScriptPlatform {
   /// The window's title, as the program last set it.
   title: string = "",
   /// The live-resize hook, and how many times a drag step called it.
-  hook: Maybe<() -> void> = None,
+  hook: Maybe<(WindowId) -> void> = None,
   dragged: i64 = 0,
   /// The clock, in milliseconds, and how much of the current wait has passed.
   clock: i64 = 0,
   waited: i64 = 0,
   /// The modifier keys held, as the last `Holding` step said.
   holding: Modifiers = Modifiers {},
+  /// The windows opened beside the main one ([Platform.open_window]), oldest first, and the
+  /// window the steps' inputs are in now (`window:N`).
+  others: []ScriptWindow = [],
+  into: WindowId = MAIN_WINDOW,
+  opened_windows: i64 = 0,
+}
+
+/// A window a script's program opened beside the main one: its number, and what of it a test
+/// reads — its size, title and place, its limits and state, and the field text input was last
+/// asked for. (The rest a main window records — its frame, its areas, assistive technology —
+/// is not kept for it.)
+pub struct ScriptWindow {
+  id: WindowId,
+  size: Size,
+  title: string = "",
+  position: Maybe<Point> = None,
+  least: Size = Size {},
+  most: Size = Size {},
+  window: WindowState = WindowState {},
+  typing: Maybe<Rect> = None,
 }
 
 /// One step of a script: an input, time passing, the window dragged to a size — the
@@ -160,6 +192,8 @@ pub data Step =
   /// The oldest file dialog asked for and not yet answered answers this: a path, or `None` for
   /// a cancel. Nothing, where none was asked for.
   | Answered(Maybe<string>)
+  /// The inputs from now on are in this window (`window:N`).
+  | Into(WindowId)
 
 /// A platform playing `inputs`, its window `size` large, with no time passing.
 pub let script_platform = pure (inputs: []InputEvent, size: Size) -> ScriptPlatform =>
@@ -177,7 +211,7 @@ impl Platform for ScriptPlatform {
       self.answers = []
       return said
     }
-    if self.next >= self.steps.len() { return [CloseRequested] }
+    if self.next >= self.steps.len() { return [(MAIN_WINDOW, CloseRequested)] }
     match self.steps[self.next] {
       // Time passes as far as the program waits — no further than the step says.
       Waited(ms) => {
@@ -196,43 +230,61 @@ impl Platform for ScriptPlatform {
         self.holding = mods
         []
       },
+      Into(window) => {
+        self.next += 1
+        self.into = window
+        []
+      },
       Answered(path) => {
         self.next += 1
         if self.dialogs.len() == 0 { return [] }
         let (tag, _) = self.dialogs[0]
         self.dialogs = self.dialogs.slice(1, self.dialogs.len())
-        [FileAnswered(tag, path)]
+        [(MAIN_WINDOW, FileAnswered(tag, path))]
       },
       Dragged(size) => {
         self.next += 1
-        self.size = size.held(self.least, self.most)
+        let _ = self.sized(self.into, size)
         if let Some(redraw) = self.hook {
           self.dragged += 1
-          redraw()
+          redraw(self.into)
         }
         []
       },
       Played(input) => {
         self.next += 1
+        let window = self.into
         match input {
-          WindowStateChanged(state) => { self.window = state },
-          Resized(size) => {
-            self.size = size.held(self.least, self.most)
-            return [Resized(self.size)]
-          },
+          WindowStateChanged(state) => self.set_state(window, state),
+          Resized(size) => return [(window, Resized(self.sized(window, size)))],
+          WindowPlaced(at) => self.placed(window, at),
           AppearanceChanged(look) => { self.look = look },
           _ => {},
         }
-        [input]
+        [(window, input)]
       },
     }
   }
-  window_size = pure (self) => self.size
+  window_size = pure (self, id) => {
+    if id == MAIN_WINDOW { return self.size }
+    for w in self.others {
+      if w.id == id { return w.size }
+    }
+    Size {}
+  }
   held = pure (self) => self.holding
   // It never waits: each pass plays the next step.
   wake_for = (self, fds) => {}
-  scale = pure (self) => self.units
-  set_text_input = (self, field) => { self.typing = field }
+  scale = pure (self, id) => self.units
+  set_text_input = (self, id, field) => {
+    if id == MAIN_WINDOW {
+      self.typing = field
+      return
+    }
+    for i, w in self.others {
+      if w.id == id { self.others[i].typing = field }
+    }
+  }
   clipboard = pure (self) => self.clip
   set_clipboard = (self, text) => { self.clip = text }
   set_cursor = (self, cursor) => { self.shape = cursor }
@@ -243,46 +295,154 @@ impl Platform for ScriptPlatform {
     self.opened.push(url)
     true
   }
-  update_access = (self, tree) => { self.access = tree }
+  update_access = (self, id, tree) => { if id == MAIN_WINDOW { self.access = tree } }
   on_live_resize = (self, hook) => { self.hook = Some(hook) }
-  set_size_limits = (self, least, most) => {
-    self.least = least
-    self.most = most
-    self.size = self.size.held(least, most)
+  set_size_limits = (self, id, least, most) => {
+    if id == MAIN_WINDOW {
+      self.least = least
+      self.most = most
+      self.size = self.size.held(least, most)
+      return
+    }
+    for i, w in self.others {
+      if w.id == id {
+        self.others[i] = ScriptWindow {
+          w | least: least,
+          most: most,
+          size: w.size.held(least, most)
+        }
+      }
+    }
   }
-  set_window_size = (self, size) => {
-    self.size = size.held(self.least, self.most)
+  set_window_size = (self, id, size) => {
+    let _ = self.sized(id, size)
   }
-  window_position = pure (self) => self.position
-  set_see_through = (self, on) => {
-    self.see_through = on
+  window_position = pure (self, id) => {
+    if id == MAIN_WINDOW { return self.position }
+    for w in self.others {
+      if w.id == id { return w.position }
+    }
+    None
+  }
+  set_see_through = (self, id, on) => {
+    if id == MAIN_WINDOW { self.see_through = on }
     true
   }
-  set_backdrop_blur = (self, radius) => {
-    self.backdrop_blur = radius
+  set_backdrop_blur = (self, id, radius) => {
+    if id == MAIN_WINDOW { self.backdrop_blur = radius }
     true
   }
-  set_window_position = (self, at) => { self.position = Some(at) }
-  set_title = (self, title) => { self.title = title }
+  set_window_position = (self, id, at) => self.placed(id, at)
+  // A logical unit is a point of the screens here (its scale is its density).
+  to_screen = pure (self, id, at) => match self.window_position(id) {
+    Some(corner) => Some(Point { x: corner.x + at.x, y: corner.y + at.y }),
+    None => None,
+  }
+  from_screen = pure (self, id, at) => match self.window_position(id) {
+    Some(corner) => Some(Point { x: at.x - corner.x, y: at.y - corner.y }),
+    None => None,
+  }
+  set_title = (self, id, title) => {
+    if id == MAIN_WINDOW {
+      self.title = title
+      return
+    }
+    for i, w in self.others {
+      if w.id == id { self.others[i].title = title }
+    }
+  }
   set_menus = (self, menus) => {
     self.menus = menus
     self.native_menus
   }
-  window_state = pure (self) => self.window
-  change_window = (self, change) => {
-    self.window = match change {
-      ToMinimized => WindowState { self.window | minimized: true },
+  window_state = pure (self, id) => {
+    if id == MAIN_WINDOW { return self.window }
+    for w in self.others {
+      if w.id == id { return w.window }
+    }
+    WindowState {}
+  }
+  change_window = (self, id, change) => {
+    let was = self.window_state(id)
+    let now = match change {
+      ToMinimized => WindowState { was | minimized: true },
       ToMaximized => WindowState { minimized: false, maximized: true },
       ToRestored => WindowState {},
     }
-    self.answers.push(WindowStateChanged(self.window))
+    self.set_state(id, now)
+    self.answers.push((id, WindowStateChanged(now)))
   }
-  set_decorated = (self, on) => { self.decorated = on }
-  choose_file = (self, tag, dialog) => { self.dialogs.push((tag, dialog)) }
-  set_window_areas = (self, drags, keeps, margin) => {
+  set_decorated = (self, id, on) => { if id == MAIN_WINDOW { self.decorated = on } }
+  choose_file = (self, id, tag, dialog) => { self.dialogs.push((tag, dialog)) }
+  set_window_areas = (self, id, drags, keeps, margin) => {
+    if id != MAIN_WINDOW { return }
     self.drag_areas = drags
     self.keep_areas = keeps
     self.resize_margin = margin
+  }
+  // Numbered from 1 in the order they open; placed where asked, else 40 across and down from
+  // the last window opened.
+  open_window = (self, spec) => {
+    let id = WindowId(self.opened_count() + 1)
+    let last = if self.others.len() > 0 { self.others[self.others.len() - 1].position } else {
+      self.position
+    }
+    let corner = last ?? Point {}
+    self.others.push(ScriptWindow {
+      id: id,
+      size: spec.size,
+      title: spec.title,
+      position: Some(spec.place ?? Point { x: corner.x + 40.0, y: corner.y + 40.0 }),
+    })
+    self.opened_windows += 1
+    Some(id)
+  }
+  close_window = (self, id) => {
+    self.others = [w in self.others | w.id != id | w]
+  }
+}
+
+impl ScriptPlatform {
+  /// How many windows have been opened beside the main one, closed or not.
+  pub let opened_count = pure (self) -> i64 => self.opened_windows
+
+  /// The window `id` resized to `size`, held to its limits as a window's would be; the size
+  /// it took.
+  let sized = (self: mut, id: WindowId, size: Size) -> Size => {
+    if id == MAIN_WINDOW {
+      self.size = size.held(self.least, self.most)
+      return self.size
+    }
+    for i, w in self.others {
+      if w.id == id {
+        let held = size.held(w.least, w.most)
+        self.others[i].size = held
+        return held
+      }
+    }
+    size
+  }
+
+  /// The window `id` minimized, maximized or fullscreen as `state` says.
+  let set_state = (self: mut, id: WindowId, state: WindowState) -> void => {
+    if id == MAIN_WINDOW {
+      self.window = state
+      return
+    }
+    for i, w in self.others {
+      if w.id == id { self.others[i].window = state }
+    }
+  }
+
+  /// The window `id`'s top-left corner at `at` on the screens.
+  let placed = (self: mut, id: WindowId, at: Point) -> void => {
+    if id == MAIN_WINDOW {
+      self.position = Some(at)
+      return
+    }
+    for i, w in self.others {
+      if w.id == id { self.others[i].position = Some(at) }
+    }
   }
 }
 
@@ -302,6 +462,8 @@ pub let parse_script = pure (script: string) -> Result<[]InputEvent, string> => 
         return Err("a modifier on the pointer is a step, not an input; read the script with parse_steps"),
       Answered(_) =>
         return Err("choose: is a step, not an input; read the script with parse_steps"),
+      Into(_) =>
+        return Err("window: is a step, not an input; read the script with parse_steps"),
     }
   }
   Ok(inputs)
@@ -392,6 +554,20 @@ pub let parse_steps = pure (script: string) -> Result<[]Step, string> => {
     }
     if let Some(path) = token.strip_prefix("choose:") {
       inputs.push(Answered(if path.len() == 0 { None } else { Some(path) }))
+      continue
+    }
+    if let Some(n) = token.strip_prefix("window:") {
+      let Some(id) = n.parse_i64() else { return Err("not a window's number: ${token}") }
+      inputs.push(Into(WindowId(id)))
+      continue
+    }
+    if token == "close" || token == "quit" {
+      inputs.push(Played(if token == "close" { CloseRequested } else { QuitRequested }))
+      continue
+    }
+    if let Some(place) = token.strip_prefix("place:") {
+      let Some(at) = point(place) else { return Err("not a place: ${token}") }
+      inputs.push(Played(WindowPlaced(at)))
       continue
     }
     if let Some(tag) = token.strip_prefix("menu:") {

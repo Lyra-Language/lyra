@@ -52,6 +52,19 @@ func TestExec_ForInDestructuring(t *testing.T) {
 			want: "1a1a\n1a2b\n2b1a\n2b2b",
 		},
 		{
+			// Over elements of different types. The case above passed while the inner
+			// loop's pattern took the *outer* holder's type — the same there: the holder's
+			// use spanned the holder, so the lookup that wants a binding ending before it
+			// skipped the inner loop's (10/27). Here that was a type error, and with types
+			// that happened to fit, IR clang refused.
+			name: "nested destructuring loops over different elements",
+			src: `
+  let outer: [](i64, bool) = [(1, true), (2, false)]
+  let inner: [](i32, string) = [(7, "seven")]
+  for (n, b) in outer { for (m, s) in inner { if m == 7 && b { println("${n}:${m}${s}") } } }`,
+			want: "1:7seven",
+		},
+		{
 			// The element name is unforgeable, so a body binding cannot collide with it —
 			// and an ordinary name reused inside the body shadows as it always would.
 			name: "a body binding of the same name shadows",

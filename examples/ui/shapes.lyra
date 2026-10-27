@@ -13,7 +13,16 @@
 
 import ui.sdl3
 import ui.sdl3.{ SdlRenderer, capture }
-import ui.backend.{ Platform, Renderer, InputEvent, CloseRequested, KeyPressed, Escape }
+import ui.backend.{
+  MAIN_WINDOW,
+  WindowId,
+  Platform,
+  Renderer,
+  InputEvent,
+  CloseRequested,
+  KeyPressed,
+  Escape
+}
 import ui.draw.{
   DrawOp,
   Fill,
@@ -60,7 +69,7 @@ let main = () -> u8 => {
   var drawn = 0
   var status: u8 = 0
   loop {
-    let list = scene(platform.window_size(), art)
+    let list = scene(platform.window_size(MAIN_WINDOW), art)
     drawn += 1
     if frames > 0 && drawn >= frames {
       if let Some(path) = args.value("--png") {
@@ -68,7 +77,7 @@ let main = () -> u8 => {
       }
       break
     }
-    renderer.draw(BACKGROUND, list)
+    renderer.draw(MAIN_WINDOW, BACKGROUND, list)
     if wants_to_close(platform.next_events(if frames > 0 { 0 } else { -1 })) { break }
   }
   sdl3.close(platform, renderer)
@@ -135,8 +144,8 @@ let upload_art = (renderer: mut SdlRenderer) -> Maybe<Art> => {
 }
 
 /// Whether the user asked to close the window, or pressed Escape.
-let wants_to_close = pure (events: []InputEvent) -> bool =>
-  events.any((e) => match e {
+let wants_to_close = pure (events: [](WindowId, InputEvent)) -> bool =>
+  events.any((e) => match e.1 {
     CloseRequested => true,
     KeyPressed(Escape, _) => true,
     _ => false,
