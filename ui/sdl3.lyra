@@ -87,6 +87,9 @@ import bindings.sdl3.{
   TextEditing as SdlTextEditing,
   WindowFocusGained as SdlFocusGained,
   WindowFocusLost as SdlFocusLost,
+  DropBegin as SdlDropBegin,
+  DropFile as SdlDropFile,
+  DropComplete as SdlDropComplete,
   poll_event_with_modifiers,
   wait_event_with_modifiers,
   modifiers,
@@ -110,6 +113,8 @@ import bindings.sdl3.{
   CURSOR_MOVE,
   CURSOR_NOT_ALLOWED,
   CURSOR_WAIT,
+  CURSOR_EW_RESIZE,
+  CURSOR_NS_RESIZE,
   KEY_RETURN,
   KEY_KP_ENTER,
   KEY_ESCAPE,
@@ -160,6 +165,7 @@ import ui.backend.{
   ToRestored,
   WindowStateChanged,
   FileAnswered,
+  FilesDropped,
   Renderer,
   InputEvent,
   Appearance,
@@ -211,6 +217,8 @@ import ui.backend.{
   Move,
   NotAllowed,
   Busy,
+  ResizeAcross,
+  ResizeDown,
   AccessRole,
   AccessRequest,
   AccessAction,
@@ -224,6 +232,11 @@ import ui.backend.{
   AxTextInput,
   AxScroll,
   AxComboBox,
+  AxRadio,
+  AxRadioGroup,
+  AxProgress,
+  AxTable,
+  AxRow,
   AxListBox,
   AxOption,
   AxContainer,
@@ -385,6 +398,8 @@ pub struct SdlPlatform {
   /// The shape of the menus last installed in the Mac's own bar ([install_menus]), `""` for
   /// none.
   menus_installed: string = "",
+  /// The paths of a drop in progress, gathered until it completes ([FilesDropped]).
+  dropping: []string = [],
 }
 
 impl Platform for SdlPlatform {
@@ -395,7 +410,18 @@ impl Platform for SdlPlatform {
       wait_event_with_modifiers(wait_ms)
     }
     while let Some((event, held)) = next {
-      if let Some(input) = translate(event, held, per_point) { events.push(input) }
+      // A drop's files, gathered into one input when it completes.
+      match event {
+        SdlDropBegin => { self.dropping = [] },
+        SdlDropFile(path) => { self.dropping.push(path) },
+        SdlDropComplete => {
+          if self.dropping.len() > 0 { events.push(FilesDropped(self.dropping)) }
+          self.dropping = []
+        },
+        _ => {
+          if let Some(input) = translate(event, held, per_point) { events.push(input) }
+        },
+      }
       next = poll_event_with_modifiers()
     }
     // The items of the Mac's own bar chosen — by click or key equivalent, during SDL's pump —
@@ -600,6 +626,11 @@ let role_code = pure (role: AccessRole) -> i32 => match role {
   AxOption => 12,
   AxTabList => 13,
   AxTab => 14,
+  AxRadio => 15,
+  AxRadioGroup => 16,
+  AxProgress => 17,
+  AxTable => 18,
+  AxRow => 19,
   AxContainer => 0,
 }
 
@@ -887,6 +918,8 @@ let cursor_id = pure (shape: Cursor) -> i32 => match shape {
   Move => CURSOR_MOVE,
   NotAllowed => CURSOR_NOT_ALLOWED,
   Busy => CURSOR_WAIT,
+  ResizeAcross => CURSOR_EW_RESIZE,
+  ResizeDown => CURSOR_NS_RESIZE,
 }
 
 // ── The renderer ─────────────────────────────────────────────────────────────

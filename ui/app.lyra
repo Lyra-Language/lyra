@@ -73,6 +73,7 @@ import ui.backend.{
   NativeSeparator,
   WindowState,
   WindowStateChanged,
+  FilesDropped,
   ToMinimized,
   ToMaximized,
   ToRestored,
@@ -282,6 +283,9 @@ pub data Subscription<e> =
   | OnFocus((bool) -> e)
   /// The window minimized, maximized, made fullscreen or put back, each time it is.
   | OnWindowState((WindowState) -> e)
+  /// Files dropped on the window, by path, one drop's together — on a Mac also a file opened
+  /// from Finder, which the system hands over as a drop.
+  | OnFilesDropped(([]string) -> e)
   /// The event each pass that file descriptor has data to read — or has closed, which a read
   /// says — so a terminal reads its programs' output as it comes, and an idle one sleeps:
   /// the platform's wait wakes for it (`Platform.wake_for`). Level-triggered, as `poll` is:
@@ -615,6 +619,10 @@ impl Host<s, e> {
         }),
         WindowStateChanged(state) => self.heard(at, platform, (sub) => match sub {
           OnWindowState(make) => Some(make(state)),
+          _ => None,
+        }),
+        FilesDropped(paths) => self.heard(at, platform, (sub) => match sub {
+          OnFilesDropped(make) => Some(make(paths)),
           _ => None,
         }),
         FileAnswered(tag, path) => {

@@ -70,6 +70,11 @@ static accesskit_role role_of(int role) {
     case 12: return ACCESSKIT_ROLE_LIST_BOX_OPTION;
     case 13: return ACCESSKIT_ROLE_TAB_LIST;
     case 14: return ACCESSKIT_ROLE_TAB;
+    case 15: return ACCESSKIT_ROLE_RADIO_BUTTON;
+    case 16: return ACCESSKIT_ROLE_RADIO_GROUP;
+    case 17: return ACCESSKIT_ROLE_PROGRESS_INDICATOR;
+    case 18: return ACCESSKIT_ROLE_TABLE;
+    case 19: return ACCESSKIT_ROLE_ROW;
     default: return ACCESSKIT_ROLE_GENERIC_CONTAINER;
   }
 }

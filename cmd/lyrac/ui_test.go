@@ -673,6 +673,11 @@ import ui.layout.{
   OptionRole,
   TabListRole,
   TabRole,
+  RadioRole,
+  RadioGroupRole,
+  ProgressRole,
+  TableRole,
+  RowRole,
   FieldSpec,
   SliderSpec,
   Vertical,
@@ -896,6 +901,11 @@ let role_name = pure (role: Role) -> string => match role {
   OptionRole => "option",
   TabListRole => "tab list",
   TabRole => "tab",
+  RadioRole => "radio",
+  RadioGroupRole => "radio group",
+  ProgressRole => "progress",
+  TableRole => "table",
+  RowRole => "row",
 }
 `)
 	want := `hits a,c,b,c
@@ -1429,8 +1439,9 @@ overlapping: 3 ops, 3 calls
 
 // Phase 5's accessibility tree (`ui.access`), built from a form as the host hands it to the
 // platform: a node for each paragraph and control — none for the rows and columns between —
-// a field labelled by its `label`, a checkbox ticked or not, a slider's number and range, and
-// the actions each offers (1 focus, 2 click, 4 set value, 8/16 step). Then what VoiceOver
+// a field labelled by its `label`, a checkbox ticked or not, a slider's number and range, a
+// radio group's radios, a progress bar's percentage, a table's rows, a button's tooltip as its
+// description, and the actions each offers (1 focus, 2 click, 4 set value, 8/16 step). Then what VoiceOver
 // does, as `AccessAction` inputs found by label: the name set, the box ticked, the slider
 // stepped twice and set outright (as a number, and as text, which is stepped too and ignored
 // when it is no number), Send pressed — the events the keyboard would raise — and an action
@@ -1439,11 +1450,11 @@ func TestRun_UiAccessibilityTree(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ sandbox, host_of }
 import ui.script.{ script_platform, ScriptPlatform }
-import ui.backend.{ AxWindow, AxGroup, AxLabel, AxImage, AxButton, AxCheckbox, AxSlider, AxTextInput, AxScroll, AxComboBox, AxListBox, AxOption, AxTabList, AxTab, AxContainer, Renderer, InputEvent, AccessAction, AccessTree, AccessNode, AxSetValue, AxClick, AxIncrement, AxFocus, AxSetNumber }
+import ui.backend.{ AxWindow, AxGroup, AxLabel, AxImage, AxButton, AxCheckbox, AxSlider, AxTextInput, AxScroll, AxComboBox, AxListBox, AxOption, AxTabList, AxTab, AxRadio, AxRadioGroup, AxProgress, AxTable, AxRow, AxContainer, Renderer, InputEvent, AccessAction, AccessTree, AccessNode, AxSetValue, AxClick, AxIncrement, AxFocus, AxSetNumber }
 import ui.access.{ access_node }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new, Fonts }
-import ui.layout.{ Node, FieldSpec, SliderSpec, column, row, text, text_input, checkbox, slider, button }
+import ui.layout.{ Node, FieldSpec, SliderSpec, column, row, text, text_input, checkbox, slider, button, radio_group, progress, table, TableColumn }
 import std.collections.{ HashMap, hashmap_new }
 
 /// A renderer that draws nothing.
@@ -1467,7 +1478,7 @@ struct Form {
   sent: string = "",
 }
 
-data Ev = Named(string) | Ticked | Moved(f32) | Sent
+data Ev = Named(string) | Ticked | Moved(f32) | Sent | Level(i64) | Picked(i64) | Widened(i64, f32)
 
 let main = () -> u8 => {
   var fonts = fonts_new()
@@ -1516,7 +1527,10 @@ let view = pure (form: Form) -> Node<Ev> => column([
   column([text("Your name"), Node { text_input(FieldSpec { value: form.name, placeholder: "Ada", on_edit: Named }) | label: "Name" }]),
   checkbox("Tick me", form.ticked, Ticked),
   row([text("Volume"), Node { slider(SliderSpec { value: form.volume, min: 0.0, max: 10.0, step: 1.0, on_change: Moved }) | label: "Volume" }]),
-  button("Send", Sent),
+  radio_group(["Low", "High"], 0, Level),
+  progress(0.5),
+  table([TableColumn { title: "Item", width: 80.0 }], [[text::<Ev>("one")]], 0, Picked, Widened),
+  button("Send", Sent).tooltip("Sends the form"),
 ])
 
 let update = pure (form: Form, ev: Ev) -> Form => match ev {
@@ -1524,6 +1538,7 @@ let update = pure (form: Form, ev: Ev) -> Form => match ev {
   Ticked => Form { form | ticked: !form.ticked },
   Moved(v) => Form { form | volume: v },
   Sent => Form { form | sent: "yes" },
+  _ => form,
 }
 
 let print_tree = (tree: AccessTree, id: u64, depth: i64) -> void => {
@@ -1534,6 +1549,7 @@ let print_tree = (tree: AccessTree, id: u64, depth: i64) -> void => {
     var line = "${indent}${role_name(node)}"
     if node.label.len() > 0 { line = "${line} label=${node.label}" }
     if node.value.len() > 0 { line = "${line} value=${node.value}" }
+    if node.description.len() > 0 { line = "${line} description=${node.description}" }
     if let Some(t) = node.toggled { line = "${line} toggled=${t}" }
     if let Some((v, a, b, s)) = node.numeric { line = "${line} numeric=${v} in ${a}..${b} by ${s}" }
     if node.actions != 0 { line = "${line} actions=${node.actions}" }
@@ -1559,6 +1575,11 @@ let role_name = pure (node: AccessNode) -> string => match node.role {
   AxOption => "option",
   AxTabList => "tab list",
   AxTab => "tab",
+  AxRadio => "radio",
+  AxRadioGroup => "radio group",
+  AxProgress => "progress",
+  AxTable => "table",
+  AxRow => "row",
   AxContainer => "container",
 }
 `)
@@ -1569,7 +1590,14 @@ let role_name = pure (node: AccessNode) -> string => match node.role {
   checkbox label=Tick me toggled=false actions=3
   label value=Volume
   slider label=Volume numeric=5 in 0..10 by 1 actions=29
-  button label=Send actions=3
+  radio group
+    radio label=Low toggled=true actions=3
+    radio label=High toggled=false actions=3
+  progress label=50%
+  label value=Item
+  table
+    row label=one toggled=true actions=3
+  button label=Send description=Sends the form actions=3
 after: name Ada, ticked true, volume 7, sent yes
 focus on Name: true
 set number: volume 9
@@ -6473,6 +6501,78 @@ tooltip: A new document
 	}
 	if n := white(frame, 440, 140, 470, 160); n < 600 {
 		t.Errorf("inside the dialog, %d white pixels of 651: no dialog in the middle", n)
+	}
+}
+
+// The smaller controls and dropped files (ui/VEGA.md §5–6), as the panels example plays
+// them: a number field scrubbed by dragging its label (8 units, two steps of 8), stepped by
+// its + button, typed into and stepped by Up (to the quarter); a radio group's choice moved by
+// Down from its one Tab stop; a disclosure collapsed from the keyboard, its content gone from
+// Tab's order; two files dropped as one input; the table's rows one Tab stop — the selected
+// row — Up moving the selection; a column's edge and the splitter's dragged.
+func TestRun_UiPanelsExample(t *testing.T) {
+	t.Parallel()
+	skipWithoutText(t)
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "panels")
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, filepath.Join(root, "examples", "ui", "panels.lyra")); code != 0 {
+		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
+	}
+	shot := filepath.Join(dir, "frame.png")
+	script := "down:30,53 move:38,53 up:38,53 click:235,93 click:127,133 Primary+a '2.5' Up Up " +
+		"Tab Tab Tab Down Down Tab Space drop:/tmp/bat.png|/tmp/ghost.png Tab Up " +
+		"down:441,52 move:461,52 up:461,52 down:263,300 move:303,300 up:303,300"
+	cmd := command(t, bin, "--script", script, "--png", shot)
+	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_RENDER_DRIVER=software")
+	out, err := cmd.CombinedOutput()
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
+		t.Skipf("SDL could not open a dummy window here: %s", out)
+	} else if ok && exitErr.ExitCode() == 1 && strings.HasPrefix(string(out), "no font") {
+		t.Skipf("no font here: %s", out)
+	} else if err != nil {
+		t.Fatalf("playing: %v\n%s", err, out)
+	}
+	want := `width 32, height 24, speed 3, palette 2, collision false
+side 300, columns 180 70 70
+sprites hero.png slime.png coin.png bat.png ghost.png, selected 3
+`
+	if string(out) != want {
+		t.Errorf("got\n%s\nwant\n%s", out, want)
+	}
+	f, err := os.Open(shot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	frame, err := png.Decode(f)
+	if err != nil {
+		t.Fatalf("the frame is not a PNG: %v", err)
+	}
+	// The accent is blue: what it fills or tints is bluer than it is red.
+	blue := func(x, y int) bool {
+		c := rgbAt(frame, x, y)
+		return c[2] > c[0]+20
+	}
+	for _, c := range []struct {
+		x, y int
+		want bool
+		what string
+	}{
+		{20, 241, true, "Palette 2's dot"},
+		{20, 193, false, "Palette 0's circle, no longer chosen"},
+		{20, 333, true, "the progress bar's fill"},
+		{240, 333, false, "the progress bar's track past it"},
+		{690, 158, true, "the selected row, bat.png"},
+		{690, 132, false, "the row above it"},
+	} {
+		if got := blue(c.x, c.y); got != c.want {
+			t.Errorf("%s, at %d,%d (%v): blue %v", c.what, c.x, c.y, rgbAt(frame, c.x, c.y), got)
+		}
 	}
 }
 

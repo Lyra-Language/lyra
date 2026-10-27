@@ -34,6 +34,11 @@ import ui.backend.{
   AxComboBox,
   AxListBox,
   AxOption,
+  AxRadio,
+  AxRadioGroup,
+  AxProgress,
+  AxTable,
+  AxRow,
   ACCESS_FOCUS,
   ACCESS_CLICK,
   ACCESS_SET_VALUE,
@@ -56,7 +61,13 @@ import ui.layout.{
   ComboBoxRole,
   ListBoxRole,
   OptionRole,
+  RadioRole,
+  RadioGroupRole,
+  ProgressRole,
+  TableRole,
+  RowRole,
   Checkable,
+  Radio,
   Ranged,
   Editable,
   Choosing,
@@ -136,6 +147,11 @@ let heard_as<e> = pure (laid: Laid<e>) -> Maybe<AccessRole> => match laid.role {
   OptionRole => Some(AxOption),
   TabListRole => Some(AxTabList),
   TabRole => Some(AxTab),
+  RadioRole => Some(AxRadio),
+  RadioGroupRole => Some(AxRadioGroup),
+  ProgressRole => Some(AxProgress),
+  TableRole => Some(AxTable),
+  RowRole => Some(AxRow),
 }
 
 /// The node for `laid`, heard as `role`.
@@ -174,6 +190,9 @@ let node_for<e> = pure (
     },
     Checkable(ticked, _) =>
       AccessNode { node | toggled: Some(ticked), actions: node.actions | ACCESS_CLICK },
+    // A radio button, or a table's row: chosen, and chosen by a click.
+    Radio(chosen, _) =>
+      AccessNode { node | toggled: Some(chosen), actions: node.actions | ACCESS_CLICK },
     Ranged(spec) => AccessNode {
       node |
       numeric: Some((f64(spec.value), f64(spec.min), f64(spec.max), f64(spec.step))),

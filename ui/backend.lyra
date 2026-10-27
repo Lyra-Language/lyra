@@ -217,6 +217,11 @@ pub data AccessRole =
   | AxOption
   | AxTabList
   | AxTab
+  | AxRadio
+  | AxRadioGroup
+  | AxProgress
+  | AxTable
+  | AxRow
   | AxContainer
 
 /// What assistive technology asks of an element.
@@ -306,6 +311,9 @@ pub data InputEvent =
   /// The file dialog asked for under this tag ([Platform.choose_file]) answered: the path
   /// chosen, or `None` — closed without a choice, or not shown at all.
   | FileAnswered(i32, Maybe<string>)
+  /// Files dropped on the window, by path, all of one drop together — on a Mac also a file
+  /// opened from Finder, which the system hands over as a drop.
+  | FilesDropped([]string)
 
 /// A mouse button, or a touch (which is [Primary]).
 pub data PointerButton = Primary | Secondary | Middle | OtherButton(u8)
@@ -347,5 +355,5 @@ pub struct Modifiers {
   primary: bool = false,
 }
 
-/// The pointer's shape.
-pub data Cursor = Arrow | IBeam | Hand | Crosshair | Move | NotAllowed | Busy
+/// The pointer's shape — the last two the arrows across and up and down an edge that resizes.
+pub data Cursor = Arrow | IBeam | Hand | Crosshair | Move | NotAllowed | Busy | ResizeAcross | ResizeDown

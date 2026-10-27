@@ -9,6 +9,28 @@ Newest first.
 
 ## Dated log
 
+### 10/26/26 — `ui`: the smaller controls, and files dropped on the window
+
+- **`ui/VEGA.md` §11's step 3**: `number_field`, `radio_group`/`radio`, `disclosure`,
+  `progress`, `separator`, `splitter` and `table` (`ui/layout/forms.lyra`, `table.lyra`), and
+  `Subscription.OnFilesDropped` with `ui.sdl3` gathering SDL's drop events into one input.
+  `examples/ui/panels.lyra` uses them all; `TestRun_UiPanelsExample` plays every one, and the
+  accessibility test hears the new roles.
+- **Three framework pieces, not seven controls' worth of input code.** A number dragged along
+  an axis (`Drags`) is the splitter's edge, a column's and a number field's label; a group with
+  one Tab stop whose arrows move the choice (`Radio` in a `OneOf`) is a radio group and a
+  table's rows; `FieldSpec.on_step` is a number field's Up and Down. The rest is composition.
+- **A view can call only a `pure` parameter, not a `pure` field.** A function type on a field
+  is not trusted — what is stored there is unchecked — so `number_field`'s buttons, which need
+  their events while the view is built, take `on_change` as a parameter. A captured `pure`
+  parameter passed on from inside a lambda is refused too (todo.md).
+- **A row cannot stretch a child to a height it learns from its children**: the table's
+  column edges were 0 tall. They sit on a stack over the header, pinned top and bottom.
+- **The example first drew its table its content's height**: the app's window scrolls by
+  default, so nothing below the root had a height to fill. `window_overflow: OverflowVisible`,
+  as every example with an expanded pane says.
+- `examples/ui/pixels.lyra` was committed unformatted (step 1), and is formatted here.
+
 ### 10/26/26 — `ui`: tooltips and modal dialogs
 
 - **`ui/VEGA.md` §11's step 2.** `.tooltip(text)`/`.tooltip_node(node)` on any node, shown by

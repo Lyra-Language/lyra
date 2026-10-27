@@ -1,7 +1,7 @@
 # What Vega needs of `ui` — design
 
-**Status: proposed 10/26; steps 1 and 2 (§2–§4: pictures, tooltips, modals) built 10/26, the
-rest to come.** Vega, the game studio (the private `vega`
+**Status: proposed 10/26; steps 1–3 (§2–§6: pictures, tooltips, modals, the smaller controls,
+dropped files) built 10/26, the rest to come.** Vega, the game studio (the private `vega`
 repo), runs on Dear ImGui through `bindings.imgui`. This is the move onto `ui`, as Termina
 made its own (`TERMINAL.md`, `WINDOW.md`): §1 is what Vega's interface does today, §2–§9 what
 `ui` must gain for it, §10 Vega's new front end, §11 the order and §12 the questions left.
@@ -127,12 +127,24 @@ Each with its lui element, parts for the cascade, and keys:
   header's edges (widths the program's), alternating rows, a row selectable. Grid lays it
   out; the header and the column edges are what is new.
 
+**Built 10/26** (`ui/layout/forms.lyra`, `table.lyra`, `ui/README.md`), all but the lui
+elements, which are step 6's. Three new pieces of the framework carry them: an element dragged
+to change a number (`Drags` — the splitter's edge, a column's, a number field's label), a group
+with one Tab stop whose arrow keys move the choice (`Radio` in a `OneOf` — the radios, and the
+table's rows), and a field's Up and Down (`FieldSpec.on_step`). Changed on the way: the splitter
+is `splitter`, beside the prelude's `split`; a number field's `on_change` is a parameter
+(`number_field(spec, on_change)`), since only a parameter's `pure` lets the view call it; the
+table is laid out by rows of fixed-width cells rather than grid, its header's edges on a stack
+over the header. Example `examples/ui/panels.lyra`.
+
 ## 6. Files dropped on the window
 
 `InputEvent.FilesDropped([]string)` and **`Subscription.OnFilesDropped(([]string) -> e)`** —
 on a Mac also a file opened from Finder, which SDL hands over as a drop
 (`bindings.imgui.take_dropped_file` today). `ui.sdl3` gathers `SDL_EVENT_DROP_FILE` between
 `DROP_BEGIN` and `DROP_COMPLETE` into one event; a script drops with `drop:PATH`.
+
+**Built 10/26** as described (`drop:A|B` drops two at once).
 
 ## 7. Docking
 
@@ -213,7 +225,8 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
 1. **Pictures** (§2), example `examples/ui/pixels.lyra`: a small pixel editor, its canvas a
    picture repainted per stroke and zoomed. **Done 10/26.**
 2. **Tooltips and modals** (§3, §4), example `examples/ui/dialogs.lyra`. **Done 10/26.**
-3. **The smaller controls** (§5) and **dropped files** (§6).
+3. **The smaller controls** (§5) and **dropped files** (§6), example `examples/ui/panels.lyra`.
+   **Done 10/26.**
 4. **Docking** in one window (§7), example `examples/ui/dock.lyra`.
 5. **Several windows** (§8), and tearing a dock tab off and back.
 6. **lui's elements** (§9).

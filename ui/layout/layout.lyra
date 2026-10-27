@@ -131,6 +131,9 @@ pub struct Node<e> {
   /// Its tooltip ([Node.tooltip]): none, or the one node shown by the pointer once it rests
   /// on this one.
   tip: []Node<e> = [],
+  /// What it is to assistive technology in place of what its kind makes it ([Node.with_role]):
+  /// a table's rows, which are radio buttons to the keyboard.
+  role: Maybe<Role> = None,
 }
 
 /// What an element does with its children, its space and its input. Built by the functions
@@ -207,6 +210,26 @@ pub data Kind<e> =
   | Gridbox
   /// Drawn by the program: its size the layout's, its insides what the painter answers.
   | Painted(Painter<e>)
+  /// Dragged along an axis to change a number ([DragSpec]): a splitter's edge, a table's
+  /// column's, a number field's label.
+  | Drags(DragSpec<e>)
+  /// A radio button ([radio]), chosen or not: this event when it is chosen.
+  | Radio(bool, e)
+  /// A group of [Radio]s with one stop for Tab — the one chosen, else the first — among which
+  /// the arrow keys move the choice ([radio_group], a [table]'s rows).
+  | OneOf
+
+/// A number dragged along `axis`: `value` as the press found it, changed by `per_unit` for
+/// each unit the pointer goes — right or down more — and held between `min` and `max`;
+/// `on_drag` with each new value.
+pub struct DragSpec<e> {
+  axis: Axis = Horizontal,
+  value: f64,
+  per_unit: f64 = 1.0,
+  min: f64 = -1.0e15,
+  max: f64 = 1.0e15,
+  on_drag: (f64) -> e,
+}
 
 /// An element the program draws ([painted]): `paint` answers what to draw in the size it was
 /// laid out at, in its own coordinates — `(0, 0)` its top-left corner — and is asked every
@@ -328,6 +351,9 @@ pub struct FieldSpec<e> {
   /// (`Interaction.drafts`), whatever `value` says — a colour picker's, whose value is the
   /// colour as `#rrggbb` and whose user may be halfway through `oklch(`.
   draft: bool = false,
+  /// The event for Up (`1`) and Down (`-1`) — ten with Shift — and the draft dropped, so the
+  /// field shows the value the step leaves: a number field's ([number_field]).
+  on_step: Maybe<(i64) -> e> = None,
 }
 
 /// The event type of a tree that raises none: `Node<NoEvent>`. (Not `Node<void>`, which does
@@ -350,6 +376,11 @@ pub data Role =
   | OptionRole
   | TabListRole
   | TabRole
+  | RadioRole
+  | RadioGroupRole
+  | ProgressRole
+  | TableRole
+  | RowRole
 
 /// A row's axis or a column's.
 pub data Axis = Horizontal | Vertical
@@ -658,12 +689,17 @@ pub let text_input<e> = pure (spec: FieldSpec<e>) -> Node<e> =>
 
 /// A read-only text field showing `value`: its text can be selected and copied, but raises no
 /// edit, so it asks for none.
-pub let read_only_input<e> = pure (value: string) -> Node<e> =>
+pub let read_only_input<e> = pure (value: string) -> Node<e> => {
+  // Written, not left to its default, and through an annotation: a `None` in a field of a
+  // generic literal is not typed from the field yet (todo.md).
+  let no_step: Maybe<(i64) -> e> = None
   text_input(FieldSpec::<e> {
     value: value,
     read_only: true,
     on_edit: (_: string) -> e => panic("a read-only field raised an edit"),
+    on_step: no_step,
   })
+}
 
 impl Node<e> {
   /// The node with these classes, space-separated (`"card wide"`), added to its own.
@@ -683,6 +719,10 @@ impl Node<e> {
 
   /// The node read to assistive technology as `label`, rather than its visible text.
   pub let labelled = pure (self, label: string) -> Node<e> => Node { self | label: label }
+
+  /// The node heard by assistive technology as `role`, whatever its kind makes it.
+  pub let with_role = pure (self, role: Role) -> Node<e> =>
+    Node { self | role: Some(role) }
 
   /// The node disabled while `off` holds: a control that takes no input, `:disabled`.
   pub let disabled_if = pure (self, off: bool) -> Node<e> => Node { self | disabled: off }
@@ -717,6 +757,7 @@ impl Node<e> {
     disabled: self.disabled,
     drags_window: self.drags_window,
     tip: [t in self.tip | t.map(f)],
+    role: self.role,
   }
 
   /// A painted element ([painted]) taking input raw ([RawInput]): every key and the text it
@@ -794,6 +835,10 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
     read_only: spec.read_only,
     on_edit: (text: string) -> b => f((spec.on_edit)(text)),
     draft: spec.draft,
+    on_step: match spec.on_step {
+      Some(step) => Some((n: i64) -> b => f(step(n))),
+      None => None,
+    },
   }),
   ColorAxis(spec) => ColorAxis(AxisSpec {
     channel: spec.channel,
@@ -828,6 +873,16 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
     }
     Painted(Painter { paint: painter.paint, on_size: on_size, input: input })
   },
+  Drags(spec) => Drags(DragSpec {
+    axis: spec.axis,
+    value: spec.value,
+    per_unit: spec.per_unit,
+    min: spec.min,
+    max: spec.max,
+    on_drag: (v: f64) -> b => f((spec.on_drag)(v)),
+  }),
+  Radio(chosen, event) => Radio(chosen, f(event)),
+  OneOf => OneOf,
 }
 
 // ── Constraints ──────────────────────────────────────────────────────────────
@@ -1406,7 +1461,7 @@ let same_node<e> = (a: Node<e>, b: Node<e>, theme: Theme) -> bool => {
   // none: not the same layout, though nothing else about it changed.
   if a.disabled != b.disabled || a.drags_window != b.drags_window { return false }
   if !same_kind(a.kind, b.kind, theme) { return false }
-  if a.tip.len() != b.tip.len() { return false }
+  if a.role != b.role || a.tip.len() != b.tip.len() { return false }
   for i in 0..<a.tip.len() {
     if !same_node(a.tip[i], b.tip[i], theme) { return false }
   }
@@ -1458,6 +1513,9 @@ let same_kind<e> = (a: Kind<e>, b: Kind<e>, theme: Theme) -> bool => match (a, b
   (Gridbox, Gridbox) => true,
   // What a painter draws is asked at paint, not kept with the layout: its box lays out alike.
   (Painted(_), Painted(_)) => true,
+  (Drags(d1), Drags(d2)) => d1.axis == d2.axis,
+  (Radio(c1, _), Radio(c2, _)) => c1 == c2,
+  (OneOf, OneOf) => true,
   _ => false,
 }
 
@@ -1479,6 +1537,7 @@ pub let focusable<e> = pure (kind: Kind<e>) -> bool => match kind {
   Tabbed(_) => true,
   ColorAxis(_) => true,
   Painted(painter) => painter.input.is_some(),
+  Radio(_, _) => true,
   _ => false,
 }
 
@@ -1680,7 +1739,7 @@ let lay_fresh<e> = (
     fonts,
     cache
   )) }
-  let role = role_of(node.kind)
+  let role = node.role ?? role_of(node.kind)
   Laid {
     id: id,
     tag: node.tag,
@@ -2013,6 +2072,7 @@ let with_state = pure (classes: string, id: string, ui: Interaction) -> string =
 let with_own_state<e> = pure (classes: string, node: Node<e>) -> string => {
   var states: []string = []
   if let Checkable(true, _) = node.kind { states.push(":checked") }
+  if let Radio(true, _) = node.kind { states.push(":checked") }
   if let Tabbed(spot) = node.kind { if spot.selected { states.push(":checked") } }
   if let Editable(spec) = node.kind { states.push(if spec.read_only { ":read-only" } else { ":read-write" }) }
   if node.disabled { states.push(":disabled") } else if focusable(node.kind) { states.push(":enabled") }
@@ -2034,6 +2094,8 @@ let role_of<e> = pure (kind: Kind<e>) -> Role => match kind {
   WindowControl(_) => ButtonRole,
   ColorAxis(_) => SliderRole,
   Tabbed(_) => TabRole,
+  Radio(_, _) => RadioRole,
+  OneOf => RadioGroupRole,
   Texels(_, _, _) => ImageRole,
   Pictured(_, _) => ImageRole,
   Scrolls(_, _) => ScrollRole,
@@ -2056,6 +2118,7 @@ let label_of<e> = pure (node: Node<e>, children: []Placed<e>) -> string => {
     // Its face's: what it floats is its menu.
     Opens(_) => if children.len() > 0 { text_inside([children[0]]) } else { "" },
     Checkable(_, _) => text_inside(children),
+    Radio(_, _) => text_inside(children),
     _ => "",
   }
 }

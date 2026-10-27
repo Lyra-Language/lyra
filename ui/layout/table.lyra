@@ -1,0 +1,114 @@
+module ui.layout
+//! A table (`ui/VEGA.md` §5): a header that stays while the rows scroll under it, columns the
+//! program sizes and the user resizes by their header's edges, alternating rows, and a row
+//! selected — by the pointer, or by the arrow keys from the one stop Tab makes of the rows
+//! ([OneOf]).
+
+import ui.style.{ Style, Sheet, OverflowAuto, insets_xy }
+
+/// A table's column: its heading and its width.
+pub struct TableColumn {
+  title: string,
+  width: f32,
+}
+
+/// How wide the edge after each column is, which a drag resizes the column by.
+pub const COLUMN_EDGE: f32 = 5.0
+
+/// The least a column is dragged to.
+pub const COLUMN_LEAST: f32 = 24.0
+
+/// A table (`Table`): its header (`Table::header`, each column's `Table::heading`, and at its
+/// end its edge, `ColumnEdge`, with its line, `Table::rule`), and below it `rows` scrolling — each a
+/// row of cells, one for each column at its width (`TableRow`, `.odd` every other one,
+/// `:checked` the one `selected`). A press on a row, or the arrow keys moving from it, raises
+/// `on_select` with its index; dragging a column's edge raises `on_resize` with the column and
+/// the width it leaves. Heard as a table of rows. The widths and the selection are the
+/// program's.
+pub let table<e> = pure (
+  columns: []TableColumn,
+  rows: [][]Node<e>,
+  selected: i64,
+  on_select: pure (i64) -> e,
+  on_resize: pure (i64, f32) -> e
+) -> Node<e> => {
+  // The headings along a row, each with its edge's room after it; the edges laid over them,
+  // pinned top and bottom, so each is the header's height — which a row cannot stretch a
+  // child to, as the row learns its height from its children.
+  var headings: []Node<e> = []
+  var edges: []Node<e> = []
+  var x: f32 = 0.0
+  for i, heading in columns {
+    headings.push(sized::<e>(Some(heading.width + COLUMN_EDGE), None, [
+      padding::<e>(insets_xy(8.0, 5.0), text::<e>(heading.title)),
+    ]).with_part("heading"))
+    x += heading.width
+    edges.push(positioned::<e>(
+      Edges { left: Some(x), top: Some(0.0), bottom: Some(0.0), width: Some(COLUMN_EDGE) },
+      column_edge(i, heading.width, on_resize)
+    ))
+    x += COLUMN_EDGE
+  }
+  let header = stack::<e>([row::<e>(headings), ...edges]).with_part("header")
+  let body_rows = [i in 0..<rows.len() | table_row::<e>(
+    columns,
+    rows[i],
+    i,
+    i == selected,
+    on_select(i)
+  )]
+  let group: Kind<e> = OneOf
+  let body = Node {
+    kind: group,
+    tag: "TableBody",
+    style: Style { overflow_y: Some(OverflowAuto) },
+    children: [column::<e>(body_rows).aligned(MainStart, CrossStretch)],
+  }.with_role(TableRole)
+  component::<e>("Table", Sheet {}, [
+    column::<e>([header, expanded::<e>(body)]).aligned(MainStart, CrossStretch),
+  ])
+}
+
+/// Column `i`'s edge, `width` its width now: dragged, `on_resize` with the width it leaves.
+let column_edge<e> = pure (
+  i: i64,
+  width: f32,
+  on_resize: pure (i64, f32) -> e
+) -> Node<e> => {
+  let kind: Kind<e> = Drags(DragSpec {
+    axis: Horizontal,
+    value: f64(width),
+    min: f64(COLUMN_LEAST),
+    on_drag: (v: f64) -> e => on_resize(i, f32(v)),
+  })
+  let rule = row::<e>([sized::<e>(Some(1.0), None).with_part("rule")]).aligned(
+    MainCenter,
+    CrossStretch
+  )
+  Node { kind: kind, tag: "ColumnEdge", children: [rule] }
+}
+
+/// Row `index` of a table of `columns`, its `cells` each as wide as its column and its edge,
+/// `chosen` if it is the one selected; `event` when it is pressed or the keys move to it.
+let table_row<e> = pure (
+  columns: []TableColumn,
+  cells: []Node<e>,
+  index: i64,
+  chosen: bool,
+  event: e
+) -> Node<e> => {
+  var placed: []Node<e> = []
+  for k in 0..<columns.len() {
+    let cell: Node<e> = if k < cells.len() { cells[k] } else { text::<e>("") }
+    placed.push(sized::<e>(Some(columns[k].width + COLUMN_EDGE), None, [
+      padding::<e>(insets_xy(8.0, 4.0), cell),
+    ]))
+  }
+  Node {
+    kind: Radio(chosen, event),
+    tag: "TableRow",
+    class: if index % 2 == 1 { "odd" } else { "" },
+    key: "${index}",
+    children: [row::<e>(placed)],
+  }.with_role(RowRole)
+}

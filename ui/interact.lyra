@@ -76,6 +76,8 @@ import ui.backend.{
   Arrow,
   IBeam,
   Hand,
+  ResizeAcross,
+  ResizeDown,
   AccessAction,
   AccessRequest,
   AxFocus,
@@ -121,6 +123,10 @@ import ui.layout.{
   axis_spot,
   picker_of,
   Painted,
+  Drags,
+  DragSpec,
+  Radio,
+  OneOf,
   RawInput,
   KeyInput,
   TextInput,
@@ -198,6 +204,10 @@ pub struct Ui {
   tip_since: i64 = -1,
   tip_rest: Point = Point {},
   tip_spent: string = "",
+  /// Where the press on an element dragged to change a number ([Drags]) was, and its value
+  /// then: a drag moves it from there.
+  drag_from: Point = Point {},
+  drag_value: f64 = 0.0,
   /// The tabs selected at the last frame: one selected since is scrolled into view.
   tabs_selected: []string = [],
   /// The window's own buttons pressed and let go on since the host last took them
@@ -887,6 +897,46 @@ impl Ui {
     }]
   }
 
+  /// An element dragged to change a number ([Drags]) with the pointer at `at`: its value at the
+  /// press moved by how far the pointer has gone along its axis, held to its range.
+  let dragged<e> = (self, spec: DragSpec<e>, at: Point) -> []e => {
+    let gone = if spec.axis == Horizontal { at.x - self.drag_from.x } else { at.y - self.drag_from.y }
+    let value = (self.drag_value + f64(gone) * spec.per_unit).clamp(spec.min, spec.max)
+    [(spec.on_drag)(value)]
+  }
+
+  /// A key for a focused radio button, or a table's row: Up or Left chooses the one before it
+  /// in its group, Down or Right the one after — the focus going with the choice, and kept in
+  /// view — and Space or Enter chooses it.
+  let radio_key<e> = (self: mut, laid: Laid<e>, focused: Found<e>, key: Key) -> []e => {
+    let by: i64 = match key {
+      ArrowUp => -1,
+      ArrowLeft => -1,
+      ArrowDown => 1,
+      ArrowRight => 1,
+      _ => 0,
+    }
+    if by == 0 { return if key == Enter || key == Character(' ') { activated(focused.laid) } else { [] } }
+    var group: Maybe<Laid<e>> = None
+    for f in along_path(laid, focused.laid.id) {
+      if let OneOf = f.laid.kind { group = Some(f.laid) }
+    }
+    let Some(g) = group else { return [] }
+    var radios: []Laid<e> = []
+    radios_in(g, radios)
+    var at = -1
+    for i, r in radios {
+      if r.id == focused.laid.id { at = i }
+    }
+    var to = at + by
+    while to >= 0 && to < radios.len() && radios[to].disabled { to += by }
+    if at < 0 || to < 0 || to >= radios.len() { return [] }
+    self.state.focus = radios[to].id
+    self.state.keyboard_focus = true
+    self.reveal_wanted = radios[to].id
+    activated(radios[to])
+  }
+
   /// The focus to the element keyed `key` ([Node.keyed]) once a layout has it — the frame
   /// after the one that made it, if that is when it appears.
   pub let focus_keyed = (self: mut, key: string) -> void => { self.focus_wanted = key }
@@ -1156,6 +1206,17 @@ impl Ui {
   /// control under the pointer); else the arrow.
   let cursor_at<e> = pure (self, laid: Laid<e>, at: Point) -> Cursor => {
     let held = find(laid, self.state.pressed, Point {})
+    // An edge or a label dragged, or under the pointer: the arrows along its axis.
+    let edge = match held {
+      Some(f) => match f.laid.kind {
+        Drags(_) => held,
+        _ => None,
+      },
+      None => drag_at(laid, at),
+    }
+    if let Some(f) = edge {
+      if let Drags(spec) = f.laid.kind { return if spec.axis == Horizontal { ResizeAcross } else { ResizeDown } }
+    }
     let over = if held.is_some() { held } else { control_at(laid, at) }
     match over {
       Some(f) => if f.laid.field.is_some() { IBeam } else {
@@ -1195,6 +1256,7 @@ impl Ui {
     let Some(held) = find(laid, self.state.pressed, Point {}) else { return [] }
     match held.laid.kind {
       Ranged(spec) => slide_to(held, spec, at),
+      Drags(spec) => self.dragged(spec, at),
       Tabbed(spot) => tab_dragged(laid, held, spot, at),
       ColorAxis(spec) => self.axis_moved(held, spec, at),
       Editable(_) => {
@@ -1243,6 +1305,18 @@ impl Ui {
           return []
         }
         if on.laid.id == open { return [] }
+      }
+    }
+    // An element dragged to change a number, where no control is over it: held, its value
+    // and the pointer kept for the drag. The focused field's draft goes, so it shows the value
+    // the drag makes (a number field's own label, dragged); the focus stays.
+    if let Some(edge) = drag_at(laid, at) {
+      if let Drags(spec) = edge.laid.kind {
+        self.state.pressed = edge.laid.id
+        let _ = self.state.drafts.remove(self.state.focus)
+        self.drag_from = at
+        self.drag_value = spec.value
+        return []
       }
     }
     let Some(target) = control_at(laid, at) else {
@@ -1576,6 +1650,7 @@ impl Ui {
         Opens(_) => true,
         Tabbed(_) => true,
         ColorAxis(_) => true,
+        Radio(_, _) => true,
         _ => false,
       },
       None => false,
@@ -1592,6 +1667,7 @@ impl Ui {
       Choosing(spec) => self.select_key(focused.laid.id, spec, key, mods),
       Tabbed(spot) => self.tab_key(laid, focused, spot, key),
       ColorAxis(spec) => self.axis_key(focused, spec, key),
+      Radio(_, _) => self.radio_key(laid, focused, key),
       // A focused opener: Enter, Space or Down opens its menu, the focus to its first item.
       Opens(_) => {
         if key == Enter || key == Character(' ') || key == ArrowDown {
@@ -1672,6 +1748,16 @@ impl Ui {
         },
         Character('z') => return self.undo(field),
         _ => {},
+      }
+    }
+    // A field that steps (a number field's): Up and Down, the draft let go for the value.
+    if key == ArrowUp || key == ArrowDown {
+      if let Editable(spec) = field.laid.kind {
+        if let Some(step) = spec.on_step {
+          let by: i64 = if shift { 10 } else { 1 }
+          let _ = self.state.drafts.remove(field.laid.id)
+          return [step(if key == ArrowUp { by } else { -by })]
+        }
       }
     }
     match key {
@@ -2254,11 +2340,64 @@ let moved_by = pure (r: Rect, by: Point) -> Rect =>
   Rect { r | x: r.x + by.x, y: r.y + by.y }
 
 /// The identities of the controls in `laid`, in the order Tab visits them: the tree's.
-pub let focus_order<e> = (laid: Laid<e>, order: mut []string) -> void => {
-  if focusable(laid.kind) && !laid.disabled { order.push(laid.id) }
-  for child in laid.children {
-    if !is_tip(child.laid) { focus_order(child.laid, order) }
+pub let focus_order<e> = (laid: Laid<e>, order: mut []string) -> void =>
+  focus_walk(laid, order, None)
+
+/// [focus_order] below `laid`, inside a group ([OneOf]) whose one stop is `stop`: a radio
+/// button there is visited only if it is the stop.
+let focus_walk<e> = (laid: Laid<e>, order: mut []string, stop: Maybe<string>) -> void => {
+  let inside = match laid.kind {
+    OneOf => Some(group_stop(laid)),
+    _ => stop,
   }
+  if focusable(laid.kind) && !laid.disabled {
+    let visited = match laid.kind {
+      Radio(_, _) => match stop {
+        Some(id) => id == laid.id,
+        None => true,
+      },
+      _ => true,
+    }
+    if visited { order.push(laid.id) }
+  }
+  for child in laid.children {
+    if !is_tip(child.laid) { focus_walk(child.laid, order, inside) }
+  }
+}
+
+/// The one stop for Tab in the group `group`: its radio button chosen, else its first that
+/// takes input; `""` for none.
+let group_stop<e> = pure (group: Laid<e>) -> string => {
+  var radios: []Laid<e> = []
+  radios_in(group, radios)
+  for r in radios {
+    if let Radio(true, _) = r.kind { if !r.disabled { return r.id } }
+  }
+  for r in radios {
+    if !r.disabled { return r.id }
+  }
+  ""
+}
+
+/// The radio buttons in `laid`, in order, to `out` — not those of a group inside it.
+let radios_in<e> = (laid: Laid<e>, out: mut []Laid<e>) -> void => {
+  for child in laid.children {
+    match child.laid.kind {
+      Radio(_, _) => out.push(child.laid),
+      OneOf => {},
+      _ => if !is_tip(child.laid) { radios_in(child.laid, out) },
+    }
+  }
+}
+
+/// The element dragged to change a number ([Drags]) under `at`, unless a control is over it.
+let drag_at<e> = pure (laid: Laid<e>, at: Point) -> Maybe<Found<e>> => {
+  let path = hit(laid, at)
+  for i in (path.len() - 1)..>=0 {
+    if let Drags(_) = path[i].laid.kind { return Some(path[i]) }
+    if focusable(path[i].laid.kind) { return None }
+  }
+  None
 }
 
 /// Every identity in `laid`.
@@ -2284,6 +2423,7 @@ let keep_field_scrolls<e> = (laid: Laid<e>, ui: mut Ui) -> void => {
 let activated<e> = pure (laid: Laid<e>) -> []e => match laid.kind {
   Pressable(event) => [event],
   Checkable(_, event) => [event],
+  Radio(_, event) => [event],
   _ => [],
 }
 

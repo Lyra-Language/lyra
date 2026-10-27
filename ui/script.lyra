@@ -20,6 +20,7 @@ module ui.script
 //! - `compose:'text'` — an input method's composition in progress, its caret at its end
 //!   (`compose:''` ends it).
 //! - `focus`, `blur` — the window gained the keyboard's focus, or lost it.
+//! - `drop:PATH` — a file dropped on the window ([FilesDropped]); `drop:A|B` two in one drop.
 //! - `maximize`, `minimize`, `restore` — the system did that to the window
 //!   ([WindowStateChanged]).
 //! - `choose:PATH` — the oldest file dialog asked for answers `PATH` (`choose:` alone, a cancel);
@@ -55,6 +56,7 @@ import ui.backend.{
   TextComposing,
   WindowFocused,
   WindowUnfocused,
+  FilesDropped,
   Primary,
   Key,
   Modifiers,
@@ -358,6 +360,11 @@ pub let parse_steps = pure (script: string) -> Result<[]Step, string> => {
     }
     if token == "focus" || token == "blur" {
       inputs.push(Played(if token == "focus" { WindowFocused } else { WindowUnfocused }))
+      continue
+    }
+    if let Some(paths) = token.strip_prefix("drop:") {
+      if paths.len() == 0 { return Err("no file to drop: ${token}") }
+      inputs.push(Played(FilesDropped(paths.split("|"))))
       continue
     }
     if let Some(place) = token.strip_prefix("drag:") {

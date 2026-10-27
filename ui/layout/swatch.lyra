@@ -67,6 +67,9 @@ pub let color_picker<e> = pure (
   alpha: bool = true,
   below: []Node<e> = []
 ) -> Node<e> => {
+  // Written, not left to its default, and through an annotation: a `None` in a field of a
+  // generic literal is not typed from the field yet (todo.md).
+  let no_step: Maybe<(i64) -> e> = None
   let field = text_input::<e>(FieldSpec {
     value: color_text(color),
     draft: true,
@@ -75,6 +78,7 @@ pub let color_picker<e> = pure (
       let typed = parse_color(text) ?? color
       on_change(if alpha { typed } else { Color { typed | a: 255 } })
     },
+    on_step: no_step,
   })
   // The opacity strip and its value beside it, 0 to 1 to two places.
   let opacity: []Node<e> = if alpha { [row::<e>([

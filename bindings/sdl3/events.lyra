@@ -140,6 +140,19 @@ struct TextInputEvent {
   text: ^u8,
 }
 
+/// `SDL_DropEvent` — a file (or text) dropped on the window, or a drop beginning or ending:
+/// where, and for a file its path, UTF-8 in memory SDL owns.
+struct DropEvent {
+  kind: u32,
+  reserved: u32,
+  timestamp: u64,
+  window_id: u32,
+  x: f32,
+  y: f32,
+  source: ^u8,
+  data: ^u8,
+}
+
 /// `SDL_TextEditingEvent` — an input method's composition, UTF-8 in memory SDL owns, and the
 /// part of it selected (`start`, `length` in characters; -1 for none).
 struct TextEditingEvent {
@@ -172,6 +185,7 @@ union RawEvent {
   window: WindowEvent,
   text: TextInputEvent,
   editing: TextEditingEvent,
+  drop: DropEvent,
   padding: [128]u8,
 }
 
@@ -186,6 +200,9 @@ const EVENT_TEXT_INPUT: u32 = 0x303
 const EVENT_WINDOW_FOCUS_GAINED: u32 = 0x20E
 const EVENT_WINDOW_FOCUS_LOST: u32 = 0x20F
 const EVENT_WINDOW_RESIZED: u32 = 0x206
+const EVENT_DROP_FILE: u32 = 0x1000
+const EVENT_DROP_BEGIN: u32 = 0x1002
+const EVENT_DROP_COMPLETE: u32 = 0x1003
 const EVENT_WINDOW_DISPLAY_SCALE_CHANGED: u32 = 0x214
 const EVENT_MOUSE_MOTION: u32 = 0x400
 const EVENT_MOUSE_BUTTON_DOWN: u32 = 0x401
@@ -255,6 +272,11 @@ pub data Event =
   /// The window's display scale changed ([window_display_scale]): it moved to another
   /// display, or the user changed the scale of this one.
   | WindowScaleChanged
+  /// Files dropped on the window — or, on a Mac, opened from Finder — arrive between a
+  /// [DropBegin] and a [DropComplete], a [DropFile] a path.
+  | DropBegin
+  | DropFile(string)
+  | DropComplete
   | Other(u32)
 
 @symbol("SDL_PollEvent")
@@ -374,6 +396,12 @@ let classify = pure (raw: RawEvent) -> Event => {
     WindowFocusGained
   } else if kind == EVENT_WINDOW_FOCUS_LOST {
     WindowFocusLost
+  } else if kind == EVENT_DROP_BEGIN {
+    DropBegin
+  } else if kind == EVENT_DROP_FILE {
+    DropFile(c_name(unsafe { raw.drop.data }))
+  } else if kind == EVENT_DROP_COMPLETE {
+    DropComplete
   } else if kind == EVENT_WINDOW_RESIZED {
     WindowResized(unsafe { raw.window.data1 }, unsafe { raw.window.data2 })
   } else if kind == EVENT_WINDOW_DISPLAY_SCALE_CHANGED {

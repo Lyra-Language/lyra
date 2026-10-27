@@ -104,7 +104,13 @@ let main = () -> u8 => {
           println("${passes} passes, ${each} ms a pass")
         }
         if let Some(path) = args.value("--png") {
-          if !save(played.renderer, played.fonts, played.host.shown[0], background, path) {
+          if !save(
+            played.renderer,
+            played.fonts,
+            played.host.shown[0],
+            background,
+            path
+          ) {
             status = 1
           }
         }
@@ -183,7 +189,11 @@ let new_state = pure (side: i64) -> State => {
   var pixels: []u32 = []
   pixels.reserve(side * side)
   for _ in 0..<side * side { pixels.push(0) }
-  State { side: side, pixels: pixels, zoom: ((HEIGHT * 0.75).floor() / side).max(MIN_ZOOM).min(MAX_ZOOM) }
+  State {
+    side: side,
+    pixels: pixels,
+    zoom: ((HEIGHT * 0.75).floor() / side).max(MIN_ZOOM).min(MAX_ZOOM)
+  }
 }
 
 let update = pure (state: State, event: Event) -> State => match event {
@@ -210,7 +220,10 @@ let update = pure (state: State, event: Event) -> State => match event {
       state.zoomed(if dy < 0.0 { 1 } else if dy > 0.0 { -1 } else { 0 })
     } else {
       State {
-        state | pan: Point { x: state.pan.x - dx * WHEEL_STEP, y: state.pan.y - dy * WHEEL_STEP }
+        state | pan: Point {
+          x: state.pan.x - dx * WHEEL_STEP,
+          y: state.pan.y - dy * WHEEL_STEP
+        }
       }
     },
   Chose(i) => State { state | color: i },
@@ -337,8 +350,16 @@ let canvas = pure (state: State) -> Node<Event> => {
         let thin = 1.0 / area.scale
         for i in 0..<=state.side {
           let at = f32(i) * z
-          ops.push(PaintDraw(Fill(Rect { x: o.x + at, y: o.y, w: thin, h: shown }, radius(0.0), GRID)))
-          ops.push(PaintDraw(Fill(Rect { x: o.x, y: o.y + at, w: shown, h: thin }, radius(0.0), GRID)))
+          ops.push(PaintDraw(Fill(
+            Rect { x: o.x + at, y: o.y, w: thin, h: shown },
+            radius(0.0),
+            GRID
+          )))
+          ops.push(PaintDraw(Fill(
+            Rect { x: o.x, y: o.y + at, w: shown, h: thin },
+            radius(0.0),
+            GRID
+          )))
         }
       }
       if let Some(p) = state.hover {
@@ -371,7 +392,11 @@ let palette = pure (chosen: i64) -> Node<Event> => {
     for i in 0..<PALETTE.len() {
       let at = swatch_at(i)
       let c = PALETTE[i]
-      let color = Color { r: u8((c >> 16) & 0xFF), g: u8((c >> 8) & 0xFF), b: u8(c & 0xFF) }
+      let color = Color {
+        r: u8((c >> 16) & 0xFF),
+        g: u8((c >> 8) & 0xFF),
+        b: u8(c & 0xFF)
+      }
       ops.push(PaintDraw(Fill(at, radius(3.0), color)))
       ops.push(PaintDraw(Border(at, radius(3.0), 1.0, EDGE)))
       if i == chosen {
@@ -416,8 +441,22 @@ let swatch_at = pure (i: i64) -> Rect => Rect {
 
 /// PICO-8's sixteen colours, opaque.
 const PALETTE: []u32 = [
-  0xFF000000, 0xFF1D2B53, 0xFF7E2553, 0xFF008751, 0xFFAB5236, 0xFF5F574F, 0xFFC2C3C7, 0xFFFFF1E8,
-  0xFFFF004D, 0xFFFFA300, 0xFFFFEC27, 0xFF00E436, 0xFF29ADFF, 0xFF83769C, 0xFFFF77A8, 0xFFFFCCAA,
+  0xFF000000,
+  0xFF1D2B53,
+  0xFF7E2553,
+  0xFF008751,
+  0xFFAB5236,
+  0xFF5F574F,
+  0xFFC2C3C7,
+  0xFFFFF1E8,
+  0xFFFF004D,
+  0xFFFFA300,
+  0xFFFFEC27,
+  0xFF00E436,
+  0xFF29ADFF,
+  0xFF83769C,
+  0xFFFF77A8,
+  0xFFFFCCAA,
 ]
 
 const SWATCH: f32 = 26.0

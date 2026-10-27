@@ -1,0 +1,226 @@
+module ui.layout
+//! The smaller controls a panel of forms is made of (`ui/VEGA.md` §5): a number field typed,
+//! stepped and scrubbed ([number_field]), radio buttons ([radio_group]), a section that
+//! collapses ([disclosure]), a progress bar ([progress]), a rule with or without text
+//! ([separator]) and two panes with the edge between them dragged ([splitter]). Each is made of
+//! the elements every control is — the framework's own part being what is dragged ([Drags]) and
+//! the group the arrow keys move a choice in ([OneOf]) — and styled through its parts.
+
+import ui.style.{ Style, Sheet }
+
+/// A number field's value and what holds it: between `min` and `max`, moved by `step` — by
+/// its buttons, the arrow keys (ten steps with Shift) and dragging its `label` across, a step
+/// every [SCRUB_UNITS] — and shown with `decimals` places (`0` for an integer).
+pub struct NumberSpec {
+  value: f64,
+  min: f64 = -1.0e12,
+  max: f64 = 1.0e12,
+  step: f64 = 1.0,
+  decimals: i64 = 0,
+  label: string = "",
+}
+
+/// How far the pointer goes, dragging a number field's label, for a step.
+pub const SCRUB_UNITS: f64 = 4.0
+
+/// A number field (`NumberField`): its label, which a drag across changes the value by
+/// (`::label`, [Drags]); the value as text, typed into — the text kept as it is typed while
+/// the field has the focus, each edit that reads as a number raising it, held to the range —
+/// and stepped by Up and Down (`::field`); and buttons stepping it down and up (`::minus`,
+/// `::plus`), `on_change` with each new value. ImGui's `input_int`, `input_float` and
+/// `drag_int` in one. (`on_change` is a parameter, not a field of the spec, because only a
+/// parameter's `pure` is checked where it is given, so only it may be called by the view.)
+pub let number_field<e> = pure (
+  spec: NumberSpec,
+  on_change: pure (f64) -> e
+) -> Node<e> => {
+  let field = text_input(FieldSpec::<e> {
+    value: number_text(spec.value, spec.decimals),
+    draft: true,
+    on_edit: (typed: string) -> e => on_change(
+      (typed.trim().parse_f64() ?? spec.value).clamp(spec.min, spec.max)
+    ),
+    on_step: Some((n: i64) -> e => on_change(on_step(spec.value + f64(n) * spec.step, spec))),
+  }).with_part("field").labelled(spec.label)
+  let minus = button::<e>(
+    "−",
+    stepped_to(spec, on_change, spec.value - spec.step)
+  ).with_part("minus").labelled("Decrease")
+  let plus = button::<e>(
+    "+",
+    stepped_to(spec, on_change, spec.value + spec.step)
+  ).with_part("plus").labelled("Increase")
+  let label: []Node<e> = if spec.label.len() == 0 { [] } else {
+    let kind: Kind<e> = Drags(DragSpec {
+      axis: Horizontal,
+      value: spec.value,
+      per_unit: spec.step / SCRUB_UNITS,
+      min: spec.min,
+      max: spec.max,
+      on_drag: (v: f64) -> e => on_change(on_step(v, spec)),
+    })
+    [Node { kind: kind, tag: "Scrub", part: "label", children: [text::<e>(spec.label)] }]
+  }
+  component::<e>("NumberField", Sheet {}, [
+    row::<e>([...label, expanded::<e>(field), minus, plus]).with_style(Style { gap: Some(4.0) }),
+  ])
+}
+
+/// The event for `v`, on a whole number of `spec`'s steps and within its range.
+let stepped_to<e> = pure (spec: NumberSpec, on_change: pure (f64) -> e, v: f64) -> e =>
+  on_change(on_step(v, spec))
+
+/// `v` on a whole number of `spec`'s steps, within its range.
+let on_step = pure (v: f64, spec: NumberSpec) -> f64 => {
+  if spec.step <= 0.0 { return v.clamp(spec.min, spec.max) }
+  let steps = (v / spec.step + 0.5).floor()
+  (f64(steps) * spec.step).clamp(spec.min, spec.max)
+}
+
+/// `v` written with `decimals` places, a whole number with none.
+pub let number_text = pure (v: f64, decimals: i64) -> string =>
+  if decimals <= 0 { "${(v + 0.5).floor()}" } else { v.to_fixed(decimals) }
+
+/// Radio buttons, one for each of `options` (`RadioGroup`, each a [radio]), `selected` the one
+/// chosen (`-1` for none), down a column — or along a row, `Horizontal` — and `on_change` with
+/// the index chosen. One stop for Tab, the one chosen; the arrow keys choose the one before or
+/// after it.
+pub let radio_group<e> = pure (
+  options: []string,
+  selected: i64,
+  on_change: pure (i64) -> e,
+  axis: Axis = Vertical
+) -> Node<e> => {
+  let radios = [i in 0..<options.len() | radio::<e>(
+    options[i],
+    i == selected,
+    on_change(i)
+  )]
+  let flow: Kind<e> = Flow(axis, MainStart, CrossStart)
+  let group: Kind<e> = OneOf
+  Node {
+    kind: group,
+    tag: "RadioGroup",
+    children: [Node {
+      kind: flow,
+      tag: if axis == Horizontal { "Row" } else { "Column" },
+      children: radios
+    }.with_style(Style {
+      gap: Some(if axis == Horizontal { 16.0 } else { 6.0 })
+    })],
+  }
+}
+
+/// A radio button labelled `label`, chosen when `chosen`: its circle (`Radio::circle`, or
+/// `Radio::chosen` holding a dot, `Radio::dot`), and `on_choose` when it is clicked or chosen
+/// from the keyboard. In a [radio_group], or any group ([OneOf]) of the program's own.
+pub let radio<e> = pure (label: string, chosen: bool, on_choose: e) -> Node<e> => {
+  let dot: []Node<e> = if chosen { [sized::<e>(None, None).with_part("dot")] } else { [] }
+  let face = sized::<e>(
+    None,
+    None,
+    dot
+  ).with_part(if chosen { "chosen" } else { "circle" })
+  let ring = sized::<e>(Some(18.0), Some(18.0), [face])
+  let body = row::<e>([ring, text::<e>(label)]).with_style(Style { gap: Some(8.0) })
+  Node { kind: Radio(chosen, on_choose), tag: "Radio", children: [body] }
+}
+
+/// A section that collapses: its header (`Disclosure`, `.open` while open), an arrow pointing
+/// right, or down while open (`Disclosure::arrow`), and `title`, a button raising `on_toggle`;
+/// and below it, while `open`, `content`. The program keeps whether it is open.
+pub let disclosure<e> = pure (
+  title: string,
+  open: bool,
+  content: Node<e>,
+  on_toggle: e
+) -> Node<e> => {
+  let arrow = if open { select_arrow::<e>() } else { submenu_arrow::<e>() }
+  let face = row::<e>([sized::<e>(Some(10.0), None, [arrow]), text::<e>(title)])
+    .with_style(Style { gap: Some(6.0) })
+  let header = Node {
+    kind: Pressable(on_toggle),
+    tag: "Disclosure",
+    class: if open { "open" } else { "" },
+    children: [face],
+  }
+  let shown: []Node<e> = if open { [content] } else { [] }
+  column::<e>([header, ...shown]).aligned(
+    MainStart,
+    CrossStretch
+  ).with_class("disclosure")
+}
+
+/// A progress bar (`Progress`) `fraction` of the way along — its fill the `Progress::fill`
+/// part — as wide as it is given; heard as a progress indicator saying its percentage.
+pub let progress<e> = pure (fraction: f32) -> Node<e> => {
+  let done = fraction.clamp(0.0, 1.0)
+  var parts: []Node<e> = []
+  if done > 0.0 { parts.push(expanded::<e>(
+    sized::<e>(None, None).with_part("fill"),
+    done
+  )) }
+  if done < 1.0 { parts.push(expanded::<e>(sized::<e>(None, None), 1.0 - done)) }
+  let bar = row::<e>(parts).aligned(MainStart, CrossStretch)
+  component::<e>("Progress", Sheet {}, [bar])
+    .with_role(ProgressRole)
+    .labelled("${(done * 100.0 + 0.5).floor()}%")
+}
+
+/// A rule across the room it is given (`Separator`, its line `Separator::line`), with `label`
+/// in it (`Separator::label`) unless that is empty — ImGui's `separator_text`.
+pub let separator<e> = pure (label: string = "") -> Node<e> => {
+  let inside: []Node<e> = if label.len() == 0 { [separator_line::<e>()] } else {
+    [
+      sized::<e>(Some(8.0), Some(1.0)).with_part("line"),
+      text::<e>(label).with_part("label"),
+      separator_line::<e>()
+    ]
+  }
+  component::<e>(
+    "Separator",
+    Sheet {},
+    [row::<e>(inside).with_style(Style { gap: Some(8.0) })]
+  )
+}
+
+/// A separator's line, taking the room left in its row.
+let separator_line<e> = pure () -> Node<e> =>
+  expanded::<e>(sized::<e>(None, Some(1.0)).with_part("line"))
+
+/// Two panes and the edge between them (`SplitEdge`, `:hover` and `:active` while dragged):
+/// across a row, `first` `at` wide — or down a column, `at` tall, with `Vertical` — and
+/// `second` the rest. Dragging the edge raises `on_drag` with the size it leaves `first`, no
+/// less than `least`; the program keeps it, and keeps it short of the room's far end.
+pub let splitter<e> = pure (
+  first: Node<e>,
+  second: Node<e>,
+  at: f32,
+  on_drag: (f32) -> e,
+  axis: Axis = Horizontal,
+  least: f32 = 40.0
+) -> Node<e> => {
+  let across = axis == Horizontal
+  let kind: Kind<e> = Drags(DragSpec {
+    axis: axis,
+    value: f64(at),
+    min: f64(least),
+    on_drag: (v: f64) -> e => on_drag(f32(v)),
+  })
+  let edge = Node {
+    kind: kind,
+    tag: "SplitEdge",
+    class: if across { "across" } else { "down" },
+    style: if across { Style { width: Some(SPLIT_EDGE) } } else { Style { height: Some(SPLIT_EDGE) } },
+  }
+  let sized_first = if across { sized::<e>(
+    Some(at),
+    None,
+    [first]
+  ) } else { sized::<e>(None, Some(at), [first]) }
+  let flow: Kind<e> = Flow(axis, MainStart, CrossStretch)
+  Node { kind: flow, tag: "Split", children: [sized_first, edge, expanded::<e>(second)] }
+}
+
+/// How thick a split's edge is: what the pointer finds to drag.
+pub const SPLIT_EDGE: f32 = 6.0

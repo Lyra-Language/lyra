@@ -695,8 +695,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   `examples/ui/settings.lyra` (COMPLETED.md, 10/21).
 - **[OPEN] What Vega needs of `ui`** — pictures the program changes, tooltips, modals, the
   smaller controls, dropped files, docking and several windows, then Vega's front end on
-  them; designed in `ui/VEGA.md` (10/26), whose §11 is the order. Steps 1 (pictures) and 2
-  (tooltips, modals; `examples/ui/dialogs.lyra`) done 10/26; the smaller controls next.
+  them; designed in `ui/VEGA.md` (10/26), whose §11 is the order. Steps 1–3 (pictures;
+  tooltips, modals; the smaller controls, dropped files) done 10/26; docking next.
 - **[OPEN] A modal is not heard as one, nor keeps the app's shortcuts out** — VoiceOver hears
   its dialog as a group (AccessKit has a `Dialog` role and `set_modal`), and `App.shortcuts`
   and drawn menus' shortcuts still reach the program while one is open (10/26).
@@ -851,7 +851,14 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   when both are under the program's root as written, else `module="…"`. Imports are one level:
   an imported file's own imports are not read.
 - **[OPEN] Typechecker: a generic struct's field defaulted to `None`** (`shown: Maybe<Laid<e>>
-  = None`) is E073; `Host.shown` is a `[]Laid<e>` of at most one meanwhile.
+  = None`) is E073; `Host.shown` is a `[]Laid<e>` of at most one meanwhile. Written in a
+  generic literal (`Spec::<e> { g: None }`) it is E073 too; `FieldSpec.on_step`'s users bind
+  an annotated `None` first (10/26).
+- **[OPEN] Purity: a `pure` parameter captured by a lambda cannot be passed on** — `(x) =>
+  twice(g, x)` inside a function taking `g: pure (i64) -> i64` is E007 at `g`, though `g`'s
+  bound is checked where it was given; calling `g` there is fine (10/26).
+- **[OPEN] Grammar: `if let` is not an arm's expression** — `_ => if let Some(v) = m { v }
+  else { 0 }` is a syntax error where `_ => if c { … }` parses; it needs braces round it (10/26).
 - **[OPEN] Typechecker: an untyped lambda as a data constructor's payload** (`Scope((_) =>
   sheet)` for `Scope((Theme) -> Sheet)`) is not elaborated from the payload's type, as an
   argument's is; its parameters must be annotated.

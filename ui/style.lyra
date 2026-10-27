@@ -531,6 +531,63 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
       radius: Some((CHECK_RADIUS - CHECK_BORDER - CHECK_GAP).max(0.0)),
     },
   },
+  // A radio button: a circle, holding the accent's dot while chosen.
+  Rule {
+    selector: "Radio::circle",
+    style: Style { background: Some(c.surface), border_color: Some(c.border), border_width: Some(CHECK_BORDER), radius: Some(9.0) },
+  },
+  Rule {
+    selector: "Radio::chosen",
+    style: Style {
+      background: Some(c.surface),
+      border_color: Some(c.accent),
+      border_width: Some(CHECK_BORDER),
+      radius: Some(9.0),
+      padding: Some(insets(4.0)),
+    },
+  },
+  Rule { selector: "Radio::dot", style: Style { background: Some(c.accent), radius: Some(5.0) } },
+  // A disclosure's header: quiet until the pointer is over it, its arrow the muted colour.
+  Rule { selector: "Disclosure", style: Style { padding: Some(insets_xy(4.0, 4.0)), radius: Some(4.0) } },
+  Rule { selector: "Disclosure:hover", style: Style { background: Some(faded(c.text, 0.06)) } },
+  Rule { selector: "Disclosure::arrow", style: Style { background: Some(c.muted) } },
+  // A progress bar: a thin track, filled with the accent.
+  Rule {
+    selector: "Progress",
+    style: Style { height: Some(6.0), radius: Some(3.0), background: Some(faded(c.text, 0.12)) },
+  },
+  Rule { selector: "Progress::fill", style: Style { background: Some(c.accent), radius: Some(3.0) } },
+  Rule { selector: "Separator::line", style: Style { background: Some(c.border) } },
+  Rule { selector: "Separator::label", style: Style { color: Some(c.muted), font_size: Some(12.0) } },
+  // What is dragged to resize — a split's edge, a table's column's — lit under the pointer.
+  Rule {
+    selector: "SplitEdge:hover, SplitEdge:active, ColumnEdge:hover, ColumnEdge:active",
+    style: Style { background: Some(faded(c.accent, 0.3)) },
+  },
+  // A number field: its label muted, its buttons quiet beside the field.
+  Rule { selector: "NumberField::label", style: Style { color: Some(c.muted), padding: Some(insets_xy(2.0, 0.0)) } },
+  Rule {
+    selector: "NumberField::minus, NumberField::plus",
+    style: Style {
+      background: Some(faded(c.text, 0.07)),
+      color: Some(c.text),
+      padding: Some(insets_xy(9.0, 6.0)),
+    },
+  },
+  Rule {
+    selector: "NumberField::minus:hover, NumberField::plus:hover",
+    style: Style { background: Some(faded(c.text, 0.13)) },
+  },
+  // A table: framed, its header shaded, every other row faintly, the selected one in the accent.
+  Rule {
+    selector: "Table",
+    style: Style { background: Some(c.surface), border_color: Some(c.border), border_width: Some(1.0), radius: Some(6.0) },
+  },
+  Rule { selector: "Table::header", style: Style { background: Some(faded(c.text, 0.05)) } },
+  Rule { selector: "Table::rule", style: Style { background: Some(c.border) } },
+  Rule { selector: "TableRow.odd", style: Style { background: Some(faded(c.text, 0.03)) } },
+  Rule { selector: "TableRow:hover", style: Style { background: Some(faded(c.text, 0.07)) } },
+  Rule { selector: "TableRow:checked", style: Style { background: Some(faded(c.accent, 0.2)) } },
   Rule {
     selector: "Slider::track",
     style: Style { background: Some(c.border), radius: Some(2.0) },

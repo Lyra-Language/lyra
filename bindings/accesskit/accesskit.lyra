@@ -18,7 +18,9 @@ import bindings.sdl3.{ Window }
 
 /// What a node is, as the C half numbers them: `0` a plain container, `1` the window, `2` a
 /// group, `3` a label, `4` an image, `5` a button, `6` a checkbox, `7` a slider, `8` a text
-/// input, `9` a scroll view.
+/// input, `9` a scroll view, `10` a combo box, `11` a list box, `12` its option, `13` a tab
+/// list, `14` a tab, `15` a radio button, `16` a radio group, `17` a progress indicator, `18` a
+/// table, `19` a row.
 pub alias RoleCode = i32
 
 /// Actions a node offers, or-ed: focus, click, set value, increment, decrement.
