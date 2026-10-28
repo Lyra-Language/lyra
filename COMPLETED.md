@@ -9,8 +9,22 @@ Newest first.
 
 ## Dated log
 
-### 10/27/26 — Five backend and grammar entries: an annotated loop's literals, void fields, a closure in a generic, two grammar gaps
+### 10/28/26 — A written `Name<…>` carries the identity key its writer means
 
+A backend fix the Vega front end (`ui/VEGA.md` §10) surfaced.
+
+- **A written `Name<…>` stamps the identity key its writer means** (typechecker,
+  `stampParameterizedKey`). A `ParameterizedType` written bare (`Node<e>`) kept an empty key;
+  the backend then resolved the name from the **lowering** context, and a monomorphized
+  prelude function lowers in the prelude's module, where a shared name — `Node` is the
+  prelude's and `ui.layout`'s — resolves to nothing: `llvm: undefined generic type "Node"`.
+  `resolveTypeWith` now stamps the head with the key the name means **from its written
+  location** (`symTable.TypeKey`), the same rule `keyedReceiver` applies to a method's
+  receiver; `walkTypeNames` takes an optional `keyStamp` (`expandAliases` passes nil).
+  Building Vega's front end — `Host`/`Running` of `Node<e>` — was the trigger; without it the
+  LLVM pass refuses the program.
+
+### 10/27/26 — Five backend and grammar entries: an annotated loop's literals, void fields, a closure in a generic, two grammar gaps
 Each reproduced first; two were not what their entries said.
 
 - **`for k: f32 in [-1.0, 1.0]` was invalid IR.** The unannotated form the entry described is

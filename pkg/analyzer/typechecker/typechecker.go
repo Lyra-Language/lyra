@@ -2709,16 +2709,36 @@ func (tc *TypeChecker) effectiveType(decl *ast.VarDeclStmt) types.Type {
 // everyone's type. The value composites are safe to assign through because the type
 // switch already binds a copy.
 func (tc *TypeChecker) resolveTypeWith(t types.Type, loc ast.Location, leaf func(types.UnresolvedType, ast.Location) types.Type) types.Type {
-	return walkTypeNames(t, loc, leaf, tc.expandParameterizedNewtype)
+	return walkTypeNames(t, loc, leaf, tc.expandParameterizedNewtype, tc.stampParameterizedKey)
+}
+
+// stampParameterizedKey answers the identity key a written `Name<…>` reference means from
+// loc — `""` where the name resolves to nothing there. stampNames' rule for the
+// parameterized form: the name belongs to the module that wrote it, and the key is what
+// the backend resolves it by from any lowering context (a monomorphized prelude function
+// is lowered in the prelude's module, where a shared name — two modules' `pub Placed` —
+// resolves to nothing). See keyedReceiver, which stamps the same key on a method's
+// receiver for the same reason.
+func (tc *TypeChecker) stampParameterizedKey(name string, loc ast.Location) string {
+	if tc.symTable == nil {
+		return ""
+	}
+	if _, ok := tc.symTable.LookupTypeFrom(name, loc); ok {
+		return tc.symTable.TypeKey(name, loc)
+	}
+	return ""
 }
 
 // walkTypeNames is resolveTypeWith's walk without a TypeChecker, so a caller holding only
 // a symbol table (expandAliases, for UFCSCallable) shares the one recursion rather than
 // growing a second. expandNewtype is resolveTypeWith's parameterized-newtype hook; nil
-// leaves a ParameterizedType as its arguments resolved.
+// leaves a ParameterizedType as its arguments resolved. keyStamp stamps a written
+// `Name<…>`'s head with the declaration it names from loc ("") where the name resolves to
+// nothing; nil leaves the key as it stands.
 func walkTypeNames(t types.Type, loc ast.Location, leaf func(types.UnresolvedType, ast.Location) types.Type,
-	expandNewtype func(types.ParameterizedType, ast.Location) (types.Type, bool)) types.Type {
-	recur := func(inner types.Type) types.Type { return walkTypeNames(inner, loc, leaf, expandNewtype) }
+	expandNewtype func(types.ParameterizedType, ast.Location) (types.Type, bool),
+	keyStamp func(string, ast.Location) string) types.Type {
+	recur := func(inner types.Type) types.Type { return walkTypeNames(inner, loc, leaf, expandNewtype, keyStamp) }
 	switch tt := t.(type) {
 	case types.UnresolvedType:
 		return leaf(tt, loc)
@@ -2757,6 +2777,11 @@ func walkTypeNames(t types.Type, loc ast.Location, leaf func(types.UnresolvedTyp
 		}
 		return tt
 	case types.ParameterizedType:
+		if tt.Key == "" && keyStamp != nil {
+			if k := keyStamp(tt.Name, loc); k != "" {
+				tt.Key = k
+			}
+		}
 		if len(tt.TypeArguments) > 0 {
 			args := make([]types.Type, len(tt.TypeArguments))
 			for i, a := range tt.TypeArguments {

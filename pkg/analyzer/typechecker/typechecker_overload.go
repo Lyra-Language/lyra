@@ -103,9 +103,9 @@ func expandAliases(t types.Type, symTable *symbols.SymbolTable, loc ast.Location
 		depth++
 		defer func() { depth-- }()
 		// The target's own names are the alias's declaring module's.
-		return walkTypeNames(types.WithAllocation(decl.Type, u.Allocation), decl.GetLocation(), leaf, nil)
+		return walkTypeNames(types.WithAllocation(decl.Type, u.Allocation), decl.GetLocation(), leaf, nil, nil)
 	}
-	return walkTypeNames(t, loc, leaf, nil)
+	return walkTypeNames(t, loc, leaf, nil, nil)
 }
 
 // receiverAcceptsValue is receiverAccepts for a receiver *expression*: an array literal's
