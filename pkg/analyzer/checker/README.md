@@ -49,7 +49,9 @@ Returns two results: `pure` violations (`lyra-E007`) and missing-bound warnings 
   definition (inference bills the call sites via the default-args desugar).
 - **A call's callee is resolved in this order**: a declaration (`calleeFor`), the enclosing
   function's parameter (charged its declared bound, or deferred to the caller as a callback),
-  a local function value (`calleeValueType` — **every effect**: its type's bound is not
+  an outer function's bounded parameter called from a closure inside it (`capturedBound`,
+  charged that bound; frames carry their parameters' bounds, hidden by a body binding of the
+  name), a local function value (`calleeValueType` — **every effect**: its type's bound is not
   enforced where it was stored, see LANGUAGE.md § Effects), a builtin, then unknown.
 - Tables live in embedded **`inference`**, shared by fixpoint and enforcement.
 - Method-to-method chains work because `checkTraitImplMethodBody` populates `MethodTable` inside

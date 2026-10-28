@@ -54,7 +54,15 @@
 //   `<Button on_click>`, `<Checkbox checked on_toggle>`, `<Slider value min max step
 //   on_change>`, `<Select options selected on_change>` (or `<Option>`s inside), `<TextInput value
 //   placeholder readonly on_edit>`, `<Image texture texels width height>`
-//   and `<Themed theme sheet>`; any of them takes `class`, `part`, `key`, `label` and `style`.
+//   and `<Themed theme sheet>`; a panel's controls — `<Picture name image revision width
+//   height>`, `<NumberField value min max step decimals on_change>` (its text the label
+//   scrubbed), `<RadioGroup selected on_change axis>` of `<Option>`s, `<Radio chosen
+//   on_choose>`, `<Disclosure title open on_toggle>`, `<Progress value>`, `<Separator>` (its
+//   text in the rule), `<Splitter at on_drag axis least>` and `<Modal open on_dismiss>` (each
+//   holding two), `<Table selected on_select on_resize>` of `<TableColumn width>`s and
+//   `<TableRow>`s, `<Dock tree panel on_change on_close on_tear>`; any of them takes `class`,
+//   `part`, `key`, `label`, `style`, `tooltip` and `tooltip-node`. A `<window name="…">` is a
+//   window beside the main one.
 //   A component is named for its parts' rules and its sheet is a function of the theme
 //   (`component_of`). The default target is `bindings.imgui.ui`, as before.
 // - **Styling for ui**: a top-level `<style global theme={AppTheme} name="app_sheet">` is a
@@ -330,7 +338,8 @@ pub let generate_with = pure (
   var components: []Component = []
   var globals: []Tag = []
   var imported: []Imported = []
-  var window = ""
+  var windows: []string = []
+  var window_names: []string = []
   for t in tops {
     match t.name {
       "script" => scripts.push("// ${name}:${first_line(t)}\n${dedent(t.raw)}"),
@@ -345,8 +354,12 @@ pub let generate_with = pure (
       "import" => imported.push(read_import(t, imports)?),
       "window" => {
         if target != UI { return Err("${t.line}: <window> is the ui target's") }
-        if window.len() > 0 { return Err("${t.line}: a file has one <window>") }
-        window = window_spec(t, name)?
+        let named = t.text_attr("name") ?? "window_spec"
+        if window_names.any((n) => n == named) {
+          return Err("${t.line}: a second <window> named ${named}; name each with name=\"…\"")
+        }
+        window_names.push(named)
+        windows.push(window_spec(t, name)?)
       },
       _ => { return Err("${t.line}: <${t.name}> at the top of a file; only <script>, <import>, <window>, <style global> and <component> go there") },
     }
@@ -365,7 +378,7 @@ pub let generate_with = pure (
     if c.rules.len() > 0 { sheets.push(writer.sheet(c)?) }
   }
   for g in globals { sheets.push(writer.global_sheet(g)?) }
-  if window.len() > 0 {
+  for window in windows {
     writer.use("WindowSpec")
     if window.contains("Size {") { writer.use("Size") }
     writer.ui_uses_in([window])
@@ -375,7 +388,7 @@ pub let generate_with = pure (
   for s in scripts { out.push(s) }
   for body in bodies { out.push(body) }
   for s in sheets { out.push(s) }
-  if window.len() > 0 { out.push(window) }
+  for window in windows { out.push(window) }
   Ok("${out.join("\n\n")}\n")
 }
 
@@ -387,9 +400,19 @@ pub let generate_with = pure (
 /// the user may make it (a side not given is no limit), which ways it resizes —
 /// `resize={false}` neither, `resize_x`/`resize_y` one side, overriding `resize` for theirs —
 /// and its overflow. What is not given keeps `WindowSpec`'s default.
+///
+/// **A window beside the main one** — one of `App.windows`' — is a `<window name="…">`: a
+/// function of that name, of its `props={{ … }}` as a component's are, whose `key={…}`
+/// (which window it is) and `place={…}` (a `Maybe<Point>`, where its corner goes) are the
+/// `WindowSpec`'s too. A file has any number, each named for itself; unnamed is the main
+/// window's `window_spec`.
 let window_spec = pure (t: Tag, file: string) -> Result<string, string> => {
   for a in t.attrs {
     if ![
+      "name",
+      "props",
+      "key",
+      "place",
       "title",
       "width",
       "height",
@@ -402,13 +425,33 @@ let window_spec = pure (t: Tag, file: string) -> Result<string, string> => {
       "resize_y",
       "overflow"
     ].any((n) => n == a.name) {
-      return Err("${a.line}: <window> has no attribute ${a.name} (title, width, height, min-width, min-height, max-width, max-height, resize, resize_x, resize_y, overflow)")
+      return Err("${a.line}: <window> has no attribute ${a.name} (name, props, key, place, title, width, height, min-width, min-height, max-width, max-height, resize, resize_x, resize_y, overflow)")
     }
   }
   if t.children.len() > 0 && words_of(t.children)
     .trim()
     .len() > 0 { return Err("${t.line}: <window> holds nothing") }
+  let name = t.text_attr("name") ?? "window_spec"
+  let props = match attr_named(t.attrs, "props") {
+    None => "",
+    Some(a) => match a.value {
+      Braced(code) => object_props(code, a.line)?,
+      _ => return Err("${a.line}: props are an object: props={{ key: string, place: Maybe<Point> }}"),
+    },
+  }
   var fields: []string = []
+  for field in ["key", "place"] {
+    if let Some(a) = attr_named(t.attrs, field) {
+      match a.value {
+        Bare => return Err("${a.line}: ${field} of <window> needs a value"),
+        Quoted(text) => {
+          if field == "place" { return Err("${a.line}: place of <window> is {…}, a Maybe<Point>") }
+          fields.push("key: ${interpolated(text)}")
+        },
+        Braced(code) => fields.push("${field}: ${code}"),
+      }
+    }
+  }
   if let Some(a) = attr_named(t.attrs, "title") {
     if a.value == Bare { return Err("${a.line}: title of <window> needs a value") }
     fields.push("title: ${attr_lyra(a.value)}")
@@ -453,7 +496,12 @@ let window_spec = pure (t: Tag, file: string) -> Result<string, string> => {
   let body = if fields.len() == 0 { "WindowSpec {}" } else {
     "WindowSpec {\n  ${fields.join(",\n  ")},\n}"
   }
-  Ok("/// From ${file}, line ${t.line}: the window, for `ui.gpu.open_app` — or an `App`'s\n/// `min_size`, `max_size`, `resize_x`, `resize_y` and `window_overflow`.\npub let window_spec = pure () -> WindowSpec => ${body}")
+  let what = if name == "window_spec" {
+    "the window, for `ui.gpu.open_app` — or an `App`'s\n/// `min_size`, `max_size`, `resize_x`, `resize_y` and `window_overflow`."
+  } else {
+    "a window beside the main one, for `App.windows`."
+  }
+  Ok("/// From ${file}, line ${t.line}: ${what}\npub let ${name} = pure (${props}) -> WindowSpec => ${body}")
 }
 
 /// Another file's components, for this one's to call: the module they are in and their
@@ -725,6 +773,12 @@ impl Writer {
       "MenuItem" => Some(["check", "shortcut", "arrow"]),
       "Tab" => Some(["label"]),
       "WindowButton" => Some(["glyph", "frame", "cross"]),
+      "NumberField" => Some(["label", "field", "minus", "plus"]),
+      "Radio" => Some(["circle", "chosen", "dot"]),
+      "Disclosure" => Some(["arrow"]),
+      "Progress" => Some(["fill"]),
+      "Separator" => Some(["line", "label"]),
+      "Table" => Some(["header", "heading", "rule"]),
       _ => None,
     }
   }
@@ -1195,6 +1249,21 @@ const UI_MODULES = [
       "swatch",
       "color_picker",
       "window_buttons",
+      "picture",
+      "modal",
+      "NumberSpec",
+      "number_field",
+      "radio_group",
+      "radio",
+      "disclosure",
+      "progress",
+      "separator",
+      "splitter",
+      "TableColumn",
+      "table",
+      "DockTree",
+      "DockTear",
+      "dock",
     ],
   ),
   ("ui.style", [
@@ -1317,12 +1386,16 @@ data UiShape =
   | ShapeBox
   /// Its text: `text`.
   | ShapeText
-  /// A control, its text its label: `button`, `checkbox`.
+  /// A control, its text its label: `button`, `checkbox`, `radio`, `separator`.
   | ShapeLabelled(string)
-  /// A control of attributes alone: `slider`, `text_input`, `image`.
+  /// A control of attributes alone: `slider`, `text_input`, `image`, `picture`,
+  /// `number_field`, `progress`, `radio_group` (its `<Option>`s), `dock`.
   | ShapeBare(string)
-  /// Two children, an anchor and what floats from it while `open`: `popup`.
-  | ShapePopup
+  /// Two children: an anchor and what floats from it while `open` (`popup`), what a dialog is
+  /// over and the dialog (`modal`), or two panes (`splitter`).
+  | ShapeTwo(string)
+  /// A table: its `<TableColumn>`s and `<TableRow>`s.
+  | ShapeTable
   /// A theme and sheet for its children.
   | ShapeThemed
   /// A flex container or a grid: its attributes are style properties (`direction="column"`
@@ -1335,9 +1408,20 @@ data UiShape =
 
 /// The attributes every ui element takes: its classes, the part of its component it is, its
 /// key, its label for assistive technology, its inline style, whether it is disabled (bare, or
-/// `disabled={condition}`), and whether a press on it moves the window (`window-drag`, bare: a
-/// title bar the program draws).
-const UI_COMMON = ["class", "part", "key", "label", "style", "disabled", "window-drag"]
+/// `disabled={condition}`), whether a press on it moves the window (`window-drag`, bare: a
+/// title bar the program draws), and its tooltip — text (`tooltip="…"`, or `{…}` a string) or
+/// a node (`tooltip-node={…}`).
+const UI_COMMON = [
+  "class",
+  "part",
+  "key",
+  "label",
+  "style",
+  "disabled",
+  "window-drag",
+  "tooltip",
+  "tooltip-node"
+]
 
 impl Writer {
   /// A capitalized tag as the `ui.layout` call it stands for, its common attributes chained
@@ -1408,6 +1492,11 @@ impl Writer {
             let at = alignment(t.text_attr("at") ?? "center").map_err((what) => "${t.line}: ${what}")?
             "align(${at}, ${child})"
           },
+          "disclosure" => {
+            let open = condition_attr(t, "open")?
+            if open.len() == 0 { return Err("${t.line}: <Disclosure> needs open") }
+            "disclosure(${required(t, "title")?}, ${open}, ${child}, ${required(t, "on_toggle")?})"
+          },
           _ => {
             let axis = match t.text_attr("axis") ?? "vertical" {
               "vertical" => "Vertical",
@@ -1428,23 +1517,57 @@ impl Writer {
       ShapeLabelled(builder) => {
         self.use(builder)
         let label = label_of(t)?
-        if builder == "button" {
-          "button(${label}, ${required(t, "on_click")?})"
-        } else {
-          let checked = match attr_named(t.attrs, "checked") {
-            Some(a) => match a.value {
-              Bare => "true",
-              Braced(code) => code,
-              Quoted(text) => text,
-            },
-            None => return Err("${t.line}: <Checkbox> needs checked"),
-          }
-          "checkbox(${label}, ${checked}, ${required(t, "on_toggle")?})"
+        match builder {
+          "button" => "button(${label}, ${required(t, "on_click")?})",
+          // A rule with its text in it, or none.
+          "separator" => if label == "\"\"" { "separator::<${self.event}>()" } else {
+            "separator::<${self.event}>(${label})"
+          },
+          "number_field" => {
+            self.use("NumberSpec")
+            let value = number_attr(t, "value")?
+            if value.len() == 0 { return Err("${t.line}: <NumberField> needs value") }
+            var fields = ["value: ${value}"]
+            for f in ["min", "max", "step"] {
+              let n = number_attr(t, f)?
+              if n.len() > 0 { fields.push("${f}: ${n}") }
+            }
+            if let Some(a) = attr_named(t.attrs, "decimals") {
+              let places = match a.value {
+                Quoted(text) => integer(text).map_err((what) => "${a.line}: decimals of <NumberField>: ${what}")?,
+                Braced(code) => code,
+                Bare => return Err("${a.line}: decimals of <NumberField> needs a value"),
+              }
+              fields.push("decimals: ${places}")
+            }
+            if label != "\"\"" { fields.push("label: ${label}") }
+            "number_field(NumberSpec { ${fields.join(", ")} }, ${self.changes(t, "on_change", "f64")?})"
+          },
+          "radio" => {
+            let chosen = condition_attr(t, "chosen")?
+            if chosen.len() == 0 { return Err("${t.line}: <Radio> needs chosen") }
+            "radio(${label}, ${chosen}, ${required(t, "on_choose")?})"
+          },
+          _ => {
+            let checked = match attr_named(t.attrs, "checked") {
+              Some(a) => match a.value {
+                Bare => "true",
+                Braced(code) => code,
+                Quoted(text) => text,
+              },
+              None => return Err("${t.line}: <Checkbox> needs checked"),
+            }
+            "checkbox(${label}, ${checked}, ${required(t, "on_toggle")?})"
+          },
         }
       },
       ShapeBare(builder) => {
         self.use(builder)
         if builder == "select" { return Ok(self.select_of(t)?) }
+        if builder == "radio_group" { return self.ui_modifiers(
+          t,
+          self.radio_group_of(t)?
+        ) }
         // A colour's picker holds the program's controls under its strips (`below`).
         if builder == "swatch" || builder == "color_picker" {
           let items = self.nodes_of(t.children, "${indent}  ")?
@@ -1495,6 +1618,36 @@ impl Writer {
             "text_input(FieldSpec { ${fields.join(", ")} })"
           },
           "window_buttons" => self.bare_control(t, builder)?,
+          "picture" => {
+            self.use("Size")
+            let w = number_attr(t, "width")?
+            let h = number_attr(t, "height")?
+            if w.len() == 0 || h.len() == 0 { return Err("${t.line}: <Picture> needs width and height") }
+            let revision = match attr_named(t.attrs, "revision") {
+              Some(a) => match a.value {
+                Quoted(text) => integer(text).map_err((what) => "${a.line}: revision of <Picture>: ${what}")?,
+                Braced(code) => code,
+                Bare => return Err("${a.line}: revision of <Picture> needs a value"),
+              },
+              None => return Err("${t.line}: <Picture> needs revision"),
+            }
+            "picture(${required(t, "name")?}, ${required(t, "image")?}, ${revision}, Size { w: ${w}, h: ${h} })"
+          },
+          "progress" => {
+            let value = number_attr(t, "value")?
+            if value.len() == 0 { return Err("${t.line}: <Progress> needs value") }
+            "progress::<${self.event}>(${value})"
+          },
+          "dock" => {
+            let panel = match t.code_attr("panel") {
+              Some(code) => code,
+              None => return Err("${t.line}: <Dock> needs panel={…}, a function of a panel's key answering its DockPanel"),
+            }
+            let made = "dock(${required(t, "tree")?}, ${panel}, ${self.typed_changes(t, "on_change", "DockTree")?}, ${self.changes(t, "on_close", "string")?})"
+            if attr_named(t.attrs, "on_tear").is_none() { made } else {
+              "${made}.tears_off(${self.typed_changes(t, "on_tear", "DockTear")?})"
+            }
+          },
           _ => {
             self.use("Size")
             let w = number_attr(t, "width")?
@@ -1504,19 +1657,44 @@ impl Writer {
           },
         }
       },
-      ShapePopup => {
-        self.use("popup")
+      ShapeTwo(builder) => {
+        self.use(builder)
         let items = self.nodes_of(t.children, "${indent}  ")?
         if items.len() != 2 || items.any((i) => i.text.starts_with("...")) {
-          return Err("${t.line}: <Popup> holds two elements, its anchor and what opens from it")
+          let two = match builder {
+            "popup" => "its anchor and what opens from it",
+            "modal" => "what it is over and the dialog",
+            _ => "its two panes",
+          }
+          return Err("${t.line}: <${t.name}> holds two elements, ${two}")
         }
-        let open = match attr_named(t.attrs, "open") {
-          Some(a) => match a.value {
-            Bare => "true",
-            Braced(code) => code,
-            Quoted(_) => return Err("${a.line}: open of <Popup> is bare or {condition}"),
-          },
-          None => return Err("${t.line}: <Popup> needs open"),
+        if builder == "splitter" {
+          let at = number_attr(t, "at")?
+          if at.len() == 0 { return Err("${t.line}: <Splitter> needs at") }
+          let least = number_attr(t, "least")?
+          let axis = match t.text_attr("axis") {
+            None => if least.len() > 0 { "Horizontal" } else { "" },
+            Some("horizontal") => "Horizontal",
+            Some("vertical") => "Vertical",
+            Some(other) =>
+              return Err("${t.line}: axis of <Splitter> is horizontal or vertical, not ${other}"),
+          }
+          if axis.len() > 0 { self.use(axis) }
+          let tail = if axis.len() == 0 { "" } else if least.len() == 0 { ", ${axis}" } else {
+            ", ${axis}, ${least}"
+          }
+          return self.ui_modifiers(
+            t,
+            "splitter(${items[0].text}, ${items[1].text}, ${at}, ${self.changes(t, "on_drag", "f32")?}${tail})"
+          )
+        }
+        let open = condition_attr(t, "open")?
+        if open.len() == 0 { return Err("${t.line}: <${t.name}> needs open") }
+        if builder == "modal" {
+          return self.ui_modifiers(
+            t,
+            "modal(${items[0].text}, ${open}, ${items[1].text}, ${required(t, "on_dismiss")?})"
+          )
         }
         let side = match t.text_attr("side") ?? "below" {
           "below" => "",
@@ -1529,6 +1707,7 @@ impl Writer {
         }
         "popup(${items[0].text}, ${open}, ${items[1].text}, ${required(t, "on_dismiss")?}${side})"
       },
+      ShapeTable => self.table_of(t, indent)?,
       ShapeMenus(which) => {
         if which == "menu_bar" {
           self.use("menu_bar")
@@ -1607,6 +1786,16 @@ impl Writer {
           if a.value != Bare { return Err("${a.line}: window-drag is bare") }
           out = "${out}.window_drag()"
         },
+        "tooltip" => {
+          if a.value == Bare { return Err("${a.line}: tooltip needs its text: tooltip=\"Undo (⌘Z)\"") }
+          out = "${out}.tooltip(${attr_lyra(a.value)})"
+        },
+        "tooltip-node" => {
+          let Braced(code) = a.value else {
+            return Err("${a.line}: tooltip-node is a node in braces: tooltip-node={…}; text is tooltip=\"…\"")
+          }
+          out = "${out}.tooltip_node(${code})"
+        },
         "style" => {
           self.use("Style")
           let fields = match a.value {
@@ -1668,17 +1857,22 @@ impl Writer {
   }
 
   /// One element written as the data [making_of] makes: a `<Menu title>` of a menu bar; a
-  /// menu's `<MenuItem>`, `<Separator/>` or `<Menu title>` (a submenu); a tab bar's `<Tab>`.
+  /// menu's `<MenuItem>`, `<Separator/>` or `<Menu title>` (a submenu); a tab bar's `<Tab>`; a
+  /// table's `<TableColumn>` or `<TableRow>`.
   let datum = (self: mut, t: Tag, indent: string) -> Result<string, string> => {
     let wanted = match self.making {
       "menus" => ["Menu"],
       "entries" => ["MenuItem", "Separator", "Menu"],
+      "columns" => ["TableColumn"],
+      "rows" => ["TableRow"],
       _ => ["Tab"],
     }
     if !wanted.any((w) => w == t.name) {
       let holder = match self.making {
         "menus" => "<MenuBar> holds <Menu>s",
         "entries" => "a menu holds <MenuItem>s, <Separator/>s and <Menu>s",
+        "columns" => "<Table>'s columns are <TableColumn>s",
+        "rows" => "<Table>'s rows are <TableRow>s",
         _ => "<TabBar>'s tabs are <Tab>s",
       }
       return Err("${t.line}: ${holder}, not <${t.name}>")
@@ -1687,12 +1881,24 @@ impl Writer {
       "Menu" => ["title"],
       "MenuItem" => ["on_select", "shortcut", "disabled", "checked"],
       "Tab" => ["key", "closable", "movable"],
+      "TableColumn" => ["width"],
       _ => [],
     }
     for a in t.attrs {
       if !allowed.any((n) => n == a.name) { return Err("${a.line}: <${t.name}> has no attribute ${a.name}") }
     }
     match t.name {
+      "TableColumn" => {
+        let width = number_attr(t, "width")?
+        if width.len() == 0 { return Err("${t.line}: <TableColumn> needs width") }
+        self.use("TableColumn")
+        Ok("TableColumn { title: ${label_of(t)?}, width: ${width} }")
+      },
+      // Its cells are nodes, among which control flow works as anywhere.
+      "TableRow" => {
+        let cells = self.making_of("", t.children, indent)?
+        Ok(self.listed(cells, indent))
+      },
       "Menu" => {
         let Some(title) = attr_named(
           t.attrs,
@@ -1821,6 +2027,120 @@ impl Writer {
       }),
       _ => Err("${a.line}: ${name} of <${t.name}> takes {…}"),
     }
+  }
+
+  /// [changes] for a value of a `ui` type, which the module imports when the lambda names it.
+  let typed_changes = (
+    self: mut,
+    t: Tag,
+    name: string,
+    value_type: string
+  ) -> Result<string, string> => {
+    let written = self.changes(t, name, value_type)?
+    if written.starts_with("(value: ${value_type})") { self.use(value_type) }
+    Ok(written)
+  }
+
+  /// A `<RadioGroup selected={…} on_change={…} axis="horizontal">` and its choices:
+  /// `options={…}`, a Lyra `[]string`, or `<Option>`s inside it, each its text — one or the
+  /// other. `on_change` takes the index chosen, an `i64`; down a column unless `axis` says.
+  let radio_group_of = (self: mut, t: Tag) -> Result<string, string> => {
+    var texts: []string = []
+    for child in t.children {
+      match child {
+        Element(o) => {
+          if o.name != "Option" {
+            return Err("${o.line}: <RadioGroup> holds <Option>s, not <${o.name}>")
+          }
+          if o.attrs.len() > 0 { return Err("${o.attrs[0].line}: <Option> takes no attributes") }
+          texts.push(label_of(o)?)
+        },
+        Words(w, _) => {
+          if w
+            .trim()
+            .len() > 0 { return Err("${t.line}: <RadioGroup> holds <Option>s, not text") }
+        },
+        Code(_, _) => { return Err("${t.line}: <RadioGroup> holds <Option>s, not {…}; or write options={…}") },
+      }
+    }
+    let options = match t.code_attr("options") {
+      Some(code) => {
+        if texts.len() > 0 { return Err("${t.line}: <RadioGroup> takes options={…} or <Option>s, not both") }
+        code
+      },
+      None => {
+        if texts.len() == 0 { return Err("${t.line}: <RadioGroup> needs options={…} or <Option>s") }
+        "[${texts.join(", ")}]"
+      },
+    }
+    let axis = match t.text_attr("axis") ?? "vertical" {
+      "vertical" => "",
+      "horizontal" => {
+        self.use("Horizontal")
+        ", Horizontal"
+      },
+      other =>
+        return Err("${t.line}: axis of <RadioGroup> is vertical or horizontal, not ${other}"),
+    }
+    Ok("radio_group(${options}, ${required(t, "selected")?}, ${self.changes(t, "on_change", "i64")?}${axis})")
+  }
+
+  /// A `<Table selected={…} on_select={…} on_resize={…}>`: its columns — `<TableColumn
+  /// width="120">Name</TableColumn>`s, or `columns={…}`, a Lyra `[]TableColumn` — and its rows —
+  /// `<TableRow>`s each holding its cells, with `<for>` and `<if>` among them, or `rows={…}`, a
+  /// Lyra `[][]Node<e>`. `on_select` takes the row's index; `on_resize` the column's and the
+  /// width it is dragged to (`Resized` is `(column: i64, width: f32) -> e => Resized(column,
+  /// width)`).
+  let table_of = (self: mut, t: Tag, indent: string) -> Result<string, string> => {
+    self.use("table")
+    var column_markup: []Markup = []
+    var row_markup: []Markup = []
+    for child in t.children {
+      match child {
+        Element(c) => {
+          if c.name == "TableColumn" {
+            column_markup.push(child)
+          } else if c.name == "TableRow" || c.name == "for" || c.name == "if" || c.name == "else" {
+            row_markup.push(child)
+          } else {
+            return Err("${c.line}: <Table> holds <TableColumn>s and <TableRow>s, not <${c.name}>")
+          }
+        },
+        Words(w, line) => {
+          if w
+            .trim()
+            .len() > 0 { return Err("${line}: <Table> holds <TableColumn>s and <TableRow>s, not text") }
+        },
+        Code(_, line) => { return Err("${line}: <Table> holds <TableColumn>s and <TableRow>s, not {…}; or write columns={…} and rows={…}") },
+      }
+    }
+    let columns = match t.code_attr("columns") {
+      Some(code) => {
+        if column_markup.len() > 0 { return Err("${t.line}: <Table> takes columns={…} or <TableColumn>s, not both") }
+        code
+      },
+      None => {
+        if column_markup.len() == 0 { return Err("${t.line}: <Table> needs columns={…} or <TableColumn>s") }
+        self.listed(self.making_of("columns", column_markup, indent)?, indent)
+      },
+    }
+    let rows = match t.code_attr("rows") {
+      Some(code) => {
+        if row_markup.len() > 0 { return Err("${t.line}: <Table> takes rows={…} or <TableRow>s, not both") }
+        code
+      },
+      None => self.listed(self.making_of("rows", row_markup, indent)?, indent),
+    }
+    let resize = match attr_named(t.attrs, "on_resize") {
+      None => return Err("${t.line}: <Table> needs on_resize"),
+      Some(a) => match a.value {
+        Braced(code) => if is_bare_name(code) {
+          "(column: i64, width: f32) -> ${self.event} => ${code}(column, width)"
+        } else { code },
+        _ => return Err("${a.line}: on_resize of <Table> takes {…}"),
+      },
+    }
+    Ok("table(${columns}, ${rows}, ${required(t, "selected")?}, ${self.changes(t, "on_select", "i64")?}, ${resize})")
   }
 
   /// `<Swatch>`, `<ColorPicker>` and `<WindowButtons/>`: controls of attributes, a colour's
@@ -2034,6 +2354,17 @@ impl Writer {
   }
 }
 
+/// A condition attribute — bare for `true`, or `{condition}` — as Lyra; `""` when absent.
+let condition_attr = pure (t: Tag, name: string) -> Result<string, string> =>
+  match attr_named(t.attrs, name) {
+    None => Ok(""),
+    Some(a) => match a.value {
+      Bare => Ok("true"),
+      Braced(code) => Ok(code),
+      Quoted(_) => Err("${a.line}: ${name} of <${t.name}> is bare or {condition}"),
+    },
+  }
+
 /// An attribute the element cannot do without, as Lyra.
 let required = pure (t: Tag, name: string) -> Result<string, string> =>
   match attr_named(t.attrs, name) {
@@ -2076,7 +2407,23 @@ let ui_kind = pure (tag: string) -> Maybe<(UiShape, []string)> => match tag {
   "Slider" => Some((ShapeBare("slider"), ["value", "min", "max", "step", "on_change"])),
   "Select" =>
     Some((ShapeBare("select"), ["options", "selected", "on_change", "separators", "option_families"])),
-  "Popup" => Some((ShapePopup, ["open", "on_dismiss", "side"])),
+  "Popup" => Some((ShapeTwo("popup"), ["open", "on_dismiss", "side"])),
+  "Modal" => Some((ShapeTwo("modal"), ["open", "on_dismiss"])),
+  "Splitter" => Some((ShapeTwo("splitter"), ["at", "on_drag", "axis", "least"])),
+  "Picture" =>
+    Some((ShapeBare("picture"), ["name", "image", "revision", "width", "height"])),
+  "NumberField" =>
+    Some((ShapeLabelled("number_field"), ["value", "min", "max", "step", "decimals", "on_change"])),
+  "RadioGroup" =>
+    Some((ShapeBare("radio_group"), ["options", "selected", "on_change", "axis"])),
+  "Radio" => Some((ShapeLabelled("radio"), ["chosen", "on_choose"])),
+  "Disclosure" => Some((ShapeWrap("disclosure"), ["title", "open", "on_toggle"])),
+  "Progress" => Some((ShapeBare("progress"), ["value"])),
+  "Separator" => Some((ShapeLabelled("separator"), [])),
+  "Table" =>
+    Some((ShapeTable, ["columns", "rows", "selected", "on_select", "on_resize"])),
+  "Dock" =>
+    Some((ShapeBare("dock"), ["tree", "panel", "on_change", "on_close", "on_tear"])),
   "TextInput" =>
     Some((ShapeBare("text_input"), ["value", "placeholder", "readonly", "on_edit"])),
   "Image" => Some((ShapeBare("image"), ["texture", "texels", "width", "height"])),

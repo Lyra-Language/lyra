@@ -210,6 +210,22 @@ let main = () => println(1)
 `))
 }
 
+// A field's default is a use where it is written, whether or not a literal in the program
+// leaves the field out for the typechecker to fill it in — a module of types alone (lui's
+// generated view state, 10/27) constructs none of them. A constructor and a struct in the
+// default count as well as a call.
+func TestUnusedImports_UsedOnlyInAFieldDefault(t *testing.T) {
+	assertNoUnusedImports(t, parseAndCheckUnusedImports(t, `
+import helper.{ seven, Empty, Origin }
+pub struct Holder {
+  n: i64 = seven(),
+  m: Maybe<i64> = Empty,
+  at: Point = Origin { x: 0 },
+}
+let main = () => println(1)
+`))
+}
+
 // Nested in a composite: the walk has to descend, not just match a leaf.
 func TestUnusedImports_TypeNestedInAComposite(t *testing.T) {
 	assertNoUnusedImports(t, parseAndCheckUnusedImports(t, `

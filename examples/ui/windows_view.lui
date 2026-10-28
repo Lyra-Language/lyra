@@ -1,0 +1,212 @@
+<!--
+  Several windows, as markup (ui/VEGA.md §9): the studio's `<Dock>`, whose tabs tear off
+  (`on_tear`), in the main window and in each window torn off — a `<window name="torn_window">`
+  of the window's state. `build/lui examples/ui/windows_view.lui` writes windows_view.lyra beside
+  it, which windows.lyra runs.
+-->
+
+<script target="ui">
+  import ui.app.{ Command, WindowPlacement }
+  import ui.draw.{ Point }
+  import ui.style.{ light_theme }
+  import ui.layout.{
+    dock_tabs,
+    dock_split,
+    dock_with,
+    dock_without,
+    dock_keys,
+    DockPanel,
+    DockCenter,
+  }
+
+  /// Every panel the studio has, by key.
+  const PANELS: []string = ["sprite", "tiles", "map", "palettes", "problems", "console"]
+
+  /// The main window's arrangement — the palettes and problems down the left, the editors over
+  /// the console — the windows torn off, the number the next one is keyed by, and the strokes
+  /// painted, the sprite editor's stand-in for work.
+  pub struct State {
+    tree: DockTree = dock_split(
+      Horizontal,
+      0.3,
+      dock_tabs(["palettes", "problems"]),
+      dock_split(
+        Vertical,
+        0.65,
+        dock_tabs(["sprite", "tiles", "map"]),
+        dock_tabs(["console"])
+      )
+    ),
+    torn: []Torn = [],
+    next: i64 = 1,
+    strokes: i64 = 0,
+  }
+
+  /// A window torn off: its key, its dock's arrangement, and where it is.
+  pub struct Torn {
+    key: string,
+    tree: DockTree,
+    place: Maybe<Point> = None,
+    size: Size = Size { w: 400.0, h: 300.0 },
+  }
+
+  pub data Event =
+    Arranged(DockTree)
+    | TornArranged(string, DockTree)
+    | Closed(string)
+    | Opened(string)
+    | TornOff(DockTear)
+    | TornClosed(string)
+    | TornMoved(string, WindowPlacement)
+    | Paint
+
+  pub let update = pure (state: State, event: Event) -> (State, []Command<Event>) => {
+    let next = match event {
+      Arranged(tree) => State { state | tree: tree },
+      // A window whose last panel has gone — docked elsewhere — closes.
+      TornArranged(key, tree) => State {
+        state |
+        torn: [w in state.torn | w.key != key || dock_keys(tree).len() > 0 | if w.key == key { Torn {
+          w |
+          tree: tree
+        } } else { w }]
+      },
+      Closed(panel) => without(state, panel),
+      // A panel opened again goes among the sprite editor's tabs — or, with that closed, in the
+      // first group.
+      Opened(key) =>
+        State { state | tree: dock_with(state.tree, key, "sprite", DockCenter) },
+      TornOff(tear) => {
+        let rest = without(state, tear.key)
+        State {
+          rest |
+          torn: [
+            ...rest.torn,
+            Torn {
+              key: "w${state.next}",
+              tree: dock_tabs([tear.key]),
+              place: tear.place,
+              size: tear.size,
+            }
+          ],
+          next: state.next + 1,
+        }
+      },
+      // Closing a window puts its panels back among the sprite editor's tabs.
+      TornClosed(key) => {
+        var tree = state.tree
+        for w in state.torn {
+          if w.key != key { continue }
+          for k in dock_keys(w.tree) { tree = dock_with(tree, k, "sprite", DockCenter) }
+        }
+        State { state | tree: tree, torn: [w in state.torn | w.key != key | w] }
+      },
+      TornMoved(key, at) => State {
+        state |
+        torn: [w in state.torn | if w.key == key { Torn {
+          w |
+          place: at.place,
+          size: at.size
+        } } else { w }]
+      },
+      Paint => State { state | strokes: state.strokes + 1 },
+    }
+    (next, [])
+  }
+
+  /// `state` without the panel `key`, wherever it is — and without a window it leaves empty.
+  let without = pure (state: State, key: string) -> State => {
+    let torn = [w in state.torn | Torn { w | tree: dock_without(w.tree, key) }]
+    State {
+      state |
+      tree: dock_without(state.tree, key),
+      torn: [w in torn | dock_keys(w.tree).len() > 0 | w]
+    }
+  }
+
+  /// The panels in no window's dock, which the toolbar opens again.
+  let closed_panels = pure (state: State) -> []string => {
+    var open = dock_keys(state.tree)
+    for w in state.torn { open = [...open, ...dock_keys(w.tree)] }
+    [k in PANELS | !open.contains(k) | k]
+  }
+
+  /// What the panel `key` shows.
+  let panel = pure (state: State, key: string) -> DockPanel<Event> => {
+    let body: []Node<Event> = if key == "sprite" {
+      [text("Strokes: ${state.strokes}"), button("Paint", Paint)]
+    } else { [text("The ${title_of(key)} panel.")] }
+    DockPanel {
+      title: title_of(key),
+      content: padding(insets(12.0), column(body).with_style(Style { gap: Some(8.0) })),
+      closable: key != "sprite",
+    }
+  }
+
+  /// A panel's title.
+  let title_of = pure (key: string) -> string => match key {
+    "sprite" => "Sprite",
+    "tiles" => "Tile set",
+    "map" => "Map",
+    "palettes" => "Palettes",
+    "problems" => "Problems",
+    "console" => "Console",
+    _ => key,
+  }
+</script>
+
+<!-- A window torn off, as the host opens it: titled for its panels, where the user left it. -->
+<window
+  name="torn_window"
+  props={{ w: Torn }}
+  key={w.key}
+  place={w.place}
+  title={[k in dock_keys(w.tree) | title_of(k)].join(", ")}
+  width={w.size.w}
+  height={w.size.h}
+  overflow="visible"
+/>
+
+<!-- The main window: a toolbar of the panels closed, over the dock. -->
+<component name="view" props={{ s: State }} event={Event}>
+  <Themed theme={light_theme()} sheet={Sheet {}}>
+    <Padding all="8">
+      <Column cross="stretch" style="gap: 8">
+        <Row cross="center" style="gap: 8; height: 30">
+          <Text>Studio</Text>
+          <for each={k in closed_panels(s)}>
+            <Button on_click={Opened(k)}>Open {title_of(k)}</Button>
+          </for>
+        </Row>
+        <Expanded>
+          <studio_dock s={s} tree={s.tree} arranged={Arranged}/>
+        </Expanded>
+      </Column>
+    </Padding>
+  </Themed>
+</component>
+
+<!-- What the window torn off as `key` shows: a dock of its panels. -->
+<component name="torn_view" props={{ s: State, key: string }} event={Event}>
+  <for each={w in s.torn}>
+    <if test={w.key == key}>
+      <Themed theme={light_theme()} sheet={Sheet {}}>
+        <Padding all="8">
+          <studio_dock s={s} tree={w.tree} arranged={(tree: DockTree) -> Event => TornArranged(key, tree)}/>
+        </Padding>
+      </Themed>
+    </if>
+  </for>
+</component>
+
+<!-- A dock of `tree`'s panels whose tabs tear off, raising `arranged` with the tree a drop
+     leaves. -->
+<component name="studio_dock" props={{ s: State, tree: DockTree, arranged: pure (DockTree) -> Event }} event={Event}>
+  <Dock
+    tree={tree}
+    panel={(k: string) -> DockPanel<Event> => panel(s, k)}
+    on_change={arranged}
+    on_close={Closed}
+    on_tear={TornOff}
+  />
+</component>

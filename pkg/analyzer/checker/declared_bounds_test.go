@@ -105,3 +105,48 @@ let bump = () -> i64 => { log = 1  0 }
 let impureCaller = () -> i64 => loose(bump)`
 	assertPurityCount(t, checkPurity(t, src), 0)
 }
+
+// **A closure calling its enclosing function's bounded parameter** costs what the bound
+// permits, as the function's own call to it does: whoever supplies the argument is held to
+// the bound. Until 10/27 the closure's call fell to the function-value rung and was charged
+// every effect, so wrapping a pure callback — `(v) => g(v)`, lui's `on_change={arranged}` —
+// was refused as mutating where it was handed on to a `pure` parameter. Handing the
+// parameter on bare from inside the closure is verified the same way.
+func TestDeclaredBound_ClosureOverABoundedParameter(t *testing.T) {
+	src := `
+let apply = pure (f: pure (i64) -> i64, x: i64) -> i64 => f(x)
+let wrapped = pure (g: pure (i64) -> i64) -> i64 => apply((v: i64) -> i64 => g(v), 1)
+let handed = pure (g: pure (i64) -> i64) -> i64 => apply((v: i64) -> i64 => apply(g, v), 1)`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}
+
+// ...but only a *bounded* parameter: an unconstrained one promises nothing to the closure
+// either; a name the body binds again — over the parameter — is that binding, not it; and a
+// function value whose annotation says `pure` is still not trusted from a closure.
+func TestDeclaredBound_ClosureOverAnythingElseIsNotTrusted(t *testing.T) {
+	for _, c := range []struct{ name, src string }{
+		{"unconstrained", `
+let apply = pure (f: pure (i64) -> i64, x: i64) -> i64 => f(x)
+let wrapped = (g: (i64) -> i64) -> i64 => apply((v: i64) -> i64 => g(v), 1)`},
+		{"rebound in the body", `
+let apply = pure (f: pure (i64) -> i64, x: i64) -> i64 => f(x)
+var log = 0
+let noisy = (n: i64) -> i64 => { log = n  n }
+let wrapped = (g: pure (i64) -> i64) -> i64 => {
+  let g = noisy
+  apply((v: i64) -> i64 => g(v), 1)
+}`},
+		{"an annotated let", `
+let apply = pure (f: pure (i64) -> i64, x: i64) -> i64 => f(x)
+var log = 0
+let noisy = (n: i64) -> i64 => { log = n  n }
+let wrapped = () -> i64 => {
+  let h: pure (i64) -> i64 = noisy
+  apply((v: i64) -> i64 => h(v), 1)
+}`},
+	} {
+		if errs := checkPurity(t, c.src); len(errs) == 0 {
+			t.Errorf("%s: a closure calling it was handed to a pure parameter unrefused", c.name)
+		}
+	}
+}

@@ -1573,6 +1573,17 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 			a.table.ReleaseTemp[e] = true
 		}
 
+	case *ast.SpreadExpr:
+		// `...xs` in an array literal **borrows** its operand: the backend copies each element
+		// out with a retain of its own (lowerSpreadOperand) and leaves the operand alive, so a
+		// binding is read as any borrowed one is and a temporary — `[...f(x)]`, `[...[a, b]]`
+		// — is released once copied. Until 10/27 this arm did not exist and the operand went
+		// unwalked: such a temporary leaked, and a closure inside it was never analysed, so
+		// its body took no retains — `[...[hold((t) => Got(key, t))]]` stored `key` and `t`
+		// unretained, and every call freed what the event it built still held (lui's
+		// `<for>` of an `<if>`, spread in place, in examples/ui/windows_view.lui).
+		a.expr(e.Value, false)
+
 	case *ast.ArrayRepeatExpr:
 		// `[v; n]` is the literal above with one element written once, so its value is
 		// transferred exactly the same way. The count is a folded integer literal by

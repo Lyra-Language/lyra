@@ -287,7 +287,7 @@ layer — implements the two traits; the display list is the whole contract.
   Opened while the keyboard had the focus on its anchor, the focus moves to the content's first
   control; closed with the focus inside, back to the anchor's (`Ui.popups`, the frame after).
 - **A tooltip** (`.tooltip(text)` on any node, `.tooltip_node(node)` for one with structure;
-  `Node.tip`) shows once the pointer has rested on the node for `TIP_DELAY_MS` (500): the
+  `Node.tip`; lui's `tooltip` and `tooltip-node`) shows once the pointer has rested on the node for `TIP_DELAY_MS` (500): the
   framework's (`Interaction.tip`, `tip_at`), laid out as a float of the node (`lay_tip`,
   `Tooltip`, its width up to its style's `max-width`) placed below the pointer's rest
   (`FloatPointer`), flipped above it at the window's foot. The rest is timed from the first
@@ -297,7 +297,7 @@ layer — implements the two traits; the display list is the whole contract.
   it and spends it until the pointer leaves the node (`tip_spent`). **It takes no input** —
   `hit`, `covered` and `focus_order` pass over it (`is_tip`) — and it is heard as the node's
   description (`Laid.description`, `AccessNode.description`), not as a node.
-- **A modal** (`modal(under, open, content, on_dismiss)`, `Modal`) is `under` in its place and,
+- **A modal** (`modal(under, open, content, on_dismiss)`, `Modal`, lui's `<Modal>`) is `under` in its place and,
   while the program says it is `open`, a scrim floating over the whole window (`ModalScrim`,
   placed at the window's corner, `FloatWindow`) dimming everything, `content` centred in it
   in a scroller of the framework's (`Dialog`, no larger than the window less the scrim's
@@ -337,9 +337,11 @@ layer — implements the two traits; the display list is the whole contract.
   the header's height; rows `TableRow`, `.odd` every other, `:checked` the selected one, their
   cells at their columns' widths). **An event the view makes eagerly is a `pure` parameter, not a
   spec's field** (`on_change`, `on_select`, `on_resize`): only a parameter's `pure` is checked
-  where it is given, so only it may be called while the view is built.
+  where it is given, so only it may be called while the view is built. lui writes each
+  (`<NumberField>`, `<RadioGroup>`, `<Radio>`, `<Disclosure>`, `<Progress>`, `<Separator>`,
+  `<Splitter>`, `<Table>` of `<TableColumn>`s and `<TableRow>`s; `bindings/README.md`).
 - **Docking** (`ui/layout/dock.lyra`; Vega's design §7): **`dock(tree, panel, on_change,
-  on_close)`** shows a `DockTree` — **the program's data**, a group of tabs (`DockTabs`:
+  on_close)`** (lui's `<Dock>`, `on_tear` its `.tears_off`) shows a `DockTree` — **the program's data**, a group of tabs (`DockTabs`:
   `DockGroup { keys, selected }`) or a split of two (`DockSplit`: `DockSplitSpec { axis, at,
   parts }`, `dock_tabs`/`dock_split` building them) — each group (`DockGroup`) a `tab_bar` of its
   panels over the shown one's content (`panel(key)` a `DockPanel { title, content, closable }`),
@@ -552,11 +554,14 @@ layer — implements the two traits; the display list is the whole contract.
 - `examples/ui/dialogs.lyra` — tooltips and a modal (`ui/VEGA.md` §11's step 2): a toolbar
   whose buttons have tooltips (Open's with its shortcut), and Close asking in a dialog over the
   dimmed window — a field, Don't Save, Cancel and Save — while the title has changed
-  (`--script "…" [--png FILE]` headless, printing what happened and the tooltip showing).
+  (`--script "…" [--png FILE]` headless, printing what happened and the tooltip showing). Its
+  view is the markup of `dialogs_view.lui` (§9: `tooltip`, `tooltip-node`, `<Modal>`).
 - `examples/ui/panels.lyra` — the smaller controls (`ui/VEGA.md` §11's step 3): a sprite's
   properties — number fields, radio buttons, a disclosure, separators, a progress bar — beside a
   table of sprites, the splitter between them dragged; a file dropped on the window joins the
-  table (`--script "…" [--png FILE]` headless, printing the state it leaves).
+  table (`--script "…" [--png FILE]` headless, printing the state it leaves). Its view is the
+  markup of `panels_view.lui` (§9: `<NumberField>`, `<RadioGroup>`, `<Disclosure>`,
+  `<Separator>`, `<Progress>`, `<Splitter>`, `<Table>` of `<TableRow>`s from a `<for>`).
 - `examples/ui/dock.lyra` — docking (`ui/VEGA.md` §11's step 4): a studio's editors and
   panels in tab groups, split and rearranged by dragging tabs, the edges between them dragged,
   closed panels opened again from a toolbar (`--script "…" [--png FILE]` headless, printing the
@@ -564,7 +569,9 @@ layer — implements the two traits; the display list is the whole contract.
 - `examples/ui/windows.lyra` — several windows (`ui/VEGA.md` §11's step 5): the dock example's
   studio, its tabs torn off into windows of their own and docked back between them, a window's
   close putting its panels back (`--script "…"` headless, `window:N` aiming the inputs at a
-  window, printing the windows, their arrangements and which shows a drop's preview).
+  window, printing the windows, their arrangements and which shows a drop's preview). Its
+  views and its torn windows' specs are the markup of `windows_view.lui` (§9: `<Dock
+  on_tear>`, `<window name="torn_window">`).
 - `examples/ui/popups.lyra` — popups: File's list with a submenu beside it, a select of sixty
   whose list scrolls, and More at the window's foot whose popup flips above it and moves in
   from the right edge (`--script "…" [--png FILE]` headless, printing what happened).
@@ -637,7 +644,10 @@ layer — implements the two traits; the display list is the whole contract.
   landing one in another window and back, the preview there and not here, Escape, a window's
   last panel leaving it, a lone tab staying, a window moved, resized and closed, from the
   example; `TestRun_UiGpuSecondWindow` a second real window drawn by the GPU's renderer and by
-  SDL's, and let go; `TestRun_UiPopupsExample` the example from the keyboard; `TestLui_UiTargetPopup`
+  SDL's, and let go — the three examples on views generated from markup, which
+  `TestLui_PanelControlExamplesAreCurrentAndCheck` holds current; `TestLui_UiTargetPanelControls`
+  the markup of every panel control, `tooltip`, `tooltip-node` and a `<window name>`, and their
+  refusals; `TestRun_UiPopupsExample` the example from the keyboard; `TestLui_UiTargetPopup`
   the markup's `<Popup>`; `TestRun_UiMenus` menus by pointer and keys, events fresh from the
   cache (a popup's too), shortcuts spelled and gathered; `TestRun_UiMenusExample` the example,
   its shortcuts taken by the app; `TestRun_UiAppMenus` `App.menus` through the host, natively

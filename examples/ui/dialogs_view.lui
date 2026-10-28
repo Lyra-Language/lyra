@@ -1,0 +1,97 @@
+<!--
+  Tooltips and a modal dialog, as markup (ui/VEGA.md §9): the toolbar's buttons each with a
+  `tooltip` — Open's a `tooltip-node`, with its shortcut in it — and the question Close asks in a
+  `<Modal>` over the page. `build/lui examples/ui/dialogs_view.lui` writes dialogs_view.lyra
+  beside it, which dialogs.lyra runs.
+-->
+
+<script target="ui">
+  import ui.backend.{ Chord, Modifiers, Character }
+  import ui.style.{ light_theme }
+  import ui.layout.{ row, spelled }
+
+  pub struct State {
+    title: string = "Untitled",
+    saved: string = "Untitled",
+    asking: bool = false,
+    name: string = "",
+    log: []string = [],
+  }
+
+  pub data Event = Did(string) | Edited(string) | Closed | Named(string) | Saved | Discarded | Cancelled
+
+  pub let update = pure (state: State, event: Event) -> State => match event {
+    Did(what) => State { state | log: [...state.log, what] },
+    Edited(title) => State { state | title: title },
+    // Close asks first when the title has changed since it was saved.
+    Closed => if state.title == state.saved {
+      State { state | log: [...state.log, "closed"] }
+    } else {
+      State { state | asking: true, name: state.title, log: [...state.log, "asked"] }
+    },
+    Named(name) => State { state | name: name },
+    Saved => State {
+      state |
+      asking: false,
+      title: state.name,
+      saved: state.name,
+      log: [...state.log, "saved as ${state.name}"]
+    },
+    Discarded => State { state | asking: false, saved: state.title, log: [...state.log, "closed without saving"] },
+    Cancelled => State { state | asking: false, log: [...state.log, "cancelled"] },
+  }
+
+  /// Open's tooltip: what it does, and its shortcut dimmed beside it.
+  let open_tip = pure () -> Node<Event> => row([
+    text::<Event>("Open a document"),
+    spelled::<Event>(Chord { key: Character('o'), mods: Modifiers { primary: true } })
+      .with_style(Style { opacity: Some(0.6) }),
+  ]).with_style(Style { gap: Some(10.0) })
+</script>
+
+<!-- The window, and over it while Close asks, the dialog. -->
+<component name="view" props={{ s: State }} event={Event}>
+  <Themed theme={light_theme()} sheet={Sheet {}}>
+    <Modal open={s.asking} on_dismiss={Cancelled}>
+      <page s={s}/>
+      <dialog s={s}/>
+    </Modal>
+  </Themed>
+</component>
+
+<!-- The toolbar, each button with a tooltip, and the title. -->
+<component name="page" props={{ s: State }} event={Event}>
+  <Padding all="12">
+    <Column style="gap: 12">
+      <Row style="gap: 8">
+        <Button on_click={Did("new")} tooltip="A new document">New</Button>
+        <Button on_click={Did("open")} tooltip-node={open_tip()}>Open</Button>
+        <Button on_click={Closed} tooltip="Close the document, asking first if it has changed">Close</Button>
+      </Row>
+      <Row main="end" cross="center" style="gap: 10">
+        <Text>Title</Text>
+        <Expanded>
+          <TextInput value={s.title} on_edit={Edited}/>
+        </Expanded>
+      </Row>
+      <Text>{if s.title == s.saved { "Saved" } else { "Edited since it was saved" }}</Text>
+    </Column>
+  </Padding>
+</component>
+
+<!-- The question Close asks: save under a name, close without saving, or cancel. -->
+<component name="dialog" props={{ s: State }} event={Event}>
+  <Column style="gap: 12; width: 400">
+    <Text style="font-size: 16">Save the changes before closing?</Text>
+    <Text>Closing without saving loses them.</Text>
+    <TextInput value={s.name} placeholder="Name" on_edit={Named}/>
+    <Row style="gap: 8">
+      <Button on_click={Discarded}>Don’t Save</Button>
+      <Expanded>
+        <Text></Text>
+      </Expanded>
+      <Button on_click={Cancelled}>Cancel</Button>
+      <Button on_click={Saved}>Save</Button>
+    </Row>
+  </Column>
+</component>

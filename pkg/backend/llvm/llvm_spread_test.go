@@ -160,3 +160,58 @@ func TestExec_ArraySpreadOfALiteralTakesTheContextsWidth(t *testing.T) {
 		t.Errorf("output %q; want %q", got, want)
 	}
 }
+
+// **A closure inside a spread's operand is analysed like any other** (ownership's
+// `SpreadExpr` arm, 10/27). The ownership pass never walked a spread's operand, so a closure
+// written there took no retains in its body: `(t) => Got(key, t)` stored its capture and its
+// parameter into the value it built without a +1 on either, and each call left that value
+// holding what the caller then freed. Found as a use-after-free in lui's generated code, where
+// a `<for>` of an `<if>` is a comprehension of spreads; the closure here is called, its
+// result dropped and its capture read again, which ASan sees fail without the arm.
+func TestExec_ClosureInsideASpreadRetainsWhatItStores(t *testing.T) {
+	t.Parallel()
+	src := `data Ev = Got(string, []i64) | Nothing
+struct Holder { f: ([]i64) -> Ev }
+let hold = (f: ([]i64) -> Ev) -> Holder => Holder { f: f }
+let spread = (key: string, ks: []i64) -> []Holder =>
+  [...flatten([k in ks | [...(if k == 1 { [hold((xs: []i64) -> Ev => Got(key, xs))] } else { [] })]])]
+let main = () -> u8 => {
+  let key = "w" ++ "1"
+  var total = 0
+  for round in 0..<20 {
+    for h in spread(key, [1, 2]) {
+      let xs = [round, round + 1]
+      match (h.f)(xs) {
+        Got(k, ys) => { total = total + k.len() + ys.len() + xs.len() },
+        Nothing => {},
+      }
+    }
+  }
+  if total == 120 && key.len() == 2 { 3 } else { 1 }
+}`
+	if got := exitCode(t, command(preludeBinary(t, src)).Run()); got != 3 {
+		t.Errorf("exited %d; want 3", got)
+	}
+	if got := buildAndRunASanWithPrelude(t, src); got != 3 {
+		t.Errorf("under ASan: exited %d; want 3", got)
+	}
+}
+
+// ...and **a temporary spread is released once copied**: the operand is borrowed, each element
+// copied out with a retain of its own, so `[...f(x)]` and `[...[a, b]]` leave their arrays —
+// and the strings in them — with nothing else to free them. Both leaked until the same arm.
+func TestExec_ATemporarySpreadDoesNotLeak(t *testing.T) {
+	t.Parallel()
+	src := `let mk = (n: i64) -> []string => ["a${n}", "b${n}"]
+let main = () -> u8 => {
+  var total = 0
+  for i in 0..<10 {
+    let xs: []string = [...mk(i), ...["c${i}", "d${i}"], "e${i}"]
+    total = total + xs.len()
+  }
+  if total == 50 { 3 } else { 2 }
+}`
+	if got := buildAndRunLSanWithPrelude(t, src); got != 3 {
+		t.Errorf("under LeakSanitizer: exited %d; want 3", got)
+	}
+}

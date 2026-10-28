@@ -1,8 +1,8 @@
 # What Vega needs of `ui` — design
 
 **Status: proposed 10/26; steps 1–3 (§2–§6: pictures, tooltips, modals, the smaller controls,
-dropped files) built 10/26, steps 4 and 5 (§7, docking in one window, and §8, several windows)
-10/27, the rest to come.** Vega, the game studio (the private `vega`
+dropped files) built 10/26, steps 4–6 (§7, docking in one window, §8, several windows, and §9,
+lui's elements) 10/27, the rest to come.** Vega, the game studio (the private `vega`
 repo), runs on Dear ImGui through `bindings.imgui`. This is the move onto `ui`, as Termina
 made its own (`TERMINAL.md`, `WINDOW.md`): §1 is what Vega's interface does today, §2–§9 what
 `ui` must gain for it, §10 Vega's new front end, §11 the order and §12 the questions left.
@@ -224,6 +224,22 @@ panel. Not done: AccessKit hears the main window alone, and `OnResize`/`OnFocus`
 `<script target="ui">` for Vega's two views, `settings_view.lui` and `import_view.lui`, which
 are `bindings.imgui.ui` markup today.
 
+**Built 10/27** (`tools/lui/lui.lyra`, `bindings/README.md`): every element above, each the
+`ui.layout` call it names. Changed on the way: a picture's key is `name` (`key` stays every
+element's identity); a number field's text is its label, as a button's is; radio buttons are
+`<RadioGroup>` of `<Option>`s, as a select's are, beside a lone `<Radio>`; `.tooltip` is two
+common attributes, `tooltip="…"` and `tooltip-node={…}`; a table's columns are `<TableColumn
+width>`s and its rows `<TableRow>`s of cells, `<for>` and `<if>` among them; `<Separator>` is
+the rule, its text in it; a second window is `<window name="…" props={{ … }} key place>`, a
+function of its props, any number to a file. **Vega's two views move with its front end**, not
+here (§10): they import its ImGui state, and the ui ones will import `Studio`'s — Settings with
+the shell, the import dialog with the import dialogs, last. Proof that the elements work is
+three examples whose views became markup — `panels`, `dialogs`, `windows` — their scripted
+runs unchanged and the first two's frames byte-identical. On the way: an import used only in a
+struct field's default warned unused; a closure calling its enclosing function's `pure`
+parameter was refused as impure; and a closure inside a spread (`[...[…]]`, which lui writes for
+an `<if>` in a `<for>`) took no retains — a use-after-free (COMPLETED.md 10/27).
+
 ## 10. Vega's new front end
 
 Written in `vega/src/face/` beside the ImGui front end, over the same `Document`, commands
@@ -245,7 +261,9 @@ view raises events that become `doc.run(edit)` in `update`, and nothing in the m
 - **Order**: the shell (window, menus, editors' bar, status bar, Settings, file dialogs and
   drops, the dock), then Palettes, Problems and Collision layers, then the sprite and
   tile-set editor (the first canvas), map, entity, scene, sound, instrument and song editors,
-  then the import dialogs. `vega --ui` opens the new front end while it grows.
+  then the import dialogs. `vega --ui` opens the new front end while it grows. Settings and the
+  import dialog stay markup, written anew for `ui` (`<script target="ui">`, §9) beside their
+  ImGui files until the switch.
 
 ## 11. Order
 
@@ -259,7 +277,8 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
 4. **Docking** in one window (§7), example `examples/ui/dock.lyra`. **Done 10/27.**
 5. **Several windows** (§8), and tearing a dock tab off and back, example
    `examples/ui/windows.lyra`. **Done 10/27.**
-6. **lui's elements** (§9).
+6. **lui's elements** (§9), examples `examples/ui/panels_view.lui`, `dialogs_view.lui` and
+   `windows_view.lui`. **Done 10/27.**
 7. **Vega's front end** (§10): the shell first, then editor by editor, each with its
    checks.
 8. **The switch**: `Vega.app` and the Linux releases built from the new front end; the

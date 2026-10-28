@@ -1,4 +1,5 @@
-// Tooltips and a modal dialog: `ui.layout`'s `.tooltip` and `modal`. The toolbar's buttons
+// Tooltips and a modal dialog: `ui.layout`'s `.tooltip` and `modal`, the view the markup of
+// dialogs_view.lui (ui/VEGA.md §9). The toolbar's buttons
 // each have a tooltip, shown once the pointer rests on one for half a second; Open's has a
 // shortcut in it. Close, with the title edited since it was saved, asks first: a dialog over
 // the dimmed window, which takes the focus — on its name field — keeps Tab inside it, lets no
@@ -6,6 +7,7 @@
 // cancels it.
 //
 //     lyrac run examples/ui/dialogs.lyra
+//     build/lui examples/ui/dialogs_view.lui      # after editing the markup
 //     lyrac run examples/ui/dialogs.lyra -- --script "Tab Tab Tab Enter" [--png FILE]
 //
 // **The second form** plays a script (`ui.script`) headless, prints what happened and the
@@ -17,28 +19,10 @@ import ui.gpu
 import ui.app.{ sandbox, run, running, step_running }
 import ui.script.{ timed_platform, parse_steps }
 import ui.interact.{ find }
-import ui.backend.{ Chord, Modifiers, Character }
 import ui.draw.{ Point, Size, Color }
 import ui.text.{ Fonts, fonts_new, glyph_atlas }
-import ui.style.{ Style, Sheet, light_theme, insets }
-import ui.layout.{
-  Node,
-  Laid,
-  paint,
-  column,
-  row,
-  text,
-  button,
-  text_input,
-  FieldSpec,
-  modal,
-  spelled,
-  expanded,
-  padding,
-  themed,
-  MainEnd,
-  CrossCenter,
-}
+import ui.layout.{ Laid, paint }
+import dialogs_view.{ State, Event, view, update }
 import std.collections.{ parse_args }
 import std.png.{ write_png }
 import std.io.{ write_bytes }
@@ -110,74 +94,6 @@ let main = () -> u8 => {
 
 /// The document's title and the one last saved; whether Close is asking, and the name the
 /// dialog will save under; and what happened, newest last.
-struct State {
-  title: string = "Untitled",
-  saved: string = "Untitled",
-  asking: bool = false,
-  name: string = "",
-  log: []string = [],
-}
-
-data Event = Did(string) | Edited(string) | Closed | Named(string) | Saved | Discarded | Cancelled
-
-let update = pure (state: State, event: Event) -> State => match event {
-  Did(what) => State { state | log: [...state.log, what] },
-  Edited(title) => State { state | title: title },
-  // Close asks first when the title has changed since it was saved.
-  Closed => if state.title == state.saved {
-    State { state | log: [...state.log, "closed"] }
-  } else {
-    State { state | asking: true, name: state.title, log: [...state.log, "asked"] }
-  },
-  Named(name) => State { state | name: name },
-  Saved => State {
-    state |
-    asking: false,
-    title: state.name,
-    saved: state.name,
-    log: [...state.log, "saved as ${state.name}"]
-  },
-  Discarded => State { state | asking: false, saved: state.title, log: [...state.log, "closed without saving"] },
-  Cancelled => State { state | asking: false, log: [...state.log, "cancelled"] },
-}
-
-/// The window, and over it while Close asks, the dialog.
-let view = pure (state: State) -> Node<Event> =>
-  themed::<Event>(light_theme(), Sheet {}, [
-    modal(page(state), state.asking, dialog(state), Cancelled),
-  ])
-
-/// The toolbar, each button with a tooltip, and the title.
-let page = pure (state: State) -> Node<Event> => padding(insets(12.0), column([
-  row([
-    button("New", Did("new")).tooltip("A new document"),
-    button("Open", Did("open")).tooltip_node(row([
-      text::<Event>("Open a document"),
-      spelled::<Event>(Chord { key: Character('o'), mods: Modifiers { primary: true } })
-        .with_style(Style { opacity: Some(0.6) }),
-    ]).with_style(Style { gap: Some(10.0) })),
-    button("Close", Closed).tooltip("Close the document, asking first if it has changed"),
-  ]).with_style(Style { gap: Some(8.0) }),
-  row([
-    text("Title"),
-    expanded(text_input(FieldSpec { value: state.title, on_edit: Edited })),
-  ]).aligned(MainEnd, CrossCenter).with_style(Style { gap: Some(10.0) }),
-  text(if state.title == state.saved { "Saved" } else { "Edited since it was saved" }),
-]).with_style(Style { gap: Some(12.0) }))
-
-/// The question Close asks: save under a name, close without saving, or cancel.
-let dialog = pure (state: State) -> Node<Event> => column([
-  text::<Event>("Save the changes before closing?").with_style(Style { font_size: Some(16.0) }),
-  text::<Event>("Closing without saving loses them."),
-  text_input(FieldSpec { value: state.name, placeholder: "Name", on_edit: Named }),
-  row([
-    button("Don’t Save", Discarded),
-    expanded(text::<Event>("")),
-    button("Cancel", Cancelled),
-    button("Save", Saved),
-  ]).with_style(Style { gap: Some(8.0) }),
-]).with_style(Style { gap: Some(12.0), width: Some(400.0) })
-
 /// `laid` — the window as the host last laid it out — drawn without showing it, and written to
 /// `path` as a PNG.
 let save = (

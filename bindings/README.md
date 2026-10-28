@@ -525,9 +525,23 @@ The example's interface is `examples/imgui/components_view.lui`.
   `<for>` and `<if>` among them still — `<TabBar selected on_select on_close on_move>` holding
   `<Tab key closable movable>`s (or `tabs={…}`) and then what follows the tabs, `<Swatch color
   open on_open on_change on_dismiss opaque>`, `<ColorPicker color on_change opaque>` (`opaque`
-  bare or `{condition}`: no opacity strip) and `<WindowButtons/>`.
-  Every element takes `class`, `part`, `key` (its identity, `.keyed`), `label` (for assistive
-  technology), `style` and `window-drag` (bare: a title bar the program draws) — **a
+  bare or `{condition}`: no opacity strip) and `<WindowButtons/>`; and a panel's controls
+  (`ui/VEGA.md` §9): `<Picture name image revision width height>` (a picture the host keeps by
+  `name`), `<NumberField value min max step decimals on_change>` (its text the label a drag
+  scrubs; `on_change` takes an `f64`), `<RadioGroup selected on_change axis>` holding `<Option>`s
+  (or `options={…}`), `<Radio chosen on_choose>`, `<Disclosure title open on_toggle>` holding
+  its content, `<Progress value>`, `<Separator/>` (its text, if any, in the rule),
+  `<Splitter at on_drag axis least>` holding its two panes, `<Modal open on_dismiss>` holding
+  what it is over and the dialog, `<Table selected on_select on_resize>` holding `<TableColumn
+  width>`s (each its text the heading; or `columns={…}`) and `<TableRow>`s each holding its
+  cells (`<for>` and `<if>` among them; or `rows={…}` — `on_resize` takes the column and the
+  width), and `<Dock tree panel on_change on_close on_tear>` (`panel={…}` a function of a key,
+  `on_tear` making its tabs tear off). **A `<window name="…" props={{ … }} key={…}
+  place={…}>`** is a window beside the main one — a function of its props answering the
+  `WindowSpec`, for `App.windows` — and a file has any number, each named; unnamed is the main
+  window's `window_spec`. Every element takes `class`, `part`, `key` (its identity, `.keyed`),
+  `label` (for assistive technology), `style`, `window-drag` (bare: a title bar the program
+  draws), `tooltip="…"` (or `{…}`, a string) and `tooltip-node={…}` (a node) — **a
   component's call too**, on the component's own node (a prop of that name is the prop), so
   `<tile class="wide"/>` spans its grid's columns. A `<for>` holding several elements makes an
   array of them each pass, `flatten`ed in place.

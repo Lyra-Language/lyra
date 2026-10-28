@@ -1091,6 +1091,176 @@ func TestLui_UiTargetPopup(t *testing.T) {
 	}
 }
 
+// The controls Vega's panels need, in the ui target (ui/VEGA.md §9): `<Picture>`, a
+// `tooltip` and a `tooltip-node`, `<Modal>` over what it covers, `<NumberField>` (its text the
+// label scrubbed), `<RadioGroup>` of `<Option>`s or `options={…}`, a lone `<Radio>`,
+// `<Separator/>` with and without text, `<Progress>`, `<Disclosure>`, `<Splitter>` across and
+// down, `<Table>` of `<TableColumn>`s and `<TableRow>`s (a `<for>` among them), `<Dock>` that
+// tears off, and a `<window name>` beside the main one, of props. The module checks clean;
+// and each misuse is refused at its line.
+func TestLui_UiTargetPanelControls(t *testing.T) {
+	t.Parallel()
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script target="ui">
+  import ui.draw.{ Image, Point }
+  import ui.layout.{ DockPanel, dock_tabs }
+
+  pub data Ev =
+    Width(f64)
+    | Shape(i64)
+    | Pick
+    | Toggle
+    | Close
+    | Split(f32)
+    | Row(i64)
+    | Resized(i64, f32)
+    | Docked(DockTree)
+    | Shut(string)
+    | Torn(DockTear)
+
+  pub struct State {
+    width: f64 = 8.0,
+    shape: i64 = 0,
+    open: bool = false,
+    at: f32 = 200.0,
+    row: i64 = 0,
+    names: []string = ["a", "b"],
+    image: Image = Image {},
+    revision: i64 = 0,
+    tree: DockTree = dock_tabs(["one"]),
+  }
+
+  let panel_of = pure (key: string) -> DockPanel<Ev> => DockPanel { title: key, content: text::<Ev>(key) }
+</script>
+<window name="tool_window" props={{ key: string, place: Maybe<Point> }} key={key} place={place} title="Tools" width="300" height="200"/>
+<component name="view" props={{ s: State }} event={Ev}>
+  <style>
+    NumberField::minus { background: #224488 }
+    Table::heading { color: #888888 }
+  </style>
+  <Modal open={s.open} on_dismiss={Close}>
+    <Splitter at={s.at} on_drag={Split}>
+      <Column>
+        <Picture name="canvas" image={s.image} revision={s.revision} width="64" height="64" tooltip="The canvas"/>
+        <NumberField value={s.width} min="1" max="64" decimals="0" on_change={Width}>Width</NumberField>
+        <NumberField value="2.5" step="0.5" decimals="1" on_change={Width}/>
+        <RadioGroup selected={s.shape} on_change={Shape} axis="horizontal">
+          <Option>Square</Option>
+          <Option>Round</Option>
+        </RadioGroup>
+        <RadioGroup options={s.names} selected={s.shape} on_change={Shape}/>
+        <Radio chosen={s.shape == 0} on_choose={Pick}>Alone</Radio>
+        <Separator/>
+        <Separator>Frames</Separator>
+        <Progress value="0.25"/>
+        <Disclosure title="More" open={s.open} on_toggle={Toggle}>
+          <Text>inside</Text>
+        </Disclosure>
+        <Button on_click={Pick} tooltip-node={text("structured")}>Tip</Button>
+      </Column>
+      <Column>
+        <Table selected={s.row} on_select={Row} on_resize={Resized}>
+          <TableColumn width="120">Name</TableColumn>
+          <TableColumn width={s.at}>Size</TableColumn>
+          <for each={n in s.names}>
+            <TableRow>
+              <Text>{n}</Text>
+              <Text>big</Text>
+            </TableRow>
+          </for>
+          <TableRow><Text>last</Text><Text>row</Text></TableRow>
+        </Table>
+        <Dock tree={s.tree} panel={panel_of} on_change={Docked} on_close={Shut} on_tear={Torn}/>
+        <Splitter at="80" on_drag={Split} axis="vertical" least="20">
+          <Text>top</Text>
+          <Text>bottom</Text>
+        </Splitter>
+      </Column>
+    </Splitter>
+    <Column>
+      <Text>Sure?</Text>
+      <Button on_click={Close}>OK</Button>
+    </Column>
+  </Modal>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`picture("canvas", s.image, s.revision, Size { w: 64.0, h: 64.0 }).tooltip("The canvas")`,
+		`number_field(NumberSpec { value: s.width, min: 1.0, max: 64.0, decimals: 0, label: "Width" }, (value: f64) -> Ev => Width(value))`,
+		`number_field(NumberSpec { value: 2.5, step: 0.5, decimals: 1 }, (value: f64) -> Ev => Width(value))`,
+		`radio_group(["Square", "Round"], s.shape, (value: i64) -> Ev => Shape(value), Horizontal)`,
+		`radio_group(s.names, s.shape, (value: i64) -> Ev => Shape(value))`,
+		`radio("Alone", s.shape == 0, Pick)`,
+		`separator::<Ev>(),`,
+		`separator::<Ev>("Frames")`,
+		`progress::<Ev>(0.25)`,
+		`disclosure("More", s.open, text("inside"), Toggle)`,
+		`button("Tip", Pick).tooltip_node(text("structured"))`,
+		`TableColumn { title: "Name", width: 120.0 }`,
+		`TableColumn { title: "Size", width: s.at }`,
+		`...[n in s.names | [`,
+		`], s.row, (value: i64) -> Ev => Row(value), (column: i64, width: f32) -> Ev => Resized(column, width))`,
+		`dock(s.tree, panel_of, (value: DockTree) -> Ev => Docked(value), (value: string) -> Ev => Shut(value)).tears_off((value: DockTear) -> Ev => Torn(value))`,
+		`splitter(text("top"), text("bottom"), 80.0, (value: f32) -> Ev => Split(value), Vertical, 20.0)`,
+		`]), s.at, (value: f32) -> Ev => Split(value)), s.open, column([`,
+		"pub let tool_window = pure (key: string, place: Maybe<Point>) -> WindowSpec => WindowSpec {\n  key: key,\n  place: place,\n  title: \"Tools\",",
+		`selector: "NumberField::minus"`,
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	for _, c := range []struct{ from, to, line, why string }{
+		{`<Modal open={s.open}`, `<Modal open="yes"`, ":38", "open of <Modal> is bare or {condition}"},
+		{`<Splitter at={s.at} on_drag`, `<Splitter on_drag`, ":39", "<Splitter> needs at"},
+		{`axis="vertical" least`, `axis="sideways" least`, ":71", "axis of <Splitter> is horizontal or vertical, not sideways"},
+		{`<Text>top</Text>`, ``, ":71", "<Splitter> holds two elements, its two panes"},
+		{`revision={s.revision} `, ``, ":41", "<Picture> needs revision"},
+		{`decimals="1"`, `decimals="1.5"`, ":43", "decimals of <NumberField>: 1.5 is not a whole number"},
+		{`<Option>Round</Option>`, `<Text>Round</Text>`, ":46", "<RadioGroup> holds <Option>s, not <Text>"},
+		{`<RadioGroup options={s.names}`, `<RadioGroup options={s.names} axis="diagonal"`, ":48", "axis of <RadioGroup> is vertical or horizontal, not diagonal"},
+		{`chosen={s.shape == 0} `, ``, ":49", "<Radio> needs chosen"},
+		{`<Progress value="0.25"/>`, `<Progress/>`, ":52", "<Progress> needs value"},
+		{`title="More" open={s.open}`, `title="More"`, ":53", "<Disclosure> needs open"},
+		{`tooltip-node={text("structured")}`, `tooltip-node="structured"`, ":56", "tooltip-node is a node in braces"},
+		{`<TableColumn width="120">`, `<TableColumn>`, ":60", "<TableColumn> needs width"},
+		{`<TableRow><Text>last`, `<Text>x</Text><TableRow><Text>last`, ":68", "<Table> holds <TableColumn>s and <TableRow>s, not <Text>"},
+		{` on_resize={Resized}`, ``, ":59", "<Table> needs on_resize"},
+		{`panel={panel_of} `, ``, ":70", "<Dock> needs panel={…}"},
+		{`place={place}`, `place="here"`, ":32", "place of <window> is {…}, a Maybe<Point>"},
+		{`<component name="view"`, "<window name=\"tool_window\"/>\n<component name=\"view\"", ":33", "a second <window> named tool_window"},
+	} {
+		bad := filepath.Join(dir, "bad.lui")
+		if !strings.Contains(source, c.from) {
+			t.Fatalf("the source lacks %q", c.from)
+		}
+		if err := os.WriteFile(bad, []byte(strings.Replace(source, c.from, c.to, 1)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := command(t, lui, bad).CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "bad.lui"+c.line) || !strings.Contains(string(out), c.why) {
+			t.Errorf("%s → %s: want %q at line %s\n%s", c.from, c.to, c.why, c.line, out)
+		}
+	}
+}
+
 // The window's elements in the ui target (ui/WINDOW.md step 8): `<MenuBar>` of `<Menu>`s,
 // whose `<MenuItem>`s, `<Separator/>`s and nested `<Menu>`s (submenus) are data, a `<for>`
 // among them; shortcuts as Chords (Cmd and Ctrl the primary modifier, a function key, a
@@ -1435,6 +1605,31 @@ func TestLui_NotebookExampleIsCurrentAndChecks(t *testing.T) {
 	}
 	if out := stdout + stderr; strings.Contains(out, "warning") {
 		t.Errorf("the example or its generated view warns:\n%s", out)
+	}
+}
+
+// The examples whose views are markup of the panel controls (ui/VEGA.md §9) — the panels'
+// number fields, radios, disclosure, separators, progress, splitter and table; the dialogs'
+// tooltips and modal; the windows' dock and torn-off window — are what lui makes from them,
+// and check clean. Their scripted runs (TestRun_UiPanelsExample, TestRun_UiDialogsExample,
+// TestRun_UiWindowsExample) play the generated views.
+func TestLui_PanelControlExamplesAreCurrentAndCheck(t *testing.T) {
+	t.Parallel()
+	skipWithoutText(t)
+	lui := buildLui(t)
+	root := repoRoot(t)
+	for _, name := range []string{"panels", "dialogs", "windows"} {
+		view := filepath.Join(root, "examples", "ui", name+"_view.lui")
+		if b, err := command(t, lui, "--check", view).CombinedOutput(); err != nil {
+			t.Errorf("examples/ui/%s_view.lyra is stale: %v\n%s", name, err, b)
+			continue
+		}
+		stdout, stderr, code := captureRun(t, "check", filepath.Join(root, "examples", "ui", name+".lyra"))
+		if code != 0 {
+			t.Errorf("checking %s exited %d\nstdout: %s\nstderr: %s", name, code, stdout, stderr)
+		} else if out := stdout + stderr; strings.Contains(out, "warning") {
+			t.Errorf("%s or its generated view warns:\n%s", name, out)
+		}
 	}
 }
 

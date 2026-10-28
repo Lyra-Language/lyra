@@ -707,7 +707,11 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
   counts as nameless**: a `for` variable over functions, a destructured name or `let h = f`
   is charged every effect even when its type says `pure`, because a function type's bound
   is checked only where a function is passed straight to a bounded parameter — `[noisy]`
-  reaches a `[]pure () -> i64` unchecked.
+  reaches a `[]pure () -> i64` unchecked. **A bounded parameter is not a value of that kind,
+  from a closure either**: `(v) => g(v)` inside a function taking `g: pure (i64) -> i64`
+  costs what `g`'s bound permits, as the function's own `g(v)` does, since whoever supplied
+  `g` was held to it; a binding of the same name in the function's body hides it (until 10/27
+  the closure's call was charged every effect).
 - **A construction takes the weaker bound its context declares.** A function with a stronger
   bound is usable where a weaker one is declared, and so is one wrapped fresh: `Some(f)`, `f` a
   `pure (i64) -> string`, is a `Maybe<(i64) -> string>` in a field, argument or binding

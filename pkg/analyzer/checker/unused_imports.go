@@ -291,7 +291,11 @@ func collectRefsByFile(
 				})
 			}
 		}
-		ast.WalkStmt(stmt, func(s ast.Statement) bool {
+		// Named, so a struct's field defaults — expressions the walk does not enter — are
+		// walked with them (below).
+		var onStmt func(ast.Statement) bool
+		var onExpr func(ast.Expression) bool
+		onStmt = func(s ast.Statement) bool {
 			for _, name := range ast.ConstRefNames(s) {
 				refs[name] = true
 			}
@@ -339,6 +343,13 @@ func collectRefsByFile(
 				case types.NamedStructType:
 					for _, f := range dt.Fields {
 						noteType(f.Type)
+						// A default is a use where it is written, not only where a literal
+						// leaves the field out and the typechecker fills it in: a module of
+						// types — a generated view's state, say — constructs none of them,
+						// and `n: i64 = seven()` warned its import of `seven` unused.
+						if def, ok := f.DefaultValue.(ast.Expression); ok && def != nil {
+							ast.WalkExpr(def, onStmt, onExpr)
+						}
 					}
 				case types.DataType:
 					for _, ctor := range dt.Constructors {
@@ -351,7 +362,8 @@ func collectRefsByFile(
 				}
 			}
 			return true
-		}, func(e ast.Expression) bool {
+		}
+		onExpr = func(e ast.Expression) bool {
 			for _, name := range ast.ConstRefNames(e) {
 				refs[name] = true
 			}
@@ -394,7 +406,8 @@ func collectRefsByFile(
 				}
 			}
 			return true
-		})
+		}
+		ast.WalkStmt(stmt, onStmt, onExpr)
 	}
 	return byFile
 }

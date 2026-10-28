@@ -505,6 +505,10 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] lui can write `on_change={Width}` through** rather than the typed lambda it
   generates, now that the compiler accepts both; it would also pass a function name (`doc.
   rename`) as itself. Regenerates Vega's and Termina's views.
+- **[OPEN] lui: a component wraps its view in a node of its own** (`component(name, Sheet {},
+  […])`) even with no `<style>`, so a `<for>` holding an `<if>` makes a component of zero or
+  one children (`windows_view.lui`'s `torn_view`). Harmless so far (frames byte-identical);
+  a component of exactly one element could be that element.
 - **[OPEN] `struct X {}` does not parse**: a type with no fields (a marker implementing a
   trait — a game's music tables) must be `data X = X` instead. Either accept it or say so.
 
@@ -692,8 +696,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] What Vega needs of `ui`** — pictures the program changes, tooltips, modals, the
   smaller controls, dropped files, docking and several windows, then Vega's front end on
   them; designed in `ui/VEGA.md` (10/26), whose §11 is the order. Steps 1–3 (pictures;
-  tooltips, modals; the smaller controls, dropped files) done 10/26, 4 and 5 (docking, several
-  windows) 10/27; lui's elements (§9) next.
+  tooltips, modals; the smaller controls, dropped files) done 10/26, 4–6 (docking, several
+  windows, lui's elements) 10/27; Vega's front end (§10, step 7) next, its two `.lui` views
+  rewritten for `ui` with it.
 - **[OPEN] Several windows: what is still the main window's** — AccessKit hears it alone,
   `OnResize`/`OnFocus`/`OnWindowState` are its, and a drawn title bar (`App.title_bar`) is its
   only; a window beside it keeps the system's frame (10/27).

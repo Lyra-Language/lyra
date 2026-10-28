@@ -45,6 +45,50 @@ Each reproduced first; two were not what their entries said.
 - Found on the way: an untyped lambda parameter with no context reports "undefined symbol" at
   its uses (todo.md).
 
+### 10/27/26 — lui: a panel's controls in markup
+
+- **`ui/VEGA.md` §11's step 6**: lui's ui target writes every control steps 1–5 built —
+  `<Picture>`, `tooltip`/`tooltip-node`, `<Modal>`, `<NumberField>`, `<RadioGroup>`/`<Radio>`,
+  `<Disclosure>`, `<Progress>`, `<Separator>`, `<Splitter>`, `<Table>` of `<TableColumn>`s and
+  `<TableRow>`s, `<Dock on_tear>` — and a `<window name>` beside the main one.
+  `TestLui_UiTargetPanelControls` holds the generated calls and eighteen refusals at their lines.
+- **The proof is three examples whose views became markup**, not a new example:
+  `panels_view.lui`, `dialogs_view.lui` and `windows_view.lui`, with their state, events and
+  `update` in the script. Their scripted tests ran unchanged, and the panels' and dialogs'
+  frames were compared with frames taken before the change: byte-identical, start and end, so
+  the component layer lui puts round each view changes nothing drawn. A new example would have
+  shown the markup compiles; these show it behaves the same.
+- **Shapes chosen to match lui's existing ones**, not the functions' parameter lists: a
+  number field's text is its label (a button's is); radios are `<Option>`s inside
+  `<RadioGroup>` (a select's are); a table's rows are `<TableRow>`s with `<for>` and `<if>`
+  among them (a tab bar's tabs are `<Tab>`s); `<Separator>` holds its text. A picture's key is
+  `name`, because `key` is already every element's identity, and the two meaning different
+  things on one tag would be a trap. A second window is a function of `props`, since its key
+  and place come from the program's state, and a file may hold any number.
+- **Vega's two views are left to its front end.** `settings_view.lui` and `import_view.lui`
+  import the ImGui front end's state; written for `ui` they import `Studio`'s, which does not
+  exist yet. They move with the shell and the import dialogs (§10).
+- **Three compiler bugs, found by the generated code, each fixed:**
+  - *An import used only in a struct field's default warned unused* (`lyra-W004`) unless a
+    literal somewhere left the field out — the unused-import walk read field *types* and never
+    their default expressions. A module of state types, a generated view's, constructs none.
+  - *A closure calling its enclosing function's `pure` parameter was refused as impure*:
+    `(v) => g(v)` inside a function taking `g: pure (i64) -> i64`, handed to a `pure` slot. The
+    closure's call fell to the function-value rung, which trusts no annotation and charges every
+    effect. A parameter's bound is trusted because whoever supplies the argument is held to it,
+    and that is as true from a closure inside the function; frames now carry their parameters'
+    bounds (`capturedBound`), hidden by a body binding of the same name. A function value in an
+    annotated `let` is still not trusted.
+  - *A closure inside a spread took no retains — a use-after-free.* The ownership pass had no
+    arm for `...xs`, so it never walked the operand: a closure there was never analysed, and its
+    body stored a capture and a parameter into the value it built without a +1 on either. lui
+    writes an `<if>` in a `<for>` as a comprehension of spreads, and the windows example
+    segfaulted on the first tab docked into another window — the event the dock's closure built
+    held a tree the caller then freed. ASan named `dock_away` as the freeing site, which pointed at
+    `ui`; comparing the IR of the closure in the loop form and the comprehension form showed the
+    missing retains. The operand is now walked as a borrow, which also releases a temporary
+    spread (`[...f(x)]`), which had leaked.
+
 ### 10/27/26 — A stated type reaches the value that needs it
 
 Six todo entries from `ui`, each a position where the program had already written the type

@@ -256,6 +256,10 @@ func InferredEffects(program *ast.Program, scopeTable *symbols.ScopeTable) map[s
 type scopeBindings struct {
 	mutable   map[string]bool
 	functions map[string]*ast.LambdaExpr
+	// bounds are the declared effect bounds of the frame's own parameters (`g: pure (i64) ->
+	// i64`), for a lambda nested in it calling one ([capturedBound]); none for a parameter
+	// its body binds again.
+	bounds map[string]*types.LambdaType
 }
 
 // pushScope appends scope onto capture, always returning a freshly backed
@@ -267,6 +271,25 @@ func pushScope(capture []scopeBindings, scope scopeBindings) []scopeBindings {
 	copy(child, capture)
 	child[len(capture)] = scope
 	return child
+}
+
+// capturedBound is the declared bound of the parameter `name` resolves to through the capture
+// stack — an enclosing function's (`(v) => g(v)` inside a function taking `g: pure (i64) ->
+// i64`) — searched innermost first and stopping at the nearest frame declaring the name; nil
+// when that is not a bounded parameter. **Trusted as a parameter's own bound is**: whoever
+// supplies the enclosing function's argument is held to it (checkDeclaredCallbackBounds), so
+// a closure calling it can do no more than the bound permits — unlike a function value in a
+// `let`, whose annotation nothing checks.
+func capturedBound(capture []scopeBindings, name string) *types.LambdaType {
+	for i := len(capture) - 1; i >= 0; i-- {
+		if _, declared := capture[i].mutable[name]; declared {
+			return capture[i].bounds[name]
+		}
+		if _, declared := capture[i].functions[name]; declared {
+			return nil
+		}
+	}
+	return nil
 }
 
 // capturedMutable reports whether name resolves, via the given enclosing-scope
@@ -996,6 +1019,10 @@ func (c *purityChecker) suppliedEffect(arg ast.Expression, capture []scopeBindin
 				return 0, false // an unconstrained parameter promises nothing
 			}
 		}
+		// An outer function's bounded parameter, handed on from a closure inside it.
+		if b := capturedBound(capture, a.Name); b != nil {
+			return boundEffect(b), true
+		}
 	}
 	return 0, false
 }
@@ -1235,10 +1262,19 @@ func (f *scopeFrames) methodParamsFor(m *ast.TraitMethodImpl) map[string]int {
 
 // buildLambdaFrame is forLambda's uncached walk.
 func (f *scopeFrames) buildLambdaFrame(lambda *ast.LambdaExpr) scopeBindings {
-	frame := scopeBindings{mutable: map[string]bool{}, functions: map[string]*ast.LambdaExpr{}}
+	frame := scopeBindings{
+		mutable:   map[string]bool{},
+		functions: map[string]*ast.LambdaExpr{},
+		bounds:    map[string]*types.LambdaType{},
+	}
 	for i := range lambda.Parameters {
 		for _, n := range patternBoundNames(lambda.Parameters[i].Pattern) {
 			frame.mutable[n] = false
+		}
+		if name := lambda.Parameters[i].Pattern.GetName(); name != "" {
+			if bound := declaredBound(lambda, i); bound != nil {
+				frame.bounds[name] = bound
+			}
 		}
 	}
 	for _, clause := range lambda.LambdaClauses {
@@ -1250,7 +1286,17 @@ func (f *scopeFrames) buildLambdaFrame(lambda *ast.LambdaExpr) scopeBindings {
 	}
 	if f.scopeTable != nil {
 		if scope, ok := f.scopeTable.Get(lambda); ok {
-			f.collectSubtree(scope, &frame)
+			// The body's bindings over the parameters', as before; and a parameter the body
+			// binds again keeps no bound, since the frame cannot say which a use means.
+			body := scopeBindings{mutable: map[string]bool{}, functions: map[string]*ast.LambdaExpr{}}
+			f.collectSubtree(scope, &body)
+			for n, m := range body.mutable {
+				frame.mutable[n] = m
+				delete(frame.bounds, n)
+			}
+			for n, l := range body.functions {
+				frame.functions[n] = l
+			}
 		}
 	}
 	return frame
@@ -3213,6 +3259,20 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int, map[strin
 						// parameter. The effect belongs to whoever supplies the callback
 						// and is charged at that call site.
 						foundCallbacks[name] = idx
+					}
+				} else if bound := capturedBound(c.capture, name); bound != nil {
+					// An enclosing function's bounded parameter, called from a closure
+					// inside it: what the bound permits, as for the function's own
+					// (above). Without this rung it fell to the function-value one below
+					// and charged every effect — `(v) => g(v)` with `g: pure …` was refused
+					// as mutating where it was handed to a `pure` parameter (10/27, lui's
+					// `on_change={arranged}` wrapped as a lambda).
+					eff := boundEffect(bound)
+					found |= eff
+					if eff&PurityEffects != 0 {
+						c.pure(ex.GetLocation(),
+							"pure function calls %q, whose declared `%s` bound still permits an effect",
+							name, strings.TrimSpace(bound.EffectPrefix()))
 					}
 				} else if lt, ok := calleeValueType(inf.allocSites.table(), ex); ok {
 					// A local **function value** — a `for` variable over functions, a
