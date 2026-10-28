@@ -9,6 +9,42 @@ Newest first.
 
 ## Dated log
 
+### 10/27/26 — Five backend and grammar entries: an annotated loop's literals, void fields, a closure in a generic, two grammar gaps
+
+Each reproduced first; two were not what their entries said.
+
+- **`for k: f32 in [-1.0, 1.0]` was invalid IR.** The unannotated form the entry described is
+  refused since 10/21 (the array settles to `[]f64`, and `k * step` is a mismatch the
+  typechecker names). The annotated form was the live bug: `checkTypedLoopVar` checked the
+  elements were assignable and pushed nothing down, so the backend lowered `[]f64` while the
+  loop variable was an `f32`. It now settles an untyped array at the written type and pushes
+  an already settled one down as itself, as the unannotated branch does (`[0.5, step]`'s
+  literal at `step`'s width). Integer literals at `u8` and fixed arrays take it the same way.
+- **A `void` field beside others** (`Checkable(bool, e)` at `e = void`) lowered as `{ i1,
+  void }`. Layout already sized a void as nothing; the LLVM types did not. `lowerFieldType`
+  makes it the empty struct for every aggregate (variant payloads, structs, tuples), and
+  `coerceAggregateElem` builds it from a void value. Equality on an empty struct is true. A
+  struct field `ev: e` and a tuple element at void had the same fault and are covered by
+  the same change. A lone void payload given a value in a generic body (`Pressable(ev)`, `ev:
+  e`) is lowered for effect and dropped, as `Pressable()` is.
+- **That did not make `ui`'s `Node<void>` compile.** Trying `examples/ui/settings.lyra` at
+  `void` next went through `Pressable(event) => [event]`: binding a void value and holding it
+  in a `[]void`. That is void as a zero-sized value, a feature of its own; the todo entry is
+  narrowed to it and `NoEvent` stays.
+- **"A lambda capturing a reassigned `var` in a generic function"** was wider: any capture,
+  `let` too, by a lambda whose signature mentions the enclosing function's type variable.
+  `lambdaTypeVars` counted `lay<e>`'s `e` in `(it: e) -> f32` as the lambda's own, so its call
+  went through `inferGenericCall` and was recorded as an instantiation, and the backend
+  emitted the lambda as a specialization: a function with no environment. A call now solves
+  only the variables the enclosing generics do not fix (`callSolvesTypeVars`, beside
+  `enclosingTypeVars`, which `withEnclosingTypeVars` now shares). The `lay_tab_strip`
+  lambda would have been wrong anyway: captures are by value, so every tab sat at `x = 0`.
+- **Grammar:** a tuple index is a comprehension source (`[c in g.1 | c]`), and an `if let` is
+  a match arm's body unbraced. The second is erased by the collector into the braced form,
+  as a bare `break` is, so nothing downstream learns it exists. 8,369 → 8,370 states.
+- Found on the way: an untyped lambda parameter with no context reports "undefined symbol" at
+  its uses (todo.md).
+
 ### 10/27/26 — A stated type reaches the value that needs it
 
 Six todo entries from `ui`, each a position where the program had already written the type

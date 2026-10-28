@@ -571,3 +571,20 @@ let main = () -> u8 => {
 		t.Errorf("exit %d; want 5 + 6 + 3 = 14", got)
 	}
 }
+
+// A tuple's element is a source (10/27): `[c in g.1 | c]` was a syntax error beside a
+// field (`g.colors`) and a constant. It takes a guard, and pairs with another clause.
+func TestExec_ArrayCompTupleElementSource(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+let main = () -> void => {
+  let g = ("glyph", [1, 2, 3], ["a", "b"])
+  let doubled = [c in g.1 | c * 2]
+  let odd = [c in g.1 | c %% 2 == 1 | c]
+  let both = [c in g.1, s in g.2 | "${s}${c}"]
+  print("${doubled[2]} ${odd.len()} ${both.join(",")}")
+}`, "")
+	if want := "6 2 a1,b1,a2,b2,a3,b3"; out != want {
+		t.Errorf("printed %q; want %q", out, want)
+	}
+}

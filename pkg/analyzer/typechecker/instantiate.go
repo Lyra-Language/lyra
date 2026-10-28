@@ -830,19 +830,7 @@ const localDiscPrefix = "local_"
 // `mid<m>` inside `outer<u>` may mention both `m` and `u`, and composition through `mid`'s
 // instantiation settles `m` exactly as composition through `outer`'s settles `u`.
 func (tc *TypeChecker) withEnclosingTypeVars(lambda *ast.LambdaExpr, subst map[string]types.Type) map[string]types.Type {
-	owner := tc.enclosingTopLevel(lambda)
-	if owner == nil {
-		return subst
-	}
-	vars := map[string]bool{}
-	addSignatureTypeVars(owner, vars)
-	ast.WalkExprChildren(owner, nil, func(e ast.Expression) bool {
-		if mid, ok := e.(*ast.LambdaExpr); ok && mid != lambda && len(mid.GenericParams) > 0 &&
-			locationContains(mid.GetLocation(), lambda.GetLocation()) {
-			addSignatureTypeVars(mid, vars)
-		}
-		return true
-	})
+	vars := tc.enclosingTypeVars(lambda)
 	if len(vars) == 0 {
 		return subst
 	}
@@ -856,6 +844,43 @@ func (tc *TypeChecker) withEnclosingTypeVars(lambda *ast.LambdaExpr, subst map[s
 		}
 	}
 	return out
+}
+
+// enclosingTypeVars is the type variables in scope at lambda from the generics enclosing
+// it: the top-level function's and every local generic's between them.
+func (tc *TypeChecker) enclosingTypeVars(lambda *ast.LambdaExpr) map[string]bool {
+	owner := tc.enclosingTopLevel(lambda)
+	if owner == nil {
+		return nil
+	}
+	vars := map[string]bool{}
+	addSignatureTypeVars(owner, vars)
+	ast.WalkExprChildren(owner, nil, func(e ast.Expression) bool {
+		if mid, ok := e.(*ast.LambdaExpr); ok && mid != lambda && len(mid.GenericParams) > 0 &&
+			locationContains(mid.GetLocation(), lambda.GetLocation()) {
+			addSignatureTypeVars(mid, vars)
+		}
+		return true
+	})
+	return vars
+}
+
+// callSolvesTypeVars is the type variables a call to lambda solves: its signature's, less
+// those an enclosing generic fixes for its whole body. `(it: e) -> f32` inside `lay<e>` is
+// an ordinary closure — its `e` is `lay`'s, already settled in each specialization — so a
+// call to it solves nothing. Taken as generic, the call was recorded as an instantiation,
+// and the backend emitted the lambda as a specialization with no environment: "unbound
+// identifier" at its first capture. A variable it declares itself (`let g<e> = …`, a local
+// generic) is its own even where the enclosing function has one of that name.
+func (tc *TypeChecker) callSolvesTypeVars(lambda *ast.LambdaExpr) map[string]bool {
+	vars := lambdaTypeVars(lambda)
+	if len(vars) == 0 || len(lambda.GenericParams) > 0 {
+		return vars
+	}
+	for name := range tc.enclosingTypeVars(lambda) {
+		delete(vars, name)
+	}
+	return vars
 }
 
 // addSignatureTypeVars adds the type variables a function declares or its signature mentions.

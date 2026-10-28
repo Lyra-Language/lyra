@@ -167,6 +167,10 @@ func (l *lowerer) emitEqRoot(block *ir.Block, a, b value.Value, t types.Type) (v
 		}
 		return l.emitEqRoot(block, a, b, inst)
 	}
+	// A void field (`Tick(string, e)` at `e = void`) holds nothing, so two are equal.
+	if empty, ok := a.Type().(*lltypes.StructType); ok && len(empty.Fields) == 0 {
+		return constant.NewInt(lltypes.I1, 1), block, nil
+	}
 	// A scalar leaf: string, float, or an integer-shaped value (bool and rune
 	// included). These are exactly the cases lowerBooleanBinaryOpExpr already handles
 	// for a top-level `==`, reached here for a *field* of an aggregate.

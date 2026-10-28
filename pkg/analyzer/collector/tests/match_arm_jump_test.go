@@ -43,6 +43,13 @@ func TestMatchArm_BareJumpCollectsAsTheBracedForm(t *testing.T) {
 			"let f = () -> void => {\n  match m {\n    A => return,\n    _ => 1,\n  }\n}",
 			"let f = () -> void => {\n  match m {\n    A => { return },\n    _ => 1,\n  }\n}",
 		},
+		{
+			// Not a jump, but a statement the same way (10/27): `if let` is a value only as
+			// a block's last statement, which is what the braces make it.
+			"if let",
+			"let f = () -> i64 => match n {\n  0 => 1,\n  _ => if let Some(v) = m { v } else if let None = m { 2 } else { 0 },\n}",
+			"let f = () -> i64 => match n {\n  0 => 1,\n  _ => { if let Some(v) = m { v } else if let None = m { 2 } else { 0 } },\n}",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

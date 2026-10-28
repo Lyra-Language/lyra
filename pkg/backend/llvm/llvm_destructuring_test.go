@@ -336,3 +336,25 @@ let main = () -> void => {
 		t.Errorf("got %q; want \"3.75\"", got)
 	}
 }
+
+// A written loop-variable type settles an array literal's elements at that type, as an
+// annotated array's do: `for k: f32 in [-1.0, 1.0]` lowered the array as `[]f64` and
+// `k * step` multiplied an f64 by an f32, invalid IR (found by Termina's ☰ glyph). A fixed
+// array literal and integer literals at a narrow width take it too, and an array already
+// settled by a typed element (`[0.5, step]`) still lowers its literal at that width.
+func TestExec_TypedLoopVariableSettlesItsLiterals(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `module main
+let main = () -> void => {
+  let step: f32 = 2.0
+  var total: f32 = 0.0
+  for k: f32 in [-1.0, 0.0, 1.0, 3.0] { total = total + k * step }
+  for k: u8 in [1, 2, 250] { total = total + f32(k) }
+  for k: f32 in #[0.25, 0.25] { total = total + k }
+  for k: f32 in [0.5, step] { total = total + k }
+  println("${total}")
+}`, "")
+	if got := strings.TrimSpace(out); got != "262" {
+		t.Errorf("got %q; want \"262\"", got)
+	}
+}

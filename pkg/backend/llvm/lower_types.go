@@ -16,13 +16,28 @@ import (
 func (l *lowerer) lowerTypeList(ts []types.Type) ([]lltypes.Type, error) {
 	out := make([]lltypes.Type, len(ts))
 	for i, t := range ts {
-		lt, err := l.lowerType(t)
+		lt, err := l.lowerFieldType(t)
 		if err != nil {
 			return nil, err
 		}
 		out[i] = lt
 	}
 	return out, nil
+}
+
+// lowerFieldType is lowerType for a field of an aggregate — a struct's, a tuple's, a
+// variant's payload. A `void` one (`Checkable(bool, e)` or `struct W<e> { ev: e }` at
+// `e = void`) holds nothing, as layout sizes it, so it is the empty struct: LLVM has no
+// void field, and `{ i1, void }` was invalid IR.
+func (l *lowerer) lowerFieldType(t types.Type) (lltypes.Type, error) {
+	lt, err := l.lowerType(t)
+	if err != nil {
+		return nil, err
+	}
+	if lt.Equal(lltypes.Void) {
+		return lltypes.NewStruct(), nil
+	}
+	return lt, nil
 }
 
 func (l *lowerer) lowerTypeDeclarations(program *ast.Program) error {

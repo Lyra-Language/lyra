@@ -195,3 +195,34 @@ func analyzeWithPreludeErrors(t *testing.T, src string) string {
 	}
 	return strings.Join(msgs, "\n")
 }
+
+// **A lambda whose signature names only the enclosing function's type variables is an
+// ordinary closure**, not a generic of its own: `(it: e) -> Pt<e>` inside `lay<e>` is
+// fixed in each of `lay`'s specializations. Its calls were taken as generic — `e` solved
+// per call — and recorded as instantiations, so the backend emitted the lambda as a
+// specialization with no environment and failed at its first capture, "unbound
+// identifier `x`" (found in `ui.layout`'s `lay_tab_strip`, 10/26). A capture is the value
+// at the lambda's creation, so every point here is at the `x` it was made with.
+func TestExec_AClosureOverTheEnclosingTypeVariableCaptures(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `module main
+struct Pt<e> { x: f32, y: f32, tag: e }
+let lay<e> = (items: []e) -> []Pt<e> => {
+  let y: f32 = 1.5
+  var out: []Pt<e> = []
+  var x: f32 = 0.0
+  let at = (it: e) -> Pt<e> => Pt { x: x, y: y, tag: it }
+  for it in items {
+    out.push(at(it))
+    x += 2.0
+  }
+  out
+}
+let main = () -> void => {
+  for p in lay(["a", "b"]) { print("${p.x} ${p.y} ${p.tag} ") }
+  for p in lay([7]) { print("${p.x} ${p.tag}") }
+}`, "")
+	if got := strings.TrimSpace(out); got != "0 1.5 a 0 1.5 b 0 7" {
+		t.Errorf("got %q; want \"0 1.5 a 0 1.5 b 0 7\"", got)
+	}
+}

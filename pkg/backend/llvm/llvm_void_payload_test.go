@@ -60,3 +60,45 @@ let main = () -> u8 => {
 		t.Errorf("exited %d; want 127 (each check adds its bit; ASan aborts with another code)", got)
 	}
 }
+
+// A `void` field **beside others** takes no space either: `Checkable(bool, e)`, a struct's
+// `ev: e` and a tuple's element at `e = void` are each an empty struct in the layout, built
+// from the void value's effects alone, and compare equal. Until 10/27 the payload lowered
+// as `{ i1, void }`, invalid IR, so `ui.layout`'s `Node<void>` stood in as `NoEvent`.
+// Under ASan, with strings beside the void fields, so a copy or drop misreading the
+// layout would fault.
+func TestExec_AVoidFieldBesideOthers(t *testing.T) {
+	t.Parallel()
+	src := `module main
+data Ev<e> = Tick(string, e) | Idle | Pair(e, i64)
+struct W<e> { n: i64, ev: e, label: string }
+let tick<e> = (s: string, f: () -> e) -> Ev<e> => Tick(s, f())
+let pair<e> = (f: () -> e, n: i64) -> Ev<e> => Pair(f(), n)
+let wrap<e> = (f: () -> e) -> W<e> => W { n: 3, ev: f(), label: "w" ++ "!" }
+let both<e> = (f: () -> e) -> (string, e) => ("t" ++ "u", f())
+let name<e> = (v: Ev<e>) -> string => match v {
+  Tick(s, _) => s,
+  Idle => "idle",
+  Pair(_, n) => "pair ${n}",
+}
+var hits = 0
+let main = () -> u8 => {
+  let noise = () -> void => { hits += 1 }
+  let xs: []Ev<void> = [tick("a" ++ "b", noise), Idle, pair(noise, 9), tick("c", noise)]
+  var out: []string = []
+  for x in xs { out.push(name(x)) }
+  let w = wrap(noise)
+  let t = both(noise)
+  var score: u8 = 0
+  if out.join(",") == "ab,idle,pair 9,c" { score += 1 }
+  if hits == 5 { score += 2 }
+  if w.n == 3 && w.label == "w!" && t.0 == "tu" { score += 4 }
+  if tick("a", noise) == tick("a", noise) && tick("a", noise) != tick("b", noise) { score += 8 }
+  if let Tick(s, _) = xs[3] { if s == "c" { score += 16 } }
+  score
+}
+`
+	if got := buildAndRunASanWithPrelude(t, src); got != 31 {
+		t.Errorf("exited %d; want 31 (each check adds its bit; ASan aborts with another code)", got)
+	}
+}

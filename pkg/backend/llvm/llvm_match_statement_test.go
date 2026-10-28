@@ -344,3 +344,30 @@ let main = () -> u8 => {
 		t.Errorf("printed %q; want %q", got, want)
 	}
 }
+
+// An `if let` is an arm's body unbraced (10/27), a value where the arm's is used — chained
+// with `else if let` and `else if` — and a statement in a void match, with no `else`. It
+// was a syntax error while `_ => if c { … }` parsed.
+func TestExec_IfLetAsAnArmBody(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `module main
+var seen = 0
+let pick = (n: i64, m: Maybe<i64>) -> i64 => match n {
+  0 => 10,
+  1 => if let Some(v) = m { v } else if let None = m { 100 } else { 1 },
+  2 => if let Some(v) = m { v * 2 } else if n > 1 { 200 } else { 1 },
+  _ => if let Some(v) = m { v } else { 0 },
+}
+let tally = (m: Maybe<i64>) -> void => match m {
+  Some(_) => if let Some(v) = m { seen += v },
+  None => {},
+}
+let main = () -> void => {
+  tally(Some(4))
+  tally(None)
+  print("${pick(0, None)} ${pick(1, Some(7))} ${pick(1, None)} ${pick(2, Some(3))} ${pick(2, None)} ${pick(5, None)} ${seen}")
+}`, "")
+	if want := "10 7 100 6 200 0 4"; out != want {
+		t.Errorf("printed %q; want %q", out, want)
+	}
+}

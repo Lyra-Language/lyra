@@ -109,17 +109,20 @@ func definePatternBindings(pattern ast.Pattern, ctx *collector_ctx.Ctx) {
 	})
 }
 
-// armJumpKinds are the statement forms a match arm may hold *bare*, without the
-// braces a block would need: `None => break`, `_ => continue`, `Err e => return e`.
-var armJumpKinds = map[string]bool{
-	"break_statement":    true,
-	"continue_statement": true,
-	"return_statement":   true,
+// armStatementKinds are the statement forms a match arm may hold *bare*, without the
+// braces a block would need: `None => break`, `_ => continue`, `Err e => return e`, and
+// `_ => if let Some(v) = m { v } else { 0 }` (10/27), which as a block's last statement is
+// the value it is in the braced form.
+var armStatementKinds = map[string]bool{
+	"break_statement":              true,
+	"continue_statement":           true,
+	"return_statement":             true,
+	"destructuring_if_declaration": true,
 }
 
-// collectMatchArmBody collects an arm body, **erasing the bare-jump spelling**: a
-// bare `break`/`continue`/`return` becomes the single-statement block the braced
-// form already produced, so `None => break` and `None => { break }` collect to
+// collectMatchArmBody collects an arm body, **erasing the bare-statement spelling**: a
+// bare `break`/`continue`/`return` or `if let` becomes the single-statement block the
+// braced form already produced, so `None => break` and `None => { break }` collect to
 // byte-identical ASTs.
 //
 // Doing it here is what makes the feature cheap. The jump forms are statements and
@@ -135,7 +138,7 @@ var armJumpKinds = map[string]bool{
 // statement jumped and `matchMerge` drops an arm whose block is sealed — so this
 // adds a spelling rather than a behaviour.
 func collectMatchArmBody(bodyNode *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression {
-	if !armJumpKinds[bodyNode.Kind()] {
+	if !armStatementKinds[bodyNode.Kind()] {
 		return CollectExpression(bodyNode, ctx)
 	}
 	stmt := ctx.CollectStatement(bodyNode)

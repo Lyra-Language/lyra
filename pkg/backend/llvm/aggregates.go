@@ -503,6 +503,25 @@ func (l *lowerer) lowerDataConstruction(block *ir.Block, dt types.DataType, ctor
 		return nil, nil, fmt.Errorf("llvm: data type %q has no constructor %q", dt.Name, ctorName)
 	}
 	fields := ctor.FieldTypes()
+	// A lone `void` payload given a value — `Pressable(ev)` in a generic body at `e = void`,
+	// `ev` a void call or parameter — holds nothing: the value is lowered for its effects
+	// and the variant is its tag alone, as `Pressable()` is.
+	if len(fields) == 0 && len(args) == 1 && len(ctor.Params) == 1 {
+		if lone, err := l.lowerType(ctor.Params[0]); err != nil || !lone.Equal(lltypes.Void) {
+			return nil, nil, fmt.Errorf("llvm: constructor %q expects no argument, got 1", ctorName)
+		}
+		v, next, err := l.lowerExpr(block, args[0])
+		if err != nil {
+			return nil, nil, err
+		}
+		if diverged(v, next) {
+			return nil, next, nil
+		}
+		if !holdsNothing(v) {
+			return nil, nil, fmt.Errorf("llvm: constructor %q has a void payload but was given a %s value", ctorName, v.Type())
+		}
+		block, args = next, nil
+	}
 	if len(args) != len(fields) {
 		return nil, nil, fmt.Errorf("llvm: constructor %q expects %d argument(s), got %d", ctorName, len(fields), len(args))
 	}
@@ -639,13 +658,23 @@ func (l *lowerer) dataPayloadStructType(ctor types.DataTypeConstructor) (*lltype
 	fieldTypes := ctor.FieldTypes()
 	fields := make([]lltypes.Type, len(fieldTypes))
 	for i, p := range fieldTypes {
-		ft, err := l.lowerType(p)
+		ft, err := l.lowerFieldType(p)
 		if err != nil {
 			return nil, err
 		}
 		fields[i] = ft
 	}
 	return lltypes.NewStruct(fields...), nil
+}
+
+// holdsNothing reports whether v is a `void` value: no value or a void call
+// (isVoidResult), or a void field read back as its empty struct (lowerFieldType).
+func holdsNothing(v value.Value) bool {
+	if isVoidResult(v) {
+		return true
+	}
+	empty, ok := v.Type().(*lltypes.StructType)
+	return ok && len(empty.Fields) == 0 && empty.TypeName == ""
 }
 
 // structFieldIndexAndType returns a struct field's position and declared type by
@@ -681,6 +710,11 @@ func findConstructor(dt types.DataType, name string) (types.DataTypeConstructor,
 // NewInsertValue (as `insertvalue elem type mismatch, expected i8, got i64`); a
 // non-int mismatch it can't reconcile is a loud error, never a panic.
 func (l *lowerer) coerceAggregateElem(block *ir.Block, v value.Value, dst lltypes.Type, src ast.Expression) (value.Value, error) {
+	// A void element (`Checkable(b, f(b))` at `e = void`) was lowered for its effects; its
+	// field is the empty struct lowerFieldType gives it.
+	if empty, ok := dst.(*lltypes.StructType); ok && len(empty.Fields) == 0 && empty.TypeName == "" && holdsNothing(v) {
+		return constant.NewZeroInitializer(empty), nil
+	}
 	// A nil value means its expression diverged — `panic(…)` in element position — and the
 	// caller's `diverged` guard was missing. Every such site funnels here, so this turns the
 	// residue into rule 5's loud error rather than the nil-deref one line down: llir builds

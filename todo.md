@@ -569,15 +569,11 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] `bindings.imgui.ui`: what the tree lacks.** Keys for repeated labels (ImGui's
   `push_id`), tooltips, tables, child regions, an integer slider, and layout past `Row` and
   `Form`. Grow it as Vega's next dialogs and panels move to markup.
-- **[OPEN] A float literal array's element times an f32 is invalid IR** — `let step: f32 =
-  2.0; for k in [-1.0, 0.0, 1.0] { total = total + k * step }` typechecks, then clang
-  refuses `fmul double %a, %b` with `%b` a float: the elements stay `f64` in the backend
-  while the product was taken as `f32`. Either the context settles the literals as `f32`
-  or the mix is refused; the backend must not emit it (rule 5). Found by Termina's ☰
-  glyph, which types the array meanwhile.
-- **[OPEN] A tuple index is not a comprehension's source**: `[c in g.1 | c]` is a syntax
-  error where `[c in g.colors | c]` and a constant parse (the grammar's generator value).
-  Found by Termina's color groups, which became a struct for it.
+- **[DONE 10/27] A float literal array's element times an f32** — unannotated it is refused
+  since 10/21 (the array is `[]f64`); with the loop variable written, `for k: f32 in [-1.0,
+  1.0]`, the literals now settle at `f32` (COMPLETED.md, 10/27).
+- **[DONE 10/27] A tuple index as a comprehension's source** — `[c in g.1 | c]` (COMPLETED.md,
+  10/27).
 - **[OPEN] `std.io`: walking a directory tree.** lyrafmt and lui each walk one by hand
   (`read_dir`, skipping `.` names and symlinked directories). A `std.io` walk, sorted,
   with the caller's filter, would serve both.
@@ -852,10 +848,13 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   id, since it cannot carry the program's event type).
 - **[DONE 10/23] lui's `ui` target's menus, tab bar, swatch, window buttons and `Fragment`**
   (`ui/WINDOW.md` step 8, COMPLETED.md 10/23).
-- **[OPEN] Backend: a lambda capturing a reassigned `var` in a generic function** — in
-  `lay_tab_strip<e>`, `let at = (laid) => Placed { at: Point { x: x, … } }` over `var x` (and
-  `var height`) passed the front end and failed in the backend, "unbound identifier `x`". The
-  same lambda in a plain `main` works; not reduced further. Written as a function meanwhile.
+- **[DONE 10/27] Backend: a lambda capturing in a generic function** — any capture, by a
+  lambda whose signature names the enclosing type variable (`(it: e) -> …`); its calls were
+  taken as generic (COMPLETED.md, 10/27). `lay_tab_strip`'s function is right as it stands: a
+  capture is the value at creation, so the lambda would have placed every tab at `x = 0`.
+- **[OPEN] Typechecker: an untyped lambda parameter with no context is "undefined symbol"**
+  at each use (`let at = (p) => p.w + 1`), though `p` is declared; it should say the
+  parameter's type cannot be inferred and to annotate it.
 - **[OPEN] Backend: a string pattern holding an escape** (`"\\"` as a `match` arm) is refused
   ("escaped string patterns not implemented yet"); lui writes an `if` instead.
 - **[OPEN] lui: an import's module is its path from the importing file**, `/` as `.` — right
@@ -864,8 +863,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] Purity: a `pure` parameter captured by a lambda cannot be passed on** — `(x) =>
   twice(g, x)` inside a function taking `g: pure (i64) -> i64` is E007 at `g`, though `g`'s
   bound is checked where it was given; calling `g` there is fine (10/26).
-- **[OPEN] Grammar: `if let` is not an arm's expression** — `_ => if let Some(v) = m { v }
-  else { 0 }` is a syntax error where `_ => if c { … }` parses; it needs braces round it (10/26).
+- **[DONE 10/27] Grammar: `if let` as an arm's expression** — the collector erases it to the
+  braced form, as a bare `break` (COMPLETED.md, 10/27).
 - **[DONE 10/22] `ui`: states as pseudo-classes** — `:hover`, `:active`, `:focus`,
   `:focus-visible`, `:focus-within`, `:checked`, `:disabled`, `:enabled`, class-level
   specificity; the class form dropped (COMPLETED.md, 10/22).
@@ -890,9 +889,10 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   and a combining accent, or an emoji sequence, takes several Left presses; needs UAX #29.
 - **[OPEN] `ui.interact`: a field's caret does not blink**, and typing is not coalesced into
   one undo step a word. Blinking wants phase 4's timers.
-- **[OPEN] `ui.layout`: `Node<void>` does not compile.** A payload instantiated at `void` in a
-  constructor with other fields lowers as `{ i1, void }` (`Checkable(bool, e)`); `NoEvent`
-  stands in. A void field should take no space, as a lone void payload already does.
+- **[OPEN] `ui.layout`: `Node<void>` does not compile.** A void field beside others takes no
+  space since 10/27 (`Checkable(bool, e)`), but `ui` also binds a void value and holds it in
+  an array (`Pressable(event) => [event]`, a `[]void`), which the backend refuses; `NoEvent`
+  stands in. Needs void as a zero-sized value: a binding, an element.
 - **[OPEN] lyrafmt is not idempotent on a long struct literal holding a lambda**: `App { view:
   (f: Form) -> Node<Ev> => view(theme, f), update: update, background: … }` past 90 columns is
   re-indented differently on a second `-w`, so `--check` fails right after a format. A match

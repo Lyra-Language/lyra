@@ -516,7 +516,7 @@ func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr
 	// solved from this call's argument types before anything can be checked against
 	// them — a declared `t` is assignable from nothing until it is bound. Solving
 	// also produces the specialization the backend will emit, recorded per call site.
-	if vars := lambdaTypeVars(lambda); len(vars) > 0 {
+	if vars := tc.callSolvesTypeVars(lambda); len(vars) > 0 {
 		return tc.inferGenericCall(calleeName, lambda, call, vars)
 	}
 	// Count required parameters (those without a default value).

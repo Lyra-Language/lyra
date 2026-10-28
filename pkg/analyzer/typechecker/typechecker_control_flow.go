@@ -1927,10 +1927,36 @@ func (tc *TypeChecker) checkTypedLoopVar(expr *ast.ForInLoopExpr, iterType, decl
 		tc.typeTable.Set(expr.Iterable, rt)
 		return
 	}
-	if elem := iterableElementType(iterType); elem != nil && !isAssignable(elem, declared) {
+	elem := iterableElementType(iterType)
+	if elem == nil {
+		return
+	}
+	if !isAssignable(elem, declared) {
 		tc.addError(expr.GetLocation(), SeverityError,
 			"the loop variable is `%s: %s`, but the elements are %s", expr.Key, declared, elem)
+		return
 	}
+	// Literal elements take the written type, as an annotated array's do: left alone,
+	// `for k: f32 in [-1.0, 1.0]` lowered the array as `[]f64` and `k * step` multiplied
+	// an f64 by an f32 (invalid IR). An array already settled is pushed down as itself, as
+	// the unannotated loop does, so the `0.5` of `[0.5, step]` is lowered at `step`'s width.
+	var settled types.Type
+	switch at := iterType.(type) {
+	case types.DynamicArrayType:
+		if hasUntypedLeaf(elem) {
+			at.ElementType = declared
+		}
+		settled = at
+	case types.StaticArrayType:
+		if hasUntypedLeaf(elem) {
+			at.ElementType = declared
+		}
+		settled = at
+	default:
+		return
+	}
+	tc.typeTable.Set(expr.Iterable, settled)
+	tc.propagateExpectedType(expr.Iterable, settled)
 }
 
 // bindForInLoopVars records the loop variable types for a for-in loop. The grammar
