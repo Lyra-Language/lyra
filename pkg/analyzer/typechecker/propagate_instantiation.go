@@ -680,6 +680,15 @@ func (tc *TypeChecker) stampAggregate(node ast.Expression, values []ast.Expressi
 		tc.propagateExpectedType(v, expected)
 		tc.propagateInstantiation(v, expected) // a nested partly solved construction
 		actual := tc.inferExprType(v)
+		// A bare constructor infers its data type afresh every time, so the instantiation
+		// the propagation just recorded on it is what it now is: `Nd { k: L, xs: [] }` in a
+		// function returning `Nd<e>` was "cannot assign K<?> to K<e>", the `L` re-inferred
+		// bare after being completed (10/27).
+		if dc, ok := v.(*ast.DataConstructorExpr); ok && dc.Value == nil {
+			if recorded, ok := tc.typeTable.Get(v); ok && recorded != nil {
+				actual = recorded
+			}
+		}
 		if actual != nil && !tc.assignableValue(v, actual, expected) {
 			where := inst.Name
 			if i < len(names) && names[i] != "" {

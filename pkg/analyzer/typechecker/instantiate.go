@@ -566,6 +566,10 @@ func (tc *TypeChecker) solveDataTypeVars(decl *ast.TypeDeclStmt, declaredFields 
 		} else if want := substituteGenerics(declaredFields[i], fromContext); len(fromContext) > 0 && mentionsNoTypeVar(want) {
 			restoreExpected = tc.pushExpectedType(want, arg.GetLocation())
 		}
+		// A lambda payload takes what its field states, as a struct field's does
+		// (inferStructGenericArgs) — the concrete parts only, so a parameter this loop is
+		// solving is left to the lambda's body.
+		tc.elaborateLambda(arg, substituteGenerics(declaredFields[i], fromContext), nil)
 		argType := tc.inferExprType(arg)
 		if restoreExpected != nil {
 			restoreExpected()

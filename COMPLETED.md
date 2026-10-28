@@ -9,6 +9,56 @@ Newest first.
 
 ## Dated log
 
+### 10/27/26 — A stated type reaches the value that needs it
+
+Six todo entries from `ui`, each a position where the program had already written the type
+and a generic value still could not see it — so it wrote `::<…>`, or a binding whose only
+job was to carry the type in. Each now gets it, by the rule a call's arguments follow:
+what a value solves stands, and the context fills only what it left open.
+
+- **A field assignment's place is the value's context while it is inferred.**
+  `self.cache = hashmap_new()` applied the field's type afterwards, too late for a generic
+  call that reports its own failure inside the inference. The binding form always pushed
+  first; this one now does, and elaborates a lambda value as an argument is.
+- **A generic struct literal infers its settled fields first.** The fields solve the
+  struct's parameters, and they were inferred bare in written order, so `Host { cache:
+  hashmap_new(), tag: 1 }` met the map before `tag` had solved `e`. A field whose type is
+  settled now goes first, in that type's context; one that is not is inferred quietly
+  (as `narrowToAssignedPlaces` infers its places), since the field loop after it infers
+  every value again in the full context and reports there. **The annotation fills what no
+  field solved** (`let a: Only<i64> = Only { cache: hashmap_new() }`) — only when the
+  fields agree with it, so `Tagged { value: "x" }` as a `Tagged<i64, bool>` is still
+  "Tagged.value: cannot assign string to i64" rather than a whole-type mismatch, which
+  seeding regardless made it, and a test caught.
+- **An unknown type solves nothing.** The nullary-constructor entry did not reproduce as
+  written; `Nd { k: L, xs: [] }` did. The empty array's element is nil, the unifier bound
+  `e` to it, the literal became `Nd<nil>`, and `L` took `K<nil>`, which the function's
+  `-> Nd<e>` could not complete. `unifyGenericTarget` now leaves a variable open on nil.
+- **A leaf default is copied per literal.** A field default is the declaration's own node,
+  shared by every literal that omits it, and a node records one type — so `shown:
+  Maybe<Laid<e>> = None` at `Host<i64>` and `Host<string>` was "cannot assign
+  Maybe<Laid<i64>> to Maybe<Laid<string>>". A leaf (no child expressions) is copied whole
+  by copying its struct (`copyLeaf`), and stays marked a default; a lambda default still
+  shares, wanting the deep copier the compiler does not have (todo.md).
+- **A constructor's lambda payload is elaborated from its field**, in the payload solve and
+  in the element check: `Scope((_) => sheet)` for a non-generic `Scope((Theme) -> Sheet)`
+  never reached the solve at all.
+- **An array element that fails waits for its siblings**: `[boxed(), sized()]` inferred
+  `sized` before anything had typed the array. A failing element is set aside with its
+  errors held back and inferred again in the first settled sibling's type — or in none,
+  reporting as before. An element that infers is inferred once, so a long table costs
+  nothing more.
+- **A method whose return settles its receiver passes the context on** (`receiverContext`).
+  The receiver sits behind a barrier so that a chain does not solve an inner call from the
+  outer's context (`m.flat_map(f).flat_map(g)`, 10/13), with builders (result = receiver)
+  the exception since 10/21. `flatten` is `([][]t) -> []t`: unifying its return with
+  `[]Node<Ev>` settles its receiver entirely, so nothing can be mis-solved, and the
+  receiver now takes `[][]Node<Ev>`. `flat_map`'s return names a variable its receiver does
+  not, so it keeps the barrier. A builtin array method (`reversed`) has no declaration to
+  ask and still gives its receiver nothing.
+- The full suite's `TestRun_UiResizeSettles` ran past its minute under load and passes
+  alone in 49 s, its todo entry's known budget problem.
+
 ### 10/27/26 — `ui`: several windows
 
 - **`ui/VEGA.md` §11's step 5**: `App.windows: [Windows { of, view, on_close, on_moved }]` —

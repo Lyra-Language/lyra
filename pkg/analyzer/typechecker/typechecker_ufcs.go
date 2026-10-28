@@ -381,25 +381,53 @@ func receiverIsGeneric(recv *ast.Parameter) bool {
 // them by `len(LambdaClauses) > 0` would have made membership depend on *when* this runs:
 // desugarClauses consumes the clauses, so the same function would be a candidate after
 // its declaration was checked and not before.
-// methodReturnsItsReceiver reports whether a call of methodName at loc passes its context
-// on to its receiver: there is a declaration of the name this file can reach that takes a
-// receiver, and every one of them returns the type its receiver takes, as written. A name
-// with any other candidate keeps the barrier — its receiver may well be a different type
-// from its result.
-func (tc *TypeChecker) methodReturnsItsReceiver(methodName string, loc ast.Location) bool {
-	found := false
+// receiverContext is the context a call of methodName at loc, wanted as `want`, passes on
+// to its receiver, or nil when it passes none. There must be a declaration of the name this
+// file can reach that takes a receiver, and every one of them must settle the same receiver
+// type from `want`: its declared return unified with the context, its receiver substituted
+// with what that solved, and nothing left open. A name with any other candidate keeps the
+// barrier — its receiver may well be a different type from its result.
+//
+// A method returning the type its receiver takes — a builder's `node.with_class("x")` —
+// passes the context on whole (10/21). **So does one whose return determines its receiver**
+// (10/27): `flatten` is `([][]t) -> []t`, so `[…].flatten()` wanted as a `[]Node<Ev>` is a
+// `[][]Node<Ev>`, and a generic leaf inside it (`text("a")`, a `Node<e>`) learns its `e`, as
+// it did through `flatten([…])`. `flat_map`'s result names a variable its receiver does not
+// (`u`), so the receiver is not settled and keeps the barrier — the chain the barrier was
+// put up for.
+func (tc *TypeChecker) receiverContext(methodName string, loc ast.Location, want types.Type) types.Type {
+	var settled types.Type
 	for _, fn := range tc.symTable.FunctionsNamed(methodName) {
 		recv, isReceiver := ufcsReceiverParam(fn)
 		if !isReceiver || !tc.ufcsImported(methodName, fn, loc) {
 			continue
 		}
-		if fn.ReturnType.Type == nil || recv.Type == nil ||
-			!types.TypesEqual(recv.Type, fn.ReturnType.Type) {
-			return false
+		if fn.ReturnType.Type == nil || recv.Type == nil {
+			return nil
 		}
-		found = true
+		var this types.Type
+		if types.TypesEqual(recv.Type, fn.ReturnType.Type) {
+			this = want
+		} else {
+			vars := make(map[string]bool, len(fn.GenericParams))
+			for _, gp := range fn.GenericParams {
+				vars[gp.Name] = true
+			}
+			bindings := map[string]types.Type{}
+			if len(vars) == 0 || !unifyGenericTarget(fn.ReturnType.Type, want, vars, bindings) {
+				return nil
+			}
+			this = substituteGenerics(recv.Type, bindings)
+			if mentionsGenericParam(this, vars) {
+				return nil
+			}
+		}
+		if settled != nil && !types.TypesEqual(settled, this) {
+			return nil
+		}
+		settled = this
 	}
-	return found
+	return settled
 }
 
 func ufcsReceiverParam(fn *ast.LambdaExpr) (*ast.Parameter, bool) {

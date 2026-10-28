@@ -277,6 +277,13 @@ func implTargetMatches(implType, receiverType types.Type) (map[string]types.Type
 // (e.g. a receiver typed as the bare struct without instantiation).
 func unifyGenericTarget(implType, receiverType types.Type, generics map[string]bool, bindings map[string]types.Type) bool {
 	if g, ok := implType.(types.GenericType); ok && generics[g.Name] {
+		// **An unknown type solves nothing**: an empty `[]`'s element is nil, and binding
+		// `e` to it in `Nd { k: L, xs: [] }` made the struct a `Nd<nil>` — so `L` took
+		// `K<nil>` as its context, and the function's `-> Nd<e>` could no longer complete
+		// it ("cannot assign K<?> to K<e>", 10/27). Left open, `e` is the context's to fill.
+		if receiverType == nil {
+			return true
+		}
 		if prior, bound := bindings[g.Name]; bound {
 			return types.TypesEqual(prior, receiverType)
 		}

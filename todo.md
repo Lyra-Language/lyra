@@ -843,9 +843,10 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] Backend: a private generic struct as another module's type argument cannot be laid
   out.** `HashMap<string, Cached<e>>` in `ui.layout` failed with "cannot lay out data type
   Maybe" while `Cached` was private; it is `pub` meanwhile (its doc says why).
-- **[OPEN] Typechecker: a generic call has no context from a field assignment or a generic
-  struct literal's field.** `self.cache = hashmap_new()` and `Host { cache: layout_cache() }`
-  need `::<…>`, though the field's type settles both.
+- **[DONE 10/27] A stated type reaches the value that needs it** in six positions: a field
+  assignment, a generic struct literal's fields, a `None` default at two instantiations, a
+  lambda constructor payload, an array element beside a typed sibling, and a method's
+  receiver when its return settles it. (COMPLETED.md, 10/27.)
 - **[OPEN] `ui.app`: commands run where the host runs.** A file read holds the loop until it
   ends; async I/O wants a worker and results the platform posts (an `InputEvent` carrying an
   id, since it cannot carry the program's event type).
@@ -857,32 +858,22 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   same lambda in a plain `main` works; not reduced further. Written as a function meanwhile.
 - **[OPEN] Backend: a string pattern holding an escape** (`"\\"` as a `match` arm) is refused
   ("escaped string patterns not implemented yet"); lui writes an `if` instead.
-- **[OPEN] Typechecker: an expected type does not reach a method's receiver** —
-  `let xs: []Node<Ev> = [...[x in ys | [text("a")]].flatten()]` cannot infer `text`'s event,
-  while `flatten([…])`, the same function called plainly, can.
 - **[OPEN] lui: an import's module is its path from the importing file**, `/` as `.` — right
   when both are under the program's root as written, else `module="…"`. Imports are one level:
   an imported file's own imports are not read.
-- **[OPEN] Typechecker: a generic struct's field defaulted to `None`** (`shown: Maybe<Laid<e>>
-  = None`) is E073; `Host.shown` is a `[]Laid<e>` of at most one meanwhile. Written in a
-  generic literal (`Spec::<e> { g: None }`) it is E073 too; `FieldSpec.on_step`'s users bind
-  an annotated `None` first (10/26).
 - **[OPEN] Purity: a `pure` parameter captured by a lambda cannot be passed on** — `(x) =>
   twice(g, x)` inside a function taking `g: pure (i64) -> i64` is E007 at `g`, though `g`'s
   bound is checked where it was given; calling `g` there is fine (10/26).
 - **[OPEN] Grammar: `if let` is not an arm's expression** — `_ => if let Some(v) = m { v }
   else { 0 }` is a syntax error where `_ => if c { … }` parses; it needs braces round it (10/26).
-- **[OPEN] Typechecker: an untyped lambda as a data constructor's payload** (`Scope((_) =>
-  sheet)` for `Scope((Theme) -> Sheet)`) is not elaborated from the payload's type, as an
-  argument's is; its parameters must be annotated.
 - **[DONE 10/22] `ui`: states as pseudo-classes** — `:hover`, `:active`, `:focus`,
   `:focus-visible`, `:focus-within`, `:checked`, `:disabled`, `:enabled`, class-level
   specificity; the class form dropped (COMPLETED.md, 10/22).
-- **[OPEN] A generic struct's lambda default has one type for every instantiation.** A field
-  default is the declaration's own AST node (`applyDefaultFields`), so `on_edit: (string) -> e =
-  (_: string) => panic("…")` lowers with no return type, and with `-> e` written it is not
-  specialized ("cannot assign (string) -> e to (string) -> Ev"). The `[]` case was fixed 10/21;
-  a lambda needs the default instantiated (or elaborated) per literal.
+- **[OPEN] A generic struct's lambda default has one type for every instantiation.** A leaf
+  default (`None`, `[]`, a literal) is copied per literal since 10/27, but one with children
+  is still the declaration's own node (`applyDefaultFields`), so `on_edit: (string) -> e = (_:
+  string) => panic("…")` is typed once for every `e`. It needs a deep AST copy, or an
+  elaboration per literal.
 - **[DONE 10/22] `ui`: a select** (HTML's `<select>`, `select`/`SelectSpec`, lui's
   `<Select>`) — its list floats over the page (`Laid.floats`) (COMPLETED.md, 10/22).
 - **[DONE 10/23] `ui`: a select's list scrolls and flips** — placed as a popup's content is
@@ -902,12 +893,6 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] `ui.layout`: `Node<void>` does not compile.** A payload instantiated at `void` in a
   constructor with other fields lowers as `{ i1, void }` (`Checkable(bool, e)`); `NoEvent`
   stands in. A void field should take no space, as a lone void payload already does.
-- **[OPEN] Typechecker: a nullary constructor in a struct literal beside a field mentioning
-  its variable** — `Nd { k: L, xs: xs }` for `struct Nd<e> { k: K<e>, xs: []e }` is E073 at
-  `L`, though the return type `Nd<e>` settles it; `let k: K<e> = L` first works.
-- **[OPEN] Typechecker: a generic call's element in an array beside typed siblings has no
-  context.** `column([box(1.0), sized(None, Some(2.0))])`, `box` typed `Node<Ev>`, cannot infer
-  `sized`'s `e`: elements are inferred one by one, before the array's type is joined.
 - **[OPEN] lyrafmt is not idempotent on a long struct literal holding a lambda**: `App { view:
   (f: Form) -> Node<Ev> => view(theme, f), update: update, background: … }` past 90 columns is
   re-indented differently on a second `-w`, so `--check` fails right after a format. A match

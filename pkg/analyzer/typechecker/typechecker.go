@@ -1883,8 +1883,21 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 	tc.checkLValueWritable(stmt.Target)
 
 	targetType := tc.inferExprType(stmt.Target)
+	if targetType == nil {
+		tc.inferExprType(stmt.Value)
+		return
+	}
+	// The place's type is the value's context **while it is inferred**, as a binding's
+	// annotation and a struct field's declared type are: a generic call whose variables no
+	// argument reaches reports its own failure inside the inference, so a context applied
+	// afterwards is too late — `self.cache = hashmap_new()` was "cannot infer type
+	// variables k, v" though the field's type says both (10/27). A lambda is elaborated
+	// from it first, as an argument is.
+	tc.elaborateLambda(stmt.Value, targetType, nil)
+	restoreExpected := tc.pushExpectedType(targetType, stmt.Value.GetLocation())
 	valueType := tc.inferExprType(stmt.Value)
-	if targetType == nil || valueType == nil {
+	restoreExpected()
+	if valueType == nil {
 		return
 	}
 	// The target's type is the context that completes a partly solved construction, and
@@ -4386,6 +4399,13 @@ func (tc *TypeChecker) inferArrayLiteralType(expr *ast.ArrayLiteralExpr) types.T
 	// the annotation that made them compatible was ever consulted (09/13).
 	elemContext := tc.arrayElementContext(expr.GetLocation())
 	contextFailed := false
+	// **With no context, an element that fails waits for its siblings.** Elements are
+	// inferred one by one, so in `column([box(1.0), sized(None, Some(2.0))])` the generic
+	// `sized` had nothing to solve its `e` from but a sibling already typed `Node<Ev>`
+	// (10/27). Such an element is set aside, its errors held back, and inferred again after
+	// the others in the context the first settled sibling gives — or in none, reporting
+	// as it did, when no sibling settles anything. An element that infers is inferred once.
+	var deferred []ast.Expression
 	for _, el := range expr.Elements {
 		var t types.Type
 		if sp, ok := el.(*ast.SpreadExpr); ok {
@@ -4406,8 +4426,14 @@ func (tc *TypeChecker) inferArrayLiteralType(expr *ast.ArrayLiteralExpr) types.T
 			if elemContext != nil {
 				restoreExpected = tc.pushExpectedType(elemContext, el.GetLocation())
 			}
+			errorCount := len(tc.errors)
 			t = tc.inferExprType(el) // keep untyped (UntypedInt, etc.) so the annotation can widen
 			restoreExpected()
+			if elemContext == nil && len(expr.Elements) > 1 && (t == nil || tc.addedErrorSince(errorCount)) {
+				tc.errors = tc.errors[:errorCount]
+				deferred = append(deferred, el)
+				continue
+			}
 			if t != nil && elemContext != nil {
 				var reported bool
 				t, reported = tc.elementTakesContext(el, t, elemContext)
@@ -4430,6 +4456,29 @@ func (tc *TypeChecker) inferArrayLiteralType(expr *ast.ArrayLiteralExpr) types.T
 		if !ok && contextFailed {
 			continue // a sibling already failed its context; this would restate it
 		}
+		if !ok {
+			tc.addError(el.GetLocation(), SeverityError,
+				"array literal: element type %s is not compatible with preceding element type %s",
+				t, elemType)
+			return nil
+		}
+		elemType = common
+	}
+	for _, el := range deferred {
+		restoreExpected := func() {}
+		if elemType != nil && mentionsNoTypeVar(elemType) && !hasUntypedLeaf(elemType) {
+			restoreExpected = tc.pushExpectedType(elemType, el.GetLocation())
+		}
+		t := tc.inferExprType(el)
+		restoreExpected()
+		if t == nil {
+			continue
+		}
+		if elemType == nil {
+			elemType = t
+			continue
+		}
+		common, ok := branchCommonType(elemType, t)
 		if !ok {
 			tc.addError(el.GetLocation(), SeverityError,
 				"array literal: element type %s is not compatible with preceding element type %s",
@@ -4941,6 +4990,12 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 				// variable is never offered as an expectation.
 				var restoreExpected func()
 				if i < len(declaredFields) {
+					// An untyped lambda payload is elaborated from its field, as an
+					// argument is from its slot: `Scope((_) => sheet)` against
+					// `Scope((Theme) -> Sheet)` gets `_: Theme` and its return. A data type
+					// with no parameters never reaches solveDataTypeVars' loop, so this is
+					// the one place it can (10/27).
+					tc.elaborateLambda(elem, substituteGenerics(declaredFields[i], subst), nil)
 					if want := substituteGenerics(declaredFields[i], subst); mentionsNoTypeVar(want) {
 						restoreExpected = tc.pushExpectedType(want, elem.GetLocation())
 					}
@@ -5570,6 +5625,7 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		// t = i64). A parameter with no inferable field stays unbound, and its
 		// fields are checked leniently below.
 		tc.inferStructGenericArgs(expr, structType, genericParamNames, typeSubst)
+		tc.seedStructArgsFromExpected(decl, typeSubst)
 	default:
 		tc.addError(expr.GetLocation(), SeverityError, "%s: expected %d generic arguments, got %d", expr.Name, len(decl.GenericParams), len(expr.GenericArgs))
 		return nil
@@ -5809,12 +5865,39 @@ func (tc *TypeChecker) inferStructGenericArgs(expr *ast.StructInstanceExpr, stru
 	for _, f := range structType.Fields {
 		declaredByName[f.Name] = f.Type
 	}
-	for idx, f := range expr.Fields {
-		fieldName := f.Name
-		if fieldName == "" && idx < len(structType.Fields) {
-			fieldName = structType.Fields[idx].Name
+	// **A field whose type is already settled goes first, inferred in that type's
+	// context**, and the rest in the order written once nothing settled is left. A generic
+	// call whose variables no argument reaches needs the context while it is inferred:
+	// `Host { cache: hashmap_new(), tag: 1 }` against `cache: HashMap<string, e>` was
+	// "cannot infer type variables k, v" — inferred bare, first, before `tag` had solved
+	// `e` (10/27). Settled is asked again after each field, since each solves more.
+	//
+	// **A field inferred before its type is settled is inferred quietly**, as
+	// narrowToAssignedPlaces infers its places: the field loop after this infers every
+	// value again, in the context the solve has settled by then, and reports there. Here
+	// it is asked only for what it pins down, and a value that needs the context to be
+	// typed at all — that `hashmap_new()`, when no other field had solved `e` first —
+	// would otherwise report a failure the second inference does not have.
+	pending := make([]int, 0, len(expr.Fields))
+	for idx := range expr.Fields {
+		pending = append(pending, idx)
+	}
+	for len(pending) > 0 {
+		pick, context := 0, types.Type(nil)
+		for j, idx := range pending {
+			declared, ok := declaredByName[structFieldName(expr, structType, idx)]
+			if !ok {
+				continue
+			}
+			if want := substituteGenerics(declared, typeSubst); !mentionsGenericParam(want, genericParamNames) {
+				pick, context = j, want
+				break
+			}
 		}
-		declared, ok := declaredByName[fieldName]
+		idx := pending[pick]
+		pending = append(pending[:pick], pending[pick+1:]...)
+		f := expr.Fields[idx]
+		declared, ok := declaredByName[structFieldName(expr, structType, idx)]
 		if !ok {
 			continue
 		}
@@ -5825,7 +5908,16 @@ func (tc *TypeChecker) inferStructGenericArgs(expr *ast.StructInstanceExpr, stru
 		// which is what solves it. Without this `v` was undefined, the parameter mentioning
 		// no type variable notwithstanding (10/19).
 		tc.elaborateLambda(f.Value, substituteGenerics(declared, typeSubst), nil)
-		vt := tc.inferExprType(f.Value)
+		var vt types.Type
+		if context != nil {
+			restoreExpected := tc.pushExpectedType(tc.resolveType(context, f.Value.GetLocation()), f.Value.GetLocation())
+			vt = tc.inferExprType(f.Value)
+			restoreExpected()
+		} else {
+			errorCount := len(tc.errors)
+			vt = tc.inferExprType(f.Value)
+			tc.errors = tc.errors[:errorCount]
+		}
 		if vt == nil {
 			continue
 		}
@@ -5836,6 +5928,49 @@ func (tc *TypeChecker) inferStructGenericArgs(expr *ast.StructInstanceExpr, stru
 		// match" keeps one definition.
 		unifyGenericTarget(declared, promoteToDefault(vt), genericParamNames, typeSubst)
 	}
+}
+
+// seedStructArgsFromExpected binds the generic parameters the fields left unsolved from the
+// context the literal sits in, when that context is an instantiation of the same type —
+// `let a: Only<i64> = Only { cache: hashmap_new() }`, where no field solves `e` and the
+// annotation says it. The rule seedFromExpectedReturn gives a call: what the values solved
+// stands, and the context fills only what they did not (10/27).
+//
+// **Only where the two agree.** A field that disagrees with the context — `Tagged { value:
+// "x" }` as a `Tagged<i64, bool>` — leaves the literal partly solved, as it was, for the
+// context's own check to name the field (stampAggregate: "Tagged.value: cannot assign
+// string to i64"). Seeding the rest would complete it as `Tagged<string, bool>`, and the
+// caller would report only that the whole type differs.
+func (tc *TypeChecker) seedStructArgsFromExpected(decl *ast.TypeDeclStmt, typeSubst map[string]types.Type) {
+	if decl == nil || len(typeSubst) == len(decl.GenericParams) {
+		return
+	}
+	want, ok := types.StripNewtype(tc.currentExpectedType()).(types.ParameterizedType)
+	if !ok || want.Name != decl.Name || len(want.TypeArguments) != len(decl.GenericParams) {
+		return
+	}
+	for i, p := range decl.GenericParams {
+		if solved, ok := typeSubst[p.Name]; ok && !types.TypesEqual(solved, want.TypeArguments[i]) {
+			return
+		}
+	}
+	for i, p := range decl.GenericParams {
+		if _, solved := typeSubst[p.Name]; !solved && mentionsNoTypeVar(want.TypeArguments[i]) {
+			typeSubst[p.Name] = want.TypeArguments[i]
+		}
+	}
+}
+
+// structFieldName is the declared name of the literal's field at idx: its own, or the
+// declaration's at that position when the literal is positional.
+func structFieldName(expr *ast.StructInstanceExpr, structType types.NamedStructType, idx int) string {
+	if name := expr.Fields[idx].Name; name != "" {
+		return name
+	}
+	if idx < len(structType.Fields) {
+		return structType.Fields[idx].Name
+	}
+	return ""
 }
 
 func (tc *TypeChecker) inferAnonymousStructInstanceExpr(expr *ast.AnonymousStructInstanceExpr) types.Type {

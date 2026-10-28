@@ -1366,9 +1366,16 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// goes, and the context is the receiver's too. Without it a leaf builder whose type
 	// variable no argument reaches (`text<e>("Title")`, a `Node<e>`) could not be chained
 	// at all: `text("Title").with_class("t")` in a `Node<Msg>` view was "cannot infer e".
+	//
+	// **And through one whose return settles its receiver** (10/27): `[…].flatten()` as a
+	// `[]Node<Ev>` takes `[][]Node<Ev>` to its receiver — see receiverContext.
 	var objType types.Type
-	if want := tc.currentExpectedType(); want != nil && tc.methodReturnsItsReceiver(member.Property.Name, member.GetLocation()) {
-		restore := tc.pushExpectedType(want, member.Object.GetLocation())
+	var recvWant types.Type
+	if want := tc.currentExpectedType(); want != nil {
+		recvWant = tc.receiverContext(member.Property.Name, member.GetLocation(), want)
+	}
+	if recvWant != nil {
+		restore := tc.pushExpectedType(recvWant, member.Object.GetLocation())
 		objType = tc.inferExprType(member.Object)
 		restore()
 	} else {

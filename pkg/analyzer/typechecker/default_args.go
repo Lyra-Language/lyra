@@ -1,6 +1,8 @@
 package typechecker
 
 import (
+	"reflect"
+
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -118,10 +120,14 @@ func (tc *TypeChecker) checkDefaultsAreTrailing(funcName string, lambda *ast.Lam
 //     supplies with the declaration's default — the one case where "missing" does not
 //     mean "wanted the default".
 //   - **The appended expression is the declaration's own AST node**, not a copy, so two
-//     literals that both omit a field share it. Sound for the same reason it is sound
-//     for a default argument: a default is checked against the field's declared type and
-//     cannot vary by site, and cloning would need the deep AST copier this compiler
-//     deliberately does not have.
+//     literals that both omit a field share it — **except a leaf**, which each literal gets
+//     a copy of (copyLeaf). Sharing is sound where the default's type cannot vary by site,
+//     and a generic struct is where it can: `shown: Maybe<Laid<e>> = None` is a
+//     `Maybe<Laid<i64>>` in one literal and a `Maybe<Laid<string>>` in the next, and one
+//     node records one type — "cannot assign Maybe<Laid<i64>> to Maybe<Laid<string>>"
+//     (10/27). A leaf has no child expressions, so its shallow copy is a whole one; a
+//     default with children (a lambda) is still shared, for want of the deep AST copier
+//     this compiler deliberately does not have (todo.md).
 func (tc *TypeChecker) applyDefaultFields(expr *ast.StructInstanceExpr, structType types.NamedStructType) {
 	if expr == nil || expr.BaseStruct != nil {
 		return
@@ -144,10 +150,32 @@ func (tc *TypeChecker) applyDefaultFields(expr *ast.StructInstanceExpr, structTy
 		if !ok {
 			continue // not an expression: the declaration's own diagnostic to report
 		}
+		value = copyLeaf(value)
 		tc.typeTable.MarkDefault(value)
 		expr.Fields = append(expr.Fields, ast.StructField{
 			Name:  declared.Name,
 			Value: value,
 		})
 	}
+}
+
+// copyLeaf is a fresh copy of expr when it has no child expressions — `None`, `[]`, a
+// literal, a name — and expr itself otherwise. Such a node holds nothing another node
+// points into, so copying its struct copies all of it.
+func copyLeaf(expr ast.Expression) ast.Expression {
+	hasChild := false
+	ast.WalkExprChildren(expr, func(ast.Statement) bool {
+		hasChild = true
+		return false
+	}, func(ast.Expression) bool {
+		hasChild = true
+		return false
+	})
+	v := reflect.ValueOf(expr)
+	if hasChild || v.Kind() != reflect.Pointer || v.IsNil() {
+		return expr
+	}
+	c := reflect.New(v.Elem().Type())
+	c.Elem().Set(v.Elem())
+	return c.Interface().(ast.Expression)
 }

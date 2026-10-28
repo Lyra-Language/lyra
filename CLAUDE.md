@@ -207,7 +207,9 @@ Each of these produces something that looks like it works. Other docs cite them 
    `slotFor`.
    - **A filled-in default is its declaration's node inside the caller's AST**
      (`TypeTable.IsDefault`): `applyDefaultArguments`/`applyDefaultFields` append it to
-     the call or literal, but its names are its declaring module's. A pass matching names
+     the call or literal, but its names are its declaring module's. A struct field's leaf
+     default (`None`, `[]`, a literal) is a fresh copy per literal (`copyLeaf`), since a
+     generic struct types it differently at each — still marked a default. A pass matching names
      against the function it walks must skip it — the typechecker infers it in its module's
      scope (`inDeclaringModule`), the backend lowers it with the locals hidden, ownership's
      last-use walks and use-after-move skip it. Captures, `@must_release` and value ranges

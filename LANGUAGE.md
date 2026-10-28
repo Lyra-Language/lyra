@@ -611,7 +611,9 @@ Solved from argument types first, then:
 
 ### A lambda literal's missing annotations
 
-`(x) => x * 7` takes its missing parameter and return types from the function type its context expects: an annotated binding, a return position, or an argument slot of any call — a function, a trait method (`3.apply((x) => x * 7)`), a method through a `where` bound, a function-typed field. **A generic struct's field is a context too**, for what it states: against `on_change: (i64) -> e`, `(v) => Width(v)` gets `v: i64` before `e` is known, and its return once the body has solved `e`.
+`(x) => x * 7` takes its missing parameter and return types from the function type its context expects: an annotated binding, a return position, or an argument slot of any call — a function, a trait method (`3.apply((x) => x * 7)`), a method through a `where` bound, a function-typed field. **A generic struct's field is a context too**, for what it states: against `on_change: (i64) -> e`, `(v) => Width(v)` gets `v: i64` before `e` is known, and its return once the body has solved `e`. So is a constructor's payload (`Scope((_) => sheet)` for `Scope((Theme) -> Sheet)`).
+
+A written type reaches a generic value the same way wherever it stands: a field assignment's place (`self.cache = hashmap_new()`), a struct literal's field and its annotation (`let a: Only<i64> = Only { cache: hashmap_new() }`), an array element's typed sibling (`[boxed(), sized()]`), and the receiver of a method whose return settles it (`[[text("a")]].flatten()` as a `[]Node<Ev>`). What a value solves stands: the context fills only what it left open.
 - Only blanks are filled; a written annotation wins and is checked.
 - A slot type mentioning a variable the call has not solved (the `u` of `(t) -> u`) is left blank for the body to solve; the enclosing declaration's own variable (`(t) -> t` inside `<t>`) is filled in.
 - An arity mismatch fills nothing.
