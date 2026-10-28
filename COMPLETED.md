@@ -9,6 +9,18 @@ Newest first.
 
 ## Dated log
 
+### 10/28/26 — `ui`: the main window's close is the program's to answer
+
+- **A close asked of the program** (`App.main_close: []MainClose { of: (s) -> e }`, an array
+  of at most one, as `shortcuts`). When the user asks to close the main window — its close
+  button, or the system's quit (Cmd+Q) — the host raises that event instead of ending at
+  once: the window stays open, and the program asks its own way (unsaved work) and ends
+  itself with `Command.QuitApp`, or simply goes on. `None` ends the program at once, as
+  before. **`Command.SetTitle(string)`** sets the main window's title as the system shows it,
+  so a document's title follows its edits (set in `update` when it changed). Vega's front end
+  is the first user (`face_run.app_of`: `main_close` raises `CloseAsked`, its `update` sets
+  the title).
+
 ### 10/28/26 — A written `Name<…>` carries the identity key its writer means
 
 A backend fix the Vega front end (`ui/VEGA.md` §10) surfaced.

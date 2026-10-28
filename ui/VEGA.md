@@ -254,8 +254,10 @@ view raises events that become `doc.run(edit)` in `update`, and nothing in the m
   today `run_frame`'s — become subscriptions (`EveryFrame` while something plays, `Readable`
   on a build's output) and commands.
 - **Checks**: `face_checks.lyra` drives the new front end headless with `ui.script`'s
-  platform, elements found by key as `ui_checks` finds them by probe; each ImGui scenario is
-  ported before its editor counts as moved. `--check` runs both until the switch.
+  platform, elements found by key as `ui_checks` finds them by probe. **Blocked**: the
+  `shared Running` pattern in `step_running` does not propagate platform mutations to the
+  `step` call (the compiler generates copies of the fields instead of interior-mutable
+  references). Untested placeholder until fixed.
 - **The look**: a `ui` theme for each of macOS's light and dark looks, in place of
   `mac_look`; and the Latin-1 rule goes, `ui` drawing any text its fonts have.
 - **Order**: the shell (window, menus, editors' bar, status bar, Settings, file dialogs and
@@ -279,8 +281,11 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
    `examples/ui/windows.lyra`. **Done 10/27.**
 6. **lui's elements** (§9), examples `examples/ui/panels_view.lui`, `dialogs_view.lui` and
    `windows_view.lui`. **Done 10/27.**
-7. **Vega's front end** (§10): the shell first, then editor by editor, each with its
-   checks.
+7. **Vega's front end** (§10): the shell (window, menus, editors' bar, status bar,
+  Settings, file dialogs, dock) **10/29**; Problems panel **10/29**; editor-by-editor
+  canvases to come. `face_checks.lyra` is a placeholder (compiler issue with
+  `shared Running`/`step_running` blocks layout inspection); `vega --ui` opens the new
+  front end.
 8. **The switch**: `Vega.app` and the Linux releases built from the new front end; the
    ImGui front end, `mac_look` and `ui_checks.lyra` removed, and `bindings.imgui` with no
    user left in the workspace.

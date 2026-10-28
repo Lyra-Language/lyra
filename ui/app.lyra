@@ -155,6 +155,12 @@ pub struct App<s, e> {
   /// state answering them ([Shortcuts]), or none. (An array of at most one: a generic struct's
   /// `None` default is not settled yet, todo.md.)
   shortcuts: []Shortcuts<s, e> = [],
+  /// What happens when the user asks to close the main window — its close button, or the
+  /// system's quit (Cmd+Q) — instead of the program ending at once: the state's event is
+  /// raised and the window stays open, and the program asks its own way (unsaved work) and
+  /// ends itself with [Command.QuitApp], or simply goes on. None here ends the program at
+  /// once. (An array of at most one, as `shortcuts` is.)
+  main_close: []MainClose<s, e> = [],
   /// The program's menus, a function of the state ([Menus]), or none: **on a Mac in the
   /// system's own menu bar** — the first as the application menu, its title the app's name,
   /// macOS's Window menu after the last — kept as the state says each pass (greyed, checked;
@@ -213,6 +219,13 @@ pub struct Menus<s, e> {
 /// What a state's shortcuts are ([App.shortcuts]): `Shortcuts { of: (state) => [...] }`.
 pub struct Shortcuts<s, e> {
   of: (s) -> []Shortcut<e>,
+}
+
+/// What a state does when the user asks to close the main window ([App.main_close]): its
+/// event, which the host raises instead of ending the program — the window stays open, and
+/// the program asks its own way or ends itself ([Command.QuitApp]).
+pub struct MainClose<s, e> {
+  of: (s) -> e,
 }
 
 /// A key the program takes whatever has the focus, held with `mods`, and the event it stands
@@ -287,6 +300,8 @@ pub data Command<e> =
   | PasteText((string) -> e)
   /// Open a web address (or `mailto:`, `file://`) as the system does.
   | OpenUrl(string)
+  /// The main window's title, as the system shows it.
+  | SetTitle(string)
   /// End the program, as closing its window does.
   | QuitApp
   /// The font's measurements at its size on this display ([Fonts.metrics]) — a grid's cell.
@@ -688,17 +703,28 @@ impl Host<s, e> {
       self.windows[k].dirty = true
       match input {
         CloseRequested => {
-          if k == 0 {
+          if k > 0 {
+            // A window beside the main one is the program's to close.
+            let Some(list) = self.beside() else { continue }
+            self.dispatch((list.on_close)(self.windows[k].key), at, platform)
+          } else {
+            if let Some(close) = self.main_close() {
+              // The program's to be asked about: the window stays open until it ends
+              // itself ([Command.QuitApp]).
+              self.dispatch((close.of)(self.state), at, platform)
+            } else {
+              self.running = false
+              return false
+            }
+          }
+        },
+        QuitRequested => {
+          if let Some(close) = self.main_close() {
+            self.dispatch((close.of)(self.state), at, platform)
+          } else {
             self.running = false
             return false
           }
-          // A window beside the main one is the program's to close.
-          let Some(list) = self.beside() else { continue }
-          self.dispatch((list.on_close)(self.windows[k].key), at, platform)
-        },
-        QuitRequested => {
-          self.running = false
-          return false
         },
         Resized(size) => if k == 0 { self.heard(at, platform, (sub) => match sub {
           OnResize(make) => Some(make(size)),
@@ -821,6 +847,10 @@ impl Host<s, e> {
   /// The program's windows beside the main one, if it has any ([App.windows]).
   let beside = pure (self) -> Maybe<Windows<s, e>> =>
     if self.app.windows.len() > 0 { Some(self.app.windows[0]) } else { None }
+
+  /// The program's handler for the main window's close, if it has one ([App.main_close]).
+  let main_close = pure (self) -> Maybe<MainClose<s, e>> =>
+    if self.app.main_close.len() > 0 { Some(self.app.main_close[0]) } else { None }
 
   /// The main window as last laid out — what a test or a program's own loop reads of it.
   pub let main_laid = pure (self) -> Laid<e> => self.windows[0].shown[0]
@@ -1233,6 +1263,7 @@ impl Host<s, e> {
         OpenUrl(url) => {
           let _ = platform.open_url(url)
         },
+        SetTitle(title) => platform.set_title(MAIN_WINDOW, title),
         QuitApp => { self.running = false },
         WindowMinimize => platform.change_window(MAIN_WINDOW, ToMinimized),
         WindowSeeThrough(on) => { let _ = platform.set_see_through(MAIN_WINDOW, on) },
