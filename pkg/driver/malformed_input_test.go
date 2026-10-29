@@ -114,6 +114,8 @@ func TestValueErrorInAListReportsOnlyItself(t *testing.T) {
 			"let main = () -> void => { println(g(1, " + badString + ")) }", escape},
 		{"interpolated literal chunk", "let f = (s: string) -> i64 => s.len()\n" +
 			"let main = () -> void => { let n = 1; println(f(\"\\q${n}\")) }", escape},
+		{"string match pattern", "let f = (s: string) -> i64 => match s { \"\\q\" => 1, _ => 0 }\n" +
+			"let main = () -> void => { println(f(\"x\")) }", escape},
 		{"compound refusal as an argument", "let f = (n: i64) -> i64 => n\n" +
 			"let main = () -> void => { println(f(1 += 2)) }", place},
 		{"compound refusal as a field value", "struct Pt { n: i64 }\n" +

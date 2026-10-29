@@ -453,8 +453,7 @@ destructuring form uses it, so a pattern means the same thing everywhere.
 - **Destructuring parameters** are irrefutable (value-testing sub-patterns refused).
   Bound names borrow; an `own` parameter frames the *whole* aggregate so unnamed managed
   fields are freed. `mut` cannot be destructured; `ref` can.
-- Loud errors: nested `shared data` sub-patterns, escaped string patterns, array patterns
-  outside `match`.
+- Loud errors: nested `shared data` sub-patterns, array patterns outside `match`.
 
 ## Floats
 

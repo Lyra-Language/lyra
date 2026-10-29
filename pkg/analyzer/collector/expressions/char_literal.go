@@ -26,7 +26,7 @@ func collectCharacterLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc 
 	raw := ctx.NodeText(node)
 	// strip surrounding single quotes
 	inner := raw[1 : len(raw)-1]
-	content, err := unescapeStringContent(inner)
+	content, err := ast.UnescapeString(inner)
 	if err != nil {
 		ctx.AddError(node, diag.SeverityError, "failed to parse character literal: %v", err)
 		return placeholderChar(loc)

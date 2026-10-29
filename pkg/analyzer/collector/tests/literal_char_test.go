@@ -56,7 +56,7 @@ func TestCollectCharLiteralExprNulEscape(t *testing.T) {
 //
 // `'\q'` used to give a syntax error and two cascading type errors, where `"\q"` gave
 // "unknown escape sequence: \q" — one mistake, two reports, and the worse one on the
-// smaller literal. The token now admits any escape and `unescapeStringContent` decides,
+// smaller literal. The token now admits any escape and `ast.UnescapeString` decides,
 // which is the string path's diagnostic reached with no new code.
 func TestCollectCharLiteralIllegalEscapeIsACollectorError(t *testing.T) {
 	msgs := collectDiagnostics(t, `let bad = '\q'`)

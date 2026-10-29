@@ -77,6 +77,9 @@ A literal that cannot hold its value is a compile error **in every position, flo
   there are refused: `48..<=57` is the same set with its meaning removed, so the scrutinee's
   type decides how its patterns are spelled. An open bound names the type's own edge and so
   has no units to be wrong in.
+- **A string pattern is read as its literal is**, escapes and all: `"\\"` matches the one
+  backslash, `"\n"` the newline, and `"\x41"` is `"A"` — so an arm after an equal one spelled
+  differently is unreachable (`lyra-W021`). An escape a literal refuses is refused here too.
 - **A pattern may name alternatives with `|`** — `1 | 2 | 3`, `"get" | "post"`,
   `'a'..<='f' | 'A'..<='F'` — matching when any of them does, and counting as all of them
   for exhaustiveness (`true | false` covers `bool`). **Literals, ranges and nullary

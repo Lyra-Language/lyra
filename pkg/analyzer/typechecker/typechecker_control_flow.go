@@ -1655,8 +1655,8 @@ func alternativeCovers(earlier, later ast.Pattern) (string, bool) {
 	el, eIsLit := earlier.(*ast.LiteralPattern)
 	ll, lIsLit := later.(*ast.LiteralPattern)
 	if eIsLit && lIsLit {
-		if fmt.Sprintf("%v", el.Value) == fmt.Sprintf("%v", ll.Value) {
-			return fmt.Sprintf("%v", el.Value) + " is already matched by the arm at %s", true
+		if literalPatternKey(el.Value) == literalPatternKey(ll.Value) {
+			return fmt.Sprintf("%v", ll.Value) + " is already matched by the arm at %s", true
 		}
 		return "", false
 	}
@@ -1674,10 +1674,10 @@ func (tc *TypeChecker) checkDuplicateMatchArms(arms []ast.MatchArm) {
 		if !ok {
 			continue
 		}
-		key := fmt.Sprintf("%v", p.Value)
+		key := literalPatternKey(p.Value)
 		if seen[key] {
 			tc.addWarning(arm.Pattern.GetLocation(), diag.CodeUnreachableMatchArm,
-				"duplicate match arm: pattern %s is already covered by an earlier arm", key)
+				"duplicate match arm: pattern %v is already covered by an earlier arm", p.Value)
 		}
 		seen[key] = true
 	}
@@ -1719,6 +1719,19 @@ func (tc *TypeChecker) checkDuplicateMatchArms(arms []ast.MatchArm) {
 			maxHi = ivs[i].hi
 		}
 	}
+}
+
+// literalPatternKey is what two literal patterns share when they match the same value:
+// their text, except that a string pattern is its unescaped content — `"\x41"` and `"A"`
+// are one string, so the second arm is unreachable (ast.StringPatternContent, the
+// backend's reading of the pattern).
+func literalPatternKey(value any) string {
+	if s, ok := value.(string); ok && strings.HasPrefix(s, `"`) {
+		if content, err := ast.StringPatternContent(s); err == nil {
+			return strconv.Quote(content)
+		}
+	}
+	return fmt.Sprintf("%v", value)
 }
 
 // literalPatternKind classifies a literal pattern as UntypedInt, UntypedFloat,

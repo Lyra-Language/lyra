@@ -29,6 +29,20 @@ func TestTypeCheck_DuplicateArms_StringLiteral_Warning(t *testing.T) {
 		"duplicate match arm: pattern \"hello\" is already covered by an earlier arm")
 }
 
+// Two string patterns spelled apart but matching one string are duplicates: a pattern is
+// compared by what it matches, its escapes read (`"\x41"` is `"A"`).
+func TestTypeCheck_DuplicateArms_EscapedStringLiteral_Warning(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+  let s = "A"
+  match s {
+    "A" => "first",
+    "\x41" => "second",
+    _ => "other",
+  }`, false)
+	assertWarningsAre(t, res,
+		"duplicate match arm: pattern \"\\x41\" is already covered by an earlier arm")
+}
+
 func TestTypeCheck_DuplicateArms_BoolLiteral_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let flag = true

@@ -3659,8 +3659,10 @@ let function_number = pure (key: string) -> Maybe<i64> => {
 }
 
 /// One character as a Lyra rune literal.
-let rune_literal = pure (c: string) -> string =>
-  if c == "'" || c == "\\" { "'\\${c}'" } else { "'${c}'" }
+let rune_literal = pure (c: string) -> string => match c {
+  "'" | "\\" => "'\\${c}'",
+  _ => "'${c}'",
+}
 
 // ── Styles ───────────────────────────────────────────────────────────────────
 

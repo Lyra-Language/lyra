@@ -142,6 +142,39 @@ func TestExec_StringMatch(t *testing.T) {
 	}
 }
 
+// A string pattern with an escape matches the string its literal builds — `"\\"` the one
+// backslash, `"\n"` the newline, not the two characters — read by the literal's own
+// unescaping (ast.StringPatternContent). Alternatives and a tuple's string position too.
+// It was refused by the backend until 10/29, and lui wrote an `if` in its place.
+func TestExec_EscapedStringMatch(t *testing.T) {
+	t.Parallel()
+	got := strings.TrimSpace(buildAndRunWithPrelude(t, `module main
+let kind = pure (s: string) -> string => match s {
+  "\\" => "backslash",
+  "\n" => "newline",
+  "a\"b" => "quoted",
+  "\t" | "\r" => "space",
+  "\u00e9" => "e-acute",
+  "\x41\o102" => "AB",
+  _ => "other",
+}
+
+let pair = pure (p: (string, i64)) -> i64 => match p {
+  ("\t", 1) => 1,
+  ("\\", _) => 2,
+  _ => 0,
+}
+
+let main = () -> void => {
+  println([s in ["\\", "\n", "a\"b", "\r", "é", "AB", "\\n", "n"] | kind(s)].join(" "))
+  println("${pair(("\\", 5))} ${pair(("\t", 1))} ${pair(("\t", 2))}")
+}
+`, ""))
+	if want := "backslash newline quoted space e-acute AB other other\n2 1 0"; got != want {
+		t.Errorf("got %q; want %q", got, want)
+	}
+}
+
 // Concatenation heap-allocates a new string (lyra_rc_alloc + memcpy) and returns
 // a fat pointer into the box's payload — observed here by comparing the result to
 // a literal via ==, and by matching on it. Covers empty operands (memcpy n=0), a
@@ -306,40 +339,8 @@ func TestEmit_StringIR(t *testing.T) {
 	}
 }
 
-// Escaped string patterns are deferred (they need Lyra-specific unescaping) and
-// must error loudly. Concatenation and interpolation are no longer here — they
-// lower now (TestExec_StringConcat, TestExec_StringInterpolation).
-func TestEmit_StringDeferred(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name    string
-		src     string
-		wantErr string
-	}{
-		{
-			"escaped pattern",
-			`let f = (s: string) -> u8 => match s {
-			   "a\tb" => 1,
-			   _      => 0,
-			 }
-			 let main = () -> u8 => f("x")`,
-			"escaped string patterns",
-		},
-	}
-	for _, c := range cases {
-		_, err := emitSource(t, c.src)
-		if err == nil {
-			t.Errorf("%s: expected a not-implemented error", c.name)
-			continue
-		}
-		if !strings.Contains(err.Error(), c.wantErr) {
-			t.Errorf("%s: expected error containing %q, got: %v", c.name, c.wantErr, err)
-		}
-	}
-}
-
 // `\0` is NUL, in a rune and in a string alike — one decoder serves both
-// (`unescapeStringContent`), and the rune half also needed the grammar's escape set, since
+// (`ast.UnescapeString`), and the rune half also needed the grammar's escape set, since
 // `char_literal` is a single token (08/30).
 //
 // **It is exactly NUL and never the start of a digit run.** That is what makes the

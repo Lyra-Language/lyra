@@ -865,8 +865,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] Typechecker: an untyped lambda parameter with no context is "undefined symbol"**
   at each use (`let at = (p) => p.w + 1`), though `p` is declared; it should say the
   parameter's type cannot be inferred and to annotate it.
-- **[OPEN] Backend: a string pattern holding an escape** (`"\\"` as a `match` arm) is refused
-  ("escaped string patterns not implemented yet"); lui writes an `if` instead.
+- **[DONE 10/29] A string pattern holding an escape** (`"\\"` as a `match` arm) matches
+  what its literal builds; lui's `rune_literal` is a `match` again. (COMPLETED.md, 10/29.)
 - **[OPEN] lui: an import's module is its path from the importing file**, `/` as `.` — right
   when both are under the program's root as written, else `module="…"`. Imports are one level:
   an imported file's own imports are not read.

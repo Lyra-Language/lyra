@@ -1265,9 +1265,18 @@ func (c *Collector) collectPatternByKind(patternNode *sitter.Node) ast.Pattern {
 				}
 			}
 		}
+		text := c.ctx.NodeText(patternNode)
+		// A string pattern keeps its escapes as written, and the backend reads them with
+		// the literal's own unescaping (ast.StringPatternContent) — so one it cannot read
+		// is refused here, as the same escape in a string literal is.
+		if strings.HasPrefix(text, `"`) {
+			if _, err := ast.StringPatternContent(text); err != nil {
+				c.addError(patternNode, CollectorErrorSeverityError, "invalid string literal: %v", err)
+			}
+		}
 		return &ast.LiteralPattern{
 			PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: loc}},
-			Value:       c.ctx.NodeText(patternNode),
+			Value:       text,
 		}
 	case "regex_pattern":
 		return c.collectRegexPattern(patternNode, loc)

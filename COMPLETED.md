@@ -9,6 +9,24 @@ Newest first.
 
 ## Dated log
 
+### 10/29/26 — A string pattern may hold an escape
+
+- **`"\\"`, `"\n"`, `"a\"b"` as `match` arms match what the same literal builds** — in a
+  plain arm, an alternative and a tuple's string position. The backend refused any string
+  pattern with a backslash ("escaped string patterns not implemented yet"), so lui's
+  `rune_literal` was an `if`; it is a `match` again.
+- **One reading of escapes, moved where both ends reach it**: the collector's
+  `unescapeStringContent` is `ast.UnescapeString`, and a pattern — which keeps its raw text,
+  quotes and escapes, because twenty-odd consumers classify a literal pattern by it — is
+  read by `ast.StringPatternContent`, the same function. Unescaping into the pattern at
+  collection instead would have changed what every one of those consumers sees.
+- **A bad escape in a pattern is the collector's error** ("invalid string literal: unknown
+  escape sequence"), as in a literal; it reached the backend unreported before, behind
+  the blanket refusal.
+- **Duplicate arms compare what they match** (`literalPatternKey`): `"\x41"` after `"A"` is
+  `lyra-W021`. While escapes could not compile it did not matter; once they could, it would
+  have been a silently dead arm.
+
 ### 10/29/26 — A named `const` sizes an array
 
 - **`[MAX_BYTES]u8` beside `const MAX_BYTES: i64 = 8` is `[8]u8`**, wherever a type is

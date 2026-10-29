@@ -51,8 +51,9 @@ A literal's bytes are genuinely read-only: a C function that writes through a
   min never reads past either buffer, and `n = 0` is valid.
 - **`match`** — a string scrutinee uses the scalar ladder (`lowerScalarMatch`); each
   literal arm is an equality test, a regex arm a DFA test (`regex_match.go`). Pattern
-  text is raw-quoted, so quotes are stripped; **escaped string patterns** are a loud
-  error (they would need Lyra's own unescaping).
+  text is kept as written, quotes and escapes included, and read by
+  `ast.StringPatternContent` — the literal's own unescaping, so `"\\"` matches the
+  string `"\\"` builds.
 - **`++`** (`lowerStringConcat`) — allocate a box, `memcpy` both operands, counts add.
   `memcpy` of length 0 is fine, so an empty operand needs no case.
 - **`slice(start, end)` copies**, it does not borrow: the box header is at the box's

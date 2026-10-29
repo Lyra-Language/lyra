@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
-	"strings"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
@@ -564,11 +563,11 @@ func constFloatFromExpr(e ast.Expression, ty *lltypes.FloatType) (value.Value, b
 // (lowerStringEquality), and a regex arm (`r"^#" =>`) tests DFA membership — one
 // call to the shared driver over the same constant tables a `pattern(...)`
 // constraint ships, the second consumer of regex_match.go's machinery (08/28). The
-// literal pattern's raw source text is quoted (unlike a StringLiteralExpr, whose
-// Value the collector already unescaped), so we strip the surrounding quotes to get
-// the bytes. An *escaped* literal pattern (containing a backslash) is deferred with
-// a loud error rather than risking a mismatch against the collector's Lyra-specific
-// unescaping.
+// literal pattern keeps its raw source text, quotes and escapes included (unlike a
+// StringLiteralExpr, whose Value the collector already unescaped), so the bytes are
+// that text read by ast.StringPatternContent — the collector's own unescaping, so
+// `"\\"` matches what the literal `"\\"` builds. An escape it cannot read was
+// already refused by the collector; an error here is rule 5's backstop.
 func (l *lowerer) stringScalarMatchTest(block *ir.Block, scrut value.Value, pattern ast.Pattern) (value.Value, error) {
 	if rp, ok := pattern.(*ast.RegexPattern); ok {
 		// Compiled and cached by pattern text (regexTablesFor); a pattern that
@@ -592,12 +591,9 @@ func (l *lowerer) stringScalarMatchTest(block *ir.Block, scrut value.Value, patt
 	if !ok {
 		return nil, fmt.Errorf("llvm: unexpected literal pattern value %T", lp.Value)
 	}
-	if len(raw) < 2 || raw[0] != '"' || raw[len(raw)-1] != '"' {
-		return nil, fmt.Errorf("llvm: expected a quoted string pattern, got %q", raw)
-	}
-	content := raw[1 : len(raw)-1]
-	if strings.ContainsRune(content, '\\') {
-		return nil, fmt.Errorf("llvm: escaped string patterns not implemented yet (%q)", raw)
+	content, err := ast.StringPatternContent(raw)
+	if err != nil {
+		return nil, fmt.Errorf("llvm: string pattern %s: %w", raw, err)
 	}
 	lit := l.lowerStringConstant(block, content)
 	return l.lowerStringEquality(block, scrut, lit), nil
