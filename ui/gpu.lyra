@@ -569,6 +569,11 @@ let frame_of = (renderer: GpuRenderer, window: Window, ops: []DrawOp) -> Frame =
         continue
       },
     }
+    // Inside clips that meet nowhere nothing shows: their intersection is empty, which an
+    // instance's clip cannot carry — a clip of no width is read as none — so it draws
+    // nothing at all (a scroller's content scrolled wholly out of view drew over what lay
+    // there).
+    if clips.len() > 0 && clip.0.is_empty() { continue }
     // A run samples one texture; an instance that samples none joins any run, so fills and
     // the glyphs over them are one draw until a second texture is needed.
     if texture >= 0 && texture != run_texture {

@@ -2600,6 +2600,81 @@ let main = () -> u8 => {
 	}
 }
 
+// ui.gpu's clips read back from the GPU (macOS with a GPU; skipped elsewhere): a fill inside
+// two clips that do not overlap draws nothing — their intersection is empty, and an empty clip
+// once read as none, so a scroller's content scrolled wholly out of view drew over whatever lay
+// there (Vega's frame strip over its side panel) — while a fill in two that overlap is cut to
+// where they do.
+func TestRun_UiGpuEmptyClip(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "darwin" {
+		t.Skip("ui.gpu's shaders are Metal's")
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	src := filepath.Join(t.TempDir(), "main.lyra")
+	if err := os.WriteFile(src, []byte(`import ui.gpu
+import ui.gpu.{ keep_frames, read_frame }
+import ui.backend.{ MAIN_WINDOW, Renderer }
+import ui.draw.{ Color, Rect, rgb, radius, Fill, PushClip, PopClip, DrawOp }
+
+let main = () -> u8 => {
+  let Ok(window) = gpu.open("gpu", 200.0, 100.0) else { return 2 }
+  var platform = window.platform
+  var renderer = window.renderer
+  let Some(g) = renderer.gpu else {
+    println("no gpu")
+    return 3
+  }
+  keep_frames(g)
+  let ops: []DrawOp = [
+    // Two clips side by side, touching nowhere: the fill inside both draws nothing.
+    PushClip(Rect { x: 0.0, y: 0.0, w: 80.0, h: 100.0 }, radius(0.0)),
+    PushClip(Rect { x: 100.0, y: 0.0, w: 80.0, h: 100.0 }, radius(0.0)),
+    Fill(Rect { x: 0.0, y: 0.0, w: 200.0, h: 50.0 }, radius(0.0), rgb(0xFF0000)),
+    PopClip,
+    PopClip,
+    // Two that overlap from 40 to 80 across: the fill shows there and nowhere else.
+    PushClip(Rect { x: 0.0, y: 50.0, w: 80.0, h: 50.0 }, radius(0.0)),
+    PushClip(Rect { x: 40.0, y: 50.0, w: 160.0, h: 50.0 }, radius(0.0)),
+    Fill(Rect { x: 0.0, y: 50.0, w: 200.0, h: 50.0 }, radius(0.0), rgb(0x0000FF)),
+    PopClip,
+    PopClip,
+  ]
+  for _ in 0..<3 { renderer.draw(MAIN_WINDOW, rgb(0xFFFFFF), ops) }
+  let Some(frame) = read_frame(g) else {
+    println("no frame")
+    return 4
+  }
+  let s = f32(frame.width) / 200.0
+  let at = (x: f32, y: f32) -> string => {
+    let p = frame.argb[i64((y * s).round()) * frame.width + i64((x * s).round())]
+    "${(p >> 16) & 0xFF},${(p >> 8) & 0xFF},${p & 0xFF}"
+  }
+  println("disjoint, in the first: ${at(40.0, 25.0)}")
+  println("disjoint, in the second: ${at(140.0, 25.0)}")
+  println("overlapping, before: ${at(20.0, 75.0)}")
+  println("overlapping, inside: ${at(60.0, 75.0)}")
+  println("overlapping, after: ${at(140.0, 75.0)}")
+  gpu.close(platform, renderer)
+  0
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := captureRunUnoptimized(t, "run", src)
+	switch code {
+	case 2, 3, 4:
+		t.Skipf("no GPU frame here (%d): %s", code, stdout)
+	case 0:
+	default:
+		t.Fatalf("exited %d\nstderr: %s", code, stderr)
+	}
+	want := "disjoint, in the first: 255,255,255\ndisjoint, in the second: 255,255,255\noverlapping, before: 255,255,255\noverlapping, inside: 0,0,255\noverlapping, after: 255,255,255\n"
+	if stdout != want {
+		t.Errorf("got\n%s\nwant\n%s", stdout, want)
+	}
+}
+
 // ui.gpu's frame read back from the GPU (macOS with a GPU; skipped elsewhere): a card's shadow
 // fades smoothly below it — darker nearer, half its strength at the shadow's edge, gone three
 // deviations out; a three-stop gradient is each stop's colour at its place; and a black box

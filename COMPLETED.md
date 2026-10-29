@@ -9,6 +9,20 @@ Newest first.
 
 ## Dated log
 
+### 10/29/26 — `ui.gpu` draws nothing inside an empty clip
+
+- **Content scrolled wholly out of view drew over what lay there.** Vega's frame strip, a row
+  that scrolls across, painted its far thumbnails over the side panel beside it — on the GPU
+  only; SDL's 2D renderer clipped them. A thumbnail past the strip's edge is a painter whose
+  own clip, intersected with the strip's, is empty (`Rect.intersect` gives no width); an
+  instance carries its clip as a rectangle, and the shader reads one of no width as *no
+  clip* (`clip.z > 0.0 ? cover(...) : 1.0`). One only partly out was cut properly, which is
+  why it looked like the side panel's background was missing.
+- **`frame_of` drops an op inside an empty clip** rather than giving the shader a way to say
+  "clipped away": nothing would show, so nothing is sent. `TestRun_UiGpuEmptyClip` reads the
+  frame back — a fill in two clips that do not meet leaves it white, one in two that overlap
+  shows only where they do — and failed before the fix.
+
 ### 10/29/26 — `lyrac` builds in parts and keeps them
 
 - **The program is split, each part compiled once and kept.** One module of IR went to one
