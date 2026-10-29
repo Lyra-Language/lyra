@@ -50,7 +50,8 @@ lyrac run --target linux-arm64 prog.lyra     # run there: the Simulator, or Dock
   parts, 27s with nothing changed (the front end), 39s after a one-line edit.
   - **Built whole instead**, as before: `--emit-llvm`, `--keep-ll`, `run --live`, another
     platform or an app; an optimized build where the linker does no ThinLTO (Apple's ld64
-    beside Apple clang, or `ld.lld` on the PATH, does); `LYRA_NO_OBJECT_CACHE=1`; a module
+    beside Apple clang does; on Linux `ld.lld` with `LYRA_THINLTO=1`, opt-in while a crash
+    on x86_64 is open — todo.md); `LYRA_NO_OBJECT_CACHE=1`; a module
     `EmitParts` refuses (`ErrNotSplittable`); and — with a note — a part that fails to
     compile, which is a split the backend got wrong.
   - Objects past 2 GB go least recently used first, looked at once an hour; ThinLTO's

@@ -202,6 +202,43 @@ jobs:
           fi
           go test -v -timeout 30m -coverpkg=./... -coverprofile=cover.out ${{ matrix.select }} $packages
 
+      # TEMPORARY (10/29): an optimized program linked in parts by ThinLTO segfaulted here
+      # (TestExample_ParseZonedDateTimeEdges) and nowhere else; Linux ThinLTO is opt-in until
+      # it is understood. This builds that probe the crashing way and prints a backtrace,
+      # without failing the run. Remove it once the cause is known.
+      - name: Diagnose the ThinLTO crash (temporary)
+        if: always() && matrix.shard == 'lyrac'
+        continue-on-error: true
+        working-directory: lyra
+        run: |
+          sudo apt-get install -y gdb >/dev/null
+          go build -o /tmp/lyrac ./cmd/lyrac
+          mkdir -p /tmp/probe && cd /tmp/probe
+          awk '/func TestExample_ParseZonedDateTimeEdges/{f=1} f&&/\[\]byte\(`/{p=1; sub(/.*\[\]byte\(`/,""); print; next} p&&/^`\)/{exit} p' \
+            "$GITHUB_WORKSPACE/lyra/cmd/lyrac/timezone_example_test.go" > probe.lyra
+          printf '%s\n' '2026-11-01T01:30:00-04:00[America/New_York]' '2026-11-01T01:30:00-05:00[America/New_York]' \
+            '2026-11-01T01:30:00[America/New_York]' '2026-11-01T01:30:00+09:00[America/New_York]' \
+            '2026-11-01T01:30:00-04:00[Nowhere/Nope]' '2026-11-01T01:30:00-04:00' '2026-09-22T18:32:29Z' \
+            'not a time at all' > inputs.txt
+          export LYRA_STD="$GITHUB_WORKSPACE/lyra" LYRA_CACHE_DIR=/tmp/probe/cache
+          for mode in whole thinlto; do
+            echo "== $mode"
+            if [ "$mode" = thinlto ]; then export LYRA_THINLTO=1 LYRA_DUMP_PARTS=/tmp/probe/parts; mkdir -p parts; fi
+            /tmp/lyrac build -o probe-$mode probe.lyra 2>&1 | grep -v warning || true
+            ./probe-$mode < inputs.txt || echo "exit $?"
+          done
+          gdb -batch -ex run -ex bt -ex 'info registers' -ex 'x/6i $pc-12' --args ./probe-thinlto < inputs.txt 2>&1 | tail -40
+          ls parts | head -20
+
+      - name: Upload the ThinLTO crash's parts (temporary)
+        if: always() && matrix.shard == 'lyrac'
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: thinlto-probe
+          path: /tmp/probe
+          if-no-files-found: ignore
+
       # `lyrafmt --check .` over the repo, which is a step at all only because the walk now
       # reads `.lyrafmtignore` (the compiler's fixtures include a file meant not to parse).
       # It runs after the tests so a formatting complaint never hides a test result.

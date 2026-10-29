@@ -125,6 +125,13 @@ func thinLTOLink(cc string, p target.Platform) ([]string, bool) {
 	case p.OS == "darwin" && strings.Contains(compilerIdentity(cc), "Apple clang"):
 		return []string{"-Wl,-cache_path_lto," + dir}, true
 	case p.OS == "linux":
+		// **Opt-in on Linux for now** (LYRA_THINLTO=1): on CI's x86_64 runner (clang 18,
+		// lld 18) a std.temporal program built this way segfaults, and nowhere else does —
+		// not arm64 Linux, not x86_64 under Rosetta, not under ASan on macOS (todo.md).
+		// Until that is understood an optimized Linux build is made whole.
+		if os.Getenv("LYRA_THINLTO") != "1" {
+			return nil, false
+		}
 		if _, err := exec.LookPath("ld.lld"); err != nil {
 			return nil, false
 		}
