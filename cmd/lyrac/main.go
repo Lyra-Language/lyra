@@ -544,6 +544,16 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 		be.Live(0, nil)
 	}
 	libs := linkFlags(res, p)
+	// In parts, each kept for the next build, where the build is one that serves
+	// (objects.go); otherwise whole, as below.
+	if !app {
+		if handled, code := buildFromParts(o, res, entry, be, p, libs, exePath(o)); handled {
+			if code != 0 {
+				return "", code
+			}
+			return exePath(o), 0
+		}
+	}
 	ir, err := be.Emit(res, entry)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %s backend: %v\n", be.Name(), err)

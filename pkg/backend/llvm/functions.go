@@ -401,15 +401,16 @@ func (l *lowerer) declareFunctionAs(name string, fn *ast.LambdaExpr) (*ir.Func, 
 		l.passByCopy(param, irParam)
 		irParams = append(irParams, irParam)
 	}
+	var irFn *ir.Func
 	if !inMemory {
-		irFn := l.module.NewFunc(name, retType, irParams...)
-		l.sourceFuncs[irFn] = true
-		return irFn, nil
+		irFn = l.module.NewFunc(name, retType, irParams...)
+	} else {
+		// A large aggregate is returned through the caller's slot (sret.go).
+		irFn = l.module.NewFunc(name, lltypes.Void, irParams...)
+		l.sretResults[irFn] = retType
 	}
-	// A large aggregate is returned through the caller's slot (sret.go).
-	irFn := l.module.NewFunc(name, lltypes.Void, irParams...)
-	l.sretResults[irFn] = retType
 	l.sourceFuncs[irFn] = true
+	l.funcModule[irFn] = l.moduleOfFile(fn.GetLocation().File)
 	return irFn, nil
 }
 

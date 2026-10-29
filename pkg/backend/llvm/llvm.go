@@ -131,6 +131,9 @@ type Backend struct {
 	// one produced.
 	live     *liveBuild
 	liveInfo *LiveInfo
+	// funcModule and stableNames are the last emitModule's (lowerer.funcModule), for EmitParts.
+	funcModule  map[*ir.Func]string
+	stableNames map[*ir.Func]string
 }
 
 // EntrySymbol emits the program's entry as the C function name rather than `main`, with
@@ -241,6 +244,8 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		externs:            map[string]externDecl{},
 		live:               b.live,
 		sourceFuncs:        map[*ir.Func]bool{},
+		funcModule:         map[*ir.Func]string{},
+		stableNames:        map[*ir.Func]string{},
 	}
 	// Record top-level `const` declarations so a reference to one inlines its
 	// compile-time value (they aren't functions, so forEachUserFunction skips them).
@@ -384,6 +389,7 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		return nil, l.symbolConflict
 	}
 	b.coroSymbols = l.seqCoroSymbols
+	b.funcModule, b.stableNames = l.funcModule, l.stableNames
 	b.liveInfo = nil
 	if l.live != nil {
 		info, err := l.finishLive(m)
@@ -417,6 +423,13 @@ type lowerer struct {
 	// livePending is generation 0's flag its signal handler sets.
 	live        *liveBuild
 	sourceFuncs map[*ir.Func]bool
+	// funcModule and stableNames are what a split build (parts.go) needs to know of a
+	// function that its symbol does not say: the Lyra module a function written there was
+	// declared in (declareFunctionAs — not a specialization, whose body is its caller's
+	// types), and a name for a function numbered program-wide that stays put when unrelated
+	// code changes (a closure by its lambda's place, an environment's drop by its layout).
+	funcModule  map[*ir.Func]string
+	stableNames map[*ir.Func]string
 	livePending *ir.Global
 	// externPlans holds the ABI plan for each foreign function whose signature carries an
 	// aggregate by value, keyed by the declared function so the call site can find it.

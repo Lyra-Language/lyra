@@ -39,6 +39,23 @@ lyrac run --target linux-arm64 prog.lyra     # run there: the Simulator, or Dock
   are one group** (`-Wl,--start-group … --end-group`): the links are a sorted set, and two
   static archives where one calls the other (FreeType and HarfBuzz, as Termina's release links
   them) need no order then.
+- **Built in parts, each kept** (`objects.go`, `llvm.EmitParts`): the program is split — a
+  part for each module's own code (a large module in pieces), program parts for what it
+  makes for itself, `globals` — and each part is compiled on a core of its own and kept in
+  `$LYRA_CACHE_DIR/objects` (else `lyra/objects` in the user's cache directory) under the
+  hash of its text, the compiler and the flags. A rebuild compiles only the parts whose
+  text changed, and `std`/`ui` parts are shared by every program. **`-O0` links ordinary
+  objects; an optimized build links by ThinLTO** (`-flto=thin`, the linker's own cache in
+  `objects/lto`), so code still inlines across parts. Vega at -O2: 230s whole, 72s cold in
+  parts, 27s with nothing changed (the front end), 39s after a one-line edit.
+  - **Built whole instead**, as before: `--emit-llvm`, `--keep-ll`, `run --live`, another
+    platform or an app; an optimized build where the linker does no ThinLTO (Apple's ld64
+    beside Apple clang, or `ld.lld` on the PATH, does); `LYRA_NO_OBJECT_CACHE=1`; a module
+    `EmitParts` refuses (`ErrNotSplittable`); and — with a note — a part that fails to
+    compile, which is a split the backend got wrong.
+  - Objects past 2 GB go least recently used first, looked at once an hour; ThinLTO's
+    cache is pruned by its linker. `LYRA_DUMP_PARTS=<dir>` writes each part's IR, to see
+    why a part compiled again.
 - **`-o` and the `.ll`** (`llPath`): the `.ll` goes beside the executable `-o` names; under
   `--emit-llvm`, `-o` names the `.ll` itself.
 - **Default `-O2`**: no debug info is emitted at any level, so `-O0` buys nothing. The level

@@ -34,8 +34,8 @@ The full pipeline is `pkg/driver` (below). The LSP runs it on every change.
 Each of these produces something that looks like it works. Other docs cite them by number.
 
 1. **After changing `grammar.js`: regenerate, `go clean -cache`, then test.** Go does not hash
-   `#include`d sources. Push the grammar repo before `lyra` code depending on it — CI
-   regenerates from the remote.
+   `#include`d sources. Push the grammar repo, its regenerated `parser.c` included, before
+   `lyra` code depending on it — CI builds the remote's committed `parser.c`.
 
 2. **Nil-check an optional field lookup before calling anything on it.**
    `ChildByFieldName`/`cst.Field` return a real nil for an absent optional field, and
@@ -470,6 +470,15 @@ program's exported fields (and `SymbolTable.Functions`, for an extern's `Func`),
 `pkg/printer` does — so a new node or type kind is covered with no case to add. A size it
 leaves is `lyra-E031`'s, which asks the same `reachableConst` to say "a `const`, but not a
 size".
+
+**Builds in parts, cached** (`cmd/lyrac/objects.go`, `pkg/backend/llvm/parts.go`) — `lyrac
+build`/`run` split the program (`EmitParts`), compile each part on its own core and keep its
+object under the hash of its text; optimized builds link by ThinLTO. **A part's text must
+depend only on what it holds**: a new symbol numbered program-wide (a counter in its name)
+needs a stable name (`stableNames`, or `numberedGlue`) or every edit recompiles every part
+naming it — `TestEmitParts_NoProgramWideNumbering` fails on one. A new module-level IR shape
+(an internal function, a private variable, metadata) must be handled in `splittable`/
+`assembleParts` or refused there, never passed through. Details: cmd/lyrac/README.md.
 
 **Foreign functions** — see [`pkg/backend/FFI.md`](pkg/backend/FFI.md).
 

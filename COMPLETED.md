@@ -9,6 +9,31 @@ Newest first.
 
 ## Dated log
 
+### 10/29/26 — `lyrac` builds in parts and keeps them
+
+- **The program is split, each part compiled once and kept.** One module of IR went to one
+  clang: Vega's 60 MB took 204s at -O2 on one core, 230s a build with the front end, whatever
+  had changed. Now `EmitParts` splits it — a part for each module's own code, program parts
+  for specializations, closures and glue, `globals` — and `lyrac` compiles the parts on every
+  core and keeps each object under the hash of its text. Vega: 72s cold, 27s with nothing
+  changed (the front end alone), 39s after a one-line edit (one part, and the ThinLTO link).
+  `vega --check` passes on the split build.
+- **ThinLTO for optimized builds**, chosen over a plain split (10/29): a plain split stops std's
+  small functions inlining into the code calling them. Measured first with `llvm-split` on
+  Vega's IR: 12 parts compiled in 6s and linked by ThinLTO in 28s, the binary 5% smaller than
+  the whole build's (cross-part inlining and internalization at work). It needs a linker
+  doing ThinLTO — Apple's beside Apple clang, or lld — and builds whole without one. -O0 has
+  nothing to inline, so its parts are ordinary objects.
+- **A part's text depends only on what it holds**, or nothing would be reused: closures, glue,
+  coroutines and string constants were numbered program-wide, so one new closure renumbered
+  every later one. A closure is named by its lambda's place, an environment drop by its layout,
+  glue by its type, a constant by its content — in the split build only, so `Emit`'s names,
+  the live build's and the tests' are unchanged. A module's part is then byte for byte the
+  same in two programs (`TestEmitParts_AModulesPartIsTheSameInEveryProgram`).
+- **Not every build**: `--emit-llvm`/`--keep-ll` (one .ll promised), `run --live`, other
+  platforms and apps build whole, as does a module `EmitParts` refuses. The Lyra front end is
+  not cached — 26 of Vega's 27 warm seconds (todo.md).
+
 ### 10/29/26 — Three diagnostics that named the wrong thing
 
 - **An untyped lambda parameter with no context** (`let at = (p) => p.w + 1`) is refused

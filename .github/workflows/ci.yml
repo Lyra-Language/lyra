@@ -11,12 +11,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # **The tests run as four shards in parallel**, each on its own runner (10/29). One job ran
-  # them in 15-17 minutes, nearly all of it cmd/lyrac, whose `TestRun_Ui*` tests each build a
-  # program holding the whole `ui` framework: ~2,150 test-seconds on a 4-core runner. The
-  # shards are about 700 test-seconds each. ui-b is "every TestRun_Ui but A–O" rather than
-  # "P–Z", and lyrac every test but TestRun_Ui, so a test of any name lands in exactly one
-  # shard. The repository is public, so parallel jobs cost nothing.
+  # **The tests run as shards in parallel**, each on its own runner (10/29). One job ran them
+  # in 15-17 minutes, nearly all of it cmd/lyrac, whose `TestRun_Ui*` tests each build a
+  # program holding the whole `ui` framework: ~2,150 test-seconds on a 4-core runner. ui-b is
+  # "every TestRun_Ui but A–O" rather than "P–Z", and lyrac every test no other shard runs,
+  # so a test of any name lands in exactly one shard. The repository is public, so parallel
+  # jobs cost nothing.
   test:
     name: build & test (${{ matrix.shard }})
     runs-on: ubuntu-latest
@@ -31,9 +31,14 @@ jobs:
           - shard: ui-b
             packages: ./cmd/lyrac
             select: -run '^TestRun_Ui' -skip '^TestRun_Ui[A-O]'
+          # lui's markup tests build `ui` programs too (~375 test-seconds), which left
+          # the lyrac shard the slowest by three minutes.
+          - shard: lui
+            packages: ./cmd/lyrac
+            select: -run '^(TestLui|TestMarkup)'
           - shard: lyrac
             packages: ./cmd/lyrac
-            select: -skip '^TestRun_Ui'
+            select: -skip '^(TestRun_Ui|TestLui|TestMarkup)'
           # Every package but cmd/lyrac (listed in the step), and the formatting check.
           - shard: rest
             packages: ""
@@ -60,7 +65,9 @@ jobs:
 
       # The tree-sitter grammar is a local `replace` dependency. Its src/parser.c is
       # ordinary tracked text since the state-explosion fix took it out of Git LFS, so
-      # no `lfs: true` is needed — and this job regenerates it below in any case.
+      # no `lfs: true` is needed. **The committed parser.c is what is tested**: this job
+      # does not regenerate it (10/29 — `npm install` and `tree-sitter generate` were ~40s
+      # of every shard), so a grammar change must be pushed with its regenerated parser.c.
       - name: Checkout tree-sitter-lyra grammar
         uses: actions/checkout@v7
         with:
@@ -73,20 +80,13 @@ jobs:
           go-version-file: lyra/go.mod
           cache-dependency-path: lyra/go.sum
 
-       # Regenerate tree-sitter parser bindings to ensure they're in sync with grammar
-      - name: Regenerate tree-sitter bindings
-        working-directory: tree-sitter-lyra
-        run: |
-          npm install
-          npm run build
-
       # The CGO binding pulls the grammar in with `#include "../../src/parser.c"`
       # (tree-sitter-lyra/bindings/go/binding.go). Go's build cache hashes the .go
       # files and tracked cgo sources but NOT files brought in via #include, so a
-      # regenerated parser.c does not invalidate the cache that setup-go restored —
-      # the previously-compiled (stale) grammar is reused and tests silently run
-      # against the old grammar. Wipe the build cache so the parser recompiles from
-      # the freshly generated parser.c. (This mirrors the local `go clean -cache`
+      # parser.c changed since the cache setup-go restored was saved does not
+      # invalidate it — the previously-compiled (stale) grammar is reused and tests
+      # silently run against the old grammar. Wipe the build cache so the parser
+      # recompiles from the checked-out parser.c. (This mirrors the local `go clean -cache`
       # step in the workspace CLAUDE.md "Critical Cross-Project Dependency".)
       - name: Invalidate cached compiled parser
         working-directory: lyra
@@ -103,6 +103,10 @@ jobs:
       # Lyra shows it matching a convention it had to obey rather than choose. `-lz` links
       # on macOS without a package and not on Linux, so the test self-skips when it is
       # missing — which is exactly why it is installed here rather than left to chance.
+      #
+      # lld is the linker an optimized `lyrac` build links its parts with, by ThinLTO
+      # (cmd/lyrac/objects.go); without it such a build is made whole, and the parts' path
+      # for optimized code would go untested here.
       #
       # libharfbuzz-dev and libfreetype-dev are `ui/`'s text (`bindings.harfbuzz`,
       # `bindings.freetype`), which every `ui.layout` program links: without them
@@ -123,7 +127,7 @@ jobs:
           sudo grep -rlE 'dl\.google\.com|packages\.microsoft\.com' \
             /etc/apt/sources.list.d/ 2>/dev/null | xargs -r sudo rm -f
           sudo apt-get update
-          sudo apt-get install -y clang zlib1g-dev pkg-config libharfbuzz-dev libfreetype-dev
+          sudo apt-get install -y clang lld zlib1g-dev pkg-config libharfbuzz-dev libfreetype-dev
 
       # The formatter (`examples/lyrafmt`) links the tree-sitter **runtime** as a system
       # library, and `TestExample_LyrafmtRoundTrips` skips without it — which it silently
@@ -255,7 +259,7 @@ jobs:
           { head -1 "$1"; for f in "$@"; do tail -n +2 "$f"; done; } > cover.out
           total=$(awk 'NR>1 && !/^mode:/ { n[$1]=$2; if ($3>0) hit[$1]=1 }
             END { for (k in n) { t+=n[k]; if (hit[k]) c+=n[k] }; printf "%.1f%%", 100*c/t }' cover.out)
-          echo "Total statement coverage ($#/4 shards): ${total}"
+          echo "Total statement coverage (from $# shards): ${total}"
 
       - name: Upload coverage profile
         uses: actions/upload-artifact@v7

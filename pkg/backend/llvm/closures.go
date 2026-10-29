@@ -272,7 +272,16 @@ func (l *lowerer) declareClosure(fn *ast.LambdaExpr) error {
 		params = append(params, irParam)
 	}
 	l.closureCount++
-	l.closures[l.closureKeyFor(fn)] = l.module.NewFunc(fmt.Sprintf("lyra_closure_%d", l.closureCount), retTy, params...)
+	irFn := l.module.NewFunc(fmt.Sprintf("lyra_closure_%d", l.closureCount), retTy, params...)
+	l.closures[l.closureKeyFor(fn)] = irFn
+	// Its place in the source, which an edit elsewhere does not move (parts.go); a
+	// specialization's copy is told apart by its key.
+	loc := fn.GetLocation()
+	stable := fmt.Sprintf("lyra_closure.%s.%d_%d", l.moduleOfFile(loc.File), loc.StartLine, loc.StartCol)
+	if l.specKey != "" {
+		stable += "." + shortHash(l.specKey)
+	}
+	l.stableNames[irFn] = stable
 	return nil
 }
 
@@ -484,6 +493,7 @@ func (l *lowerer) envDropFnFor(caps []captures.Capture, envTy *lltypes.StructTyp
 		payload := ir.NewParam("payload", lltypes.NewPointer(lltypes.I8))
 		fn = l.module.NewFunc(fmt.Sprintf("lyra_env_drop_%d", l.envDropCount), lltypes.Void, payload)
 		l.envDropFns[key] = fn
+		l.stableNames[fn] = "lyra_env_drop." + shortHash(key)
 
 		entry := fn.NewBlock("entry")
 		typed := entry.NewBitCast(payload, lltypes.NewPointer(envTy))

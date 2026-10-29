@@ -1262,6 +1262,18 @@ sets V on every add. What stands between that and a ROM:
 - **[DONE 10/11] `sret` on the 68000** — not the M68k LLVM: a libc `memcpy` declared with an
   `i64` length, read as 0 by a 32-bit `size_t`. LLVM's intrinsics now (COMPLETED.md 10/11).
 
+## Builds in parts (`lyrac`, 10/29)
+
+- **[OPEN] The front end is not cached.** A rebuild of Vega with nothing changed is 27s, 26 of
+  them collecting, checking and lowering every module again; caching a module's analysis needs
+  its dependencies' interfaces as keys. `ui` test programs at -O0 are front-end bound too.
+- **[OPEN] Parts for other platforms, apps and live builds**: each builds whole. Cross builds
+  need the platform's ThinLTO linker (lld for Linux, ld64 for iOS); `--live` relinks its
+  generations from one module.
+- **[OPEN] A large program part.** Specializations, closures and glue of the whole program are
+  `p.<k>`, by name, and change with any code that instantiates; a specialization could go to
+  the part of the module asking for it.
+
 ## Building for other platforms
 
 `std.game` runs on every platform SDL3 does; `lyrac` builds for its host alone (Vega's modern

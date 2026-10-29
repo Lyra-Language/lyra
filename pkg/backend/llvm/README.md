@@ -14,6 +14,19 @@ building an instruction from another pass's value owes that check.
 Built on `github.com/llir/llvm` v0.3.6 (pure Go, emits **typed** pointers such as `i8*`).
 `llvm.New()` returns a `*Backend`; `Emit` builds an `ir.Module`.
 
+- **`EmitParts` (`parts.go`) is `Emit` split for separate compilation** (`lyrac`'s cached
+  build, cmd/lyrac/objects.go): a part for each module's own functions (recorded by
+  `declareFunctionAs` in `funcModule`; a module past 400 functions in pieces by name),
+  program parts (`p.<k>`) for specializations, closures, glue and `main`, and `globals` for
+  the mutable globals. **A part's text depends only on what it holds**, which is what lets
+  its object be reused: names numbered program-wide are replaced — a closure by its
+  lambda's place and an environment drop by its layout (`stableNames`, recorded where they
+  are made), glue and coroutines by their name less the count, a private constant by its
+  content (`.k.<hash>`, copied into every part using it). A part declares what it uses
+  from others, and only the type definitions it names. Anything it does not handle — a
+  non-external function, a private variable, an alias, metadata — is `ErrNotSplittable`.
+  `parts_test.go` holds the properties: linked parts are the program, and a module's part
+  is byte for byte the same in two programs.
 - **`@main` is always `i32`** at the ABI level whatever Lyra's `u8`/`void` entry returns;
   the body value is coerced (`coerceIntWidth`) and zero-extended into it (`entryABI`).
 - **Integer arithmetic is checked** (`trap.go`, via `emitTrapIf`): `+ - *` use
