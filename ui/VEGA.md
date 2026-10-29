@@ -255,8 +255,9 @@ view raises events that become `doc.run(edit)` in `update`, and nothing in the m
   on a build's output) and commands.
 - **Checks**: `face_checks.lyra` checks the new front end headless. The **event-level**
   checks run and pass — build the studio, raise a panel's events (a swatch's press, the
-  picker's Done and Cancel, a palette's rename), and check what each does to the state — the
-  Palettes panel's, now. The **render-level** checks — finding the panel's widgets by their
+  picker's Done and Cancel, a palette's rename; a layer added, deleted and renamed), and
+  check what each does to the state — the Palettes' and Collision layers' panels, now.
+  The **render-level** checks — finding the panel's widgets by their
   `.keyed` key, as `ui_checks` finds them by probe — wait on a compiler fix: the
   `shared Running` pattern in `step_running` does not propagate platform mutations to the
   `step` call (the compiler generates copies of the fields instead of interior-mutable
@@ -287,8 +288,10 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
 7. **Vega's front end** (§10): the shell (window, menus, editors' bar, status bar,
   Settings, file dialogs, dock) **10/29**; Problems panel **10/29**; **Palettes panel and
   its colour picker 10/29** — a swatch's press opens a picker: RGB sliders and a live
-  preview for the free-colour consoles, the console's fixed colours for the fixed ones;
-  each change one undoable edit — checked at the event level in `face_checks.lyra`.
+  preview for the free-colour consoles, the console's fixed colours for the fixed ones —
+  and the **Collision layers panel 10/29**, every layer its name typed over and a button
+  deleting it, then Add up to the console's mask; each change one undoable edit, checked
+  at the event level in `face_checks.lyra`.
   Editor-by-editor canvases to come. `face_checks.lyra` is event-level for now; the
   render-level checks (finding the panel's widgets by key) wait on the `shared
   Running`/`step_running` compiler fix. `vega --ui` opens the new front end.
