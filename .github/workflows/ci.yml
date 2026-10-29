@@ -11,9 +11,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # **The tests run as four shards in parallel**, each on its own runner (10/29). One job ran
+  # them in 15-17 minutes, nearly all of it cmd/lyrac, whose `TestRun_Ui*` tests each build a
+  # program holding the whole `ui` framework: ~2,150 test-seconds on a 4-core runner. The
+  # shards are about 700 test-seconds each. ui-b is "every TestRun_Ui but A–O" rather than
+  # "P–Z", and lyrac every test but TestRun_Ui, so a test of any name lands in exactly one
+  # shard. The repository is public, so parallel jobs cost nothing.
   test:
-    name: build & test
+    name: build & test (${{ matrix.shard }})
     runs-on: ubuntu-latest
+    strategy:
+      # Every shard's failures are worth seeing, not only the first one's.
+      fail-fast: false
+      matrix:
+        include:
+          - shard: ui-a
+            packages: ./cmd/lyrac
+            select: -run '^TestRun_Ui[A-O]'
+          - shard: ui-b
+            packages: ./cmd/lyrac
+            select: -run '^TestRun_Ui' -skip '^TestRun_Ui[A-O]'
+          - shard: lyrac
+            packages: ./cmd/lyrac
+            select: -skip '^TestRun_Ui'
+          # Every package but cmd/lyrac (listed in the step), and the formatting check.
+          - shard: rest
+            packages: ""
+            select: ""
     env:
       # Use the SDK that setup-go installs (read from go.mod) directly, rather
       # than letting `go` fetch a separate module toolchain — the module
@@ -136,7 +160,9 @@ jobs:
       # own, so every run saves), and pruned after the tests to what this run used — the
       # marker's time, which only a hit or a new binary passes — so it holds one tree's
       # programs rather than every run's.
+      # The backend tests are in the rest shard alone, so it alone keeps their binaries.
       - name: Restore the backend tests' binaries
+        if: matrix.shard == 'rest'
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/lyra-llvm-tests
@@ -144,6 +170,7 @@ jobs:
           restore-keys: lyra-llvm-tests-${{ runner.os }}-
 
       - name: Mark the binaries' time
+        if: matrix.shard == 'rest'
         run: mkdir -p ~/.cache/lyra-llvm-tests && touch "$RUNNER_TEMP/tests-began" && sleep 1
 
       # -coverpkg=./... instruments every package so tests that live in a
@@ -160,9 +187,16 @@ jobs:
       # -timeout 30m: headroom. cmd/lyrac's tests each compile and link a whole program;
       # they run in parallel, but a runner has few cores and they once took the package
       # past go test's default 10 minutes.
+      #
+      # A shard's profile is uploaded, and the coverage job below merges them.
       - name: Test with coverage
         working-directory: lyra
-        run: go test -v -timeout 30m -coverpkg=./... -coverprofile=cover.out ./...
+        run: |
+          packages="${{ matrix.packages }}"
+          if [ -z "$packages" ]; then
+            packages=$(go list ./... | grep -v '/cmd/lyrac$')
+          fi
+          go test -v -timeout 30m -coverpkg=./... -coverprofile=cover.out ${{ matrix.select }} $packages
 
       # `lyrafmt --check .` over the repo, which is a step at all only because the walk now
       # reads `.lyrafmtignore` (the compiler's fixtures include a file meant not to parse).
@@ -172,34 +206,60 @@ jobs:
       # formatter *runs* on this architecture — which is not idle: it segfaulted on x86-64
       # until 09/20, and every machine in this project is aarch64.
       - name: Check formatting
+        if: matrix.shard == 'rest'
         working-directory: lyra
         run: |
           ./build.sh
           build/lyrafmt --check .
 
       - name: Keep only the binaries this run used
-        if: always()
+        if: always() && matrix.shard == 'rest'
         run: |
           find ~/.cache/lyra-llvm-tests -type f ! -newer "$RUNNER_TEMP/tests-began" -delete
           echo "kept $(find ~/.cache/lyra-llvm-tests -type f | wc -l) binaries, $(du -sh ~/.cache/lyra-llvm-tests | cut -f1)"
 
       - name: Save the backend tests' binaries
-        if: always()
+        if: always() && matrix.shard == 'rest'
         uses: actions/cache/save@v6
         with:
           path: ~/.cache/lyra-llvm-tests
           key: lyra-llvm-tests-${{ runner.os }}-${{ github.run_id }}
 
-      - name: Report total coverage
-        working-directory: lyra
-        run: |
-          total=$(go tool cover -func=cover.out | awk '/^total:/ {print $NF}')
-          echo "Total statement coverage: ${total}"
-
       - name: Upload coverage profile
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: coverage-profile
+          name: coverage-${{ matrix.shard }}
           path: lyra/cover.out
+          if-no-files-found: ignore
+
+  # The shards' profiles joined into one, and its total. Profiles from separate runs
+  # concatenate (one `mode:` line kept); a block is covered when any shard covered it. The
+  # total is counted here rather than by `go tool cover -func`, which needs the sources and
+  # so a checkout and Go — it agrees with it to the tenth of a percent.
+  coverage:
+    name: coverage
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: coverage-*
+          path: shards
+
+      - name: Report total coverage
+        run: |
+          set -- shards/*/cover.out
+          if [ ! -e "$1" ]; then echo "no shard wrote a profile"; exit 0; fi
+          { head -1 "$1"; for f in "$@"; do tail -n +2 "$f"; done; } > cover.out
+          total=$(awk 'NR>1 && !/^mode:/ { n[$1]=$2; if ($3>0) hit[$1]=1 }
+            END { for (k in n) { t+=n[k]; if (hit[k]) c+=n[k] }; printf "%.1f%%", 100*c/t }' cover.out)
+          echo "Total statement coverage ($#/4 shards): ${total}"
+
+      - name: Upload coverage profile
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-profile
+          path: cover.out
           if-no-files-found: ignore
