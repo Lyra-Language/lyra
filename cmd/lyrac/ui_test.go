@@ -2267,11 +2267,14 @@ let main = () -> u8 => {
 			t.Fatalf("building %s exited %d: %s", name, code, stderr)
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	// A layout that does not settle loops for ever; one that does finishes in seconds here,
+	// but built at -O0 beside the suite's other programs on CI's two cores it took over a
+	// minute (1,500 of its 1,734 passes by then), so the limit is generous.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	out, err := commandContext(t, ctx, filepath.Join(dir, "stress")).CombinedOutput()
 	if ctx.Err() != nil {
-		t.Fatalf("resizing the demo did not settle within a minute:\n%s", out)
+		t.Fatalf("resizing the demo did not settle within five minutes:\n%s", out)
 	}
 	if err != nil || !strings.Contains(string(out), "done: 1734 passes") {
 		t.Errorf("resizing the demo: %v\n%s", err, out)
@@ -5472,6 +5475,10 @@ on Apple's systems: the buttons 0 wide
 // and the controls inside them keep their presses; elsewhere it is the window's own.
 func TestRun_HitTestAnswers(t *testing.T) {
 	t.Parallel()
+	// Its C half calls SDL, so the program links SDL3 even though it opens no window.
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
 	got := runUiProgram(t, `import bindings.hittest.{ set_areas_only, answer }
 
 let main = () -> void => {
@@ -5629,6 +5636,10 @@ an answer with none asked: 'cancelled'; waiting
 // tags, then none.
 func TestRun_DialogQueue(t *testing.T) {
 	t.Parallel()
+	// Its C half calls SDL, so the program links SDL3 even though it opens no window.
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
 	got := runUiProgram(t, `import bindings.dialog.{ answer, poll, PathChosen, ChoiceCancelled, ChoiceFailed }
 
 let main = () -> void => {
