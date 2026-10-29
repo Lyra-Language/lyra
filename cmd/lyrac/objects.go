@@ -43,7 +43,7 @@ import (
 
 // cacheFormat changes when what an object is keyed by or how it is built changes, so an
 // old cache is never read as a new one.
-const cacheFormat = "lyra-objects-1"
+const cacheFormat = "lyra-objects-2" // 2: parts state the target's data layout (datalayout.go)
 
 // buildFromParts builds exe from the program's parts, if this build is one the split
 // serves (see above). handled false: build it whole.
@@ -74,6 +74,9 @@ func buildFromParts(o buildOptions, res *driver.Result, entry *driver.EntryPoint
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %s backend: %v\n", be.Name(), err)
 		return true, 1
+	}
+	for i := range parts {
+		parts[i].IR = withDataLayout(cc, p, parts[i].IR)
 	}
 	// LYRA_DUMP_PARTS=<dir> writes each part's IR there: the way to see why a part was
 	// compiled again (diff it against the last build's).
@@ -125,10 +128,10 @@ func thinLTOLink(cc string, p target.Platform) ([]string, bool) {
 	case p.OS == "darwin" && strings.Contains(compilerIdentity(cc), "Apple clang"):
 		return []string{"-Wl,-cache_path_lto," + dir}, true
 	case p.OS == "linux":
-		// **Opt-in on Linux for now** (LYRA_THINLTO=1): on CI's x86_64 runner (clang 18,
-		// lld 18) a std.temporal program built this way segfaults, and nowhere else does —
-		// not arm64 Linux, not x86_64 under Rosetta, not under ASan on macOS (todo.md).
-		// Until that is understood an optimized Linux build is made whole.
+		// **Opt-in on Linux for now** (LYRA_THINLTO=1): on CI's x86_64 runner a std.temporal
+		// program built this way segfaulted — an `i128` slot allocated 8-aligned, read before
+		// the target's data layout was known (datalayout.go, the fix). Until CI has run it
+		// on real x86_64 hardware since, an optimized Linux build is made whole.
 		if os.Getenv("LYRA_THINLTO") != "1" {
 			return nil, false
 		}

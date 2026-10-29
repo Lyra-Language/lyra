@@ -1264,11 +1264,13 @@ sets V on every add. What stands between that and a ROM:
 
 ## Builds in parts (`lyrac`, 10/29)
 
-- **[OPEN] Linux ThinLTO segfaults a program on CI's x86_64 runner** (clang 18, lld 18):
-  `TestExample_ParseZonedDateTimeEdges`'s std.temporal probe, built in parts at -O2. Not on
-  arm64 Linux (clang/lld 15), x86_64 under Rosetta, or macOS under ASan; opt-in
-  (`LYRA_THINLTO=1`) until understood. CI's temporary "Diagnose the ThinLTO crash" step
-  prints a backtrace and uploads the parts.
+- **[PARTIAL] Linux ThinLTO is opt-in** (`LYRA_THINLTO=1`) until CI confirms the 10/29 fix
+  on real x86_64 hardware: an `i128` slot read without the data layout was 8-aligned and
+  faulted on `movaps` (COMPLETED.md). Then make it the default and drop CI's temporary
+  "Diagnose the ThinLTO crash" steps.
+- **[OPEN] The backend tests compile IR with no data layout**, as lyrac did before 10/29 —
+  an `i128` slot is 8-aligned there. Give `compileCached` the target's layout as
+  `cmd/lyrac/datalayout.go` does.
 - **[OPEN] The front end is not cached.** A rebuild of Vega with nothing changed is 27s, 26 of
   them collecting, checking and lowering every module again; caching a module's analysis needs
   its dependencies' interfaces as keys. `ui` test programs at -O0 are front-end bound too.

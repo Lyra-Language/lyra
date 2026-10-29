@@ -57,6 +57,10 @@ lyrac run --target linux-arm64 prog.lyra     # run there: the Simulator, or Dock
   - Objects past 2 GB go least recently used first, looked at once an hour; ThinLTO's
     cache is pruned by its linker. `LYRA_DUMP_PARTS=<dir>` writes each part's IR, to see
     why a part compiled again.
+- **The IR states the target's data layout** (`datalayout.go`), asked of the clang compiling
+  it once per compiler and target: read without one, LLVM aligned an `alloca` by its default
+  layout (`i128` to 8) and generated code by the target's (16 on x86_64), and a store to the
+  slot faulted. `--emit-llvm` writes none.
 - **`-o` and the `.ll`** (`llPath`): the `.ll` goes beside the executable `-o` names; under
   `--emit-llvm`, `-o` names the `.ll` itself.
 - **Default `-O2`**: no debug info is emitted at any level, so `-O0` buys nothing. The level

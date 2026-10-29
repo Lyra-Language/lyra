@@ -9,6 +9,23 @@ Newest first.
 
 ## Dated log
 
+### 10/29/26 — The IR lyrac compiles states the target's data layout
+
+- **A std.temporal program segfaulted on CI's x86_64 runner** once linked in parts by
+  ThinLTO, and nowhere else. A diagnostic step built it there and ran it under gdb: a
+  `movaps` storing the result into the caller's `sret` slot at an address 8 mod 16. The
+  caller had allocated `%Maybe$ZonedDateTime` (an `i128` inside) with `align 8`.
+- **The IR carried no `target datalayout`**, so LLVM read it under its default layout —
+  `i128` aligned to 8 — fixing every unaligned `alloca`'s alignment as it read, and only then
+  took the target's, where x86_64 aligns `i128` to 16 (since LLVM 18; arm64 always has). The
+  callee, generated under the target's layout, assumed 16. Whole-program builds inlined the
+  callee and never showed it; across parts it was a real call. arm64 and Rosetta tolerate the
+  misaligned store, which is why only real x86_64 hardware faulted.
+- **lyrac now asks clang for the target's layout** (`clang -S -emit-llvm -x c /dev/null`, once
+  a compiler and target) and states it atop the IR it compiles, whole and in parts — not a
+  table of layouts, which change with the compiler, as this one did. `--emit-llvm` stays
+  without it. The backend's own tests compile IR without it still (todo.md).
+
 ### 10/29/26 — `ui.gpu` draws nothing inside an empty clip
 
 - **Content scrolled wholly out of view drew over what lay there.** Vega's frame strip, a row

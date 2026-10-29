@@ -559,6 +559,13 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 		fmt.Fprintf(os.Stderr, "lyrac: %s backend: %v\n", be.Name(), err)
 		return "", 1
 	}
+	// The target's data layout, so the IR is read as it will be compiled (datalayout.go).
+	// Not for --emit-llvm, whose .ll is for whatever compiler the user hands it to.
+	if !o.emitOnly {
+		if cc, err := findCC(o.cc); err == nil {
+			ir = withDataLayout(cc, p, ir)
+		}
+	}
 	if o.liveEmit != nil {
 		o.liveEmit.info = be.LiveInfo()
 	}
