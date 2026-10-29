@@ -84,7 +84,7 @@ func (l *lowerer) lowerArrayComp(block *ir.Block, e *ast.ArrayCompExpr) (value.V
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: cannot size array comprehension element type %s", dynType.ElementType)
 	}
-	stride := alignUp(elemSize, elemAlign)
+	stride := bufferStride(elemSize, elemAlign)
 
 	// A sequence source has no length to size the box from, so it takes the growing
 	// path (seq_lower.go) — alone: a sequence beside another generator would need the

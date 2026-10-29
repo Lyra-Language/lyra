@@ -108,3 +108,46 @@ let main = () -> void => {
 		t.Errorf("got %q; want %q", got, want)
 	}
 }
+
+// A struct pattern takes the element apart as a tuple pattern does (10/29), in either slot of
+// the one form it fits — renamed fields and a managed field included, under ASan since a
+// destructured string is retained and released per iteration.
+func TestExec_ForInStructPatternASan(t *testing.T) {
+	t.Parallel()
+	src := `
+struct Pt { x: i64, y: i64, tag: string }
+let main = () -> u8 => {
+  var points: []Pt = []
+  for i in 1..<=3 { points.push(Pt { x: i, y: i * 2, tag: "p${i}" }) }
+  var t = 0
+  for { x, y } in points { t = t + x * 10 + y }
+  var tags = ""
+  for i, { tag, y: w } in points { tags = tags ++ tag; t = t + i * 100 + w }
+  if tags != "p1p2p3" { return 1 }
+  u8(t - 200)
+}
+`
+	// 12 + 24 + 36 = 72; then 300 + (2 + 4 + 6) = 312; 384 - 200
+	if got := buildAndRunASanWithPrelude(t, src); got != 184 {
+		t.Errorf("got %d; want 184", got)
+	}
+}
+
+// The two-name form's element takes a written type (10/29), settling literal elements at
+// it as the one-name form does; the index stays an i64.
+func TestExec_ForInTwoNamesTypeTheElement(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `module main
+let main = () -> void => {
+  let step: f32 = 2.0
+  var total: f32 = 0.0
+  var at = 0
+  for i, k: f32 in [0.25, 0.5, 1.0] { total = total + k * step; at = at + i }
+  var small: u16 = 0
+  for i, b: u8 in [200, 250] { small = small + u16(b) + u16(i) }
+  println("${total} ${at} ${small}")
+}`, "")
+	if got := strings.TrimSpace(out); got != "3.5 3 451" {
+		t.Errorf("got %q; want \"3.5 3 451\"", got)
+	}
+}

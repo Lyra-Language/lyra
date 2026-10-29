@@ -291,3 +291,15 @@ let f = (n: i64) -> i64 => match n {
 `
 	assertNoUnusedImports(t, parseAndCheckUnusedImports(t, src))
 }
+
+// TestUnusedImport_NoDiag_TurbofishArgument: a type named only as a call's type argument is
+// a use of its import — `layout::<StudioEvent>(…)` warned it unused, and deleting the import
+// was then lyra-E001 (10/29). Inside a generic argument too.
+func TestUnusedImport_NoDiag_TurbofishArgument(t *testing.T) {
+	src := `
+import ev.{ Ev, Other }
+let a = tally::<Ev>([])
+let b = tally::<Maybe<Other>>([])
+`
+	assertNoUnusedImports(t, parseAndCheckUnusedImports(t, src))
+}

@@ -121,6 +121,17 @@ func (tc *TypeChecker) bindGenerator(gen *ast.Generator) {
 			sourceType)
 		return
 	}
+	// A written type is held to the source as a loop variable's is (`for i: u8 in …`):
+	// a range counts at its width, literal elements settle at it, anything else must be
+	// assignable to it. Recorded first so that check's own settling has the last word.
+	if gen.Type != nil {
+		if declared := tc.resolveType(gen.Type, gen.GetLocation()); declared != nil {
+			tc.typeTable.Set(gen.Value, sourceType)
+			tc.checkTypedLoopVar(gen.Identifier, gen.Value, sourceType, declared, gen.GetLocation())
+			tc.setLoopVarType(gen.Identifier, declared)
+		}
+		return
+	}
 	// A range over untyped bounds keeps them untyped (iterableElementType's rule), which
 	// would leave the binding with no width. Settle it the way an unannotated literal
 	// binding settles.

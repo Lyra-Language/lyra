@@ -447,4 +447,17 @@ func alignUp(n, a int) int {
 	return (n + a - 1) / a * a
 }
 
+// bufferStride is the bytes a `[]T` buffer gives each element: its size rounded to its
+// alignment, and **never zero**. An element taking no space (`struct Marker {}`, 10/29) has
+// every address at the buffer's start, and a buffer of `n × 0` bytes was `malloc(0)` —
+// ASan crashed reporting each zero-sized store past it, and growing or shrinking one was
+// `realloc(p, 0)`, which may free `p`. One byte each keeps every buffer non-empty and
+// costs only arrays of nothing.
+func bufferStride(size, align int) int {
+	if s := alignUp(size, align); s > 0 {
+		return s
+	}
+	return 1
+}
+
 func ceilDiv(n, d int) int { return (n + d - 1) / d }

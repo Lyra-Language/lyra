@@ -5607,10 +5607,8 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 			tc.addError(expr.GetLocation(), SeverityError, "%s: not a struct type", expr.Name)
 			return nil
 		}
-		if len(st.Fields) == 0 {
-			tc.addError(expr.GetLocation(), SeverityError, "%s: no fields declared", expr.Name)
-			return nil
-		}
+		// A struct with no fields is built as `Marker {}` (10/29); it was refused here,
+		// "no fields declared", for as long as the grammar could not declare one.
 		decl, structType, resultType = d, st, st
 	} else if dDecl, fields, dt, ok := tc.findInlineRecordConstructor(expr.Name, expr.GetLocation()); ok {
 		// `Node { … }` where Node is a data constructor whose payload is an inline

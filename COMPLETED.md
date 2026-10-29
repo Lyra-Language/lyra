@@ -9,6 +9,51 @@ Newest first.
 
 ## Dated log
 
+### 10/29/26 — Six type-checker and grammar gaps: an empty struct, a struct pattern in `for`, written clause and element types, a place as a guard, a turbofish import
+
+Each was reproduced first. The grammar is tree-sitter-lyra's, with a corpus test for each form.
+
+- **`struct Marker {}`** parses and builds. The grammar's declaration body took one member
+  at least, and a corpus test pinned `struct Point {}` as an error; the typechecker refused
+  `Marker {}` too ("no fields declared"), a check as old as struct checking with no reason
+  given. The todo entry left the choice open; accepting it retires `data Marker = Marker`.
+  The anonymous struct type keeps one member at least, since `{}` there is the empty
+  block's rival.
+- **Empty values had two backend faults, found by the empty struct's ASan test.** An array of
+  them was `malloc(2 × 0)`, and growing or shrinking one was `realloc(p, 0)`, which may free
+  `p`. Every `[]T` buffer now gives an element one byte at least (`bufferStride`, the ten
+  sites that computed `alignUp(size, align)`). Separately, **Apple clang's AddressSanitizer
+  crashes on a zero-sized store** — it checks `address − 1`, finds the red zone, and dies
+  writing the report ("nested bug in the same thread"), reproduced in four lines of IR. Such
+  an access means nothing, so the backend removes every zero-sized load and store once the
+  module is built (`dropZeroSizedAccesses`, a load replaced by `zeroinitializer`) rather
+  than guarding each of the sites that move values through memory.
+- **`for { x, y } in points`**, and `for i, { x, y: w } in …`. The entry spelled it `for Pt
+  { x, y }`, but Lyra's struct pattern has no type name (`let { x, y } = p`), and that
+  form is what the loop takes. The collector desugars it exactly as a tuple pattern: a
+  hidden element and a destructuring `let` at the top of the body, so no later pass learns
+  the form exists.
+- **A written type on the two-name form's element and on a comprehension clause** (`for i, b:
+  u8 in bytes`, `[i: u8 in 0..<10 | i]`). Both reuse the one-name loop's rule
+  (`checkTypedLoopVar`, now taking the binder and its source rather than the loop): a range
+  counts at the type, literal elements settle at it, an array's elements must be it. A type
+  on the two-name form's *index* is refused, since the index is always an `i64` and a `u8`
+  there would read as narrowing the walk.
+- **`[p in pairs | p.0 | p.1]`**: a field, an element or a tuple position is a guard. It read as
+  the single result `p.0 | p.1`, a bitwise-or refused as one. The grammar's existing
+  `prec.dynamic` contest between the guarded and unguarded readings already picks the
+  guard once the guard alternative exists.
+- **`lyra-W004` counts a turbofish argument as a use**: `layout::<StudioEvent>(…)` with the
+  import named nowhere else warned it unused (Vega's `face_checks.lyra`), and deleting it was
+  then `lyra-E001`. The reference walk noted every type a declaration or a lambda writes, but
+  not a call's type arguments.
+
+**Left:** a qualified constructor (`import_view.Chosen(1)`) needs qualified type names first
+(`let t: lib.Ty` does not parse either), so it is a design, not a gap. The generic struct's
+lambda default needs a copy of the lambda with its own scope and recorded nodes, which are
+keyed by node pointer, so it is not a small one either. `examples/collector`, the bootstrap
+collector in Lyra, does not know the new forms, but none are in the goldens it is held to.
+
 ### 10/29/26 — The IR lyrac compiles states the target's data layout
 
 - **A std.temporal program segfaulted on CI's x86_64 runner** once linked in parts by

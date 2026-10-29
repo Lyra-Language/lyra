@@ -291,6 +291,13 @@ func TestAnalyze_ForInLoopVariableOfLiteralsIsI64(t *testing.T) {
 		{"let n = 10\n  for i: u8 in 0..<n { }", "the loop variable is `i: u8`, but this bound is i64"},
 		{"for f: f32 in 0..<3 { }", "a range counts in integers, so `f: f32` cannot walk it"},
 		{"let xs: []i64 = [1]\n  for x: u8 in xs { }", "the loop variable is `x: u8`, but the elements are i64"},
+		// The two-name form's element and a comprehension clause take the same rule (10/29);
+		// the two-name form's index takes no type at all.
+		{"let xs: []i64 = [1]\n  for i, x: u8 in xs { }", "the loop variable is `x: u8`, but the elements are i64"},
+		{"let xs: []i64 = [1]\n  for i: u8, x in xs { }", "the index of a two-name loop is always an i64"},
+		{"let ys = [b: u8 in 0..<300 | b]", "loop variable b: literal value 300 overflows u8"},
+		{"let xs: []i64 = [1]\n  let ys = [x: u8 in xs | x]", "the loop variable is `x: u8`, but the elements are i64"},
+		{"let ys = [f: f32 in 0..<3 | f]", "a range counts in integers, so `f: f32` cannot walk it"},
 	}
 	for _, c := range cases {
 		src := "let main = () -> void => {\n  " + c.body + "\n}\n"

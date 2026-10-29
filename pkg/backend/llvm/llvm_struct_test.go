@@ -412,3 +412,42 @@ let main = () -> u8 => {
 		t.Errorf("exited %d; want 7 (each bit is one literal that must hold)", got)
 	}
 }
+
+// A struct with no fields (10/29) — a marker implementing a trait, which had to be `data
+// Marker = Marker` — is built, stored in a struct and an array, returned, compared and
+// dispatched on. Under ASan, which crashed on a zero-sized store (dropZeroSizedAccesses),
+// and through the paths that grow, shrink and copy a buffer of them, each of which was
+// `malloc(0)` or `realloc(p, 0)` before bufferStride.
+func TestExec_AStructWithNoFields(t *testing.T) {
+	t.Parallel()
+	src := `module main
+trait Named {
+  name: (Self) -> string
+}
+struct Marker {}
+impl Named for Marker {
+  name = (self) => "marker"
+}
+struct Holder { m: Marker, n: i64 }
+let make = pure () -> Marker => Marker {}
+let main = () -> u8 => {
+  let m = make()
+  let h = Holder { m: Marker {}, n: 7 }
+  let ms = [Marker {}, m]
+  var score = 0
+  if m.name() == "marker" && h.m.name() == "marker" { score += 1 }
+  if ms.len() == 2 && h.n == 7 { score += 2 }
+  if m == Marker {} && ms[0] == ms[1] { score += 4 }
+  var grown: []Marker = []
+  for _ in 0..<9 { grown.push(Marker {}) }
+  let kept = [x in 0..<10 | x % 3 == 0 | Marker {}]
+  let both = [...grown, ...kept]
+  let fixed = #[Marker {}, Marker {}, Marker {}]
+  if grown.len() == 9 && kept.len() == 4 && both.len() == 13 && fixed.len() == 3 { score += 8 }
+  if both[12].name() == "marker" && fixed[2] == grown[8] { score += 16 }
+  u8(score)
+}`
+	if got := buildAndRunASanWithPrelude(t, src); got != 31 {
+		t.Errorf("exited %d; want 31 (each bit is one use that must hold)", got)
+	}
+}

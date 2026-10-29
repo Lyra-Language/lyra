@@ -638,7 +638,7 @@ func (l *lowerer) lowerSeqComp(block *ir.Block, e *ast.ArrayCompExpr, gen *ast.G
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: cannot size array comprehension element type %s", dynType.ElementType)
 	}
-	stride := int64(alignUp(elemSize, elemAlign))
+	stride := int64(bufferStride(elemSize, elemAlign))
 	srcElem, ok := l.recordedType(gen.Value)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for a comprehension clause's source")

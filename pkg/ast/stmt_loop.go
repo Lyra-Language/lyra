@@ -33,6 +33,9 @@ type ForInLoopExpr struct {
 	// literals gives an i64.
 	KeyType types.Type
 	Value   string
+	// ValueType is the type written on the element of the two-name form (`for i, b: u8 in
+	// bytes`), nil when there is none; the index is always an i64.
+	ValueType types.Type
 	// KeyLocation/ValueLocation span just the binding names, for a diagnostic that is
 	// about one of them rather than about the loop (lyra-W020). Tagged out of the printer
 	// like every other auxiliary position, so goldens stay stable.

@@ -78,11 +78,18 @@ func collectGenerator(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Generator {
 	if err := ctx.RegisterVariable(binding); err != nil {
 		ctx.AddError(node, diag.SeverityError, "failed to register the comprehension clause's variable %q: %v", name, err)
 	}
-	return ast.Generator{
+	gen := ast.Generator{
 		ExprBase:   ast.ExprBase{AstBase: ast.AstBase{Location: ctx.NodeLocation(node)}},
 		Value:      value,
 		Identifier: name,
 	}
+	// `[i: u8 in 0..<10 | …]` — the clause's written type, as a loop variable's.
+	if ann := cst.Field(node, "type_annotation"); ann != nil {
+		if t := cst.Field(ann, "type"); t != nil {
+			gen.Type = ctx.ParseType(t)
+		}
+	}
+	return gen
 }
 
 func collectGuards(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Expression {

@@ -90,7 +90,7 @@ func (l *lowerer) dynArrayBox(block *ir.Block, elemLyra types.Type, n int) (valu
 	if !ok {
 		return nil, nil, nil, fmt.Errorf("llvm: cannot size dynamic array element type %s", elemLyra)
 	}
-	stride := alignUp(elemSize, elemAlign)
+	stride := bufferStride(elemSize, elemAlign)
 
 	boxTy := DynArrayBoxType(elemLL)
 	box := l.dynArrayAlloc(block, boxTy, elemLL, i64c(int64(n)), i64c(int64(n)), int64(stride))
@@ -159,7 +159,7 @@ func (l *lowerer) lowerDynArrayRepeatRuntime(block *ir.Block, e *ast.ArrayRepeat
 		return nil, nil, fmt.Errorf("llvm: cannot size dynamic array element type %s", dynType.ElementType)
 	}
 	boxTy := DynArrayBoxType(elemLL)
-	box := l.dynArrayAlloc(block, boxTy, elemLL, n, n, int64(alignUp(elemSize, elemAlign)))
+	box := l.dynArrayAlloc(block, boxTy, elemLL, n, n, int64(bufferStride(elemSize, elemAlign)))
 
 	v, err = l.coerceAggregateElem(block, v, elemLL, e.Value)
 	if err != nil {
@@ -530,7 +530,7 @@ func (l *lowerer) lowerDynArrayPush(block *ir.Block, call *ast.FunctionCallExpr,
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: cannot size dynamic array element type %s", elemLyra)
 	}
-	stride := int64(alignUp(elemSize, elemAlign))
+	stride := int64(bufferStride(elemSize, elemAlign))
 
 	box, block, err := l.lowerExpr(block, member.Object)
 	if err != nil {
@@ -621,7 +621,7 @@ func (l *lowerer) lowerDynArrayReserve(block *ir.Block, call *ast.FunctionCallEx
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: cannot size dynamic array element type %s", elemLyra)
 	}
-	stride := int64(alignUp(elemSize, elemAlign))
+	stride := int64(bufferStride(elemSize, elemAlign))
 
 	box, block, err := l.lowerExpr(block, member.Object)
 	if err != nil {
@@ -858,7 +858,7 @@ func (l *lowerer) lowerArraySlice(block *ir.Block, call *ast.FunctionCallExpr, m
 	if !sized {
 		return nil, nil, fmt.Errorf("llvm: cannot size array element type %s", elemLyra)
 	}
-	stride := int64(alignUp(elemSize, elemAlign))
+	stride := int64(bufferStride(elemSize, elemAlign))
 
 	// `srcAt` yields the address of the source's i-th element, and `length` its count.
 	// The two receiver kinds differ in exactly this and nothing else, so they are resolved
@@ -1009,7 +1009,7 @@ func (l *lowerer) lowerDynArraySpreadConstruction(block *ir.Block, e *ast.ArrayL
 	if !sized {
 		return nil, nil, fmt.Errorf("llvm: cannot size array element type %s", elemLyra)
 	}
-	stride := int64(alignUp(elemSize, elemAlign))
+	stride := int64(bufferStride(elemSize, elemAlign))
 	boxTy := DynArrayBoxType(elemLL)
 
 	// Phase 1 — evaluate every operand once, in source order, summing the lengths.

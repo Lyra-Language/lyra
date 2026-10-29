@@ -15,7 +15,7 @@ func CollectForInLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForInL
 	defer ctx.PopScope()
 
 	var label, key, value string
-	var keyType types.Type
+	var keyType, valueType types.Type
 	var keyLoc, valueLoc ast.Location
 	var iterable ast.Expression
 	var body *ast.BlockExpr
@@ -29,7 +29,7 @@ func CollectForInLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForInL
 		case "label":
 			label = ctx.NodeText(child)
 		case "for_in_condition":
-			key, value, keyType, keyLoc, valueLoc, iterable, destructure = collectForInCondition(child, ctx)
+			key, value, keyType, valueType, keyLoc, valueLoc, iterable, destructure = collectForInCondition(child, ctx)
 		case "for_in_body":
 			expr := ctx.CollectExpr(child)
 			if b, ok := expr.(*ast.BlockExpr); ok {
@@ -76,6 +76,7 @@ func CollectForInLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForInL
 		Key:           key,
 		KeyType:       keyType,
 		Value:         value,
+		ValueType:     valueType,
 		KeyLocation:   keyLoc,
 		ValueLocation: valueLoc,
 		Iterable:      iterable,
@@ -85,13 +86,13 @@ func CollectForInLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForInL
 	return loop
 }
 
-func collectForInCondition(node *sitter.Node, ctx *collector_ctx.Ctx) (key, value string, keyType types.Type, keyLoc, valueLoc ast.Location, iterable ast.Expression, destructure *ast.DestructuringDeclStmt) {
+func collectForInCondition(node *sitter.Node, ctx *collector_ctx.Ctx) (key, value string, keyType, valueType types.Type, keyLoc, valueLoc ast.Location, iterable ast.Expression, destructure *ast.DestructuringDeclStmt) {
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
-		case "tuple_pattern":
-			// `for (k, v) in xs` — the element is bound to a synthetic name and taken
-			// apart by a `let` the caller prepends to the body.
+		case "tuple_pattern", "struct_pattern":
+			// `for (k, v) in xs`, `for { x, y } in points` — the element is bound to a
+			// synthetic name and taken apart by a `let` the caller prepends to the body.
 			//
 			// **The name is unforgeable**, on the `_` rule's reasoning: `$` is not in the
 			// identifier token's character set, so nothing in the body can refer to the
@@ -112,7 +113,7 @@ func collectForInCondition(node *sitter.Node, ctx *collector_ctx.Ctx) (key, valu
 			} else if hasSecondBinding(node) {
 				ctx.AddError(child, diag.SeverityError,
 					"the first binding of a two-name loop is the index, which cannot be destructured; "+
-						"write `for i, (a, b) in …` to take the element apart")
+						"write `for i, (a, b) in …` or `for i, { x, y } in …` to take the element apart")
 				continue
 			} else {
 				key = forInElementName
@@ -156,10 +157,22 @@ func collectForInCondition(node *sitter.Node, ctx *collector_ctx.Ctx) (key, valu
 			valueLoc = ctx.NodeLocation(child)
 			registerLoopVar(child, value, ctx)
 		case "type_annotation":
-			// `for i: u16 in …` — the one-binding form's type (the grammar admits it
-			// nowhere else). Its own case, or the `default` below would take it for the
-			// iterable.
-			if t := cst.Field(child, "type"); t != nil {
+			// `for i: u16 in …`, and the element's in `for i, b: u8 in …`. Its own case, or
+			// the `default` below would take it for the iterable. **A type on the index of
+			// the two-name form is refused**: the index is always an i64, and a `u8` there
+			// would read as narrowing the walk.
+			t := cst.Field(child, "type")
+			if t == nil {
+				continue
+			}
+			switch {
+			case isSecondBinding(node, child):
+				valueType = ctx.ParseType(t)
+			case hasSecondBinding(node):
+				ctx.AddError(child, diag.SeverityError,
+					"the index of a two-name loop is always an i64, so it takes no type; "+
+						"a type after the second name is the element's (`for i, b: u8 in …`)")
+			default:
 				keyType = ctx.ParseType(t)
 			}
 		default:

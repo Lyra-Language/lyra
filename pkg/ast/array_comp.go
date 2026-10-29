@@ -1,5 +1,7 @@
 package ast
 
+import "github.com/Lyra-Language/lyra/pkg/types"
+
 type ArrayCompExpr struct {
 	ExprBase
 	Generators []Generator
@@ -17,6 +19,9 @@ type Generator struct {
 	ExprBase
 	Value      Expression
 	Identifier string
+	// Type is the clause's written type (`[i: u8 in 0..<10 | …]`), nil when there is none;
+	// it means what a loop variable's does (`ForInLoopExpr.KeyType`).
+	Type types.Type
 }
 
 func (g *Generator) exprNode() {}

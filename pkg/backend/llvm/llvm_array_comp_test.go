@@ -588,3 +588,41 @@ let main = () -> void => {
 		t.Errorf("printed %q; want %q", out, want)
 	}
 }
+
+// A comprehension clause takes a written type (10/29), as a loop variable does: a range
+// counts at its width and literal elements settle at it, so the results are `u8`s and
+// `f32`s rather than the defaults.
+func TestExec_ArrayCompClauseTakesAWrittenType(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `module main
+let main = () -> void => {
+  let bytes: []u8 = [i: u8 in 250..<=255 | i]
+  let doubled: []u8 = [i: u8 in 0..<4 | i * 2]
+  let step: f32 = 2.0
+  let scaled: []f32 = [k: f32 in [-1.0, 0.25] | k * step]
+  println("${bytes.len()} ${bytes[5]} ${doubled[3]} ${scaled[0]} ${scaled[1]}")
+}`, "")
+	if got := strings.TrimSpace(out); got != "6 255 6 -2 0.5" {
+		t.Errorf("got %q; want \"6 255 6 -2 0.5\"", got)
+	}
+}
+
+// A `bool` field, element or tuple position is a guard (10/29): `[p in pairs | p.0 | p.1]`
+// read as the single result `p.0 | p.1`, a bitwise-or refused as one.
+func TestExec_ArrayCompPlaceAsAGuard(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `module main
+struct Item { keep: bool, v: i64 }
+let main = () -> void => {
+  let pairs = [(true, 1), (false, 2), (true, 3)]
+  let a = [p in pairs | p.0 | p.1]
+  let items = [Item { keep: false, v: 5 }, Item { keep: true, v: 6 }]
+  let b = [it in items | it.keep | it.v]
+  let flags = [true, false]
+  let c = [x in 0..<3 | flags[0] | x]
+  println("${a.len()} ${a[1]} ${b.len()} ${b[0]} ${c.len()}")
+}`, "")
+	if got := strings.TrimSpace(out); got != "2 3 1 6 3" {
+		t.Errorf("got %q; want \"2 3 1 6 3\"", got)
+	}
+}

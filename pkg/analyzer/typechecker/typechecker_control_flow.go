@@ -1870,8 +1870,16 @@ func (tc *TypeChecker) checkForInLoopExpr(expr *ast.ForInLoopExpr) types.Type {
 		// placeholder in this scope; fill in its Type.
 		if iterType != nil && expr.KeyType != nil {
 			if declared := tc.resolveType(expr.KeyType, expr.GetLocation()); declared != nil {
-				tc.checkTypedLoopVar(expr, iterType, declared)
+				tc.checkTypedLoopVar(expr.Key, expr.Iterable, iterType, declared, expr.GetLocation())
 				tc.setLoopVarType(expr.Key, declared)
+			}
+		} else if iterType != nil && expr.ValueType != nil {
+			// `for i, b: u8 in bytes` — the element's type, by the one-name form's rule; the
+			// index stays an i64.
+			if declared := tc.resolveType(expr.ValueType, expr.GetLocation()); declared != nil {
+				tc.checkTypedLoopVar(expr.Value, expr.Iterable, iterType, declared, expr.GetLocation())
+				tc.setLoopVarType(expr.Key, types.PrimitiveType{Name: types.Int64})
+				tc.setLoopVarType(expr.Value, declared)
 			}
 		} else if iterType != nil {
 			// An unannotated array of untyped literals settles to its defaults, as
@@ -1897,7 +1905,9 @@ func (tc *TypeChecker) checkForInLoopExpr(expr *ast.ForInLoopExpr) types.Type {
 }
 
 // checkTypedLoopVar holds a written loop-variable type (`for i: u16 in 0..<100`) against
-// what the loop walks.
+// what the loop walks. `name` is the binder the type is written on — the loop's variable,
+// the two-name form's element, or a comprehension clause's (`[i: u8 in 0..<10 | …]`) — and
+// `iterable` what it walks.
 //
 //   - **Over a range, the type is the range's width.** Each untyped bound narrows to it —
 //     and must fit, so `for b: u8 in 0..<300` is refused as `let b: u8 = 300` is — and the
@@ -1905,15 +1915,15 @@ func (tc *TypeChecker) checkForInLoopExpr(expr *ast.ForInLoopExpr) types.Type {
 //     already typed must be that type; a range counts in integers, so the type must be one.
 //   - **Over anything else, the element must be assignable to it**: the annotation states
 //     the element's type, it does not convert it.
-func (tc *TypeChecker) checkTypedLoopVar(expr *ast.ForInLoopExpr, iterType, declared types.Type) {
-	if r, isRange := expr.Iterable.(*ast.RangeExpr); isRange {
+func (tc *TypeChecker) checkTypedLoopVar(name string, iterable ast.Expression, iterType, declared types.Type, loc ast.Location) {
+	if r, isRange := iterable.(*ast.RangeExpr); isRange {
 		rt, ok := iterType.(types.RangeType)
 		if !ok {
 			return
 		}
 		if !types.StepDomainIsInteger(declared) {
-			tc.addError(expr.GetLocation(), SeverityError,
-				"a range counts in integers, so `%s: %s` cannot walk it — count in an integer and convert inside the loop", expr.Key, declared)
+			tc.addError(loc, SeverityError,
+				"a range counts in integers, so `%s: %s` cannot walk it — count in an integer and convert inside the loop", name, declared)
 			return
 		}
 		for _, bound := range []struct {
@@ -1924,20 +1934,20 @@ func (tc *TypeChecker) checkTypedLoopVar(expr *ast.ForInLoopExpr, iterType, decl
 				continue
 			}
 			if isUntypedNumeric(bound.t) {
-				tc.checkLiteralRange("loop variable "+expr.Key, bound.e, declared)
+				tc.checkLiteralRange("loop variable "+name, bound.e, declared)
 				tc.propagateExpectedType(bound.e, declared)
 				continue
 			}
 			if !isAssignable(bound.t, declared) {
 				tc.addError(bound.e.GetLocation(), SeverityError,
-					"the loop variable is `%s: %s`, but this bound is %s — convert it, `%s(…)`", expr.Key, declared, bound.t, declared)
+					"the loop variable is `%s: %s`, but this bound is %s — convert it, `%s(…)`", name, declared, bound.t, declared)
 			}
 		}
 		rt.Start, rt.End = declared, declared
 		if rt.Step != nil {
 			rt.Step = declared
 		}
-		tc.typeTable.Set(expr.Iterable, rt)
+		tc.typeTable.Set(iterable, rt)
 		return
 	}
 	elem := iterableElementType(iterType)
@@ -1945,8 +1955,8 @@ func (tc *TypeChecker) checkTypedLoopVar(expr *ast.ForInLoopExpr, iterType, decl
 		return
 	}
 	if !isAssignable(elem, declared) {
-		tc.addError(expr.GetLocation(), SeverityError,
-			"the loop variable is `%s: %s`, but the elements are %s", expr.Key, declared, elem)
+		tc.addError(loc, SeverityError,
+			"the loop variable is `%s: %s`, but the elements are %s", name, declared, elem)
 		return
 	}
 	// Literal elements take the written type, as an annotated array's do: left alone,
@@ -1968,8 +1978,8 @@ func (tc *TypeChecker) checkTypedLoopVar(expr *ast.ForInLoopExpr, iterType, decl
 	default:
 		return
 	}
-	tc.typeTable.Set(expr.Iterable, settled)
-	tc.propagateExpectedType(expr.Iterable, settled)
+	tc.typeTable.Set(iterable, settled)
+	tc.propagateExpectedType(iterable, settled)
 }
 
 // bindForInLoopVars records the loop variable types for a for-in loop. The grammar

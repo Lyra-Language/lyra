@@ -292,7 +292,7 @@ func (l *lowerer) bindTailSubArray(block *ir.Block, name string, box, length val
 	if !ok {
 		return nil, fmt.Errorf("llvm: cannot size `[head, ...%s]` element type %s", name, elemLyra)
 	}
-	stride := int64(alignUp(elemSize, elemAlign))
+	stride := int64(bufferStride(elemSize, elemAlign))
 	srcTy := DynArrayBoxType(elemLL)
 	fn := block.Parent
 

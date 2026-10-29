@@ -42,6 +42,8 @@ The reference for Lyra's semantics as implemented. Compiler internals live in `l
 
 ### Struct literals and record update
 
+**A struct may have no fields** (10/29): `struct Marker {}`, built as `Marker {}` — a marker type implementing a trait, which had to be `data Marker = Marker` before. It takes no space: an array of them holds nothing but its length, and every two are equal.
+
 `P { base | f: v }` is a copy of `base` with the listed fields replaced; `{ base | f: v }` is the anonymous form. **The base is any postfix expression** — a name, a call (`Duration { duration() | days: 1 }`), a field, an index, or a parenthesized expression for anything else; an operator needs those parentheses, since `|` is also bitwise or and only a postfix base keeps the two readings apart. The base must have the literal's type, each update must name one of its fields (no field is added), and a kept managed field is a copy with its own reference. A literal gives each field one value, and a struct pattern names each field once (`lyra-E075`). There is no `...base` spread in a struct literal: `...` is an array literal's element (`lyra-E068`).
 
 **A default — a field's (`zone: Zone = THIRDS`) or a parameter's (`by: i64 = SCALE`) — is read
@@ -71,7 +73,8 @@ A literal that cannot hold its value is a compile error **in every position, flo
 - **Direction is the operator's, never the bounds'**: `5..<1` is an empty ascending range.
 - Step: `0..<10:2`, a **magnitude**. Negative literal step is an error; a non-positive step known only at run time traps (`lyra: range step must be positive`). A comprehension with a degenerate step yields an empty array.
 - `for-in` **terminates at the type's edge**: `0..<=hi` with `hi` at the type max visits max and exits; a large step cannot leap an exclusive end.
-- **A loop variable over literal bounds is an `i64`**, as `let n = 5` is (09/29; it was left untyped, so `t = i` took `t`'s width — which the backend, counting at i64, did not honour: a `u8` could hold 299). **Its type may be written**, one-variable form only: `for i: u16 in 0..<100`. Literal bounds narrow to it and must fit (`for b: u8 in 0..<300` is refused), the loop counts at that width (`for b: u8 in 250..<=255` stops at 255), a typed bound must already be that type, and the type must be an integer. Over an array the written type must be the element's.
+- **A loop variable over literal bounds is an `i64`**, as `let n = 5` is (09/29; it was left untyped, so `t = i` took `t`'s width — which the backend, counting at i64, did not honour: a `u8` could hold 299). **Its type may be written**: `for i: u16 in 0..<100`. Literal bounds narrow to it and must fit (`for b: u8 in 0..<300` is refused), the loop counts at that width (`for b: u8 in 250..<=255` stops at 255), a typed bound must already be that type, and the type must be an integer. Over an array the written type must be the element's. **The same rule types the two-name form's element and a comprehension clause** (10/29): `for i, b: u8 in bytes`, `[i: u8 in 0..<10 | i]`. The two-name form's index is always an `i64`, so a type on it is refused (`for i: u8, b in …`).
+- **A loop's element may be taken apart** by a tuple or a struct pattern, alone or after an index: `for (k, v) in entries`, `for { x, y } in points` (10/29), `for i, { x, y: w } in points`. Only an irrefutable pattern belongs there; a loop has nowhere to send an element that fails to match.
 - As a match pattern or `type` constraint a range is a set: `..>`/`..>=` there are `lyra-E034`.
 - **A range pattern on a `rune` is written in runes** (`'0'..<='9'`), and numeric bounds
   there are refused: `48..<=57` is the same set with its meaning removed, so the scrutinee's
@@ -337,7 +340,13 @@ Prelude, `where t: Ord`, `self` receiver (`a.min(b)` = `min(a, b)`). `min` keeps
   both. Always qualified, because bare "clause" is a multi-clause function's arm — the two
   never appear unqualified in the same prose. (The grammar node and the AST field keep the
   name `generator`: a contract older than the convention.)
-- The guards are optional (`[x in xs | x * 2]`), comma-separated, and **all must hold**.
+- The guards are optional (`[x in xs | x * 2]`), comma-separated, and **all must hold**. A
+  guard is a comparison, a call, a name, or a field, element or tuple position (`[p in pairs
+  | p.0 | p.1]`, since 10/29) — anything else is parenthesized, since a top-level `|` there
+  separates the sections rather than or-ing two values.
+- **A clause may write its variable's type** (`[i: u8 in 0..<10 | i]`, since 10/29), with
+  a loop variable's meaning: a range counts at it, literal elements settle at it, and an
+  array's elements must already be it.
 - **Several clauses nest left to right**: in `[y in ys, x in xs | …]` the `y` clause is the
   outer loop, so `ys = [10, 20]`, `xs = [1, 2, 3]` yields the pairs in the order `10:1
   10:2 10:3 20:1 …`.

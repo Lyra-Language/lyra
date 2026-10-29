@@ -55,10 +55,8 @@ not a formality.
 
 Package management, versioning and separate compilation are out of scope by decision.
 
-- **[OPEN] `lyra-W004` calls an import unused when only a type argument names it** —
-  `layout::<StudioEvent>(…)` with `StudioEvent` imported and nowhere else (Vega's
-  `face_checks.lyra`, 10/29); dropping the import is then `lyra-E001`. Count a turbofish
-  argument as a use.
+- **[DONE 10/29] `lyra-W004` counts a turbofish argument as a use** (`layout::<StudioEvent>(…)`;
+  COMPLETED.md, 10/29).
 
 - **[PARTIAL] A formatter in Lyra (`lyrafmt`) as the self-hosting probe.** Round trip,
   indentation, whitespace, spacing, inline blocks and **line breaking** (09/19: 90 columns,
@@ -503,8 +501,8 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   alphabetically first; candidates are now ranked by how the module reaches them.
   (COMPLETED.md, 10/19.)
 - **[OPEN] A constructor cannot be qualified** — `import_view.Chosen(1)` is a syntax error,
-  so a namespace import reaches a module's functions and none of its constructors. It
-  belongs beside the qualified type names (Modules and tooling).
+  so a namespace import reaches a module's functions and none of its constructors. Nor can
+  a type (`let t: lib.Ty` does not parse, 10/29), so both, and patterns, are one design.
 - **[DONE 10/19] A constructor is a function value** (`on_change: Width`), and **a lambda
   in a generic struct field is typed by it**. (COMPLETED.md, 10/19.)
 - **[OPEN] lui can write `on_change={Width}` through** rather than the typed lambda it
@@ -514,8 +512,8 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   […])`) even with no `<style>`, so a `<for>` holding an `<if>` makes a component of zero or
   one children (`windows_view.lui`'s `torn_view`). Harmless so far (frames byte-identical);
   a component of exactly one element could be that element.
-- **[OPEN] `struct X {}` does not parse**: a type with no fields (a marker implementing a
-  trait — a game's music tables) must be `data X = X` instead. Either accept it or say so.
+- **[DONE 10/29] `struct X {}`** — a struct with no fields, taking no space (COMPLETED.md,
+  10/29).
 
 - **[DONE 09/23] A match arm names alternatives with `|`** (`1 | 2`, `"get" | "post"`),
   over literals and ranges. A binding alternative stays refused, deliberately — see
@@ -532,12 +530,10 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   C-style `for init; cond; post` is gone. (COMPLETED.md, 10/08.)
 - **[DONE 10/08] `while let p = v { … }`**, erased by the collector into `loop { if let … }`.
   (COMPLETED.md, 10/08.) Sheliak's three poll loops and lyra-md's link scan use it.
-- **[OPEN] A struct pattern as a `for` binding** (`for Pt { x, y } in points`). Its rival was
-  the conditional `for` reading the literal as a condition; with that form now `while`, the
-  grammar may admit it. Untried; a tuple covers the spelling.
-- **[OPEN] A written loop-variable type in the other positions**: a comprehension clause
-  (`[i: u8 in 0..<10 | …]`) and the two-variable form's element. `for i: u16 in …` covers
-  the one-variable loop (09/29).
+- **[DONE 10/29] A struct pattern as a `for` binding** — `for { x, y } in points`, in either
+  slot (COMPLETED.md, 10/29).
+- **[DONE 10/29] A written loop-variable type in the other positions** — a comprehension
+  clause and the two-name form's element (COMPLETED.md, 10/29).
 - **[DONE 10/29] A private method's hint says it is private**, not "import it".
   (COMPLETED.md, 10/29.)
 - **[OPEN] Type-namespaced associated functions.** `Rng.seeded(42)` is `lyra-E035`;
@@ -931,10 +927,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 10/19] A constant is a comprehension source** — `[p in PAIRS | p.1]` was a
   syntax error at `in`: an all-caps name lexes as a `const_identifier`, which the clause's
   source list lacked. (COMPLETED.md, 10/19.)
-- **[OPEN] A guard is only a comparison, a call or a name** — `[p in pairs | p.1 | p.0]`
-  (a `bool` field as the guard) reads as the single result `p.1 | p.0`, a bitwise-or, and
-  is refused as one; `p.1 == true` works. A field, an element or a tuple position could be
-  a guard too.
+- **[DONE 10/29] A field, an element or a tuple position as a guard** (`[p in pairs | p.0 |
+  p.1]`; COMPLETED.md, 10/29).
 - **[DONE 10/19] A later `let … else` no longer hides an earlier binding of its name**, a
   plain destructuring neither, and a destructured name is rebound like a `let`'s.
   (COMPLETED.md, 10/19.)

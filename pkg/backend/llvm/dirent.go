@@ -164,7 +164,7 @@ func (l *lowerer) ensureReadDirRuntime(dt types.DataType, elemLyra types.Type,
 	if !ok {
 		return nil, fmt.Errorf("llvm: cannot size dir_names element type %s", dyn.ElementType)
 	}
-	stride := int64(alignUp(elemSize, elemAlign))
+	stride := int64(bufferStride(elemSize, elemAlign))
 	opened.NewBr(loop)
 
 	ent := loop.NewCall(readdir, dir)

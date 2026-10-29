@@ -372,6 +372,12 @@ func collectRefsByFile(
 			case *ast.DataConstructorExpr:
 				// `Square(2)`, and a nullary `Circle` once the collector knows it for one.
 				refs[ex.Constructor] = true
+			case *ast.FunctionCallExpr:
+				// A turbofish names a type where no annotation does: `layout::<StudioEvent>(…)`
+				// warned its only import unused until 10/29, and deleting it was lyra-E001.
+				for _, arg := range ex.GenericArguments {
+					noteType(arg)
+				}
 			case *ast.TupleLiteralExpr:
 				// A named tuple or newtype built by its name — `Name("x")` — is the same
 				// shape; an anonymous tuple's name is empty.
