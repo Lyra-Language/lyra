@@ -297,8 +297,14 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
   slice 10/29** (`face/picture_editor.lyra`): the canvas a picture fingerprinted by its
   pixels (a gesture's amends count no revision), pencil, eraser, fill, line, box and picker,
   the brushes, the picture and frame, zoom (View's too) and the grids — a stroke one gesture.
-  Its selections, shapes, flips, frame strip, animations, preview and resizing to come, then
-  the other editors. `vega --ui` opens the new front end.
+  Its selections, shapes, flips, frame strip, animations, preview and resizing to come.
+  **The map editor 10/29** (`face/tile_map_editor.lyra`): stamp, erase, fill and pick (a
+  drag a stamp of cells, as is a drag across the tile picker's tiles), the canvas a fixed
+  viewport the view pans and zooms about the pointer, the grid, plane and screen, the tiles'
+  shapes, the map's properties and Edit tiles; a size typed is a draft made by Resize, since
+  a number field raises each edit and resizing to 6 on the way to 64 would drop cells. The
+  map's own collision shapes to come, then the entity, scene, sound, instrument and song
+  editors. `vega --ui` opens the new front end.
 8. **The switch**: `Vega.app` and the Linux releases built from the new front end; the
    ImGui front end, `mac_look` and `ui_checks.lyra` removed, and `bindings.imgui` with no
    user left in the workspace.
