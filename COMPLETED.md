@@ -9,6 +9,32 @@ Newest first.
 
 ## Dated log
 
+### 10/29/26 — A named `const` sizes an array
+
+- **`[MAX_BYTES]u8` beside `const MAX_BYTES: i64 = 8` is `[8]u8`**, wherever a type is
+  written — a parameter, a return type, a local, a struct field, a payload, a callback's
+  parameter. It was `lyra-E031` everywhere: the collector writes any named size as a
+  `const` generic parameter's `SizeVar`, and the generic-parameter check refused one no
+  `<const N>` declared (a struct field was told to add `Buf<MAX_BYTES>`, which no type can
+  take). `std.chips.effects` wrote `[8]u8` beside its own `MAX_BYTES` for want of it; it
+  writes the name now.
+- **A desugaring in the driver, before every pass** (`foldConstArraySizes`), as a
+  constructor value is: the typechecker, layout and the backend's fifty-odd readers of a
+  written type see `[8]u8` and learn nothing new. Settling it in the typechecker's
+  resolution instead would have left every backend site reading a parameter's AST type to
+  meet an unbound `SizeVar`.
+- **Every type is reached by reflection**, as `pkg/printer` reads the AST, rather than by a
+  list of the dozen node kinds and dozen type kinds a type sits in — the list rule 8 says
+  drifts. A value inside an interface is changed as a copy and put back; a pointer is
+  walked once.
+- **What folds is deliberately small**: a top-level `const` the writing module reaches (its
+  own, an import, the prelude's — never the global scope, which holds exports nobody
+  imported), whose value is a non-negative integer literal or another such `const`. That is
+  what `resolveConstantInt` folds for a repeat count, so `#[0; MAX]` and `[MAX]u8` agree on
+  what a size may be. A computed `const` stays `lyra-E031`, now saying it is a `const` but
+  not a size (todo.md keeps arithmetic open). A binding's own `<const N>` shadows a
+  module's `N`.
+
 ### 10/28/26 — `ui`: the main window's close is the program's to answer
 
 - **A close asked of the program** (`App.main_close: []MainClose { of: (s) -> e }`, an array

@@ -635,7 +635,13 @@ A lowercase type name is a type variable wherever it appears. What a written `<�
   may pass its own `[M]t` on to another, which settles when the caller is specialized; a
   `[N]t` may be a local's type and a return type. The type must be an integer, and a size
   written as a name that no `const` declares is `lyra-E031` — a size never makes a function
-  generic by being written, as a lowercase type does. Pass a large array as `ref [N]t`, which
+  generic by being written, as a lowercase type does.
+- **A module `const` sizes an array anywhere a type is written** — `[MAX_BYTES]u8` beside
+  `const MAX_BYTES: i64 = 8` is `[8]u8`, in a parameter, a return type, a local, a struct
+  field or a payload. The `const` is one the module reaches (its own, an import, the
+  prelude's) whose value is a non-negative integer literal, or another such `const`; one
+  computed (`3 * 4`) or negative is `lyra-E031`, saying so. A binding's own `const N`
+  shadows a module `const N` inside it. Pass a large array as `ref [N]t`, which
   borrows rather than copies. Not yet: `N` as a value in the body, arithmetic on it in a type
   (`[N + 1]t`), a `const` in a type's or trait's list, and a turbofish value (`f::<64>`).
 

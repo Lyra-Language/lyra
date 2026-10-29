@@ -22,7 +22,7 @@ func checkGenericParams(t *testing.T, source string) []diag.Diagnostic {
 	if len(collectErrs) > 0 {
 		t.Fatalf("collector errors: %v", collectErrs)
 	}
-	return checker.CheckGenericParams(program)
+	return checker.CheckGenericParams(program, nil)
 }
 
 func errorsOnly(diags []diag.Diagnostic) []diag.Diagnostic {

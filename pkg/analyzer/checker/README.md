@@ -301,12 +301,16 @@ unused-local check (writes count as reads; walks into nested lambdas). **Reporte
 
 ## `generic_params.go` (`lyra-E031`, `lyra-W013`)
 
-`CheckGenericParams(program)`, AST-only, pre-typecheck. A written generic list must agree with the
+`CheckGenericParams(program, namedConst)`, AST-only, pre-typecheck. A written generic list must agree with the
 signature's variables: a mentioned variable missing from the list is `lyra-E031`, a listed one
 never mentioned is `lyra-W013`. The list stays optional. Catches typo'd lowercase type names
 (which silently become new variables) and bounds on the wrong variable.
 
 - The `where` half is in the collector (`Collector.MergeWhereConstraints` reports `lyra-E031`).
+- **An array size named by a module `const` never reaches it** — the driver folds it first
+  (`foldConstArraySizes`). A size left is a misspelling, or a `const` that is not a number;
+  `namedConst` (the driver's `reachableConst`) tells the two apart for the message, in a
+  function's signature (`checkSizeVars`) and a type's body alike.
 - Variable walk is **`types.CollectTypeVars`**, shared with the typechecker (`lambdaTypeVars`) and
   backend (`mentionsTypeVar`). Nominal types (`NamedStructType`, `DataType`) are not descended.
 - **Type declarations** (`checkTypeDeclGenericParams`): every variable the body mentions must be

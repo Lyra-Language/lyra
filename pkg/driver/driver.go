@@ -200,6 +200,8 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	aliasedConstructorUses := eraseConstructorAliases(program, symTable)
 	// And a constructor written as a function value becomes the lambda that applies it.
 	eraseConstructorValues(program, symTable)
+	// And an array sized by a named `const` takes the number it names (`[MAX]u8` → `[8]u8`).
+	foldConstArraySizes(program, symTable)
 	res.Diagnostics = append(res.Diagnostics, shadowWarnings(symTable)...)
 	res.Diagnostics = append(res.Diagnostics, constructorShadowWarnings(program, symTable)...)
 	for _, rawErr := range collectorErrors {
@@ -242,7 +244,10 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 		// reported both severities: an undeclared type variable is an error, a
 		// declared-but-unmentioned one a warning. Every pass here carries its own
 		// severity now, which is what lets them share this loop.
-		checker.CheckGenericParams(program),
+		checker.CheckGenericParams(program, func(name string, loc ast.Location) bool {
+			_, ok := reachableConst(symTable, name, loc)
+			return ok
+		}),
 	} {
 		res.Diagnostics = append(res.Diagnostics, diags...)
 	}

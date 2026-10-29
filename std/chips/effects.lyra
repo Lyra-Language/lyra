@@ -15,7 +15,7 @@ module std.chips.effects
 //! ]
 //! var player = new_player()
 //! player.start(Effect { first: 0, count: 3 })
-//! var out: [8]u8 = #[0; MAX_BYTES]
+//! var out: [MAX_BYTES]u8 = #[0; MAX_BYTES]
 //! let n = player.frame(STEPS, out)          // once a frame; send out[0..n] to the PSG
 //! ```
 //!
@@ -66,9 +66,9 @@ pub struct Effect {
 pub let fm_period = pure (block: i64, fnum: i64) -> u16 =>
   u16(((block & 7) << 11) | (fnum & 0x7FF))
 
-/// The most bytes a frame sends the PSG, and so the length of [Player.frame]'s buffer
-/// (written `[8]u8`: a named constant cannot size an array type yet): a tone's period and
-/// volume (3), and noise's setting, its pitch's channel silenced, its period and volume (5).
+/// The most bytes a frame sends the PSG, and so the length of [Player.frame]'s buffer: a
+/// tone's period and volume (3), and noise's setting, its pitch's channel silenced, its
+/// period and volume (5).
 pub const MAX_BYTES: i64 = 8
 
 /// The most writes a frame makes to the YM2612 — an FM effect's first: the channel keyed
@@ -153,7 +153,7 @@ impl Player {
   pub let frame<const N: i64> = (
     self: mut,
     steps: ref [N]EffectStep,
-    out: mut [8]u8
+    out: mut [MAX_BYTES]u8
   ) -> i64 => {
     let (t, nz) = self.due()
     let tone = if t >= 0 && t < steps.len() { Some(steps[t]) } else { None }
@@ -167,7 +167,7 @@ impl Player {
     self: mut,
     tone: Maybe<EffectStep>,
     noise: Maybe<EffectStep>,
-    out: mut [8]u8
+    out: mut [MAX_BYTES]u8
   ) -> i64 => {
     var n: i64 = 0
     if self.tone.playing {

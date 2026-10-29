@@ -461,6 +461,16 @@ constructor written bare (`xs.map(Width)`) is erased by the driver, before every
   walks (`walkProgramExprs`, semantic tokens) visit `ConstructorValue` instead of the lambda.
   A new LSP walk over raw `ast.WalkStmt` needs the same substitution.
 
+**Array sizes named by a `const`** (`pkg/driver/const_array_size.go`) — `[MAX]u8` is
+erased by the driver, before every pass, into `[8]u8`: the collector writes a named size as a
+`const` generic parameter's `SizeVar`, and `foldConstArraySizes` replaces each that a module
+`const` the writing module reaches answers (`reachableConst`, `constSize`), skipping a name an
+enclosing binding declares `<const N>`. **It reaches every type by reflection** over the
+program's exported fields (and `SymbolTable.Functions`, for an extern's `Func`), as
+`pkg/printer` does — so a new node or type kind is covered with no case to add. A size it
+leaves is `lyra-E031`'s, which asks the same `reachableConst` to say "a `const`, but not a
+size".
+
 **Foreign functions** — see [`pkg/backend/FFI.md`](pkg/backend/FFI.md).
 
 **Live reload (`lyrac run --live`)** — design `pkg/backend/LIVE.md`; backend

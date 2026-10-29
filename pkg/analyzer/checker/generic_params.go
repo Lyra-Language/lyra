@@ -50,7 +50,14 @@ import (
 // This pass runs before typechecking: it needs only the collector's types, and
 // reporting at the declaration is the entire point — the whole failure mode being
 // closed is a diagnostic that lands somewhere else.
-func CheckGenericParams(program *ast.Program) []diag.Diagnostic {
+//
+// namedConst says whether an array size's name is a module `const` reachable from loc —
+// one the driver could not fold into a number (foldConstArraySizes folds the rest), so the
+// error can say why rather than ask for a `const` parameter. Nil answers no.
+func CheckGenericParams(program *ast.Program, namedConst func(name string, loc ast.Location) bool) []diag.Diagnostic {
+	if namedConst == nil {
+		namedConst = func(string, ast.Location) bool { return false }
+	}
 	var diags []diag.Diagnostic
 	// Every binding, not only the top-level ones: `declaration` is an ordinary
 	// statement, so a generic function may be declared inside any block, and a
@@ -60,9 +67,9 @@ func CheckGenericParams(program *ast.Program) []diag.Diagnostic {
 		if !ok {
 			continue
 		}
-		diags = append(diags, checkGenericParamsIn(stmt, nil)...)
+		diags = append(diags, checkGenericParamsIn(stmt, nil, namedConst)...)
 		if decl, ok := stmt.(*ast.TypeDeclStmt); ok {
-			diags = append(diags, checkTypeDeclGenericParams(decl)...)
+			diags = append(diags, checkTypeDeclGenericParams(decl, namedConst)...)
 		}
 		if trait, ok := stmt.(*ast.TraitDeclStmt); ok {
 			diags = append(diags, checkTraitGenericParams(trait)...)
@@ -87,17 +94,36 @@ func CheckGenericParams(program *ast.Program) []diag.Diagnostic {
 // `Order` id), which is a pattern rather than a slip. That is where types and bindings part:
 // a binding's unused variable is solved by nothing and can carry a bound that constrains
 // nothing.
-func checkTypeDeclGenericParams(decl *ast.TypeDeclStmt) []diag.Diagnostic {
+func checkTypeDeclGenericParams(decl *ast.TypeDeclStmt, namedConst func(string, ast.Location) bool) []diag.Diagnostic {
 	declared := make(map[string]bool, len(decl.GenericParams))
 	for _, p := range decl.GenericParams {
 		declared[p.Name] = true
 	}
 	used := map[string]bool{}
-	collectDeclBodyTypeVars(decl.Type, used)
+	collectDeclBody(decl.Type, types.CollectTypeVars, used)
+	sizes := map[string]bool{}
+	collectDeclBody(decl.Type, types.CollectSizeVars, sizes)
 
 	var diags []diag.Diagnostic
 	for _, name := range sortedNames(used) {
 		if declared[name] {
+			continue
+		}
+		if sizes[name] {
+			// A type takes no `const` parameter yet, so a size here can only be a module
+			// `const` — one that did not fold, or none at all.
+			msg := unfoldedConstMessage(name)
+			if !namedConst(name, decl.GetLocation()) {
+				msg = fmt.Sprintf(
+					"array size %q is not a `const` — declare one (`const %s: i64 = …`), or write the size as a number",
+					name, name)
+			}
+			diags = append(diags, diag.Diagnostic{
+				Location: typeDeclNameLocation(decl),
+				Severity: diag.SeverityError,
+				Code:     diag.CodeUndeclaredTypeVariable,
+				Message:  msg,
+			})
 			continue
 		}
 		msg := fmt.Sprintf(
@@ -118,28 +144,29 @@ func checkTypeDeclGenericParams(decl *ast.TypeDeclStmt) []diag.Diagnostic {
 	return diags
 }
 
-// collectDeclBodyTypeVars collects the type variables a declaration's own body mentions: a
-// struct's or union's fields, a data type's constructor payloads, and anything else through
-// CollectTypeVars — which stops at a nominal type, since in a *signature* that is another
-// declaration's business. Here the nominal type is the declaration itself, one level down.
-func collectDeclBodyTypeVars(t types.Type, vars map[string]bool) {
+// collectDeclBody collects what collect finds in a declaration's own body — the type
+// variables (CollectTypeVars), or the sizes alone (CollectSizeVars): a struct's or union's
+// fields, a data type's constructor payloads, and anything else through collect — which
+// stops at a nominal type, since in a *signature* that is another declaration's business.
+// Here the nominal type is the declaration itself, one level down.
+func collectDeclBody(t types.Type, collect func(types.Type, map[string]bool), vars map[string]bool) {
 	switch body := t.(type) {
 	case types.NamedStructType:
 		for _, f := range body.Fields {
-			types.CollectTypeVars(f.Type, vars)
+			collect(f.Type, vars)
 		}
 	case types.UnionType:
 		for _, m := range body.Members {
-			types.CollectTypeVars(m.Type, vars)
+			collect(m.Type, vars)
 		}
 	case types.DataType:
 		for _, c := range body.Constructors {
 			for _, p := range c.Params {
-				collectDeclBodyTypeVars(p, vars)
+				collectDeclBody(p, collect, vars)
 			}
 		}
 	default:
-		types.CollectTypeVars(t, vars)
+		collect(t, vars)
 	}
 }
 
@@ -204,14 +231,14 @@ func typeDeclNameLocation(decl *ast.TypeDeclStmt) ast.Location {
 // inside a local `mid<m>` inside `outer<u>` may mention both `m` and `u` (09/13). The walk
 // stops at a function binding and recurses into it with its variables added, so a sibling's
 // variables never leak into scope.
-func checkGenericParamsIn(stmt ast.Statement, inScope map[string]bool) []diag.Diagnostic {
+func checkGenericParamsIn(stmt ast.Statement, inScope map[string]bool, namedConst func(string, ast.Location) bool) []diag.Diagnostic {
 	var diags []diag.Diagnostic
 	ast.WalkStmt(stmt, func(s ast.Statement) bool {
 		decl, ok := s.(*ast.VarDeclStmt)
 		if !ok {
 			return true
 		}
-		diags = append(diags, checkSizeVars(decl, inScope)...)
+		diags = append(diags, checkSizeVars(decl, inScope, namedConst)...)
 		if len(decl.GenericParams) > 0 {
 			// No list written means nothing to reconcile: a binding with type variables
 			// and no list is generic and legal, unchanged.
@@ -231,10 +258,10 @@ func checkGenericParamsIn(stmt ast.Statement, inScope map[string]bool) []diag.Di
 		}
 		if block, isBlock := lambda.Body.(*ast.BlockExpr); isBlock {
 			for _, bodyStmt := range block.Statements {
-				diags = append(diags, checkGenericParamsIn(bodyStmt, inner)...)
+				diags = append(diags, checkGenericParamsIn(bodyStmt, inner, namedConst)...)
 			}
 		} else {
-			diags = append(diags, checkGenericParamsIn(&ast.ExpressionStmt{Expression: lambda.Body}, inner)...)
+			diags = append(diags, checkGenericParamsIn(&ast.ExpressionStmt{Expression: lambda.Body}, inner, namedConst)...)
 		}
 		return false
 	}, nil)
@@ -322,11 +349,12 @@ func checkBindingGenericParams(decl *ast.VarDeclStmt, inScope map[string]bool) [
 }
 
 // checkSizeVars reports an array size written as a name no `const` parameter declares —
-// `[M]t` in a function without `<const M: i64>`. Unlike a lowercase type variable, which
-// makes a function generic by being written, a size is only ever a declared parameter:
+// `[M]t` in a function without `<const M: i64>` — and that the driver did not fold as a
+// module `const` (foldConstArraySizes). Unlike a lowercase type variable, which makes a
+// function generic by being written, a size is only ever a declared parameter or a `const`:
 // an undeclared one is a misspelling or a missing declaration, and left alone it would be
 // an array whose size nothing ever settles.
-func checkSizeVars(decl *ast.VarDeclStmt, inScope map[string]bool) []diag.Diagnostic {
+func checkSizeVars(decl *ast.VarDeclStmt, inScope map[string]bool, namedConst func(string, ast.Location) bool) []diag.Diagnostic {
 	sizes := map[string]bool{}
 	signatureSizeVars(decl, sizes)
 	consts := map[string]bool{}
@@ -340,16 +368,28 @@ func checkSizeVars(decl *ast.VarDeclStmt, inScope map[string]bool) []diag.Diagno
 		if consts[name] || inScope[name] {
 			continue
 		}
+		msg := fmt.Sprintf(
+			"array size %q is not a `const` parameter of %s or a `const` — declare it (`<const %s: i64>`), or write the size as a number",
+			name, quoteName(decl.Name), name)
+		if namedConst(name, decl.GetLocation()) {
+			msg = unfoldedConstMessage(name)
+		}
 		diags = append(diags, diag.Diagnostic{
 			Location: declNameLocation(decl),
 			Severity: diag.SeverityError,
 			Code:     diag.CodeUndeclaredTypeVariable,
-			Message: fmt.Sprintf(
-				"array size %q is not a `const` parameter of %s — declare it (`<const %s: i64>`), or write the size as a number",
-				name, quoteName(decl.Name), name),
+			Message:  msg,
 		})
 	}
 	return diags
+}
+
+// unfoldedConstMessage is lyra-E031 for an array size naming a module `const` whose value
+// the driver could not take as a size.
+func unfoldedConstMessage(name string) string {
+	return fmt.Sprintf(
+		"array size %q is a `const`, but its value is not a size: an array type's size must be a non-negative integer literal, or a `const` whose value is one — write the number in %q's declaration, or here",
+		name, name)
 }
 
 // signatureSizeVars adds the array sizes decl's annotation and, for a function, its
