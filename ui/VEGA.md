@@ -253,11 +253,14 @@ view raises events that become `doc.run(edit)` in `update`, and nothing in the m
 - **The frame's other work**: audio previews, a song playing, builds polled and a game run —
   today `run_frame`'s — become subscriptions (`EveryFrame` while something plays, `Readable`
   on a build's output) and commands.
-- **Checks**: `face_checks.lyra` drives the new front end headless with `ui.script`'s
-  platform, elements found by key as `ui_checks` finds them by probe. **Blocked**: the
+- **Checks**: `face_checks.lyra` checks the new front end headless. The **event-level**
+  checks run and pass — build the studio, raise a panel's events (a swatch's press, the
+  picker's Done and Cancel, a palette's rename), and check what each does to the state — the
+  Palettes panel's, now. The **render-level** checks — finding the panel's widgets by their
+  `.keyed` key, as `ui_checks` finds them by probe — wait on a compiler fix: the
   `shared Running` pattern in `step_running` does not propagate platform mutations to the
   `step` call (the compiler generates copies of the fields instead of interior-mutable
-  references). Untested placeholder until fixed.
+  references), so a headless window can't yet be driven frame by frame.
 - **The look**: a `ui` theme for each of macOS's light and dark looks, in place of
   `mac_look`; and the Latin-1 rule goes, `ui` drawing any text its fonts have.
 - **Order**: the shell (window, menus, editors' bar, status bar, Settings, file dialogs and
@@ -282,10 +285,13 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
 6. **lui's elements** (§9), examples `examples/ui/panels_view.lui`, `dialogs_view.lui` and
    `windows_view.lui`. **Done 10/27.**
 7. **Vega's front end** (§10): the shell (window, menus, editors' bar, status bar,
-  Settings, file dialogs, dock) **10/29**; Problems panel **10/29**; editor-by-editor
-  canvases to come. `face_checks.lyra` is a placeholder (compiler issue with
-  `shared Running`/`step_running` blocks layout inspection); `vega --ui` opens the new
-  front end.
+  Settings, file dialogs, dock) **10/29**; Problems panel **10/29**; **Palettes panel and
+  its colour picker 10/29** — a swatch's press opens a picker: RGB sliders and a live
+  preview for the free-colour consoles, the console's fixed colours for the fixed ones;
+  each change one undoable edit — checked at the event level in `face_checks.lyra`.
+  Editor-by-editor canvases to come. `face_checks.lyra` is event-level for now; the
+  render-level checks (finding the panel's widgets by key) wait on the `shared
+  Running`/`step_running` compiler fix. `vega --ui` opens the new front end.
 8. **The switch**: `Vega.app` and the Linux releases built from the new front end; the
    ImGui front end, `mac_look` and `ui_checks.lyra` removed, and `bindings.imgui` with no
    user left in the workspace.
