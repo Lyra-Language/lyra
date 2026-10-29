@@ -304,8 +304,10 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
   shapes, the map's properties and Edit tiles; a size typed is a draft made by Resize, since
   a number field raises each edit and resizing to 6 on the way to 64 would drop cells; and
   the map's own collision shapes (the Shapes tool, a drag a box or a move, and the panel's
-  name, kind, layers, one-way edge, place and size). The entity, scene, sound, instrument
-  and song editors to come. `vega --ui` opens the new front end.
+  name, kind, layers, one-way edge, place and size). The sprite and tile-set editor's
+  **collision shapes, keys and frame operations 10/29** — one shapes section for both
+  editors (`face/shapes.lyra`). Its selections, frame strip, animations, preview, resizing
+  and true colour to come, then the entity, scene, sound, instrument and song editors. `vega --ui` opens the new front end.
 8. **The switch**: `Vega.app` and the Linux releases built from the new front end; the
    ImGui front end, `mac_look` and `ui_checks.lyra` removed, and `bindings.imgui` with no
    user left in the workspace.
