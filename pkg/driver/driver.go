@@ -493,6 +493,9 @@ func collectParseErrors(root *sitter.Node, source []byte) []diag.Diagnostic {
 			if len(text) > 0 && len(text) <= 40 {
 				msg = fmt.Sprintf("syntax error: unexpected %q", text)
 			}
+			if hint, ok := uppercaseTypeParamMessage(source, node.StartByte(), node.EndByte()); ok {
+				msg = "syntax error: " + hint
+			}
 			diags = append(diags, diag.Diagnostic{
 				Severity: diag.SeverityError,
 				Location: nodeLocation(node),

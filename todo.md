@@ -538,10 +538,8 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] A written loop-variable type in the other positions**: a comprehension clause
   (`[i: u8 in 0..<10 | …]`) and the two-variable form's element. `for i: u16 in …` covers
   the one-variable loop (09/29).
-- **[OPEN] A private method's hint says "import it"** when its module already is imported
-  (`shapes.square(2).hidden()`; `typechecker_ufcs.go`, the `ufcsImported` branches). It
-  should say the method is private to its module. Found 10/07 testing `impl` blocks; a
-  hand-written private method gets the same message.
+- **[DONE 10/29] A private method's hint says it is private**, not "import it".
+  (COMPLETED.md, 10/29.)
 - **[OPEN] Type-namespaced associated functions.** `Rng.seeded(42)` is `lyra-E035`;
   building the feature is a separate decision (`Trait::method` half-exists).
 - **[OPEN] Operator overload on a `data` type:** with a `Sub` impl, `Empty - 1` parses as
@@ -862,9 +860,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   lambda whose signature names the enclosing type variable (`(it: e) -> …`); its calls were
   taken as generic (COMPLETED.md, 10/27). `lay_tab_strip`'s function is right as it stands: a
   capture is the value at creation, so the lambda would have placed every tab at `x = 0`.
-- **[OPEN] Typechecker: an untyped lambda parameter with no context is "undefined symbol"**
-  at each use (`let at = (p) => p.w + 1`), though `p` is declared; it should say the
-  parameter's type cannot be inferred and to annotate it.
+- **[DONE 10/29] An untyped lambda parameter with no context is reported once, at the
+  parameter**, asking for an annotation. (COMPLETED.md, 10/29.)
 - **[DONE 10/29] A string pattern holding an escape** (`"\\"` as a `match` arm) matches
   what its literal builds; lui's `rune_literal` is a `match` again. (COMPLETED.md, 10/29.)
 - **[OPEN] lui: an import's module is its path from the importing file**, `/` as `.` — right
@@ -969,9 +966,10 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   only at store. Wrapping-only is the cheap first slice.
 - **[DECIDED] Narrowing gets named methods** (`truncate`/`saturate`/`narrow`). **[OPEN]**
   they need return-type-from-context inference or a turbofish.
-- **[OPEN] An uppercase type parameter is reported as its bound** — `let f<R> where R:
-  Renderer = (r: mut R, …)` says "unknown type \"Renderer\"" (imported) and refuses `r.upload`.
-  It should say a type variable is lowercase (`<r>`), as LANGUAGE.md has it (10/26).
+- **[PARTIAL 10/29] An uppercase type parameter** (`let f<R> where R: Renderer`): the parse
+  error now says a type parameter is lowercase and gives the list fixed (`<R>` is `<r>`).
+  **[OPEN]** the errors the parser's recovery leaves after it — "unknown type \"R\"",
+  "unknown type \"Renderer\"" — still follow it.
 
 ## Functional / imperative blend
 

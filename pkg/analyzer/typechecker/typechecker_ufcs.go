@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -599,8 +600,7 @@ func (tc *TypeChecker) ufcsHint(methodName string, recv types.Type, loc ast.Loca
 				continue
 			}
 			if !tc.ufcsImported(methodName, candidate, loc) {
-				return fmt.Sprintf("; %s takes a `self` receiver in module %q — import it to call it method-style",
-					methodName, tc.symTable.ModuleOfFile[candidate.GetLocation().File])
+				return tc.unreachableReceiverHint(methodName, candidate)
 			}
 			fn, ok = candidate, true
 			break
@@ -618,8 +618,7 @@ func (tc *TypeChecker) ufcsHint(methodName string, recv types.Type, loc ast.Loca
 	// Reachable because resolution's export rung answers for a module this file never
 	// imported — which is exactly the case where naming the import is the hint.
 	if !tc.ufcsImported(methodName, fn, loc) {
-		return fmt.Sprintf("; %s takes a `self` receiver in module %q — import it to call it method-style",
-			methodName, tc.symTable.ModuleOfFile[fn.GetLocation().File])
+		return tc.unreachableReceiverHint(methodName, fn)
 	}
 	// It is a receiver function this file can see, so the receiver's *type* is what did
 	// not fit — and the caller's message names only the type that failed, never the one
@@ -634,6 +633,18 @@ func (tc *TypeChecker) ufcsHint(methodName string, recv types.Type, loc ast.Loca
 		return ""
 	}
 	return fmt.Sprintf("; %s takes %s", methodName, want)
+}
+
+// unreachableReceiverHint is ufcsHint's answer for a receiver function another module
+// declares that this call cannot reach (ufcsImported). Importing it is the edit only if that
+// module exports it: a private one cannot be called from here however the file imports, so
+// "import it" would send the reader to add an import that changes nothing (10/07).
+func (tc *TypeChecker) unreachableReceiverHint(name string, fn *ast.LambdaExpr) string {
+	module := tc.symTable.ModuleOfFile[fn.GetLocation().File]
+	if !slices.Contains(tc.symTable.ExportingModules(name), module) {
+		return fmt.Sprintf("; %s takes a `self` receiver but is private to module %q — only `pub` functions are callable from another module", name, module)
+	}
+	return fmt.Sprintf("; %s takes a `self` receiver in module %q — import it to call it method-style", name, module)
 }
 
 // fixedArrayHint names the edit for the one mismatch a reader cannot guess from the

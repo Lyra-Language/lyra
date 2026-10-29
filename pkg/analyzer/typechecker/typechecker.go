@@ -33,6 +33,9 @@ type TypeChecker struct {
 	// constructorValueReported holds the constructor lambdas already refused as untypable,
 	// so the several paths that read a lambda's signature report one once.
 	constructorValueReported map[*ast.LambdaExpr]bool
+	// uninferredParams holds the lambda parameters reported as untypable — no annotation
+	// and no context — so each is reported once, at the parameter, not at every use.
+	uninferredParams map[*ast.Parameter]bool
 	// constBuiltinCalls holds the float-builtin method calls that a `const` initializer's
 	// constancy walk accepted, pending the verification sweep at the end of the pass
 	// (verifyConstBuiltinCalls, typechecker_const.go). The walk runs before the
@@ -3500,6 +3503,14 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 			tc.addError(e.GetLocation(), SeverityError, "undefined identifier %q%s", e.Name, tc.unimportedHint(e.Name, e.GetLocation()))
 			return nil
 		}
+		// A lambda's parameter is in scope, but has a type only once an annotation or the
+		// lambda's context gives it one (paramTypes, above). Reaching here, nothing did:
+		// `let at = (p) => p.w + 1`. That is the parameter's to report, once — "undefined
+		// symbol" at each use named a declared name as missing (10/26).
+		if p, ok := sym.(*ast.Parameter); ok && p.Type == nil {
+			tc.reportUninferredParameter(p, e.Name)
+			return nil
+		}
 		tc.addError(e.GetLocation(), SeverityError, "undefined symbol %q", e.Name)
 		return nil
 	}
@@ -6565,4 +6576,20 @@ func isPlainLiteral(e ast.Expression) bool {
 		return true
 	}
 	return false
+}
+
+// reportUninferredParameter refuses a lambda parameter nothing gave a type — no
+// annotation, and no context (a call's parameter type, a binding's annotation) to infer
+// one from. Once per parameter, at the parameter.
+func (tc *TypeChecker) reportUninferredParameter(p *ast.Parameter, name string) {
+	if tc.uninferredParams == nil {
+		tc.uninferredParams = map[*ast.Parameter]bool{}
+	}
+	if tc.uninferredParams[p] {
+		return
+	}
+	tc.uninferredParams[p] = true
+	tc.addError(p.GetLocation(), SeverityError,
+		"cannot infer the type of parameter %q: nothing here says what it is — annotate it (`(%s: T) => …`), or pass the lambda where a function type is expected",
+		name, name)
 }

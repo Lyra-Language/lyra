@@ -9,6 +9,26 @@ Newest first.
 
 ## Dated log
 
+### 10/29/26 — Three diagnostics that named the wrong thing
+
+- **An untyped lambda parameter with no context** (`let at = (p) => p.w + 1`) is refused
+  once, at the parameter: "cannot infer the type of parameter \"p\" … annotate it". It was
+  "undefined symbol \"p\"" at every use — the parameter is in scope but untyped, and the
+  identifier's lookup fell through to the last arm — then "cannot infer the return type",
+  which is now suppressed as that error's consequence (`reportUninferredParameter`,
+  `uninferredParams`).
+- **A private method is private, not an import away**: `shapes.square(2).hidden()` said
+  "import it to call it method-style" for a function `shapes` does not export, which no
+  import could fix. Both branches of `ufcsHint` that said so ask
+  `unreachableReceiverHint`, which checks `ExportingModules` first.
+- **An uppercase type parameter** (`let f<R>`, `struct Box<T>`, `<t, U>`) stays a parse
+  error — the grammar refuses it on purpose (`generic_type.js`: `T` would collide with a
+  const_identifier) — but the error says why and gives the list lowercased: "`<R>` is
+  `<r>`". Recognised in `collectParseErrors` from the source around the error
+  (`uppercaseTypeParamMessage`: a `<…>` after a declared name, holding an uppercase
+  name that is not a `const` parameter), not by a grammar rule that would accept the
+  spelling only to refuse it. The recovery's own errors still follow it (todo.md).
+
 ### 10/29/26 — A string pattern may hold an escape
 
 - **`"\\"`, `"\n"`, `"a\"b"` as `match` arms match what the same literal builds** — in a

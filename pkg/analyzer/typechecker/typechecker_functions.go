@@ -256,6 +256,13 @@ func (tc *TypeChecker) inferLambdaReturnType(funcName string, lambda *ast.Lambda
 
 	inferred, ok := tc.typeTable.Get(value)
 	if !ok || inferred == nil {
+		// An untypable parameter was reported, and the body's type is lost with it: the
+		// return type is that error's consequence, not a second one.
+		for i := range lambda.Parameters {
+			if tc.uninferredParams[&lambda.Parameters[i]] {
+				return
+			}
+		}
 		// The body was walked already, so a missing entry means inference could not
 		// finish. The usual cause is self-recursion, where computing the return type
 		// requires the return type — and a recursive function's callers need its
