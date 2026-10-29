@@ -55,6 +55,11 @@ not a formality.
 
 Package management, versioning and separate compilation are out of scope by decision.
 
+- **[OPEN] `lyra-W004` calls an import unused when only a type argument names it** —
+  `layout::<StudioEvent>(…)` with `StudioEvent` imported and nowhere else (Vega's
+  `face_checks.lyra`, 10/29); dropping the import is then `lyra-E001`. Count a turbofish
+  argument as a use.
+
 - **[PARTIAL] A formatter in Lyra (`lyrafmt`) as the self-hosting probe.** Round trip,
   indentation, whitespace, spacing, inline blocks and **line breaking** (09/19: 90 columns,
   comma lists exploded one element per line) are in; the repo is formatted by it, a

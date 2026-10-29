@@ -256,12 +256,14 @@ view raises events that become `doc.run(edit)` in `update`, and nothing in the m
 - **Checks**: `face_checks.lyra` checks the new front end headless. The **event-level**
   checks run and pass — build the studio, raise a panel's events (a swatch's press, the
   picker's Done and Cancel, a palette's rename; a layer added, deleted and renamed), and
-  check what each does to the state — the Palettes' and Collision layers' panels, now.
-  The **render-level** checks — finding the panel's widgets by their
-  `.keyed` key, as `ui_checks` finds them by probe — wait on a compiler fix: the
-  `shared Running` pattern in `step_running` does not propagate platform mutations to the
-  `step` call (the compiler generates copies of the fields instead of interior-mutable
-  references), so a headless window can't yet be driven frame by frame.
+  check what each does to the state. **Render-level** checks drive the window's own loop
+  (`running`/`step_running` over `ui.script`'s platform, SDL's dummy video and software
+  renderer) and find a widget by its `.keyed` key where the loop laid it out, as
+  `ui_checks` finds one by probe: a drag across the sprite editor's canvas paints it. (They
+  were thought blocked on `shared Running` not seeing the loop end; it does — a script's
+  end asks to close, which unsaved changes hold open, so the passes are bounded.)
+- **The window does not scroll** (`App.window_overflow: OverflowVisible`): under `ui.app`'s
+  default, `OverflowAuto`, the body got the height it asked for and the dock its content's.
 - **The look**: a `ui` theme for each of macOS's light and dark looks, in place of
   `mac_look`; and the Latin-1 rule goes, `ui` drawing any text its fonts have.
 - **Order**: the shell (window, menus, editors' bar, status bar, Settings, file dialogs and
@@ -291,10 +293,12 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
   preview for the free-colour consoles, the console's fixed colours for the fixed ones —
   and the **Collision layers panel 10/29**, every layer its name typed over and a button
   deleting it, then Add up to the console's mask; each change one undoable edit, checked
-  at the event level in `face_checks.lyra`.
-  Editor-by-editor canvases to come. `face_checks.lyra` is event-level for now; the
-  render-level checks (finding the panel's widgets by key) wait on the `shared
-  Running`/`step_running` compiler fix. `vega --ui` opens the new front end.
+  at the event level in `face_checks.lyra`. **The sprite and tile-set editor's first
+  slice 10/29** (`face/picture_editor.lyra`): the canvas a picture fingerprinted by its
+  pixels (a gesture's amends count no revision), pencil, eraser, fill, line, box and picker,
+  the brushes, the picture and frame, zoom (View's too) and the grids — a stroke one gesture.
+  Its selections, shapes, flips, frame strip, animations, preview and resizing to come, then
+  the other editors. `vega --ui` opens the new front end.
 8. **The switch**: `Vega.app` and the Linux releases built from the new front end; the
    ImGui front end, `mac_look` and `ui_checks.lyra` removed, and `bindings.imgui` with no
    user left in the workspace.
