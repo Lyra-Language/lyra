@@ -128,13 +128,6 @@ func thinLTOLink(cc string, p target.Platform) ([]string, bool) {
 	case p.OS == "darwin" && strings.Contains(compilerIdentity(cc), "Apple clang"):
 		return []string{"-Wl,-cache_path_lto," + dir}, true
 	case p.OS == "linux":
-		// **Opt-in on Linux for now** (LYRA_THINLTO=1): on CI's x86_64 runner a std.temporal
-		// program built this way segfaulted — an `i128` slot allocated 8-aligned, read before
-		// the target's data layout was known (datalayout.go, the fix). Until CI has run it
-		// on real x86_64 hardware since, an optimized Linux build is made whole.
-		if os.Getenv("LYRA_THINLTO") != "1" {
-			return nil, false
-		}
 		if _, err := exec.LookPath("ld.lld"); err != nil {
 			return nil, false
 		}

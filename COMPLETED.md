@@ -25,6 +25,9 @@ Newest first.
   a compiler and target) and states it atop the IR it compiles, whole and in parts — not a
   table of layouts, which change with the compiler, as this one did. `--emit-llvm` stays
   without it. The backend's own tests compile IR without it still (todo.md).
+- **Confirmed on CI's x86_64 hardware** by a temporary step building the program both ways
+  under gdb: the ThinLTO build now prints what the whole build does. Linux ThinLTO, opt-in
+  while the crash was open, is the default again and the step is gone.
 
 ### 10/29/26 — `ui.gpu` draws nothing inside an empty clip
 
