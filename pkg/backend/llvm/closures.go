@@ -282,6 +282,12 @@ func (l *lowerer) declareClosure(fn *ast.LambdaExpr) error {
 		stable += "." + shortHash(l.specKey)
 	}
 	l.stableNames[irFn] = stable
+	// Split with its module's functions, not the program's pool: its name holds its line, so
+	// a line added above it renames it, and in the pool, spread by a hash of the name,
+	// a file's closures renamed together reshuffled every pool part — one blank line in
+	// Vega's `face` recompiled all sixteen, and at -O2 the ThinLTO of most of the
+	// program after them (10/30). Its module's parts are compiled again then anyway.
+	l.funcModule[irFn] = l.moduleOfFile(loc.File)
 	return nil
 }
 

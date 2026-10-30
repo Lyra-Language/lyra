@@ -9,6 +9,42 @@ Newest first.
 
 ## Dated log
 
+### 10/30/26 — Vega checks in 7.5 s, not 26; a line shifted no longer reshuffles the pool parts
+
+`lyrac check` on Vega took 26 s and a build with nothing changed 36. A CPU profile of the
+check (a copy of lyrac built with `go build -overlay`, the repo untouched) found three costs,
+none of them the work itself:
+
+- **`DeclaringDataType` ranked and sorted every type in the program** for each constructor
+  written — a map, a sort and import scans per call, a third of the check — and only then
+  skipped the types lacking the constructor. It now filters first; the order among the
+  survivors is the same, so the answer is.
+- **Use before declaration copied the visible scope** into a fresh map at every function,
+  block and arm. At the top level that is every top-level name of the merged program, so
+  the pass was quadratic: 6 s. Scopes are now chained (`names`, a child over its parent); a
+  child is checked while its parent stands as it was when the child was entered.
+- **go-tree-sitter gives tree-sitter allocators that call back into Go** only to call libc's
+  `malloc` — C to Go to C for every node, four fifths of parsing. `pkg/parser` resets it to
+  libc's own in its `init` (`ts_set_allocator(NULL, …)`); the memory is libc's either way.
+
+All 95 programs in the workspace with a `main` give the same diagnostics before and after.
+Check 26 → 7.5 s; a build with nothing changed 36 → 16 s.
+
+**An edit was the slow case, not a rebuild.** One blank line added near the top of
+`face/picture_editor.lyra` made the next -O2 build 123 s, most of a cold one.
+`LYRA_DUMP_PARTS` before and after showed all sixteen pool parts (`p.*`) changed: a closure
+had no module in `funcModule`, so it went to the pool, spread by a hash of its name — and
+its name holds its line, so every closure below the blank line was renamed and moved.
+Closures now go with their module's parts, which an edit to the file recompiles anyway:
+123 → 100 s, CPU halved, and at -O0 an edit costs 17.5 s against 16 for nothing changed.
+
+**The other 80 s is one ThinLTO job**: `face_checks.check_all`, every `check_…` (each
+called once) inlined into one function of 3.3 MB of code, optimized on one core and run
+again whenever `face` changes, since it imports from it. Read off the LTO cache's
+timestamps (one object 50 s after the rest) and `nm` on it. Smaller parts (100 functions
+for 400) changed nothing, as expected of a single function. Open: Lyra has no way to keep a
+function from being inlined.
+
 ### 10/29/26 — An arm writing its scrutinee no longer frees what it bound
 
 Termina crashed (a trace trap, malloc finding its heap corrupt) on the first character typed.

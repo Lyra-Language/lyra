@@ -55,7 +55,7 @@ func (c *ubeChecker) checkStatements(stmts []ast.Statement) {
 // This matters beyond the inconsistency: shadowing is the idiom that *replaces*
 // reassigning a borrowed parameter, which is now an error (lyra-E025), so the escape
 // hatch has to exist for the rule to be reasonable.
-func (c *ubeChecker) checkStatementsInScope(stmts []ast.Statement, inScope map[string]bool) {
+func (c *ubeChecker) checkStatementsInScope(stmts []ast.Statement, inScope *names) {
 	// Pass 1: collect names of variables declared directly in this block.
 	declared := map[string]bool{}
 	for _, stmt := range stmts {
@@ -66,20 +66,17 @@ func (c *ubeChecker) checkStatementsInScope(stmts []ast.Statement, inScope map[s
 
 	// Pass 2: walk each statement in order; flag identifiers whose declaration
 	// has not been seen yet.
-	seen := map[string]bool{}
-	for name := range inScope {
-		seen[name] = true
-	}
+	seen := withNames(inScope)
 	for _, stmt := range stmts {
 		c.checkStmt(stmt, declared, seen)
 		for _, name := range directDeclaredNames(stmt) {
-			seen[name] = true
+			seen.own[name] = true
 		}
 	}
 }
 
 // checkStmt walks a single statement for use-before-declaration.
-func (c *ubeChecker) checkStmt(stmt ast.Statement, declared, seen map[string]bool) {
+func (c *ubeChecker) checkStmt(stmt ast.Statement, declared map[string]bool, seen *names) {
 	if stmt == nil {
 		return
 	}
@@ -91,7 +88,7 @@ func (c *ubeChecker) checkStmt(stmt ast.Statement, declared, seen map[string]boo
 		c.checkExpr(s.Value, declared, seen)
 
 	case *ast.VarReassignmentStmt:
-		if declared[s.Name] && !seen[s.Name] {
+		if declared[s.Name] && !seen.has(s.Name) {
 			c.report(s.GetLocation(), s.Name)
 		}
 		c.checkExpr(s.Value, declared, seen)
@@ -144,17 +141,17 @@ func (c *ubeChecker) checkStmt(stmt ast.Statement, declared, seen map[string]boo
 // checkExpr walks an expression for use-before-declaration. Scope-creating
 // nodes and identifier checks are handled explicitly; everything else returns
 // true to let the walker recurse automatically.
-func (c *ubeChecker) checkExpr(expr ast.Expression, declared, seen map[string]bool) {
+func (c *ubeChecker) checkExpr(expr ast.Expression, declared map[string]bool, seen *names) {
 	ast.WalkExpr(expr, nil, func(e ast.Expression) bool {
 		switch ex := e.(type) {
 		case *ast.IdentifierExpr:
-			if declared[ex.Name] && !seen[ex.Name] {
+			if declared[ex.Name] && !seen.has(ex.Name) {
 				c.report(ex.GetLocation(), ex.Name)
 			}
 			return false
 
 		case *ast.MathAssignOpExpr:
-			if root := rootIdentExpr(ex.Left); root != nil && declared[root.Name] && !seen[root.Name] {
+			if root := rootIdentExpr(ex.Left); root != nil && declared[root.Name] && !seen.has(root.Name) {
 				c.report(root.GetLocation(), root.Name)
 			}
 			c.checkExpr(ex.Right, declared, seen)
@@ -169,12 +166,12 @@ func (c *ubeChecker) checkExpr(expr ast.Expression, declared, seen map[string]bo
 			// seen — a later `let` of the same name shadows it rather than using it
 			// early.
 			params := withNames(seen)
-			maps.Copy(params, parameterNames(ex))
+			maps.Copy(params.own, parameterNames(ex))
 			c.checkExprInScope(ex.Body, params)
 			for _, clause := range ex.LambdaClauses {
 				clauseScope := withNames(params)
 				for _, p := range clause.Patterns {
-					collectPatternNames(p, clauseScope)
+					collectPatternNames(p, clauseScope.own)
 				}
 				c.checkExprInScope(clause.Body, clauseScope)
 			}
@@ -217,9 +214,9 @@ func (c *ubeChecker) checkClauseBody(clause *ast.LambdaClause) {
 	if clause == nil {
 		return
 	}
-	params := map[string]bool{}
+	params := withNames(nil)
 	for _, p := range clause.Patterns {
-		collectPatternNames(p, params)
+		collectPatternNames(p, params.own)
 	}
 	if clause.Guard != nil {
 		c.checkExprInScope(clause.Guard.Condition, params)
@@ -236,7 +233,7 @@ func (c *ubeChecker) checkClauseBody(clause *ast.LambdaClause) {
 // a use before declaration. Entering each block bare reported `{ let n = n * 10 }` under a
 // parameter or an outer `let n`, and `let v = v * 3` in an arm binding `v`, as lyra-E002 —
 // a shadow, which LANGUAGE.md promises, refused by this pass alone.
-func (c *ubeChecker) checkExprInScope(expr ast.Expression, inScope map[string]bool) {
+func (c *ubeChecker) checkExprInScope(expr ast.Expression, inScope *names) {
 	if expr == nil {
 		return
 	}
@@ -244,11 +241,7 @@ func (c *ubeChecker) checkExprInScope(expr ast.Expression, inScope map[string]bo
 		c.checkStatementsInScope(block.Statements, inScope)
 		return
 	}
-	seen := map[string]bool{}
-	for name := range inScope {
-		seen[name] = true
-	}
-	c.checkExpr(expr, map[string]bool{}, seen)
+	c.checkExpr(expr, map[string]bool{}, inScope)
 }
 
 // parameterNames collects the names a lambda's parameters bind, including those bound
@@ -270,15 +263,34 @@ func collectPatternNames(p ast.Pattern, names map[string]bool) {
 	ast.EachPatternBinding(p, func(b ast.PatternBinding) { names[b.Name] = true })
 }
 
-// withNames is inScope plus names, as a new set; an empty name is skipped (a one-variable
-// `for` leaves its second slot empty).
-func withNames(inScope map[string]bool, names ...string) map[string]bool {
-	out := make(map[string]bool, len(inScope)+len(names))
-	maps.Copy(out, inScope)
-	for _, n := range names {
+// withNames is a scope inside inScope binding `bound` besides; an empty name is skipped (a
+// one-variable `for` leaves its second slot empty).
+func withNames(inScope *names, bound ...string) *names {
+	own := make(map[string]bool, len(bound))
+	for _, n := range bound {
 		if n != "" {
-			out[n] = true
+			own[n] = true
 		}
 	}
-	return out
+	return &names{own: own, parent: inScope}
+}
+
+// names is a scope's names seen so far, over the scopes enclosing it. A nested scope is
+// entered as a child of the names visible outside it, never a copy of them: copying was
+// quadratic, since the top level's are every top-level name in the program — a fifth of
+// checking Vega (10/30). A scope adds only to its own names, so a child sees its parent as
+// it was when the child was checked, which is when it was entered.
+type names struct {
+	own    map[string]bool
+	parent *names
+}
+
+// has reports whether name is seen in this scope or one enclosing it.
+func (n *names) has(name string) bool {
+	for s := n; s != nil; s = s.parent {
+		if s.own[name] {
+			return true
+		}
+	}
+	return false
 }

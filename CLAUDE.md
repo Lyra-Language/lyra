@@ -481,7 +481,10 @@ depend only on what it holds**: a new symbol numbered program-wide (a counter in
 needs a stable name (`stableNames`, or `numberedGlue`) or every edit recompiles every part
 naming it — `TestEmitParts_NoProgramWideNumbering` fails on one. A new module-level IR shape
 (an internal function, a private variable, metadata) must be handled in `splittable`/
-`assembleParts` or refused there, never passed through. Details: cmd/lyrac/README.md.
+`assembleParts` or refused there, never passed through. **A function named after its place
+in the source belongs to its module's parts** (`funcModule`): in the program's pool, spread
+by a hash of the name, a line added above a file's closures renamed them all and changed
+every pool part. Details: cmd/lyrac/README.md.
 
 **Foreign functions** — see [`pkg/backend/FFI.md`](pkg/backend/FFI.md).
 

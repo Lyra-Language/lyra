@@ -1268,15 +1268,20 @@ sets V on every add. What stands between that and a ROM:
 - **[OPEN] The backend tests compile IR with no data layout**, as lyrac did before 10/29 —
   an `i128` slot is 8-aligned there. Give `compileCached` the target's layout as
   `cmd/lyrac/datalayout.go` does.
-- **[OPEN] The front end is not cached.** A rebuild of Vega with nothing changed is 27s, 26 of
-  them collecting, checking and lowering every module again; caching a module's analysis needs
-  its dependencies' interfaces as keys. `ui` test programs at -O0 are front-end bound too.
+- **[OPEN] The front end is not cached.** A rebuild of Vega with nothing changed is 16s (36
+  before 10/30's fixes), about 15 of them parsing, checking and lowering every module again;
+  caching a module's analysis needs its dependencies' interfaces as keys. Cheaper first:
+  parse a module directory's files in parallel (3s of parsing is serial), and memoize
+  `resolveForLayout`'s instantiations (4s of lowering).
+- **[OPEN] One ThinLTO job is 80s of every edit to Vega's `face`**: `face_checks.check_all`,
+  its once-called checks inlined into one huge function (COMPLETED.md 10/30). A `@noinline`
+  (or cold) attribute, or Vega calling its checks through function values, would end it.
 - **[OPEN] Parts for other platforms, apps and live builds**: each builds whole. Cross builds
   need the platform's ThinLTO linker (lld for Linux, ld64 for iOS); `--live` relinks its
   generations from one module.
-- **[OPEN] A large program part.** Specializations, closures and glue of the whole program are
+- **[OPEN] A large program part.** Specializations and glue of the whole program are
   `p.<k>`, by name, and change with any code that instantiates; a specialization could go to
-  the part of the module asking for it.
+  the part of the module asking for it. (Closures go to their module's since 10/30.)
 
 ## Building for other platforms
 

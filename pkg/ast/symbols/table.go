@@ -1316,9 +1316,15 @@ func (st *SymbolTable) DeclaringDataType(ctorName string, loc ast.Location) (*as
 		return st.DataTypeWithConstructorIn(module, ctorName)
 	}
 	asking := st.ModuleOfFile[loc.File]
-	keys := make([]string, 0, len(st.Types))
-	for k := range st.Types {
-		keys = append(keys, k)
+	// Only the data types with the constructor are ranked: ranking and sorting every type
+	// in the program for each constructor written was a third of checking Vega (10/30).
+	var keys []string
+	for k, decl := range st.Types {
+		if dt, ok := decl.Type.(types.DataType); ok && slices.ContainsFunc(dt.Constructors, func(c types.DataTypeConstructor) bool {
+			return c.Name == ctorName
+		}) {
+			keys = append(keys, k)
+		}
 	}
 	// **Ranked by how the asking file reaches the type**, then by key: its own module's,
 	// one it imports by name (or whose constructor it does), the prelude's, one whose module
@@ -1357,15 +1363,6 @@ func (st *SymbolTable) DeclaringDataType(ctorName string, loc ast.Location) (*as
 	})
 	for _, k := range keys {
 		decl := st.Types[k]
-		dt, ok := decl.Type.(types.DataType)
-		if !ok {
-			continue
-		}
-		if !slices.ContainsFunc(dt.Constructors, func(c types.DataTypeConstructor) bool {
-			return c.Name == ctorName
-		}) {
-			continue
-		}
 		if resolved, ok := st.LookupTypeFrom(decl.Name, loc); ok && resolved == decl {
 			return decl, true
 		}
