@@ -23,6 +23,8 @@ module std.collections
 
 /// A set of `t`, unordered.
 pub struct Set<t> {
+  /// The members, as the keys of a map whose values mean nothing. Read the set through its
+  /// methods — `contains`, `members`, `len` — rather than this.
   items: HashMap<t, bool>,
 }
 

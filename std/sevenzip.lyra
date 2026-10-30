@@ -32,8 +32,11 @@ import std.compress.{ inflate, lzma_decode, lzma2_decode, crc32 }
 
 /// An archive, its table of contents read.
 pub struct SevenZip {
+  /// The archive's bytes, which [extract_7z] reads a block's packed data from.
   data: []u8,
+  /// Its entries, in the order the archive lists them.
   entries: []SevenZipEntry,
+  /// Its compressed blocks, which an entry's `block` indexes.
   blocks: []SevenZipBlock,
 }
 
@@ -47,22 +50,27 @@ pub struct SevenZipEntry {
   directory: bool,
   /// The CRC-32 of its bytes, where the archive records one.
   crc: Maybe<u32>,
-  /// The block its bytes are in, and where among the block's bytes they begin; -1 for an
-  /// entry with none (a directory or an empty file).
+  /// The block its bytes are in, an index into the archive's `blocks`; -1 for an entry
+  /// with none (a directory or an empty file).
   block: i64,
+  /// Where its bytes begin among its block's bytes once unpacked.
   offset: i64,
 }
 
 /// One compressed block: how it is compressed, where its packed bytes are, and its size and
 /// CRC-32 unpacked.
 pub struct SevenZipBlock {
-  /// The coders' method ids, and the first coder's properties. Only a block of one coder
-  /// is read.
+  /// The coders' method ids. Only a block of one coder is read.
   methods: [][]u8,
+  /// The first coder's properties — for LZMA, its settings and dictionary size.
   properties: []u8,
+  /// Where its packed bytes begin in the archive.
   pack_offset: i64,
+  /// How many packed bytes it has, from `pack_offset`.
   pack_size: i64,
+  /// Its size once unpacked.
   size: i64,
+  /// The CRC-32 of its unpacked bytes, where the archive records one.
   crc: Maybe<u32>,
 }
 

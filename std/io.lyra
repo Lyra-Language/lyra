@@ -420,11 +420,6 @@ pub let create_dir_all = (path: string) -> bool => {
   read_dir(path).is_some()
 }
 
-/// The program paused for `ms` milliseconds — a polling loop's wait (`lui --watch`
-/// reading its files a few times a second). Not a timer: the wait is at least `ms`, and
-/// as much longer as the system makes it. Nothing at or below 0.
-///
-/// Over libc's `usleep` in steps of half a second: POSIX lets it refuse a second or more.
 /// Whether file descriptor `fd` has data to read now — or its other end has closed or it
 /// failed, which a read then says — asked without waiting (POSIX's `poll`, no timeout): what a
 /// loop checks a pipe or a terminal's descriptor with before reading it.
@@ -434,6 +429,11 @@ pub let readable = (fd: i32) -> bool => {
   unsafe { posix_poll(raw, 1, 0) } > 0 && p.revents != 0
 }
 
+/// The program paused for `ms` milliseconds — a polling loop's wait (`lui --watch`
+/// reading its files a few times a second). Not a timer: the wait is at least `ms`, and
+/// as much longer as the system makes it. Nothing at or below 0.
+///
+/// Over libc's `usleep` in steps of half a second: POSIX lets it refuse a second or more.
 pub let sleep_ms = (ms: i64) -> void => {
   var left = ms
   while left > 0 {

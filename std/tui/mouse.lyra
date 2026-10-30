@@ -24,19 +24,25 @@ module std.tui
 
 /// Which button an event is about.
 pub data MouseButton =
+  /// The left button.
   MouseLeft
+  /// The middle button, or a pressed wheel.
   | MouseMiddle
+  /// The right button.
   | MouseRight
-  /// A wheel notch. Terminals report the wheel as a button press with no matching
+  /// A wheel notch upward. Terminals report the wheel as a button press with no matching
   /// release, so a `WheelUp` is always a `Press` and never arrives in pairs.
   | WheelUp
+  /// A wheel notch downward; a `Press` with no release, as `WheelUp` is.
   | WheelDown
   /// Motion with nothing held down, reported only under `mouse_enable_motion`.
   | NoButton
 
 /// What happened.
 pub data MouseAction =
+  /// A button went down, or the wheel turned a notch.
   Press
+  /// A button came up.
   | Release
   /// The pointer moved. Under `mouse_enable_motion` this arrives with a button held (a
   /// drag) or with `NoButton` (a bare move); `mouse_enable` alone never produces it.

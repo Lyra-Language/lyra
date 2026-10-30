@@ -29,13 +29,16 @@ import std.compress.{ inflate, crc32 }
 
 /// A decoded image.
 pub struct Png {
+  /// Its width in pixels.
   width: i64,
+  /// Its height in pixels.
   height: i64,
   /// Four bytes a pixel — red, green, blue, alpha — rows top to bottom.
   rgba: []u8,
-  /// An indexed image's palette, four bytes an entry as `rgba`, and each pixel's index into
-  /// it; both empty for any other.
+  /// An indexed image's palette, four bytes an entry as `rgba`; empty for any other.
   palette: []u8 = [],
+  /// An indexed image's pixels as indices into `palette`, a byte each, rows top to bottom
+  /// — the artist's numbering, kept beside the colours; empty for any other image.
   indices: []u8 = [],
 }
 

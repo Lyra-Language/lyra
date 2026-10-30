@@ -28,14 +28,22 @@ module std.xml
 /// An element: its name, attributes in the order written, child elements, and the text
 /// directly inside it (between its children, joined), entities decoded.
 pub struct Element {
+  /// Its tag name as written; a namespace prefix stays part of it (`svg:rect`).
   name: string,
+  /// Its attributes, in the order written.
   attributes: []Attribute,
+  /// Its child elements, in order.
   children: []Element,
+  /// All the character data directly inside it, CDATA included, joined in order **with its
+  /// whitespace** — whether indentation means anything is the format's to say.
   text: string,
 }
 
+/// One attribute of an element.
 pub struct Attribute {
+  /// Its name as written, prefix and all.
   name: string,
+  /// Its value, quotes removed and entities decoded.
   value: string,
 }
 

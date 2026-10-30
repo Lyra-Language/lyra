@@ -44,7 +44,9 @@ import std.compress.{ crc32 }
 
 /// An archive, its headers read.
 pub struct Rar {
+  /// The archive's bytes, which [extract_rar] reads an entry's data from.
   data: []u8,
+  /// Its entries, in the order the archive lists them.
   entries: []RarEntry,
 }
 
@@ -54,19 +56,25 @@ pub struct RarEntry {
   name: string,
   /// Its size, uncompressed.
   size: i64,
+  /// Whether it is a directory rather than a file.
   directory: bool,
   /// A symbolic or hard link, a junction or a copy of another entry: listed, not extracted.
   link: bool,
+  /// Whether its data is encrypted; [extract_rar] refuses it, since it needs a password.
   encrypted: bool,
   /// The CRC-32 of its bytes, where the archive records one.
   crc: Maybe<u32>,
-  /// 0 stored, 1–5 compressed; the algorithm's version (0 for RAR 5's); whether it carries
-  /// on from the file before it.
+  /// 0 stored, 1–5 compressed.
   method: i64,
+  /// The compression algorithm's version: 0 for RAR 5's, the one read; anything else is
+  /// RAR 7's, which [extract_rar] refuses.
   version: i64,
+  /// Whether it carries on from the file before it — a solid archive, where an entry's
+  /// dictionary starts where the previous one's ended.
   solid: bool,
-  /// Where its packed bytes are.
+  /// Where its packed bytes begin in the archive.
   data_offset: i64,
+  /// How many packed bytes it has, from `data_offset`.
   packed_size: i64,
 }
 

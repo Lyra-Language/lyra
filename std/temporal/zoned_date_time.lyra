@@ -8,12 +8,14 @@ module std.temporal
 /// year: the clock reading `01:30` in New York on the November morning the clocks go back
 /// names two different instants, and a struct holding `01:30` cannot say which.
 ///
-/// **This slice converts one way**, from an instant. Going the other way — naming a local
-/// time and asking which instant it was — is where a time that does not exist or happens
-/// twice has to be resolved, which is Temporal's `disambiguation` option and the next
-/// slice (todo.md).
+/// **From an instant there is one answer** (`instant.to_zoned_date_time(zone)`). From a
+/// local time there may be none or two — a clock skipped forward, or repeated — and
+/// [Disambiguation] says which to take: `date_time.to_zoned_date_time(zone, how)`.
 pub struct ZonedDateTime {
+  /// The moment it names.
   instant: Instant,
+  /// The zone whose clock it is read on. The offset, date and time are worked out from the
+  /// two, never stored.
   zone: TimeZone,
 }
 

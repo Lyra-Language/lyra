@@ -48,6 +48,7 @@ pub struct TimeZone {
 pub struct ZoneType {
   /// Seconds **east** of UTC, so New York in winter is -18000.
   offset: i64,
+  /// Whether this is the zone's daylight-saving rule.
   is_dst: bool,
   /// The abbreviation, `EST` or `EDT`. Not unique across zones, and not parseable back
   /// into one — two zones' `CST` are different offsets.

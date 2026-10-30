@@ -44,15 +44,25 @@ module std.temporal
 /// means whatever that order computes. Build one from the functions below and the question
 /// never arises.
 pub struct Duration {
+  /// Years — a calendar unit, whose length depends on the date it is applied to.
   years: i64,
+  /// Months — a calendar unit, 28 to 31 days depending on the month.
   months: i64,
+  /// Weeks, of seven days each.
   weeks: i64,
+  /// Days. On a calendar, a day; added to an instant, exactly 24 hours.
   days: i64,
+  /// Hours.
   hours: i64,
+  /// Minutes.
   minutes: i64,
+  /// Seconds.
   seconds: i64,
+  /// Milliseconds.
   milliseconds: i64,
+  /// Microseconds.
   microseconds: i64,
+  /// Nanoseconds.
   nanoseconds: i64,
 }
 
@@ -270,12 +280,19 @@ impl Duration {
 /// `total` to count in. **The calendar units are not here**: a year, month or week has no
 /// fixed length without a date to measure from, and Temporal refuses them there too.
 pub data TimeUnit =
+  /// Days of exactly 24 hours.
   Days
+  /// Hours.
   | Hours
+  /// Minutes.
   | Minutes
+  /// Seconds.
   | Seconds
+  /// Thousandths of a second.
   | Milliseconds
+  /// Millionths of a second.
   | Microseconds
+  /// Billionths of a second.
   | Nanoseconds
 
 /// The decimal number at `runes[from..]` and the index just past it, or `None` when there

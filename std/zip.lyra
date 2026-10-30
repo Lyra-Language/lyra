@@ -39,7 +39,9 @@ pub struct ZipEntry {
   flags: u16,
   /// The CRC-32 of its uncompressed bytes.
   crc: u32,
+  /// Its size in the archive, in bytes — what [unzip] reads.
   compressed_size: i64,
+  /// Its size once extracted, in bytes, which [unzip] checks.
   size: i64,
   /// Where its local header begins.
   header_offset: i64,

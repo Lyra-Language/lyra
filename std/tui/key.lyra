@@ -27,21 +27,30 @@ module std.tui
 pub data Key =
   /// A character key, carrying its code point.
   Char rune
-  /// The four arrow keys.
+  /// The up arrow.
   | Up
+  /// The down arrow.
   | Down
+  /// The left arrow.
   | Left
+  /// The right arrow.
   | Right
-  /// Navigation keys, sent as `\e[H`/`\e[F` or as the numbered `\e[1~` family depending
-  /// on the terminal — both spellings decode to these.
+  /// Home. The navigation keys are sent as `\e[H`/`\e[F` or as the numbered `\e[1~`
+  /// family depending on the terminal — both spellings decode to these.
   | Home
+  /// End.
   | End
+  /// Page Up.
   | PageUp
+  /// Page Down.
   | PageDown
+  /// The forward-delete key (`\e[3~`), not Backspace.
   | Delete
   /// Return/Enter, sent as CR in raw mode rather than the LF it is outside one.
   | Enter
+  /// Tab.
   | Tab
+  /// Backspace — 127 (DEL) from nearly every terminal, or 8 (BS) from some.
   | Backspace
   /// The Escape key itself. **Reported one keypress late** — see `next_event`.
   | Escape

@@ -8,7 +8,9 @@ module std.temporal
 /// date-time that exists, so this struct has no invalid values to forge: the invariant
 /// lives in the fields' types, where Lyra can keep it.
 pub struct PlainDateTime {
+  /// The calendar date.
   date: PlainDate,
+  /// The time of day on it.
   time: PlainTime,
 }
 
