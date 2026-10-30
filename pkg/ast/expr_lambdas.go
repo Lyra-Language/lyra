@@ -39,7 +39,10 @@ type LambdaExpr struct {
 	// Interrupt is `@interrupt(vblank)` or `@interrupt(hblank)` on the declaration: the
 	// function a console runs on that interrupt (checker.CheckInterruptHandlers; exported
 	// by the backend as `__lyra_interrupt_<kind>`, which the runtime's entry calls).
-	Interrupt   string
+	Interrupt string
+	// NoInline is `@noinline` on the declaration: the function is never inlined into its
+	// callers (the backend's noInline, on the declaration and each specialization).
+	NoInline    bool
 	IsUnsafe    bool
 	IsPure      bool
 	IsDet       bool

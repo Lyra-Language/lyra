@@ -1060,8 +1060,12 @@ On a `struct`: the value names a foreign resource released by `fn`. A binding le
 - Field reads are borrows.
 - Warning, not error (under-reports: a release on any branch counts; no `#[allow]`).
 - `struct` only (`type Fd = i32` waits on the grammar). `bindings/raylib`'s `Sound` and `Wave` use it.
-- **`@borrowed` on a function** says the resource it answers is someone else's: a binding of its result carries no obligation. raylib's `default_font()` is the case — its `Font` is raylib's static data. On a function whose declared result is not a `@must_release` type (or a wrapper of one) it is an error. It and `@interrupt` are the attributes a `let` takes; any other is an error.
+- **`@borrowed` on a function** says the resource it answers is someone else's: a binding of its result carries no obligation. raylib's `default_font()` is the case — its `Font` is raylib's static data. On a function whose declared result is not a `@must_release` type (or a wrapper of one) it is an error. It, `@noinline` and `@interrupt` are the attributes a top-level `let` takes; any other is an error.
 - **Releasing a borrowed resource is `lyra-W025`** — `unload_font(default_font())`, directly or through a binding or an unwrap: it frees what the lender still uses.
+
+### `@noinline`
+
+**On a function, it is never inlined into a caller** — every specialization of a generic one too. It takes no arguments and goes only on a function. The optimizer inlines a function called once wherever it can, which is usually right; this keeps one apart — to read it in a profile or a backtrace, or to keep a caller of many small, cold ones small. It changes no behaviour, only the code.
 
 ### `@symbol("Name")`
 

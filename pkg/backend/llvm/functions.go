@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/llir/llvm/ir"
+	"github.com/llir/llvm/ir/enum"
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
@@ -411,7 +412,17 @@ func (l *lowerer) declareFunctionAs(name string, fn *ast.LambdaExpr) (*ir.Func, 
 	}
 	l.sourceFuncs[irFn] = true
 	l.funcModule[irFn] = l.moduleOfFile(fn.GetLocation().File)
+	noInline(irFn, fn)
 	return irFn, nil
+}
+
+// noInline marks irFn never to be inlined if its source is `@noinline`: a declared function
+// or trait method here, each specialization of a generic one in monomorphize.go. (Only a
+// top-level `let` takes an attribute.)
+func noInline(irFn *ir.Func, fn *ast.LambdaExpr) {
+	if fn.NoInline {
+		irFn.FuncAttrs = append(irFn.FuncAttrs, enum.FuncAttrNoInline)
+	}
 }
 
 // defineFunction lowers a declared function's body: bind each parameter into a

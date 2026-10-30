@@ -338,7 +338,8 @@ func destructuringPatternBoundNames(pat ast.Pattern) []string {
 }
 
 // collectDeclarationAttributes reads the attributes on a `let`/`var`/`const` declaration.
-// There is one: `@borrowed`, on a function, lifted onto its lambda (ReturnsBorrowed).
+// Each goes on a function and is lifted onto its lambda: `@borrowed` (ReturnsBorrowed),
+// `@interrupt(…)` (Interrupt) and `@noinline` (NoInline).
 // value is the declaration's initializer, or nil for a destructuring declaration, which
 // can carry none.
 //
@@ -363,9 +364,13 @@ func collectDeclarationAttributes(node *sitter.Node, value ast.Expression, ctx *
 				collectInterruptAttribute(attr, value, ctx)
 				continue
 			}
+			if name == "noinline" {
+				collectNoInlineAttribute(attr, value, ctx)
+				continue
+			}
 			if name != "borrowed" {
 				ctx.AddError(attr, diag.SeverityError,
-					"unknown attribute `@%s` on a declaration; a function takes `@borrowed` or `@interrupt(vblank)`", name)
+					"unknown attribute `@%s` on a declaration; a function takes `@borrowed`, `@noinline` or `@interrupt(vblank)`", name)
 				continue
 			}
 			if cst.Field(attr, "args") != nil {
@@ -380,6 +385,19 @@ func collectDeclarationAttributes(node *sitter.Node, value ast.Expression, ctx *
 			lambda.ReturnsBorrowed = true
 		}
 	}
+}
+
+// collectNoInlineAttribute reads `@noinline`: the function is never inlined into a caller.
+func collectNoInlineAttribute(attr *sitter.Node, value ast.Expression, ctx *collector_ctx.Ctx) {
+	if cst.Field(attr, "args") != nil {
+		ctx.AddError(attr, diag.SeverityError, "`@noinline` takes no arguments")
+	}
+	lambda, ok := value.(*ast.LambdaExpr)
+	if !ok {
+		ctx.AddError(attr, diag.SeverityError, "`@noinline` keeps a function from being inlined, so it goes on a function declaration")
+		return
+	}
+	lambda.NoInline = true
 }
 
 // collectInterruptAttribute reads `@interrupt(vblank)` / `@interrupt(hblank)`: the function a

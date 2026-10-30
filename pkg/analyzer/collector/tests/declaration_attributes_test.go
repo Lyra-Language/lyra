@@ -6,14 +6,16 @@ import (
 )
 
 // An attribute on a declaration was parsed and silently dropped until 09/13, so a
-// misspelled `@borrowed` changed nothing and said nothing. `@borrowed` is the one there is,
-// and it needs a function.
+// misspelled `@borrowed` changed nothing and said nothing. `@borrowed` and `@noinline` need a
+// function.
 func TestDeclarationAttributes(t *testing.T) {
 	for _, c := range []struct{ name, src, want string }{
 		{"unknown", "@borowed\nlet f = () -> i64 => 1", "unknown attribute `@borowed` on a declaration"},
 		{"on a value", "@borrowed\nlet n = 5", "goes on a function declaration"},
 		{"with arguments", "@borrowed(x)\nlet f = () -> i64 => 1", "`@borrowed` takes no arguments"},
 		{"on a destructuring", "@borrowed\nlet (a, b) = t", "goes on a function declaration"},
+		{"noinline on a value", "@noinline\nlet n = 5", "`@noinline` keeps a function from being inlined, so it goes on a function declaration"},
+		{"noinline with arguments", "@noinline(x)\nlet f = () -> i64 => 1", "`@noinline` takes no arguments"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			errs := parseAndCollectErrors(t, c.src)
@@ -26,8 +28,10 @@ func TestDeclarationAttributes(t *testing.T) {
 			}
 		})
 	}
-	for _, e := range parseAndCollectErrors(t, "@borrowed\npub let f = () -> i64 => 1") {
-		t.Errorf("unexpected %v", e)
+	for _, src := range []string{"@borrowed\npub let f = () -> i64 => 1", "@noinline\nlet f = () -> i64 => 1"} {
+		for _, e := range parseAndCollectErrors(t, src) {
+			t.Errorf("unexpected %v", e)
+		}
 	}
 }
 
