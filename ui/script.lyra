@@ -52,6 +52,7 @@ module ui.script
 //! firing is exact.
 
 import ui.backend.{
+  set_interface_factor,
   Platform,
   WindowId,
   MAIN_WINDOW,
@@ -117,6 +118,9 @@ pub struct ScriptPlatform {
   next: i64 = 0,
   size: Size,
   units: f32 = 1.0,
+  /// The interface's scale ([Platform.set_interface_scale]): the window's size said in units
+  /// this many times larger, and drawn so.
+  interface: f32 = 1.0,
   clip: string = "",
   typing: Maybe<Rect> = None,
   shape: Cursor = Arrow,
@@ -266,16 +270,21 @@ impl Platform for ScriptPlatform {
     }
   }
   window_size = pure (self, id) => {
-    if id == MAIN_WINDOW { return self.size }
+    let by = self.interface
+    if id == MAIN_WINDOW { return Size { w: self.size.w / by, h: self.size.h / by } }
     for w in self.others {
-      if w.id == id { return w.size }
+      if w.id == id { return Size { w: w.size.w / by, h: w.size.h / by } }
     }
     Size {}
   }
   held = pure (self) => self.holding
   // It never waits: each pass plays the next step.
   wake_for = (self, fds) => {}
-  scale = pure (self, id) => self.units
+  scale = pure (self, id) => self.units * self.interface
+  set_interface_scale = (self, factor) => {
+    self.interface = factor
+    set_interface_factor(factor)
+  }
   set_text_input = (self, id, field) => {
     if id == MAIN_WINDOW {
       self.typing = field
@@ -315,7 +324,10 @@ impl Platform for ScriptPlatform {
     }
   }
   set_window_size = (self, id, size) => {
-    let _ = self.sized(id, size)
+    let _ = self.sized(
+      id,
+      Size { w: size.w * self.interface, h: size.h * self.interface }
+    )
   }
   window_position = pure (self, id) => {
     if id == MAIN_WINDOW { return self.position }

@@ -71,7 +71,8 @@ import ui.sdl3.{
   renderer_for,
   platform_for,
   release_renderer,
-  close_platform
+  close_platform,
+  pixels_per_unit
 }
 import bindings.gpu
 import bindings.gpu.{ Gpu, DRAW, PUSH_LAYER, POP_LAYER, BACKDROP }
@@ -79,7 +80,6 @@ import bindings.sdl3.{
   Window,
   window_size,
   window_pixel_density,
-  window_display_scale,
   window_from_id,
   last_error,
   destroy_window,
@@ -409,7 +409,7 @@ struct Instance {
 /// `ops` as a frame of `renderer`'s in `window`: each op in pixels, as instances in runs of one
 /// texture, the clips carried on each instance, and the layers and backdrops as commands.
 let frame_of = (renderer: GpuRenderer, window: Window, ops: []DrawOp) -> Frame => {
-  let scale = window_display_scale(window)
+  let scale = pixels_per_unit(window)
   let (vw, vh) = pixels_of(window)
   var out = Frame {}
   var run_texture: i64 = -1

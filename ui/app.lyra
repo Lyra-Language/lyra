@@ -178,6 +178,18 @@ pub struct App<s, e> {
   /// The windows beside the main one, a function of the state ([Windows]), or none. (An array of
   /// at most one, as `shortcuts` is.)
   windows: []Windows<s, e> = [],
+  /// The interface's size, a function of the state ([InterfaceScale]) — every logical unit
+  /// this many times larger, in every window, on top of the display's scale: 1.25 makes text,
+  /// padding and every size a quarter larger, the windows holding fewer units. None here is 1.
+  /// (An array of at most one, as `shortcuts` is.)
+  interface_scale: []InterfaceScale<s> = [],
+}
+
+/// The interface's size as a state says it ([App.interface_scale]): `of` answers the factor,
+/// asked each pass and given the platform when it changes ([Platform.set_interface_scale]),
+/// every window then laid out again at its size in the new units.
+pub struct InterfaceScale<s> {
+  of: (s) -> f32,
 }
 
 /// The windows a program opens beside its main one (`ui/VEGA.md` §8) — a dock's tabs torn off
@@ -471,6 +483,8 @@ pub struct Host<s, e> {
   /// The window that last gained the keyboard's focus: where an edit of the focused field and
   /// a file dialog go.
   focused: WindowId = MAIN_WINDOW,
+  /// The interface scale last given the platform ([App.interface_scale]).
+  interface_scale: f32 = 1.0,
   /// How many events `update` has had: a window laid out at fewer shows an older state.
   version: i64 = 0,
   /// The keys of windows the platform could not open, not asked for again.
@@ -677,6 +691,7 @@ impl Host<s, e> {
     }
     self.deliver_due(now, platform)
     if !self.running { return false }
+    self.scale_interface(platform)
     let first = self.windows[0].shown.len() == 0
     if first { self.limit_size(0, platform, platform.window_size(MAIN_WINDOW)) }
     self.sync_windows(platform, renderer)
@@ -851,6 +866,16 @@ impl Host<s, e> {
   /// The program's handler for the main window's close, if it has one ([App.main_close]).
   let main_close = pure (self) -> Maybe<MainClose<s, e>> =>
     if self.app.main_close.len() > 0 { Some(self.app.main_close[0]) } else { None }
+
+  /// The interface's scale as the state says it ([App.interface_scale]) given the platform when
+  /// it changed, before anything is laid out in its units — every window then drawn again.
+  let scale_interface<p> where p: Platform = (self: mut, platform: mut p) -> void => {
+    let wanted = if self.app.interface_scale.len() > 0 { (self.app.interface_scale[0].of)(self.state) } else { 1.0 }
+    if (wanted - self.interface_scale).abs() < 0.0001 { return }
+    self.interface_scale = wanted
+    platform.set_interface_scale(wanted)
+    for k in 0..<self.windows.len() { self.windows[k].dirty = true }
+  }
 
   /// The main window as last laid out — what a test or a program's own loop reads of it.
   pub let main_laid = pure (self) -> Laid<e> => self.windows[0].shown[0]

@@ -2990,6 +2990,62 @@ a window scrolled to its end, then taller, clamps: window 0,180
 	}
 }
 
+// The interface's scale (App.interface_scale): the state's factor given the platform, the
+// window laid out in units that many times larger — fewer of them across — and its pixels a
+// unit that many times more, which the renderers read from ui.backend (Vega's interface size,
+// 10/30).
+func TestRun_UiInterfaceScale(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, InterfaceScale, sandbox, running, step_running }
+import ui.script.{ timed_platform }
+import ui.backend.{ Renderer, MAIN_WINDOW, interface_factor_now }
+import ui.draw.{ Size, Color, TextureId }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, text }
+
+/// A renderer that draws nothing.
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, window, background, ops) => {}
+}
+
+data Ev = Nothing
+
+let view = pure (scale: f32) -> Node<Ev> => text("scaled")
+
+let main = () -> u8 => {
+  let scales: []f32 = [1.0, 2.0, 1.25]
+  for scale in scales {
+    var platform = timed_platform([], Size { w: 400.0, h: 300.0 })
+    var renderer = Blank {}
+    var fonts = fonts_new()
+    let app = sandbox(view, (s: f32, _: Ev) => s, Color { r: 0, g: 0, b: 0 })
+    let scaled = App { app | interface_scale: [InterfaceScale { of: (s: f32) -> f32 => s }] }
+    let window = running(scaled, scale, platform, renderer, fonts)
+    while step_running(window) {}
+    let laid = window.host.main_laid()
+    println("${scale}: laid out ${laid.size.w}x${laid.size.h}, ${window.platform.scale(MAIN_WINDOW)} pixels a unit, renderers ${interface_factor_now()}")
+  }
+  0
+}
+`)
+	want := `1: laid out 400x300, 1 pixels a unit, renderers 1
+2: laid out 200x150, 2 pixels a unit, renderers 2
+1.25: laid out 320x240, 1.25 pixels a unit, renderers 1.25
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // The window widens its content only to the width below which it overflows: a flex row of a
 // growing field and a button in a window narrower than the field's own 160 overflows and
 // scrolls, as in a browser, until the field asks min-width: 0 — then the row fits the window

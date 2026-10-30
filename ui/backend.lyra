@@ -40,6 +40,19 @@ pub type WindowId = i64
 /// The window a platform opened with.
 pub const MAIN_WINDOW: WindowId = WindowId(0)
 
+/// **The interface's scale** ([Platform.set_interface_scale]) as a platform last set it —
+/// kept here, beside the trait, so a renderer, which is not told the platform, draws by the
+/// same factor as the platform it is paired with reports units in. A process has one
+/// interface.
+var interface_factor: f32 = 1.0
+
+/// The interface's scale as a platform last set it ([interface_factor]).
+pub let interface_factor_now = () -> f32 => interface_factor
+
+/// The interface's scale set, for the renderers — a platform's [Platform.set_interface_scale]
+/// calls it.
+pub let set_interface_factor = (factor: f32) -> void => { interface_factor = factor }
+
 /// The windows, and the input they receive.
 pub trait Platform {
   /// What happened since the last call, oldest first, each with the window it happened in (or
@@ -51,8 +64,14 @@ pub trait Platform {
   /// The window's size, in logical units.
   window_size: (Self, WindowId) -> Size
   /// Pixels a logical unit in the window: its display's density times the scale the user
-  /// chose for it.
+  /// chose for it, times the interface's own ([set_interface_scale]).
   scale: (Self, WindowId) -> f32
+  /// Every logical unit made `factor` times larger in every window — an interface size the
+  /// user chooses, on top of each display's scale: windows report their sizes and input in
+  /// the units it makes, and draw them this much larger, so text, padding and every size in
+  /// units grow together. 1 is as the display has it. The host sets it from
+  /// [App.interface_scale].
+  set_interface_scale: (mut Self, f32) -> void
   /// Ask for typed text in the window, with the field it goes into — where an input method's
   /// window and a phone's keyboard keep clear of — or stop asking, with `None`.
   set_text_input: (mut Self, WindowId, Maybe<Rect>) -> void

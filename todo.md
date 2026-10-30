@@ -694,9 +694,10 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is built.
 
-- **[OPEN] An interface-wide scale** — Vega's Settings offer an interface size (75–200%) its
-  ImGui front end applied, and `ui` has nothing to apply it with: every size in points, text
-  and padding included, multiplied by a factor the app sets, on top of the display's own.
+- **[DONE 10/30] An interface-wide scale** — `App.interface_scale`: every logical unit that
+  many times larger, on top of the display's scale; `Platform.set_interface_scale`, the
+  factor in `ui.backend` for the renderers (`TestRun_UiInterfaceScale`). Vega's Settings size
+  works again.
 
 - **[DONE 10/21] Phase 1, the seams** — `ui.draw`'s display list, `ui.tess`, the
   `Platform`/`Renderer` traits and `ui.sdl3` over `SDL_RenderGeometry` (COMPLETED.md, 10/21).

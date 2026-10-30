@@ -159,6 +159,8 @@ import bindings.sdl3.{
   WINDOW_FULLSCREEN,
 }
 import ui.backend.{
+  interface_factor_now,
+  set_interface_factor,
   Platform,
   WindowId,
   MAIN_WINDOW,
@@ -532,8 +534,11 @@ impl Platform for SdlPlatform {
     Size { w: f32(w) * per_point, h: f32(h) * per_point }
   }
   scale = (self, id) => match self.window_of(id) {
-    Some(window) => window_display_scale(window),
-    None => 1.0,
+    Some(window) => pixels_per_unit(window),
+    None => interface_factor_now(),
+  }
+  set_interface_scale = (self, factor) => {
+    set_interface_factor(factor.clamp(MIN_INTERFACE_SCALE, MAX_INTERFACE_SCALE))
   }
   set_text_input = (self, id, field) => {
     let Some(window) = self.window_of(id) else { return }
@@ -827,9 +832,18 @@ let system_look = () -> Appearance =>
   if system_theme() == ThemeDark { DarkMode } else { LightMode }
 
 /// Logical units a point of `window`'s coordinates is: its pixel density over its display
-/// scale.
+/// scale, and over the interface's own (`ui.backend`'s `interface_factor`).
 let units_per_point = (window: Window) -> f32 =>
-  window_pixel_density(window) / window_display_scale(window)
+  window_pixel_density(window) / window_display_scale(window) / interface_factor_now()
+
+/// Pixels a logical unit in `window`: its display scale times the interface's — what the
+/// platform says ([SdlPlatform.scale]) and both renderers draw by.
+pub let pixels_per_unit = (window: Window) -> f32 =>
+  window_display_scale(window) * interface_factor_now()
+
+/// The interface scales [Platform.set_interface_scale] keeps to.
+const MIN_INTERFACE_SCALE: f32 = 0.5
+const MAX_INTERFACE_SCALE: f32 = 3.0
 
 /// An SDL event as the interface sees it, positions in logical units, a key's modifiers the
 /// ones `held` as it was made — or `None` for one it has no use for.
@@ -1316,7 +1330,7 @@ let paint = (
   background: Color,
   ops: []DrawOp
 ) -> i64 => {
-  let scale = window_display_scale(window)
+  let scale = pixels_per_unit(window)
   canvas.clear_clip()
   canvas.set_draw_color(CanvasColor {
     r: background.r,
