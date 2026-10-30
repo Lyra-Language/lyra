@@ -350,8 +350,10 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
   R, G, B and A sliders. **Import image 10/30**: written in code as Settings was, not markup
   — a modal over the window, its state the studio's and the import worked out again in `next`
   as a choice changes, its frames painted over the checker; what it says and the edit it makes
-  shared with the ImGui dialog (`image_import.lyra`). Import Tiled map's dialog to come. `vega
-  --ui` opens the new front end.
+  shared with the ImGui dialog (`image_import.lyra`). **Import Tiled map 10/30**: the same way,
+  its layers' planes, colours, collision map and where each thing goes in a modal that
+  scrolls, `tiled_plan.lyra` shared; Import shows the scene. Step 7 is done; `vega --ui` opens
+  the new front end.
 8. **The switch**: `Vega.app` and the Linux releases built from the new front end; the
    ImGui front end, `mac_look` and `ui_checks.lyra` removed, and `bindings.imgui` with no
    user left in the workspace.
