@@ -8,6 +8,10 @@ type StructInstanceExpr struct {
 	ExprBase
 	Name        string
 	GenericArgs []types.Type
+	// Namespace is the namespace import the name was written through (`shapes` in
+	// `shapes.Pt { … }`), empty for a bare name. Set when the driver erases the qualifier
+	// (eraseQualifiedNames), so a re-analysis of the same node can record it again.
+	Namespace string
 	// The base a record update copies from — `existingPlayer` in
 	// `Player { existingPlayer | health: newHealth }`. Any postfix expression, a call
 	// included (`Duration { duration() | days: 1 }`), so it is an Expression and not

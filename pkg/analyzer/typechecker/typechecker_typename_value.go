@@ -39,6 +39,9 @@ import (
 func (tc *TypeChecker) reportUnresolvedConstructor(e *ast.DataConstructorExpr) {
 	name := e.Constructor
 	loc := e.GetLocation()
+	if tc.symTable.QualifiedFailed(loc) {
+		return
+	}
 
 	if _, ok := tc.symTable.LookupTypeFrom(name, loc); ok {
 		tc.addErrorCode(loc, SeverityError, diag.CodeTypeNameAsValue,

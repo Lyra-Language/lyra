@@ -51,6 +51,10 @@ func (st *SymbolTable) Clone() (*SymbolTable, map[*Scope]*Scope) {
 		OverloadSets:    cloneMap(st.OverloadSets),
 		SharedExports:   cloneMapOfSlice(st.SharedExports),
 		TypeRefs:        st.TypeRefs.clone(),
+		// Written by the driver after collection, so a snapshot's are empty; copied all
+		// the same, for a clone taken later (qualified.go).
+		qualified:       cloneMap(st.qualified),
+		qualifiedFailed: cloneMap(st.qualifiedFailed),
 	}
 	return out, seen
 }

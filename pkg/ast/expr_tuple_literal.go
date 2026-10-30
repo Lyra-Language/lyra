@@ -9,6 +9,10 @@ type TupleLiteralExpr struct {
 	Elements         []Expression
 	GenericArguments []types.Type
 	Name             string
+	// Namespace is the namespace import the name was written through (`shapes` in
+	// `shapes.Circle(2)`), empty for a bare name. Set when the driver erases the qualifier
+	// (eraseQualifiedNames), so a re-analysis of the same node can record it again.
+	Namespace string
 }
 
 func (t *TupleLiteralExpr) exprNode() {}

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -121,7 +122,7 @@ func CheckUnusedImports(program *ast.Program, used ImportUse) []diag.Diagnostic 
 			if strings.HasPrefix(stmt.Alias, "_") {
 				continue
 			}
-			if !refs[stmt.Alias] {
+			if !refs[stmt.Alias] && !dispatched[stmt.Alias] {
 				warnings = append(warnings, diag.Diagnostic{
 					Location: loc,
 					Severity: diag.SeverityWarning,
@@ -140,7 +141,7 @@ func CheckUnusedImports(program *ast.Program, used ImportUse) []diag.Diagnostic 
 			if strings.HasPrefix(name, "_") {
 				continue
 			}
-			if !refs[name] {
+			if !refs[name] && !dispatched[name] {
 				warnings = append(warnings, diag.Diagnostic{
 					Location: loc,
 					Severity: diag.SeverityWarning,
@@ -167,7 +168,8 @@ func CheckUnusedImports(program *ast.Program, used ImportUse) []diag.Diagnostic 
 type ImportUse struct {
 	// Modules maps a file to the module paths it reached through a UFCS call.
 	Modules map[string]map[string]bool
-	// Names maps a file to the *declared* names of traits it reached by dispatch.
+	// Names maps a file to the *declared* names of traits it reached by dispatch, and of
+	// namespaces a qualified constructor or literal named (`shapes.Circle(2)`).
 	Names map[string]map[string]bool
 	// Callees maps a file to the spans of the callees a UFCS call synthesized, so a
 	// reference made *only* that way can be told from a bare one. See UFCSCallees.
@@ -414,6 +416,16 @@ func collectRefsByFile(
 			return true
 		}
 		ast.WalkStmt(stmt, onStmt, onExpr)
+	}
+	// A type written through a namespace, `p: shapes.Pt`, is a use of the namespace. (A
+	// constructor or literal written so was erased before this runs, and its use arrives
+	// in ImportUse.Names instead.)
+	for _, refs := range byFile {
+		for name := range refs {
+			if namespace, _, ok := symbols.SplitQualified(name); ok {
+				refs[namespace] = true
+			}
+		}
 	}
 	return byFile
 }

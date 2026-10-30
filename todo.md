@@ -500,9 +500,13 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   module importing only `project.{ … }` meant another module's `ImportEvent`, the
   alphabetically first; candidates are now ranked by how the module reaches them.
   (COMPLETED.md, 10/19.)
-- **[OPEN] A constructor cannot be qualified** — `import_view.Chosen(1)` is a syntax error,
-  so a namespace import reaches a module's functions and none of its constructors. Nor can
-  a type (`let t: lib.Ty` does not parse, 10/29), so both, and patterns, are one design.
+- **[DONE 10/29] A constructor, a literal, a pattern and a type through a namespace** —
+  `shapes.Circle(2)`, `shapes.Pt { … }`, `shapes.Dot =>`, `p: shapes.Pt` (COMPLETED.md, 10/29).
+- **[OPEN] An inline-record constructor does not lower**: `data Shape = Square { side: i64 }`
+  type-checks, then `Square { side: 3 }` is "struct instance lowering not implemented" in the
+  backend, and a `Square { side } =>` arm "struct pattern on non-struct value" (10/29).
+- **[OPEN] A one-letter or all-caps type cannot be qualified** (`lib.A`, `lib.RGB`): the token
+  needs a lowercase second letter so `vdp.SCREEN_WIDTH` stays a constant. Import it by name.
 - **[DONE 10/19] A constructor is a function value** (`on_change: Width`), and **a lambda
   in a generic struct field is typed by it**. (COMPLETED.md, 10/19.)
 - **[OPEN] lui can write `on_change={Width}` through** rather than the typed lambda it

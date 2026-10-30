@@ -198,6 +198,11 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// name, and the uses it rewrote count the import as used (lyra-W004, below).
 	res.Diagnostics = append(res.Diagnostics, constructorAliasCollisions(program, symTable)...)
 	aliasedConstructorUses := eraseConstructorAliases(program, symTable)
+	// And a constructor, struct literal or pattern written through a namespace
+	// (`shapes.Circle(2)`) takes its bare name, its module recorded. After the aliases, so
+	// the bare name it leaves is never taken for one.
+	qualifiedDiags, qualifiedUses := eraseQualifiedNames(program, symTable)
+	res.Diagnostics = append(res.Diagnostics, qualifiedDiags...)
 	// And a constructor written as a function value becomes the lambda that applies it.
 	eraseConstructorValues(program, symTable)
 	// And an array sized by a named `const` takes the number it names (`[MAX]u8` → `[8]u8`).
@@ -420,7 +425,8 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// never writes that module's name, so the syntactic check cannot see the use.
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUnusedImports(program, checker.ImportUse{
 		Modules: tc.UFCSModules(),
-		Names:   mergeNameUses(mergeNameUses(tc.DispatchedTraits(), aliasedConstructorUses), tc.AliasedTypeUses()),
+		Names: mergeNameUses(mergeNameUses(mergeNameUses(tc.DispatchedTraits(), aliasedConstructorUses),
+			tc.AliasedTypeUses()), qualifiedUses),
 		Callees: tc.UFCSCallees(),
 		Exports: func(file, name string) []string {
 			return typechecker.UFCSReachableExporters(symTable, file, name)
@@ -724,21 +730,7 @@ func constructorShadowWarnings(program *ast.Program, st *symbols.SymbolTable) []
 
 // ownConstructor is the data type in module that declares a constructor named name.
 func ownConstructor(st *symbols.SymbolTable, module, name string) (*ast.TypeDeclStmt, bool) {
-	for _, decl := range st.Types {
-		if st.ModuleOfFile[decl.GetLocation().File] != module {
-			continue
-		}
-		dt, ok := decl.Type.(types.DataType)
-		if !ok {
-			continue
-		}
-		for _, c := range dt.Constructors {
-			if c.Name == name {
-				return decl, true
-			}
-		}
-	}
-	return nil, false
+	return st.DataTypeWithConstructorIn(module, name)
 }
 
 // collectPackages is the union of every `@link`'s `pkg:`, sorted and deduplicated —

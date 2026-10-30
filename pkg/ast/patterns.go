@@ -126,6 +126,10 @@ type DataPattern struct {
 	PatternBase
 	Name    string
 	Pattern Pattern
+	// Namespace is the namespace import the name was written through (`shapes` in
+	// `shapes.Circle(r) =>`), empty for a bare name. Set when the driver erases the qualifier
+	// (eraseQualifiedNames), so a re-analysis of the same node can record it again.
+	Namespace string
 }
 
 func (p *DataPattern) patternNode() {}

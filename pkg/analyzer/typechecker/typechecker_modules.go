@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -249,6 +250,31 @@ func (tc *TypeChecker) checkWrittenTypeNames() {
 		tc.addError(ref.Loc, SeverityError, "unknown %s %q%s",
 			kind, ref.Name, tc.unimportedHint(ref.Name, ref.Loc))
 	}
+}
+
+// reportQualifiedType says why a type written through a namespace (`p: shapes.Pt`) did not
+// resolve — no such namespace, no such type, or a private one — where "unknown type" would
+// leave the reader to guess which. Reports true when the name was qualified.
+func (tc *TypeChecker) reportQualifiedType(name string, loc ast.Location) bool {
+	namespace, member, ok := symbols.SplitQualified(name)
+	if !ok {
+		return false
+	}
+	path, ok := tc.symTable.NamespaceIn(tc.symTable.ModuleOfFile[loc.File], namespace)
+	switch decl, declared := tc.symTable.LookupTypeIn(path, member); {
+	case !ok:
+		tc.addError(loc, SeverityError,
+			"%s: no namespace import named %q here — `import %s` reaches its types as `%s.%s`",
+			name, namespace, namespace, namespace, member)
+	case !declared:
+		tc.addError(loc, SeverityError, "module %q has no type %q", path, member)
+	case !decl.IsPublic:
+		tc.addError(loc, SeverityError,
+			"%s is private to module %q; mark its declaration `pub` to reach it from here", name, path)
+	default:
+		return false
+	}
+	return true
 }
 
 // reportPrivateType turns a failed type lookup into "not yours" when some other module

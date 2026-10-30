@@ -941,13 +941,26 @@ func (tc *TypeChecker) checkDataMatchArm(pattern ast.Pattern, dt types.DataType)
 	case *ast.WildcardPattern, *ast.IdentifierPattern:
 		return
 	case *ast.DataPattern:
+		// `shapes.Circle(r)` names shapes' constructor, so the scrutinee must be shapes'
+		// type: by name alone it matched this module's own `Circle` in silence (10/29).
+		if module, qualified := tc.symTable.QualifiedAt(p.GetLocation(), p.Name); qualified {
+			owner, ok := tc.symTable.DataTypeWithConstructorIn(module, p.Name)
+			scrutinee, found := tc.symTable.LookupTypeRef(dt.Name, dt.Key, p.GetLocation())
+			if ok && found && owner != scrutinee {
+				tc.addError(p.GetLocation(), SeverityError,
+					"%s.%s builds %s.%s, but this match is on %s", module, p.Name, module, owner.Name, dt)
+				return
+			}
+		}
 		for _, ctor := range dt.Constructors {
 			if ctor.Name == p.Name {
 				return
 			}
 		}
-		tc.addError(p.GetLocation(), SeverityError,
-			"%s is not a constructor of %s", p.Name, dt.Name)
+		if !tc.symTable.QualifiedFailed(p.GetLocation()) {
+			tc.addError(p.GetLocation(), SeverityError,
+				"%s is not a constructor of %s", p.Name, dt.Name)
+		}
 	case *ast.BindingPattern:
 		tc.checkDataMatchArm(p.Pattern, dt)
 	case *ast.OrPattern:

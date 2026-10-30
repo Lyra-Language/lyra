@@ -1048,7 +1048,9 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 		// just as unhelpful.
 		if p.Pattern == nil {
 			if _, isCtor := tc.findDataTypeByConstructor(p.Name, p.GetLocation()); !isCtor {
-				tc.reportCapitalizedBindingName(p)
+				if !tc.symTable.QualifiedFailed(p.GetLocation()) {
+					tc.reportCapitalizedBindingName(p)
+				}
 				// Bind anyway, so the body does not then cascade into an "undefined
 				// identifier" at every use — the same best-effort the struct arm above
 				// takes, and for the same reason.
@@ -1070,8 +1072,10 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 			}
 		}
 		if ctor == nil {
-			tc.addError(p.GetLocation(), SeverityError,
-				"%s is not a constructor of %s", p.Name, dt.Name)
+			if !tc.symTable.QualifiedFailed(p.GetLocation()) {
+				tc.addError(p.GetLocation(), SeverityError,
+					"%s is not a constructor of %s", p.Name, dt.Name)
+			}
 			return
 		}
 		tc.bindDataPatternPayload(p, ctor, bind)
@@ -2963,7 +2967,7 @@ func (tc *TypeChecker) resolveNameReporting(tt types.UnresolvedType, loc ast.Loc
 		// A name that resolves to nothing here may still be *someone's* — a private
 		// declaration in another module, which the key deliberately hides. Saying so
 		// beats "unknown type", which reads as a typo.
-		if tc.reportPrivateType(tt.Name, loc) {
+		if tc.reportPrivateType(tt.Name, loc) || tc.reportQualifiedType(tt.Name, loc) {
 			tc.resolvedTypes[key] = tt
 			return tt
 		}
@@ -4972,7 +4976,7 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 	// constructor or the old `data_constructor_expr` did — by constructor name —
 	// so `?`, `??`, and must-use see the owning data type (e.g. `Maybe`).
 	if name != "?" {
-		if dt, isCtor := tc.findDataTypeByConstructor(name, expr.GetLocation()); isCtor {
+		if decl, dt, isCtor := tc.declaringDataType(name, expr.GetLocation()); isCtor {
 			// The constructor's declared payload field types (flat), so an untyped
 			// literal argument (`B(3)` with `B(u8)`) takes the field's width instead
 			// of promoting to i64 — the same context-directed propagation structs and
@@ -4993,7 +4997,10 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 			// function's variables from its call arguments — and the same unifier,
 			// so "what does this type variable match" keeps one definition.
 			// `Some(5)` binds t = i64 and the value is a `Maybe<i64>`.
-			decl, _ := tc.symTable.LookupTypeFrom(dt.Name, expr.GetLocation())
+			//
+			// The declaration is the one the constructor resolved to, never the data type's
+			// name looked up again: `shapes.Circle(2)` beside this module's own `Shape` found
+			// shapes' constructor and then this module's type (10/29).
 			subst := tc.solveDataTypeVars(decl, declaredFields, expr.Elements)
 			// `Ok()` has no argument to solve its variable from: applied to nothing, the
 			// payload is void, so the variable is void by the spelling itself.
@@ -5323,7 +5330,10 @@ func conversionSpellingFor(t types.Type) (string, bool) {
 func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, name string) types.Type {
 	decl, ok := tc.symTable.LookupTypeFrom(name, expr.GetLocation())
 	if !ok {
-		tc.addError(expr.GetLocation(), SeverityError, "undefined tuple type %q", name)
+		// A qualified name already refused (`shapes.Nope(1)`) says nothing more.
+		if !tc.symTable.QualifiedFailed(expr.GetLocation()) {
+			tc.addError(expr.GetLocation(), SeverityError, "undefined tuple type %q", name)
+		}
 		return nil
 	}
 	declType, ok := decl.Type.(types.TupleType)
@@ -5620,6 +5630,9 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		structType = types.NamedStructType{Name: expr.Name, Fields: fields}
 		resultType = dt
 	} else {
+		if tc.symTable.QualifiedFailed(expr.GetLocation()) {
+			return nil
+		}
 		tc.addError(expr.GetLocation(), SeverityError, "undefined struct type %q%s", expr.Name, tc.unimportedHint(expr.Name, expr.GetLocation()))
 		return nil
 	}

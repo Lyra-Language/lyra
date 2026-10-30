@@ -863,6 +863,14 @@ target = "genesis"
 - `import lib` binds `lib.x` and no bare names. An alias binds only its local name. `lib.x`
   reaches a function, a type, **and a `const` or top-level `let`/`var`** (`pad.LEFT`,
   `vdp.SCREEN_WIDTH`) — the last was "no member" until 09/30.
+- **And its constructors and types, in every position** (10/29): `shapes.Circle(2)`,
+  `shapes.Circle 2`, `shapes.Dot`, `shapes.Pt { x: 1 }`, `shapes.Circle(r) =>`, `let
+  shapes.Wrap(v) = b else { … }`, `xs.map(shapes.Circle)`, and as a type `p: shapes.Pt`,
+  `[]shapes.Shape`, `collections.HashMap<string, i64>`. **The qualifier says whose**: beside
+  this module's own `Circle`, `shapes.Circle` is still shapes', and a qualified pattern is
+  refused against another module's type. The member must be `pub`. The name's second letter
+  must be lowercase or a digit — `lib.A` and `lib.RGB` read as constants, which is what keeps
+  `vdp.SCREEN_WIDTH` a constant — so such a type is imported by name instead.
 - `pub extern` exports a foreign function as `pub let` does a binding; a call still needs
   `unsafe` (§8, `extern`).
 - **A member imported under another name** (`import lib.{ Box as B }`) is that member under
@@ -886,7 +894,7 @@ A local declaration of an imported (or prelude) name wins every bare reference i
 
 **Several modules may export one name**, and a module may re-export a name it imports (`pub let map = (n) => seq.map(n) + 1`). A bare name reaches a module only through its own member list, so the importer chooses; importing one name from two modules is an error, fixed with an alias (`import two.{ helper as other }`) or the namespace.
 
-**Two modules' types of one name are different types**, wherever a value carries one: `let p: Point = two.make()` is refused when `Point` here is not two's, and the message spells them `two.Point` and `Point`.
+**Two modules' types of one name are different types**, wherever a value carries one: `let p: Point = two.make()` is refused when `Point` here is not two's, and the message spells them `two.Point` and `Point`. A `data` type too: until 10/29 one was compared by name alone, so another module's `Shape` passed for this one's.
 
 ### Documentation comments
 

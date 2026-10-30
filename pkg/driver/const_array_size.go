@@ -29,6 +29,13 @@ import (
 // a type is written in a dozen kinds of node and nested in a dozen kinds of type (a struct's
 // fields, a payload, a callback's parameter), and a hand-written list of positions is the
 // switch rule 8 warns about — one missed is a `[MAX]u8` refused in that position alone.
+//
+// **The same walk keys a generic type written through a namespace** (10/29):
+// `collections.HashMap<string, i64>` becomes `HashMap<string, i64>` carrying the key of
+// std.collections' declaration. The dotted name resolved in the typechecker, but the
+// backend reads a written annotation as written and mangled `collections.HashMap$…` beside
+// `HashMap$…`: one type, two LLVM types, and a store between them refused. A plain
+// `shapes.Pt` keeps its dotted name, which every lookup resolves (symbols/qualified.go).
 func foldConstArraySizes(program *ast.Program, st *symbols.SymbolTable) {
 	if st == nil {
 		return
@@ -130,9 +137,10 @@ type visitKey struct {
 }
 
 var (
-	staticArrayType = reflect.TypeOf(types.StaticArrayType{})
-	varDeclType     = reflect.TypeOf(ast.VarDeclStmt{})
-	lambdaExprType  = reflect.TypeOf(ast.LambdaExpr{})
+	staticArrayType   = reflect.TypeOf(types.StaticArrayType{})
+	parameterizedType = reflect.TypeOf(types.ParameterizedType{})
+	varDeclType       = reflect.TypeOf(ast.VarDeclStmt{})
+	lambdaExprType    = reflect.TypeOf(ast.LambdaExpr{})
 )
 
 // walk folds every named size inside v, which must be addressable (or an interface or
@@ -199,6 +207,22 @@ func (f *sizeFolder) walk(v reflect.Value, shadowed map[string]bool) bool {
 func (f *sizeFolder) walkStruct(v reflect.Value, shadowed map[string]bool) bool {
 	t := v.Type()
 	switch t {
+	case parameterizedType:
+		if !v.CanAddr() {
+			return false
+		}
+		p := v.Addr().Interface().(*types.ParameterizedType)
+		changed := false
+		if p.Key == "" {
+			if key, member, ok := f.st.QualifiedTypeKey(f.st.ModuleOfFile[f.loc.File], p.Name); ok {
+				p.Name, p.Key = member, key
+				changed = true
+			}
+		}
+		if f.walk(v.FieldByName("TypeArguments"), shadowed) {
+			changed = true
+		}
+		return changed
 	case staticArrayType:
 		changed := false
 		if !v.CanAddr() {

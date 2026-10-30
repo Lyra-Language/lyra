@@ -197,6 +197,7 @@ Each of these produces something that looks like it works. Other docs cite them 
    | spell a type for a person (a diagnostic, a hover, a doc page) | `types.Source` (`types.SourceSettled` for a signature, `types.SourceAnnotation` for an annotation the editor shows or inserts) — **never `String()`**, which is mangled into symbols and spells `DynamicArray<u8>`. The typechecker's sink (`addErrorCode`) renders any `types.Type` argument itself, so pass the type, not a string made from it |
    | a constructor's payload fields (a lone `void` is none — `Ok()`) | `DataTypeConstructor.FieldTypes` |
    | an aggregate field's LLVM type (a `void` one beside others is `{}`) | `lowerFieldType` (`backend/llvm/lower_types.go`) |
+   | what a name written through a namespace means (`shapes.Circle(2)`, `p: shapes.Pt`) | a type's dotted name in `declKeyIn`; a constructor, literal or pattern erased by the driver (`eraseQualifiedNames`) with its module recorded at its location and on the node (`Namespace`), read by `declKey` and `DeclaringDataType` — `ast/symbols/qualified.go` |
    | a `[]T` buffer's bytes per element (never zero, so no `malloc(0)` or `realloc(p, 0)`) | `bufferStride` (`backend/llvm/layout.go`) |
    | a load or store of a value taking no space (ASan crashes on one) | none emitted: `dropZeroSizedAccesses` removes them once the module is built (`backend/llvm/zero_sized.go`) |
    | declare a libc function the runtime calls | `declareLibc` / `declareLibcVariadic` — **never `module.NewFunc`**, which a program's `extern` of the same name collides with |

@@ -9,6 +9,57 @@ Newest first.
 
 ## Dated log
 
+### 10/29/26 — A namespace reaches a module's constructors and types
+
+`import shapes` reached `shapes.area(x)` and `shapes.ORIGIN` and none of the module's
+constructors or types: `shapes.Circle(2)`, `shapes.Pt { … }`, `p: shapes.Pt` and
+`shapes.Dot =>` were each a syntax error. The todo entry named constructors; types share
+the token and the question, so both landed, with patterns.
+
+- **The grammar reads `shapes.Circle` as one token** (`qualified_type_name`), aliased in
+  each position to the node the bare name has there (`tuple_name`, `struct_name`,
+  `data_type_name`, `user_defined_type_name`). As a token it never contests member access
+  — a field is lowercase, and the lexer takes the longest match — so no conflict was
+  added; the parser grew by 63 states (8,388 → 8,451). **Its name needs a lowercase second
+  letter**: tried first as `[A-Z][a-zA-Z0-9]*`, it would have lexed `vdp.SCREEN_WIDTH`
+  as `vdp.SCREEN` and stranded `_WIDTH`, breaking every constant read through a namespace.
+  So `lib.A` and `lib.RGB` cannot be qualified (todo.md).
+- **A type keeps its dotted name**, and `declKeyIn` reads `ns.Name` as the namespace
+  module's own exported `Name`. Every type lookup goes through it, so annotations, the
+  written-name gate and the backend's layout needed nothing — except a generic one: the
+  backend reads an annotation as written, and `collections.HashMap<string, i64>` mangled
+  apart from `HashMap<string, i64>`, one type as two LLVM types and a store between them
+  refused (an llir panic). The driver's reflection walk over every written type (the one
+  folding `[MAX]u8`) now gives a qualified generic the bare name and its declaration's key.
+- **A constructor, a struct literal and a pattern are erased to the bare name**, as an
+  aliased constructor already is, because a constructor is compared by name in a dozen
+  places. The driver records each erased node's location with the module the qualifier
+  named, and the two resolvers construction and patterns ask — `declKey` and
+  `DeclaringDataType` — answer from that module, at that location, for that name only.
+  **The qualifier is also kept on the node** (`Namespace`): the collect cache shares the
+  AST of every unedited file with the next analysis, whose symbol table starts without the
+  record, so a cached `lib.Circle(2)` beside its module's own `Circle(string)` meant the
+  wrong one to everything asking afterwards (`TestQualifiedNames_SurviveACachedReanalysis`
+  — whose first version passed with the bug present, because each analysis wrote the files
+  to a fresh directory and the cache never hit).
+- **Three wrong answers the qualifier exposed, none of them new.** A construction found
+  its constructor's type, then looked the type's *name* up again (`LookupTypeFrom(dt.Name)`)
+  and took this module's own `Shape`; it now keeps the declaration it found. Two modules'
+  `data` types of one name were assignable to each other — `nominalDataMatch`, which lets a
+  bare constructed `Maybe` meet a written `Maybe<i64>`, compared names alone — while two
+  structs were refused; it now requires the declaration keys to agree where both sides have
+  one. And a pattern's constructor was looked up by name in the scrutinee's type, so
+  `shapes.Circle(r) =>` matched this module's `Circle`; a qualified pattern is now held to
+  the qualifier's type.
+- **One refusal each**: no such namespace, no such member, or a private one, said in those
+  words. A refused name is recorded so the typechecker's "undefined tuple type" and "not a
+  constructor" stand down at it; a private one is erased anyway, so it resolves and costs
+  only the refusal. `lyra-W004` counts a namespace used through a qualified name.
+
+Found beside it, not fixed: an inline-record constructor (`data Shape = Square { side: i64
+}`) type-checks and then does not lower at all, built or matched (todo.md). Highlighting
+paints `shapes.Circle` whole as a type, since a token has no parts.
+
 ### 10/29/26 — Six type-checker and grammar gaps: an empty struct, a struct pattern in `for`, written clause and element types, a place as a guard, a turbofish import
 
 Each was reproduced first. The grammar is tree-sitter-lyra's, with a corpus test for each form.

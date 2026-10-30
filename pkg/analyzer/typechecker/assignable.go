@@ -875,18 +875,31 @@ func isOwnedReturn(mod types.TypeModifier) bool {
 // (`Maybe<i64>`), or an UnresolvedType naming the same data type. Used so a
 // constructor application (which infers to the bare DataType) is accepted
 // against a written instantiation of that type.
+//
+// **The name is not the whole identity**: where two modules declare a data type of one
+// name, each carries its declaration's key, and two keys that differ are two types.
+// Compared by name alone until 10/29, a `shapes.Shape` passed for this module's own
+// `Shape` — and was then matched against the other's constructors. A side with no key
+// (a program-wide name, or a reference not yet resolved) still matches by name.
 func nominalDataMatch(from, to types.Type) bool {
 	if name, ok := dataTypeName(from); ok {
 		if other, ok := nominalName(to); ok {
-			return name == other
+			return name == other && nominalKeysAgree(from, to)
 		}
 	}
 	if name, ok := dataTypeName(to); ok {
 		if other, ok := nominalName(from); ok {
-			return name == other
+			return name == other && nominalKeysAgree(from, to)
 		}
 	}
 	return false
+}
+
+// nominalKeysAgree reports whether two nominal references can name one declaration: their
+// keys are equal, or one has none to disagree with.
+func nominalKeysAgree(a, b types.Type) bool {
+	ka, kb := nominalIdentity(a), nominalIdentity(b)
+	return ka == "" || kb == "" || ka == kb
 }
 
 // instantiationsMatch reports whether two instantiations of one generic type agree

@@ -98,6 +98,11 @@ type SymbolTable struct {
 	// the one a type value cannot answer for itself (see typerefs.go).
 	TypeRefs *TypeRefTable
 
+	// qualified records each constructor, struct literal and pattern name erased from a
+	// qualified spelling (`shapes.Circle`) with the module it named (qualified.go).
+	qualified       map[ast.Location]QualifiedRef
+	qualifiedFailed map[ast.Location]bool
+
 	// Quick lookup tables - these point to AST nodes directly
 	Types     map[string]*ast.TypeDeclStmt
 	Functions map[string]*ast.LambdaExpr
@@ -636,6 +641,10 @@ func (st *SymbolTable) declKey(name string, loc ast.Location) string {
 	if st == nil {
 		return name
 	}
+	// A name erased from `shapes.Pt { … }` means shapes' own, at that node only.
+	if module, ok := st.QualifiedAt(loc, name); ok {
+		return qualifiedName(module, name)
+	}
 	return st.declKeyIn(st.ModuleOfFile[loc.File], name)
 }
 
@@ -651,6 +660,13 @@ func (st *SymbolTable) ResolvedReachably(name string, loc ast.Location) bool {
 	}
 	module := st.ModuleOfFile[loc.File]
 	if st.ModuleDeclares(module, name) {
+		return true
+	}
+	// A qualified name is reachable exactly when its namespace resolves it.
+	if _, ok := st.QualifiedAt(loc, name); ok {
+		return true
+	}
+	if _, ok := st.qualifiedKey(module, name); ok {
 		return true
 	}
 	if imports := st.ImportScopes[module]; imports != nil {
@@ -671,6 +687,10 @@ func (st *SymbolTable) ResolvedReachably(name string, loc ast.Location) bool {
 // (module → imports → prelude), so a key-based lookup and a scope-based one cannot
 // disagree about which declaration a name means.
 func (st *SymbolTable) declKeyIn(module, name string) string {
+	// `shapes.Pt`: the namespace's module's own declaration (qualified.go).
+	if key, ok := st.qualifiedKey(module, name); ok {
+		return key
+	}
 	if st.ModuleDeclares(module, name) {
 		return qualifiedName(module, name)
 	}
@@ -1290,6 +1310,10 @@ func (st *SymbolTable) ModuleDeclares(module, name string) bool {
 func (st *SymbolTable) DeclaringDataType(ctorName string, loc ast.Location) (*ast.TypeDeclStmt, bool) {
 	if st == nil {
 		return nil, false
+	}
+	// `shapes.Circle`: the qualifier says whose, so nothing is ranked (qualified.go).
+	if module, ok := st.QualifiedAt(loc, ctorName); ok {
+		return st.DataTypeWithConstructorIn(module, ctorName)
 	}
 	asking := st.ModuleOfFile[loc.File]
 	keys := make([]string, 0, len(st.Types))
