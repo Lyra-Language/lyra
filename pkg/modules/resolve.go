@@ -105,8 +105,12 @@ func Resolve(entryFile string, roots []string, opts Options) ([]Unit, []diag.Dia
 // without a word. The same holds for a single-file module named by its path (`a/b.lyra`
 // declaring `module a.b`).
 //
-// The implied root goes after the roots given, so it never changes what they already
-// resolve; it is not added twice.
+// **The implied root takes the place of the entry's own directory**, which is the module's
+// (or a module path's), never a root of the program: the roots are then the ones `lyrac`
+// has building from the program's entry file. Appended after it (10/17), `import settings`
+// in `src/face/settings.lyra` (`module face`) found that file itself beneath `src/face`
+// before `src/settings/` beneath `src`, and the editor analysed it twice — every function
+// in it "already defined" at itself (10/30).
 func (r *resolver) addProgramRoot(entry Unit) {
 	if entry.Path == "" {
 		return
@@ -126,12 +130,13 @@ func (r *resolver) addProgramRoot(entry Unit) {
 	default:
 		return
 	}
+	roots := []string{root}
 	for _, have := range r.roots {
-		if filepath.Clean(have) == filepath.Clean(root) {
-			return
+		if c := filepath.Clean(have); c != filepath.Clean(root) && c != filepath.Clean(dir) {
+			roots = append(roots, have)
 		}
 	}
-	r.roots = append(r.roots, root)
+	r.roots = roots
 }
 
 // trailingDirs reports whether dir's last directories are names, in order.

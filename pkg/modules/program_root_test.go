@@ -53,3 +53,27 @@ func TestResolve_NoRootForAMisplacedModule(t *testing.T) {
 		t.Fatalf("a misplaced module found vt through an implied root")
 	}
 }
+
+// The module's own directory is not searched as a root once the program's is known: a file
+// of `face` importing `settings` gets the program's `settings`, not a file of its own module
+// named settings.lyra — which, found first, was the entry file analysed twice (10/30).
+func TestResolve_AModulesOwnDirectoryIsNotARoot(t *testing.T) {
+	root := write(t, map[string]string{
+		"src/app.lyra":               "import face\nlet main = () -> u8 => 0",
+		"src/face/settings.lyra":     "module face\nimport settings.{ defaults }\npub let x = () -> i64 => defaults()",
+		"src/face/app.lyra":          "module face\npub let y = () -> i64 => 2",
+		"src/settings/settings.lyra": "module settings\npub let defaults = () -> i64 => 1",
+	})
+	entry := filepath.Join(root, "src/face/settings.lyra")
+	units, diags := Resolve(entry, []string{filepath.Dir(entry)}, Options{})
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics: %v", diags)
+	}
+	files := map[string]int{}
+	for _, u := range units {
+		files[u.File]++
+	}
+	if files[entry] != 1 || files[filepath.Join(root, "src/settings/settings.lyra")] != 1 || len(units) != 3 {
+		t.Fatalf("units = %v, want face's two files and settings' one, each once", paths(units))
+	}
+}

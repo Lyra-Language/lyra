@@ -45,8 +45,10 @@ front end (`lyrac` and the LSP — without it the editor ran with no prelude).
 - **The root is the directory *containing* `std/`**, not `std/` itself.
 - **A module file's place implies its program's root** (`addProgramRoot`, in `Resolve`): an
   entry file in its own module's directory (`src/ui/grid.lyra` declaring `module ui`), or a
-  file module at its path (`src/net/http.lyra` declaring `module net.http`), adds the
-  directory above (`src`) after the roots given, so it finds its program's other modules.
+  file module at its path (`src/net/http.lyra` declaring `module net.http`), puts the
+  directory above (`src`) **in place of the file's own directory**, so it finds its program's
+  other modules as `lyrac` does from the entry file. Kept beside it (until 10/30), the module's
+  own directory came first: `import settings` in `src/face/settings.lyra` found that file.
   `DefaultRoots` gives only the file's own directory, which is right for an entry file at the
   top and wrong for any other — an editor opening `grid.lyra` reported `vt` missing while
   `lyrac`, built from the top, did not. A file whose place does not match its path implies

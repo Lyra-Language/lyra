@@ -9,6 +9,17 @@ Newest first.
 
 ## Dated log
 
+### 10/30/26 — An editor's root is the program's, not the module's directory
+The language server reported every function of Termina's `src/face/settings.lyra` "already
+defined" at itself. A file opened in an editor is the entry of its own analysis, and since
+10/17 (`addProgramRoot`) a file in its module's directory implies its program's root, `src`
+— appended **after** the file's own directory, so nothing the old roots resolved would
+change. But that directory is the module's, never a root: `import settings` there found
+`face/settings.lyra` — the file itself — before `src/settings/`, and loaded it a second time.
+`lyrac`, building from `termina.lyra`, never searched `src/face`, so only the editor saw it.
+The implied root now replaces the file's own directory, and the roots are the ones `lyrac`
+has; every Termina, Vega and Sheliak file then checked clean as its own entry (142).
+
 ### 10/30/26 — A large aggregate passed bare warns (`lyra-W031`)
 Sheliak's bus helpers copied a several-kilobyte `GenesisBus` on every memory read — two thirds
 of a frame, found only by profiling (09/28). A bare parameter is read-only already (E025), so
