@@ -310,9 +310,13 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
   taking Cmd+A, C, X, V and D itself (an Edit menu item's shortcut would be taken from
   every text field too: a window's shortcuts run before any element hears a key) — and
   **the frame strip 10/29**, a thumbnail a frame in a row that scrolls across — and **the
-  animations section 10/29**, each step over two lines in the narrow panel. Its preview,
-  onion skin, resizing and true colour to come, then the entity,
-  scene, sound, instrument and song editors. `vega --ui` opens the new front end.
+  animations section 10/29**, each step over two lines in the narrow panel. **The entity
+  editor 10/29** (`face/entity_editor.lyra`): the list, the name, the sprite and the
+  animation it starts with, the colliders — a shape and the layers it is on and meets as
+  checkboxes, in place of ImGui's combos of them — and the movement in pixels a frame, over
+  a preview playing the start (`EveryFrame` only while an entity editor's tab is shown),
+  each collider outlined in its row's colour. The sprite editor's preview, onion skin,
+  resizing and true colour to come, then the scene, sound, instrument and song editors. `vega --ui` opens the new front end.
 8. **The switch**: `Vega.app` and the Linux releases built from the new front end; the
    ImGui front end, `mac_look` and `ui_checks.lyra` removed, and `bindings.imgui` with no
    user left in the workspace.
