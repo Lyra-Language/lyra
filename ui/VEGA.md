@@ -315,8 +315,14 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
   animation it starts with, the colliders — a shape and the layers it is on and meets as
   checkboxes, in place of ImGui's combos of them — and the movement in pixels a frame, over
   a preview playing the start (`EveryFrame` only while an entity editor's tab is shown),
-  each collider outlined in its row's colour. The sprite editor's preview, onion skin,
-  resizing and true colour to come, then the scene, sound, instrument and song editors. `vega --ui` opens the new front end.
+  each collider outlined in its row's colour. **The scene editor 10/29**
+  (`face/scenes.lyra`): the scenes and their properties (name, maps behind and in front,
+  the camera's zone), a canvas of the maps — each a picture of its cells, the front over the
+  back — the placements as the game first shows them and the camera's starting screen and
+  zone; Select drags a placement or the zone (its corner resizes it), Place puts an entity
+  down, by whole tiles while Snap is on, a drag one gesture; and the side panel's entities,
+  placements and the chosen one's fields. The sprite editor's preview, onion skin, resizing
+  and true colour to come, then the sound, instrument and song editors. `vega --ui` opens the new front end.
 8. **The switch**: `Vega.app` and the Linux releases built from the new front end; the
    ImGui front end, `mac_look` and `ui_checks.lyra` removed, and `bindings.imgui` with no
    user left in the workspace.
