@@ -358,9 +358,9 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
    ImGui front end, `mac_look` and `ui_checks.lyra` removed, and `bindings.imgui` with no
    user left in the workspace. **Done 10/30**: `vega.lyra` opens the studio on `ui` (`--frames
    N` stepping it, a frame each), the ImGui modules and their checks are gone, and a release no
-   longer needs `liblyra-imgui.a`. `bindings.imgui` stays for lyra's own examples. Two things
-   the ImGui front end did are left open: the dock's arrangement kept between runs, and the
-   interface size (an interface-wide scale `ui` lacks).
+   longer needs `liblyra-imgui.a`. `bindings.imgui` stays for lyra's own examples. The dock's
+   arrangement is kept between runs since (Vega's `face/layout.lyra`); the interface size is
+   left open (an interface-wide scale `ui` lacks).
 
 ## 12. Open questions
 
