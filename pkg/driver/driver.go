@@ -174,13 +174,18 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// Likewise before the walk: a declaration that takes a name an imported module
 	// exports is keyed apart from it, and a type is keyed as it is registered.
 	c.SetImports(graph)
+	broken := map[string][]ast.Location{}
 	for i, u := range units {
 		// Parse diagnostics are per unit and cheap, so they are recollected for the
 		// reused prefix too rather than being carried in the snapshot — one fewer thing
 		// the snapshot has to be right about.
 		before := len(res.Diagnostics)
-		res.Diagnostics = append(res.Diagnostics, collectParseErrors(u.Root, u.Source)...)
+		syntax := collectParseErrors(u.Root, u.Source)
+		res.Diagnostics = append(res.Diagnostics, syntax.diags...)
 		stampFile(res.Diagnostics[before:], u.File)
+		if len(syntax.broken) > 0 {
+			broken[u.File] = append(broken[u.File], syntax.broken...)
+		}
 		if i < start {
 			continue
 		}
@@ -192,6 +197,7 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 		}
 		c.AddFile(u.Root, u.Source, u.File, u.Path)
 	}
+	parseDiagnostics := len(res.Diagnostics)
 	program, symTable, scopeTable, collectorErrors := c.Finish()
 	res.Program, res.SymbolTable, res.ScopeTable = program, symTable, scopeTable
 	// Before every pass: an aliased constructor import is erased into the constructor's own
@@ -458,6 +464,7 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	for _, te := range typeErrors {
 		res.Diagnostics = append(res.Diagnostics, te.Diagnostic())
 	}
+	res.Diagnostics = holdBackAfterSyntaxErrors(res.Diagnostics, parseDiagnostics, broken)
 
 	return res
 }
@@ -470,53 +477,6 @@ func (r *Result) err(loc ast.Location, code, msg string) {
 		Location: loc,
 		Message:  msg,
 	})
-}
-
-// collectParseErrors walks the tree-sitter CST for ERROR and MISSING nodes and
-// returns them as diagnostics. Tree-sitter embeds parse errors as named nodes
-// rather than failing the parse, so this is the only way to surface them.
-// Positions are converted from tree-sitter's 0-based rows/columns to Lyra's
-// 1-based ast.Location convention so downstream mapping treats them like any
-// other diagnostic.
-func collectParseErrors(root *sitter.Node, source []byte) []diag.Diagnostic {
-	if !root.HasError() {
-		return nil
-	}
-	var diags []diag.Diagnostic
-	var walk func(*sitter.Node)
-	walk = func(node *sitter.Node) {
-		if node.IsMissing() {
-			diags = append(diags, diag.Diagnostic{
-				Severity: diag.SeverityError,
-				Location: nodeLocation(node),
-				Message:  fmt.Sprintf("missing %s", node.Kind()),
-			})
-			return
-		}
-		if node.IsError() {
-			text := node.Utf8Text(source)
-			msg := "syntax error"
-			if len(text) > 0 && len(text) <= 40 {
-				msg = fmt.Sprintf("syntax error: unexpected %q", text)
-			}
-			if hint, ok := uppercaseTypeParamMessage(source, node.StartByte(), node.EndByte()); ok {
-				msg = "syntax error: " + hint
-			}
-			diags = append(diags, diag.Diagnostic{
-				Severity: diag.SeverityError,
-				Location: nodeLocation(node),
-				Message:  msg,
-			})
-			return
-		}
-		for i := uint(0); i < node.ChildCount(); i++ {
-			if child := node.Child(i); child != nil && child.HasError() {
-				walk(child)
-			}
-		}
-	}
-	walk(root)
-	return diags
 }
 
 // nodeLocation converts a tree-sitter node's 0-based span to a 1-based

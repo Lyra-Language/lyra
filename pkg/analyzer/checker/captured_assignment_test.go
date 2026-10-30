@@ -42,7 +42,7 @@ func TestCapturedAssignment_PlainAssignment(t *testing.T) {
 	assertCapturedAssignment(t, `
 let main = () -> u8 => {
   var n = 5
-  let bump = () -> i64 => { n = n + 1  n }
+  let bump = () -> i64 => { n = n + 1; n }
   u8(bump())
 }
 `, "n")
@@ -52,7 +52,7 @@ func TestCapturedAssignment_CompoundAssignment(t *testing.T) {
 	assertCapturedAssignment(t, `
 let main = () -> u8 => {
   var n = 5
-  let bump = () -> i64 => { n += 1  n }
+  let bump = () -> i64 => { n += 1; n }
   u8(bump())
 }
 `, "n")
@@ -65,7 +65,7 @@ func TestCapturedAssignment_ThroughAPath(t *testing.T) {
 struct Counter { n: i64 }
 let main = () -> u8 => {
   var c = Counter { n: 0 }
-  let bump = () -> i64 => { c.n = 1  c.n }
+  let bump = () -> i64 => { c.n = 1; c.n }
   u8(bump())
 }
 `, "c")
@@ -98,7 +98,7 @@ let main = () -> u8 => {
 func TestCapturedAssignment_OwnParameterIsFine(t *testing.T) {
 	assertNoCapturedAssignment(t, `
 let main = () -> u8 => {
-  let f = (n: i64) -> i64 => { n = n + 1  n }
+  let f = (n: i64) -> i64 => { n = n + 1; n }
   u8(f(1))
 }
 `)
@@ -191,7 +191,7 @@ func TestCapturedAddress_OwnLocalIsFine(t *testing.T) {
 let fill = (p: ^mut i32) -> void => unsafe { p^ = 42 }
 let apply = (f: () -> void) -> void => f()
 let main = () -> u8 => {
-  apply(() => { var own: i32 = 0  unsafe { fill(&mut own) }  println("${own}") })
+  apply(() => { var own: i32 = 0; unsafe { fill(&mut own) }; println("${own}") })
   0
 }
 `

@@ -9,6 +9,32 @@ Newest first.
 
 ## Dated log
 
+### 10/30/26 — A syntax error is reported as the mistake, once
+
+Two broken lines measured it. An unclosed `add(1,` was `unexpected "= add(1, \n  let y"`, then
+"x used before its declaration" and "undefined identifier y"; an unclosed `(1 + 2` was
+`unexpected "2"`, a `missing )` a line later, and "operands must be numeric, got integer
+literal and void". Tree-sitter's ERROR and MISSING nodes say where **recovery** happened, not
+what went wrong, and every pass after parsing then reported the shape recovery guessed.
+
+- **Delimiters are matched over the tree's own tokens** (`pkg/driver/syntax_errors.go`), not
+  the source text: strings and comments are already single tokens there, and `${`/`}` are the
+  scanner's markers aliased into it. MISSING tokens are skipped — they are tree-sitter's guess
+  at the fix, and counting them balanced exactly what was being looked for. Each unclosed
+  opener is reported at itself, naming the closer that ended its region; tree-sitter's ERROR
+  and MISSING reports reaching past the first one are its echoes and are dropped.
+- **Two cascades the first version had.** An unterminated `${` also flagged the `(` and `{`
+  around it, so of the openers open at the end of the file only the innermost is reported.
+  `[1, 2)` was an unclosed `[` *and* an unmatched `)`, so a wrong closer on its opener's line
+  is one mismatch; on a later line (`print(1))`) it is unmatched.
+- **Held back after a syntax error** (`holdBackAfterSyntaxErrors`): every error inside a
+  top-level item holding one, and every warning in that file — an "unused" warning there is
+  usually a use that landed in an ERROR node. Errors in the file's other items and other
+  files stay. Balanced input keeps tree-sitter's own report; nothing changes for a file
+  that parses.
+- Not done: a broken declaration can still make another *file* report its name undefined.
+- Test: `pkg/driver/syntax_errors_test.go`.
+
 ### 10/30/26 — Colour emoji in `ui.text`
 
 Found by Termina, whose output and command line showed an emoji as nothing. **No second atlas**:

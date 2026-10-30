@@ -595,6 +595,11 @@ with all errors as `[]diagnostic.Diagnostic` (CST positions converted to 1-based
 - **An instantiation carries its request site**: lowering enters the generic's module, but
   type arguments resolve from the site — `lookupNamedType` falls back to the site's key after
   the current module's. Composed specializations take the outer site.
+- **Syntax errors are reported by the driver, not the parser** (`syntax_errors.go`):
+  unbalanced delimiters are matched over the CST's tokens (MISSING ones skipped) and named
+  at the opener, replacing tree-sitter's ERROR/MISSING reports past the first; then every
+  later error inside a top-level item holding a syntax error, and every warning in that
+  file, is held back. A new opening token in the grammar belongs in `closerOf`.
 - `driver.ResolveEntryPoint(res)` (`entrypoint.go`): top-level `let main`, zero parameters,
   returning `u8` or void. Build-time only, not part of `Analyze`.
 
