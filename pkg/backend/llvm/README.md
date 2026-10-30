@@ -317,8 +317,12 @@ See DATA_LAYOUT.md. A capitalized call the typechecker resolved to a constructor
 `DataType` and goes to `lowerDataConstruction`. `lowerTupleLiteralExpr`,
 `lowerDataConstruction` and `lowerStructInstanceExpr` all pass elements through
 `coerceAggregateElem`. A `shared` value is built inline then boxed (`lowerBoxShared`).
-Loud error: an inline-record data constructor; record-update syntax; a struct field
-omitted in favour of a default.
+An inline-record variant written as a struct literal (`Square { side: 3 }`) records its
+`DataType` too: `lowerInlineRecordConstruction` builds the anonymous-struct payload as its
+literal would (`buildAnonymousStruct`) and the variant as any constructor's
+(`finishDataConstruction`); a struct pattern matches an anonymous struct through
+`resolveStructType`. Loud error: a record update of a variant; a struct field omitted in
+favour of a default.
 
 ### `newtype`
 

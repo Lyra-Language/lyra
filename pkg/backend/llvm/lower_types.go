@@ -714,9 +714,19 @@ func (l *lowerer) resolveDataType(t types.Type) (types.DataType, bool) {
 }
 
 // resolveStructType resolves a scrutinee type to its NamedStructType.
+//
+// **An anonymous struct answers too**, as a struct of its fields in the type's own order —
+// the order it is built and laid out in (namedStructFields) — so a struct pattern matches
+// an inline-record variant's payload (`Square { side } =>`, which the collector makes
+// `Square({ side })`) and any `{ … }` value. It answered no until 10/30.
 func (l *lowerer) resolveStructType(t types.Type) (types.NamedStructType, bool) {
-	st, ok := l.resolveShape(t).(types.NamedStructType)
-	return st, ok
+	switch st := l.resolveShape(t).(type) {
+	case types.NamedStructType:
+		return st, true
+	case types.AnonymousStructType:
+		return types.NamedStructType{Fields: st.Fields}, true
+	}
+	return types.NamedStructType{}, false
 }
 
 // resolveTupleType resolves a scrutinee type to its TupleType (named or anonymous).

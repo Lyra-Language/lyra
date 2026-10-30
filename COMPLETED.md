@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 10/30/26 — An inline-record variant is built and matched
+`data Shape = Square { side: i64 } | …` type-checked, and the backend refused both halves:
+`Square { side: 3 }` was "struct instance lowering not implemented", and `Square { side } =>`
+"struct pattern on non-struct value". Re-run first, it turned out wider than the entry said:
+the parenthesized spelling it means, `Square({ side })`, failed the same way, because the
+collector already makes the braced pattern that one (a data pattern over an anonymous struct
+pattern). So the two gaps were a struct literal naming a constructor, and a struct pattern
+over **any** anonymous struct.
+- **The literal is not rewritten in the driver**, as qualified and aliased constructors are,
+  because the typechecker already types it as the constructor on purpose
+  (`findInlineRecordConstructor`, generics included), and a rewrite would have bypassed that
+  to reach a path that types it no better. The backend builds it from the shared halves:
+  `buildAnonymousStruct`, split out of the anonymous struct literal's lowering, then
+  `finishDataConstruction`, split out of the constructor's — build, box when `shared`, Perceus
+  reuse — so neither half has a copy to drift from.
+- **`resolveStructType` answers for an anonymous struct** with its fields in the type's own
+  order, the order it is laid out and built in (`namedStructFields` already relied on it), so
+  extracting a field by its index reads the field the pattern names.
+- Tested built and matched beside positional and nullary variants, with fields out of order,
+  tested and renamed in patterns, in `if let` and `let … else`, generic, as a recursive
+  `shared` tree, through a namespace beside a local namesake, and its `string`/`[]string`
+  fields under LeakSanitizer. A record update of a variant stays refused by the typechecker,
+  its base having no type to be.
+
 ### 10/30/26 — A managed global releases what it held
 `q = q.slice(1, q.len())` leaked the array it replaced — in `main` as well, which the todo
 entry had recorded as fine — and so did every reassignment of a managed global and every

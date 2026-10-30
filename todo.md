@@ -504,9 +504,8 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   (COMPLETED.md, 10/19.)
 - **[DONE 10/29] A constructor, a literal, a pattern and a type through a namespace** —
   `shapes.Circle(2)`, `shapes.Pt { … }`, `shapes.Dot =>`, `p: shapes.Pt` (COMPLETED.md, 10/29).
-- **[OPEN] An inline-record constructor does not lower**: `data Shape = Square { side: i64 }`
-  type-checks, then `Square { side: 3 }` is "struct instance lowering not implemented" in the
-  backend, and a `Square { side } =>` arm "struct pattern on non-struct value" (10/29).
+- **[DONE 10/30] An inline-record variant is built and matched** — `Square { side: 3 }`,
+  `Square { side } =>` (COMPLETED.md, 10/30).
 - **[DONE 10/30] An all-caps type or constructor through a namespace** — `lib.RGB`, `lib.A(1)`,
   `lib.LOUD =>` (COMPLETED.md, 10/30).
 - **[DONE 10/19] A constructor is a function value** (`on_change: Width`), and **a lambda

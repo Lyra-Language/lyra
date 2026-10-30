@@ -135,9 +135,9 @@ func (l *lowerer) lowerTupleIndexExpr(block *ir.Block, e *ast.TupleIndexExpr) (v
 // **A record update** (`P { base | f: v }`) is the same construction with the base
 // supplying every field the literal does not: see lowerRecordBaseField.
 //
-// Deferred with a loud error: a missing field relying on a default value, and an
-// inline-record data constructor (which records the owning DataType, not a struct —
-// that's the data/tagged-union work).
+// An inline-record data constructor (`Square { side: 3 }`) records its owning DataType,
+// not a struct, and is built by lowerInlineRecordConstruction. Deferred with a loud error:
+// a missing field relying on a default value.
 func (l *lowerer) lowerStructInstanceExpr(block *ir.Block, e *ast.StructInstanceExpr) (value.Value, *ir.Block, error) {
 	recorded, ok := l.recordedType(e)
 	if !ok {
@@ -145,6 +145,9 @@ func (l *lowerer) lowerStructInstanceExpr(block *ir.Block, e *ast.StructInstance
 	}
 	if ut, isUnion := recorded.(types.UnionType); isUnion {
 		return l.lowerUnionInstanceExpr(block, e, ut)
+	}
+	if dt, isData := recorded.(types.DataType); isData {
+		return l.lowerInlineRecordConstruction(block, e, dt)
 	}
 	structType, ok := recorded.(types.NamedStructType)
 	if !ok {
@@ -551,6 +554,15 @@ func (l *lowerer) lowerDataConstruction(block *ir.Block, dt types.DataType, ctor
 		}
 	}
 
+	return l.finishDataConstruction(block, dt, tag, ctor, payloadFields, srcExpr)
+}
+
+// finishDataConstruction is variant ctor (declaration index tag) of dt from its lowered
+// payload fields: the inline union, boxed when dt is `shared` — into a Perceus reuse
+// token's box when srcExpr is a reuse target. Shared by a constructor applied to its
+// payload (`Square({ side: 3 })`, lowerDataConstruction) and an inline-record one
+// written as a struct literal (`Square { side: 3 }`, lowerInlineRecordConstruction).
+func (l *lowerer) finishDataConstruction(block *ir.Block, dt types.DataType, tag int, ctor types.DataTypeConstructor, payloadFields []value.Value, srcExpr ast.Expression) (value.Value, *ir.Block, error) {
 	union, err := l.buildDataValue(block, dt, tag, ctor, payloadFields)
 	if err != nil {
 		return nil, nil, err
@@ -744,6 +756,45 @@ func (l *lowerer) coerceAggregateElem(block *ir.Block, v value.Value, dst lltype
 		v.Type(), dst, src.GetLocation().Pretty())
 }
 
+// lowerInlineRecordConstruction builds an inline-record variant written as a struct literal,
+// `Square { side: 3 }` of `data Shape = Square { side: i64 } | …`: its payload is the
+// anonymous struct `{ side: i64 }`, so this is `Square({ side: 3 })` — that struct built as
+// its literal would be (buildAnonymousStruct), then the variant around it as any
+// constructor's (finishDataConstruction). The typechecker records the owning data type
+// here, as it does for `Square({ … })`; until 10/30 this said "not implemented".
+//
+// A record update cannot reach here — its base would have to be the variant, which is no
+// type (the typechecker refuses it) — and is refused loudly if one does.
+func (l *lowerer) lowerInlineRecordConstruction(block *ir.Block, e *ast.StructInstanceExpr, dt types.DataType) (value.Value, *ir.Block, error) {
+	ctor, tag, ok := findConstructor(dt, e.Name)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: data type %q has no constructor %q", dt.Name, e.Name)
+	}
+	var record types.AnonymousStructType
+	if len(ctor.Params) == 1 {
+		record, ok = ctor.Params[0].(types.AnonymousStructType)
+	}
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: %s at %s is built as a struct literal but its payload is not a record", e.Name, e.GetLocation().Pretty())
+	}
+	if e.BaseStruct != nil {
+		return nil, nil, fmt.Errorf("llvm: a record update of the variant %s at %s has no base type", e.Name, e.GetLocation().Pretty())
+	}
+	payload, block, err := l.buildAnonymousStruct(block, record, e.Fields, nil)
+	if err != nil || payload == nil {
+		return nil, block, err
+	}
+	payloadStructTy, err := l.dataPayloadStructType(ctor)
+	if err != nil {
+		return nil, nil, err
+	}
+	payload, err = l.coerceAggregateElem(block, payload, payloadStructTy.Fields[0], e)
+	if err != nil {
+		return nil, nil, err
+	}
+	return l.finishDataConstruction(block, dt, tag, ctor, []value.Value{payload}, e)
+}
+
 // lowerAnonymousStructInstanceExpr builds `{ x: 1, y: "s" }`.
 //
 // The one thing it does that the named path does not have to: **fields are placed by
@@ -765,7 +816,24 @@ func (l *lowerer) lowerAnonymousStructInstanceExpr(block *ir.Block, e *ast.Anony
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: anonymous struct did not survive allocation stripping")
 	}
-	llType, err := l.lowerType(stackType)
+	agg, block, err := l.buildAnonymousStruct(block, stackType, e.Fields, e.BaseStruct)
+	if err != nil || agg == nil {
+		return nil, block, err
+	}
+	if types.AllocationOf(recorded) == types.Shared {
+		boxed, err := l.lowerBoxShared(block, agg, stackType)
+		return boxed, block, err
+	}
+	return agg, block, nil
+}
+
+// buildAnonymousStruct is an anonymous struct's inline value from the fields a literal
+// writes — and from base, a record update's, for the fields it does not — placed in the
+// type's own field order. A nil value with no error is a field that diverged. Shared by
+// `{ x: 1 }` and an inline-record constructor's payload (`Square { side: 3 }`), which is
+// that literal under a constructor's name.
+func (l *lowerer) buildAnonymousStruct(block *ir.Block, structType types.AnonymousStructType, fields []ast.StructField, baseExpr ast.Expression) (value.Value, *ir.Block, error) {
+	llType, err := l.lowerType(structType)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -774,14 +842,14 @@ func (l *lowerer) lowerAnonymousStructInstanceExpr(block *ir.Block, e *ast.Anony
 		return nil, nil, fmt.Errorf("llvm: anonymous struct %s did not lower to a struct", structType)
 	}
 
-	valueByName := make(map[string]ast.Expression, len(e.Fields))
-	for _, f := range e.Fields {
+	valueByName := make(map[string]ast.Expression, len(fields))
+	for _, f := range fields {
 		valueByName[f.Name] = f.Value
 	}
 
 	var base value.Value
-	if e.BaseStruct != nil {
-		base, block, err = l.lowerExpr(block, e.BaseStruct)
+	if baseExpr != nil {
+		base, block, err = l.lowerExpr(block, baseExpr)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -813,10 +881,6 @@ func (l *lowerer) lowerAnonymousStructInstanceExpr(block *ir.Block, e *ast.Anony
 			return nil, nil, err
 		}
 		agg = block.NewInsertValue(agg, v, uint64(i))
-	}
-	if types.AllocationOf(recorded) == types.Shared {
-		boxed, err := l.lowerBoxShared(block, agg, stackType)
-		return boxed, block, err
 	}
 	return agg, block, nil
 }
