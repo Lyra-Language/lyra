@@ -347,7 +347,11 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
   the size — typed in pixels as a draft that Resize makes, as the map's is, for a sprite a
   console draws at any size, else chosen in whole tiles — the palette, and Make true colour
   or Make indexed (`fit.made_*`, one edit); a true-colour picture's left brush made with
-  R, G, B and A sliders. The import dialogs to come. `vega --ui` opens the new front end.
+  R, G, B and A sliders. **Import image 10/30**: written in code as Settings was, not markup
+  — a modal over the window, its state the studio's and the import worked out again in `next`
+  as a choice changes, its frames painted over the checker; what it says and the edit it makes
+  shared with the ImGui dialog (`image_import.lyra`). Import Tiled map's dialog to come. `vega
+  --ui` opens the new front end.
 8. **The switch**: `Vega.app` and the Linux releases built from the new front end; the
    ImGui front end, `mac_look` and `ui_checks.lyra` removed, and `bindings.imgui` with no
    user left in the workspace.

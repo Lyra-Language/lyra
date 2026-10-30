@@ -47,6 +47,15 @@ not a formality.
     higher-order function per lambda set. Verdict: not worth it for speed alone; revisit if
     the `noalloc` refusal starts biting or a self-hosting profile shows indirect-call cost.
 
+### Typechecker
+
+- **[OPEN] An error in a generic call's array argument, past its first element, goes
+  unreported** (10/30, Vega's import dialog). With `flags: []bool`,
+  `rowof([lbl("p"), sel(Spec { options: [i in flags | all[i]] })])` checks clean — `all[i]`
+  indexing with a `bool` — where the element alone, or the array in an annotated `let`, is
+  refused (`rowof<e>`, `lbl<e>`, `sel<e>` generic in `e`). `ui`'s `row([text(…), select(…)])`
+  is the shape.
+
 ### Traits: a method's own type variables
 
 - **[DECIDED] `Self<…>` through a `where` bound stays refused.** `Result<_, e>` (a hole
