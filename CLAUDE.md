@@ -135,7 +135,7 @@ Each of these produces something that looks like it works. Other docs cite them 
      exclusion is a claim written beside its reason. Registering a new *consumer* is still
      manual. Better than registering a mirror: delete it (`ast.RewriteStmt`, `ast.WalkStmt`).
    - **Type kinds have no checklist.** The walks that must reach *every* composite are
-     resolution (`resolveTypeWith`), layout (`SizeAndAlign`, `resolveForLayout`),
+     resolution (`resolveTypeWith`), layout (`types.SizeAndAlign`, `resolveForLayout`),
      substitution (`Substitute`, `CollectTypeVars`, `mentionsGenericParam`, ownership's
      `substituteTypeVars`), retain/drop (`emitOwnedValue`), `mentionsTypeVar`, and
      `resolveInstantiation` (`backend/llvm/generic_types.go`). Container-shaped switches
@@ -198,7 +198,8 @@ Each of these produces something that looks like it works. Other docs cite them 
    | spell a type for a person (a diagnostic, a hover, a doc page) | `types.Source` (`types.SourceSettled` for a signature, `types.SourceAnnotation` for an annotation the editor shows or inserts) — **never `String()`**, which is mangled into symbols and spells `DynamicArray<u8>`. The typechecker's sink (`addErrorCode`) renders any `types.Type` argument itself, so pass the type, not a string made from it |
    | a constructor's payload fields (a lone `void` is none — `Ok()`) | `DataTypeConstructor.FieldTypes` |
    | an aggregate field's LLVM type (a `void` one beside others is `{}`) | `lowerFieldType` (`backend/llvm/lower_types.go`) |
-   | what a name written through a namespace means (`shapes.Circle(2)`, `p: shapes.Pt`) | a type's dotted name in `declKeyIn`; a constructor, literal or pattern erased by the driver (`eraseQualifiedNames`) with its module recorded at its location and on the node (`Namespace`), read by `declKey` and `DeclaringDataType` — `ast/symbols/qualified.go` |
+   | what a name written through a namespace means (`shapes.Circle(2)`, `p: shapes.Pt`, `lib.RGB`) | a type's dotted name in `declKeyIn`; a constructor, literal or pattern erased by the driver (`eraseQualifiedNames`) with its module recorded at its location and on the node (`Namespace`), read by `declKey` and `DeclaringDataType` — `ast/symbols/qualified.go`. An all-caps value (`lib.LOUD`, `vdp.SCREEN_WIDTH`) is collected as the `MemberExpr` it always was; the driver turns one naming the namespace's constructor into it (`qualifiedConstructorValue`) |
+   | the bytes a value takes by value (a layout, a parameter's copy) | `types.SizeAndAlign` (`pkg/types/layout.go`; the backend's `SizeAndAlign` delegates); for a type as written, `TypeChecker.ByValueSize`, which resolves each aggregate's components from its declaration |
    | a `[]T` buffer's bytes per element (never zero, so no `malloc(0)` or `realloc(p, 0)`) | `bufferStride` (`backend/llvm/layout.go`) |
    | a load or store of a value taking no space (ASan crashes on one) | none emitted: `dropZeroSizedAccesses` removes them once the module is built (`backend/llvm/zero_sized.go`) |
    | declare a libc function the runtime calls | `declareLibc` / `declareLibcVariadic` — **never `module.NewFunc`**, which a program's `extern` of the same name collides with |

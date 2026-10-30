@@ -1,5 +1,10 @@
 # `pkg/types` — the type system
 
+**`layout.go` is the size and alignment of a value** (`SizeAndAlign`, LP64), the engine the
+backend lays aggregates out with and the front end asks about cost (`lyra-W031`).
+`SizeAndAlignResolving` takes a `Resolver` for a type as written: it answers each type met,
+and the resolver its components are written under (a struct's fields are its declaration's).
+
 Every type implements `Type` (`typeNode()`, `String()`, `GetName()`). Language-level semantics of
 each type are in [`LANGUAGE.md`](../../LANGUAGE.md); this file covers representation.
 

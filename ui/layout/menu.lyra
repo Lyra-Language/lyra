@@ -296,7 +296,7 @@ let lay_opens<e> = (
   children: []Node<e>,
   spec: MenuSpec<e>,
   c: Constraints,
-  ctx: Ctx,
+  ctx: ref Ctx,
   fonts: mut Fonts,
   cache: mut LayoutCache<e>
 ) -> Body<e> => {

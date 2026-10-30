@@ -241,7 +241,7 @@ let matching_nodes = (path: string, model: Model) -> Maybe<NodeAnimation> =>
   }
 
 /// Release a model and its clips.
-let close = (o: Opened) -> void => {
+let close = (o: ref Opened) -> void => {
   unload_model(o.model)
   match o.anims {
     Some(a) => unload_animations(a),
@@ -252,7 +252,7 @@ let close = (o: Opened) -> void => {
 /// The transform that frames a model: its centre to the origin, turned, then scaled so its
 /// largest extent is `FIT` — applied in that order, since `matrix_multiply` applies its
 /// first argument first.
-let framing = pure (o: Opened, yaw: Degrees, pitch: Degrees, zoom: f32) -> Matrix => {
+let framing = pure (o: ref Opened, yaw: Degrees, pitch: Degrees, zoom: f32) -> Matrix => {
   let largest = max3(o.dims.x, o.dims.y, o.dims.z)
   let s = if largest > 0.0 { FIT / largest * zoom } else { zoom }
   let centred = matrix_translation(vec3(
@@ -273,7 +273,7 @@ let framing = pure (o: Opened, yaw: Degrees, pitch: Degrees, zoom: f32) -> Matri
 /// pose before the framing. Back faces are drawn throughout, since a glTF material may be
 /// double-sided and the lighting shader turns a back face's normal round.
 let draw_opened = (
-  o: Opened,
+  o: ref Opened,
   transform: Matrix,
   wires: bool,
   posed: Maybe<[]Matrix>
@@ -286,7 +286,7 @@ let draw_opened = (
   set_backface_culling(true)
 }
 
-let draw_pass = (o: Opened, transform: Matrix, wires: bool, posed: Maybe<[]Matrix>,
+let draw_pass = (o: ref Opened, transform: Matrix, wires: bool, posed: Maybe<[]Matrix>,
   see_through: bool) -> void => {
   for i in 0..<i64(o.model.mesh_count) {
     let material = model_mesh_material(o.model, i)
@@ -304,14 +304,14 @@ let draw_pass = (o: Opened, transform: Matrix, wires: bool, posed: Maybe<[]Matri
 
 /// The model's bounding box under a transform — raylib's box applies the model's own
 /// transform, so a copy with the framing set measures the framed model.
-let framed_box = (o: Opened, transform: Matrix) -> BoundingBox => {
+let framed_box = (o: ref Opened, transform: Matrix) -> BoundingBox => {
   var m = o.model
   m.transform = transform
   model_bounding_box(m)
 }
 
 /// How many clips a model has, 0 for none.
-let clip_count = pure (o: Opened) -> i64 =>
+let clip_count = pure (o: ref Opened) -> i64 =>
   match o.anims {
     Some(a) => i64(a.count),
     None => 0,
@@ -730,7 +730,7 @@ let meshes_without_normals = pure (model: Model) -> i64 => {
   n
 }
 
-let relight = (viewing: Maybe<Opened>, lit: Maybe<Lighting>, on: bool) -> void =>
+let relight = (viewing: ref Maybe<Opened>, lit: Maybe<Lighting>, on: bool) -> void =>
   match viewing {
     Some(o) => apply_lighting(o.model, lit, on),
     None => {},

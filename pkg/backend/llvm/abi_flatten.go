@@ -12,7 +12,7 @@ import (
 //
 // **The offsets must be the ones `SizeAndAlign` produces**, not ones computed a second
 // way, because that is what the emitted `getelementptr`s and the fixture's `offsetof`
-// agree on. So this walks with the same alignment arithmetic `aggregateSizeAndAlign`
+// agree on. So this walks with the same alignment arithmetic `types.SizeAndAlign`
 // does — a field starts at `alignUp(runningSize, fieldAlign)` — and any divergence
 // between the two is a wrong classification, which links cleanly and computes garbage.
 

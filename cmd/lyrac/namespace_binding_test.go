@@ -95,3 +95,52 @@ let main = () -> u8 => {
 		t.Errorf("expected 25 + 3 + 3 + 4 + 5 = 40; exit %d, stderr: %s", code, stderr)
 	}
 }
+
+// An all-caps type or constructor through a namespace — `lib.RGB`, `lib.LOUD`, `lib.CD(3)`
+// — means the namespace's own, as a PascalCase one does, and a constant beside them
+// (`lib.MAX`) is still the constant.
+func TestRun_ANamespaceReachesItsAllCapsTypesAndConstructors(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	dir := t.TempDir()
+	for name, text := range map[string]string{
+		"lib.lyra": `module lib
+pub const MAX = 7
+pub data Signal = LOUD | CD(i64) | Quiet
+pub struct RGB { r: i64, g: i64 }
+pub tuple A(i64, i64)
+pub data BOX<t> = PUT(t)
+pub let level = pure (s: Signal) -> i64 => match s { LOUD => 10, CD(n) => n, Quiet => 0 }
+`,
+		"main.lyra": `import lib
+data Signal = LOUD | Other
+let local = pure (s: Signal) -> i64 => match s { LOUD => 100, Other => 0 }
+let score = pure (s: lib.Signal) -> i64 => match s {
+  lib.LOUD => 1,
+  lib.CD(n) => n,
+  lib.Quiet => 0,
+}
+let main = () -> u8 => {
+  let all: []lib.Signal = [lib.LOUD, lib.CD(3)]
+  var total = 0
+  for s in all { total = total + lib.level(s) + score(s) }
+  let m: Maybe<lib.Signal> = Some lib.LOUD
+  let Some(s) = m else { return 1 }
+  let c: lib.RGB = lib.RGB { r: 1, g: 2 }
+  let p: lib.A = lib.A(4, 5)
+  let b: lib.BOX<i64> = lib.PUT(6)
+  let lib.PUT(v) = b else { return 1 }
+  u8(total + c.r + c.g + p.0 + lib.MAX + local(LOUD) / 100 + score(s) + v)
+}
+`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// levels 10 + 3 and scores 1 + 3 = 17; RGB 3; A 4; MAX 7; local 1; score 1; PUT 6.
+	if _, stderr, code := captureRun(t, "run", filepath.Join(dir, "main.lyra")); code != 39 {
+		t.Errorf("expected 17 + 3 + 4 + 7 + 1 + 1 + 6 = 39; exit %d, stderr: %s", code, stderr)
+	}
+}

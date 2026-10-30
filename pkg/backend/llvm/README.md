@@ -778,8 +778,9 @@ values and returns a value.
 | `recordedType(expr)` | every TypeTable read (substitutes, strips newtypes) |
 
 `layout.go` holds the type toolkit (`LLVMPrimitive`, `IsSignedInt`, `SharedBoxType`,
-`DynArrayBoxType`, `TagType`, `DataUnionType`, `StringLLVMType`) and `SizeAndAlign`.
-`pointerSize` is where LP64 is assumed.
+`DynArrayBoxType`, `TagType`, `DataUnionType`, `StringLLVMType`). `SizeAndAlign` delegates to
+`types.SizeAndAlign` (`pkg/types/layout.go`), the one engine the front end asks too;
+`types.PointerSize` is where LP64 is assumed.
 
 ## Behavioural tests
 

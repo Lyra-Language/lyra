@@ -130,7 +130,7 @@ let axis_size = pure (channel: ColorChannel) -> Size => match channel {
 
 /// The hue an axis of `color` identified as `id` draws and moves along: the colour's own, or —
 /// while it is grey, and says none — the one its picker holds.
-let axis_hue = pure (color: Color, ui: Interaction, id: string) -> f32 => {
+let axis_hue = pure (color: Color, ui: ref Interaction, id: string) -> f32 => {
   let h = to_hsv(color)
   if h.s > 0.0001 && h.v > 0.0001 { return f32(h.h) }
   ui.hues.get(picker_of(id)) ?? f32(h.h)

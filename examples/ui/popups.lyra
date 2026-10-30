@@ -182,7 +182,7 @@ let menu = pure (items: []Node<Event>) -> Node<Event> =>
   column([i in items | item(i)]).aligned(MainStart, CrossStretch).with_class("menu")
 
 /// A menu's item: its button, or the button a submenu's popup is anchored to, as a row.
-let item = pure (n: Node<Event>) -> Node<Event> =>
+let item = pure (n: ref Node<Event>) -> Node<Event> =>
   if n.tag == "Button" { n.with_class("item") } else {
     Node { n | children: [i in n.children | if i.tag == "Button" { i.with_class("item") } else { i }] }
   }
@@ -215,7 +215,7 @@ let sheet = pure () -> Sheet => Sheet {
 let save = (
   renderer: SdlRenderer,
   fonts: Fonts,
-  laid: Laid<Event>,
+  laid: ref Laid<Event>,
   path: string
 ) -> bool => {
   var r = renderer

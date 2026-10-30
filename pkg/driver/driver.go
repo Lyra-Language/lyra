@@ -327,6 +327,10 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// type; before the backend, which could not honour them through an indirect call.
 	res.Diagnostics = append(res.Diagnostics, checker.CheckByRefFunctionValues(program, tt)...)
 
+	// A large aggregate taken by a bare parameter, copied at every call (lyra-W031). Beside
+	// E082 because it is the same question asked the other way: where `ref` would compile.
+	res.Diagnostics = append(res.Diagnostics, checker.CheckLargeByValueParams(program, tt, tc.ByValueSize)...)
+
 	// A `@must_release` resource dropped without its release call (lyra-W022). After
 	// typechecking for the same reason use-after-move is: the binding's *settled* type
 	// is what says whether it carries an obligation, and the callee resolution it uses

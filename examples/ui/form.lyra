@@ -137,7 +137,7 @@ let view = pure (theme: Theme, state: Form) -> Node<FormEvent> =>
   ])
 
 /// A field with its label above it, and read to assistive technology by it.
-let labelled = pure (label: string, field: Node<FormEvent>) -> Node<FormEvent> =>
+let labelled = pure (label: string, field: ref Node<FormEvent>) -> Node<FormEvent> =>
   column([text(label).with_class("label"), Node { field | label: label }]).aligned(
     MainStart,
     CrossStretch
@@ -182,7 +182,7 @@ let report = (form: Form) -> void => {
 let save = (
   renderer: SdlRenderer,
   fonts: Fonts,
-  view: Node<FormEvent>,
+  view: ref Node<FormEvent>,
   background: Color,
   path: string
 ) -> bool => {

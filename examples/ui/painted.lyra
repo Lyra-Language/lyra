@@ -206,7 +206,7 @@ const INK: Color = Color { r: 0x30, g: 0x34, b: 0x3C }
 let save = (
   renderer: SdlRenderer,
   fonts: Fonts,
-  laid: Laid<Event>,
+  laid: ref Laid<Event>,
   background: Color,
   path: string
 ) -> bool => {

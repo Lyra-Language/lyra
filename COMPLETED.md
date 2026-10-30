@@ -9,6 +9,52 @@ Newest first.
 
 ## Dated log
 
+### 10/30/26 — A large aggregate passed bare warns (`lyra-W031`)
+Sheliak's bus helpers copied a several-kilobyte `GenesisBus` on every memory read — two thirds
+of a frame, found only by profiling (09/28). A bare parameter is read-only already (E025), so
+the copy is the whole difference from `ref`, and the warning says so at the declaration
+past 256 bytes (clippy's `large_types_passed_by_value` default).
+- **What `ref` would break was measured, not assumed**: a `ref` struct parameter was captured,
+  copied, put in an array and a tuple, passed to bare and `own` parameters, taken with `&` and
+  returned, and ran right. What it cannot do is E082's — be a function value, or sit on a nested
+  lambda — so a function used as a value anywhere (by name, conservatively) is skipped. A
+  generator or `async` function is skipped for safety: its frame outlives the call that lent it.
+- **The size is the backend's own.** `SizeAndAlign` lived in `backend/llvm`, which imports the
+  checker, so it moved to `pkg/types` (`layout.go`) with a `Resolver` — each type met answered,
+  and the resolver its components are written under, a struct's being its declaration's — and
+  the backend delegates. `TypeChecker.ByValueSize` is that resolver over the typechecker's own
+  resolution, a generic instance included (`resolveGenericAggregate`).
+- **`self` in an `impl` cannot be written `self: ref T`** (E089, the block gives its type), and
+  the block is erased before any pass, so the message gives both spellings.
+- **It fired over 550 times across the workspace** — `ui` 93, Vega 355, Termina 82, Sheliak 4,
+  the examples 26, `std` 2 — and `ui`'s took nineteen lui tests down, which hold `ui` to checking
+  silently. A 1 KB threshold would have left `ui` three; it was kept at 256, because `ui`'s
+  528-byte `Style` copied at every cascade lookup is what the warning is for. `ui`, `std` and
+  the examples were swept to `ref` by script at each reported position and checked against
+  Vega, Termina's last commit and every example; the other repos are left to their sessions
+  (todo.md). The per-file scan undercounted it at first (8): from the workspace root a module
+  checked alone resolved its imports elsewhere, and Vega's whole program was the true count.
+
+### 10/30/26 — An all-caps type or constructor through a namespace
+`lib.RGB`, `lib.A(1)` and `lib.LOUD =>` were syntax errors: `qualified_type_name` (10/29) needs
+a lowercase second letter, so that `vdp.SCREEN_WIDTH` would not lex as `vdp.SCREEN` and a
+stray `_WIDTH`. An all-caps name is a constant's or a constructor's alike, bare, and the
+grammar had already settled that for bare names by admitting `const_identifier` wherever a
+constructor goes and letting the next token decide.
+- **The qualified form does the same, as a token of its own** (`qualified_const_name`), in
+  `qualified_type_name`'s positions and a bare constant's. It could not be a token admitted
+  only where member access is impossible: a pattern and a tuple share their opening `(`, and
+  the longest match would then have taken `(vdp.SCREEN_WIDTH + 1)` as a pattern's name. So it
+  is in expressions too, a node the collector reads back as the `MemberExpr` it always was,
+  each half at its own span — every namespace constant's CST changed and its AST did not. The
+  Lyra collector has the same case, and both editors paint the token whole as a constant.
+- **A bare `lib.LOUD` is that member access**, which the driver turns into the constructor when
+  the namespace's module declares one (`qualifiedConstructorValue`), before the erasure that
+  then treats it as any qualified constructor; a constant stays a member access.
+- **`prec(1)` on the token lexed `shapes.Circle` as `shapes.C`**: a token's precedence outranks
+  its match length. The tie the two tokens share (`lib.A1`) is settled by declaring the
+  constant's first, as `const_identifier` wins it bare. +33 states (8,451 → 8,484).
+
 ### 10/30/26 — An error inside an expression inferred twice is reported
 
 Vega's Import image dialog had `[i in allowed | i < all.len()]` — a list of bools, the filter

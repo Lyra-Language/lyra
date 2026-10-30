@@ -215,7 +215,7 @@ impl Synth {
 
   /// Whether `dac` (`std.chips.music`'s [Dac]) has a note this synth has not started: then
   /// its sample's bytes go to [play_sample].
-  pub let new_sample = pure (self, dac: Dac) -> bool => dac.note != self.dac_note
+  pub let new_sample = pure (self: ref, dac: Dac) -> bool => dac.note != self.dac_note
 
   /// `bytes`, `dac`'s sample, played on the DAC from its first, as [follow] says.
   pub let play_sample = (self: mut, dac: Dac, bytes: []u8) -> void => {

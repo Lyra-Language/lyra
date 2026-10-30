@@ -476,7 +476,7 @@ const EDGE: Color = Color { r: 0x00, g: 0x00, b: 0x00, a: 0x28 }
 let save = (
   renderer: SdlRenderer,
   fonts: Fonts,
-  laid: Laid<Event>,
+  laid: ref Laid<Event>,
   background: Color,
   path: string
 ) -> bool => {

@@ -115,7 +115,7 @@ let main = () -> u8 => {
 }
 
 /// Whether `laid` shows where a tab being docked would land.
-let previewing = pure (laid: Laid<Event>) -> bool =>
+let previewing = pure (laid: ref Laid<Event>) -> bool =>
   laid.tag == "DockPreview" || laid.children.any((c) => previewing(c.laid))
 
 /// `tree` written out: a group as its keys, the shown one starred; a split as its axis (`H`

@@ -6,7 +6,8 @@ Semantic passes outside the typechecker. Language semantics are in
 - **Pre-typecheck, AST-only**: `use_before_declaration.go`, `shadowing.go`, `unused_variables.go`,
   `effect_bounds.go`, `generic_params.go`, `type_names.go`, `inert_borrow_modifier.go`.
 - **Post-typecheck** (need `TypeTable`/`MethodTable`): `purity.go`, `use_after_move.go`,
-  `range_analysis.go`, `array_repeat_alias.go`, must-release, let-else divergence. A pass lives
+  `range_analysis.go`, `array_repeat_alias.go`, must-release, let-else divergence,
+  `large_by_value_param.go`. A pass lives
   post-typecheck when it needs the *settled* type the backend lowers, not the inferred one.
 - **Every pass returns `[]diag.Diagnostic`**, carrying its own severity; the driver loops over
   them. `typechecker.TypeError` is the one exception (`TypeError.Diagnostic()` bridges it).
@@ -276,6 +277,17 @@ lambda (anything not a top-level `let`'s value — every one is a closure), or a
 whose recorded type is such a function outside a call's function position. An indirect call
 passes by value, so the backend cannot honour the mode; the named-function case segfaulted.
 Runs after typechecking (it reads recorded `LambdaType`s).
+
+## `large_by_value_param.go` (`lyra-W031`)
+
+`CheckLargeByValueParams(program, tt, size)`: a top-level function taking 256 bytes or more
+by a bare parameter, copied at every call. `size` is `TypeChecker.ByValueSize` — the
+backend's engine (`types.SizeAndAlignResolving`) with each aggregate's components resolved
+from its own declaration — so the number is the layout the backend lowers. Silent where `ref`
+would not compile (E082's two shapes: a function used as a value, matched by **name**, and a
+nested lambda) or not be safe (a generator's or `async` function's frame outlives the call);
+also externs and type-variable sizes. `self` gets both spellings, `self: ref` and `self: ref
+T`, since the `impl` block it may be in is erased before any pass.
 
 ## `array_repeat_alias.go` (`lyra-W019`)
 

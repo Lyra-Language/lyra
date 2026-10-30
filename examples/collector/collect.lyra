@@ -888,6 +888,7 @@ let collect_expr = (node: Node, source: Source) -> Maybe<shared Expr> =>
     // the optional-ness is decided here and carried into one collector rather than
     // re-derived from the text.
     "member_expr" => collect_member(node, source, false),
+    "qualified_const_name" => Some(collect_qualified_constant(node, source)),
     "optional_member_expr" => collect_member(node, source, true),
     "index_expr" => collect_index(node, source, false),
     "optional_index_expr" => collect_index(node, source, true),
@@ -936,6 +937,37 @@ let collect_member = (
     object: object,
     property: property
   }))
+}
+
+/// `vdp.SCREEN_WIDTH`, one token since an all-caps name through a namespace lexed as one
+/// (10/30), read as the member access it was before, as the Go collector reads it
+/// (`collectQualifiedConstant`). A token holds no space, so the namespace ends at the dot.
+let collect_qualified_constant = (node: Node, source: Source) -> shared Expr => {
+  let parts = node.text(source.bytes).split(".")
+  let location = source.location_of(node)
+  let object_end = location.start_col + parts[0].len()
+  MemberExpr(MemberAccess {
+    location: location,
+    object: IdentifierExpr(Identifier {
+      location: Location {
+        start_line: location.start_line,
+        start_col: location.start_col,
+        end_line: location.start_line,
+        end_col: object_end,
+      },
+      name: parts[0],
+    }),
+    property: IdentifierExpr(Identifier {
+      location: Location {
+        start_line: location.start_line,
+        start_col: object_end + 1,
+        end_line: location.end_line,
+        end_col: location.end_col,
+      },
+      is_const: true,
+      name: parts[1],
+    }),
+  })
 }
 
 /// `array[0]`.

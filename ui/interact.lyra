@@ -412,7 +412,7 @@ impl Ui {
 
   /// Whether a transition is moving anything at `now` — while one is, the host draws every
   /// frame.
-  pub let animating = pure (self) -> bool => {
+  pub let animating = pure (self: ref) -> bool => {
     for (
       _,
       motion
@@ -422,7 +422,7 @@ impl Ui {
 
   /// How long from `now` until a tooltip shows, in milliseconds — the host draws then — or `-1`
   /// for none waiting.
-  pub let tip_due = pure (self, now: i64) -> i64 => {
+  pub let tip_due = pure (self: ref, now: i64) -> i64 => {
     if self.tip_wanted.len() == 0 || self.state.tip.len() > 0 || self.tip_since < 0 { return -1 }
     (self.tip_since + TIP_DELAY_MS - now).max(0)
   }
@@ -463,7 +463,7 @@ impl Ui {
   }
 
   /// What each element moving a size shows at `now`, for the layout.
-  let sizes_shown = pure (self) -> HashMap<string, Computed> => {
+  let sizes_shown = pure (self: ref) -> HashMap<string, Computed> => {
     var out: HashMap<string, Computed> = hashmap_new()
     for (id, motion) in self.motions.entries() {
       if moves_sizes(motion) { out.insert(id, shown_at(motion, self.now)) }
@@ -583,7 +583,7 @@ impl Ui {
 
   /// Which open menu's list `id` is in — its place in `Interaction.menus`, the deepest holding
   /// it — or -1 for none.
-  let menu_level = pure (self, id: string) -> i64 => {
+  let menu_level = pure (self: ref, id: string) -> i64 => {
     let menus = self.state.menus
     var k = menus.len() - 1
     while k >= 0 {
@@ -917,7 +917,7 @@ impl Ui {
 
   /// An element dragged to change a number ([Drags]) with the pointer at `at`: its value at the
   /// press moved by how far the pointer has gone along its axis, held to its range.
-  let dragged<e> = (self, spec: DragSpec<e>, at: Point) -> []e => {
+  let dragged<e> = (self: ref, spec: DragSpec<e>, at: Point) -> []e => {
     let gone = if spec.axis == Horizontal { at.x - self.drag_from.x } else { at.y - self.drag_from.y }
     let value = (self.drag_value + f64(gone) * spec.per_unit * self.drag_scale).clamp(
       spec.min,
@@ -1167,7 +1167,7 @@ impl Ui {
   }
 
   /// A key for the focused element, if it takes input raw.
-  let raw_key<e> = (self, laid: Laid<e>, key: KeyInput) -> Maybe<[]e> => {
+  let raw_key<e> = (self: ref, laid: Laid<e>, key: KeyInput) -> Maybe<[]e> => {
     let Some(f) = find(laid, self.state.focus, Point {}) else { return None }
     let Some(raw) = raw_of(f.laid) else { return None }
     match (raw.on_key)(key) {
@@ -1177,7 +1177,7 @@ impl Ui {
   }
 
   /// Text for the focused element, if it takes input raw.
-  let raw_text<e> = (self, laid: Laid<e>, text: TextInput) -> Maybe<[]e> => {
+  let raw_text<e> = (self: ref, laid: Laid<e>, text: TextInput) -> Maybe<[]e> => {
     let Some(f) = find(laid, self.state.focus, Point {}) else { return None }
     let Some(raw) = raw_of(f.laid) else { return None }
     match (raw.on_text)(text) {
@@ -1318,7 +1318,7 @@ impl Ui {
   /// The pointer's shape at `at`: an I-beam over a text field, or while a selection is being
   /// dragged in one; the pointing hand over a button that can be pressed (a disabled one is no
   /// control under the pointer); else the arrow.
-  let cursor_at<e> = pure (self, laid: Laid<e>, at: Point) -> Cursor => {
+  let cursor_at<e> = pure (self: ref, laid: Laid<e>, at: Point) -> Cursor => {
     let held = find(laid, self.state.pressed, Point {})
     // An edge or a label dragged, or under the pointer: the arrows along its axis.
     let edge = match held {
@@ -1600,7 +1600,7 @@ impl Ui {
   pub let scroll_by = (
     self: mut,
     id: string,
-    sc: Scroller,
+    sc: ref Scroller,
     axis: Axis,
     by: f32
   ) -> bool => {
@@ -1985,13 +1985,13 @@ impl Ui {
   }
 
   /// The focused field, if a field has the focus.
-  let focused_field<e> = pure (self, laid: Laid<e>) -> Maybe<Found<e>> => {
+  let focused_field<e> = pure (self: ref, laid: Laid<e>) -> Maybe<Found<e>> => {
     let Some(f) = find(laid, self.state.focus, Point {}) else { return None }
     if f.laid.field.is_some() { Some(f) } else { None }
   }
 
   /// A field's text, caret and selection as an [Editing], the caret kept inside the text.
-  let editing<e> = pure (self, field: Found<e>) -> Editing => {
+  let editing<e> = pure (self: ref, field: Found<e>) -> Editing => {
     let Editable(spec) = field.laid.kind else { return Editing { runes: [] } }
     let state = self.widget(field.laid.id)
     let runes = spec.value.to_runes()
@@ -2003,7 +2003,7 @@ impl Ui {
   }
 
   /// What the framework holds for the element identified as `id`, or nothing yet.
-  let widget = pure (self, id: string) -> WidgetState =>
+  let widget = pure (self: ref, id: string) -> WidgetState =>
     self.state.widgets.get(id) ?? WidgetState {}
 }
 

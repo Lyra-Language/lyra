@@ -115,7 +115,7 @@ let tab_node<e> = pure (spec: TabsSpec<e>, i: i64) -> Node<e> => {
 let lay_tab_strip<e> = (
   children: []Node<e>,
   c: Constraints,
-  ctx: Ctx,
+  ctx: ref Ctx,
   fonts: mut Fonts,
   cache: mut LayoutCache<e>
 ) -> Body<e> => {

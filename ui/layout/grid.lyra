@@ -31,9 +31,9 @@ import ui.style.{
 /// `children` laid out as a grid computed as `style`, within `c` (inside its padding).
 let lay_grid<e> = (
   children: []Node<e>,
-  style: Computed,
+  style: ref Computed,
   c: Constraints,
-  ctx: Ctx,
+  ctx: ref Ctx,
   fonts: mut Fonts,
   cache: mut LayoutCache<e>
 ) -> Body<e> => {
@@ -124,11 +124,11 @@ let lay_grid<e> = (
 /// to fill, from the items' least or greatest widths alone.
 let grid_intrinsic_width<e> = (
   children: []Node<e>,
-  style: Computed,
+  style: ref Computed,
   least: bool,
-  within: Cascade,
+  within: ref Cascade,
   fonts: mut Fonts,
-  ui: Interaction,
+  ui: ref Interaction,
   id: string
 ) -> f32 => {
   if children.len() == 0 { return 0.0 }
@@ -184,9 +184,9 @@ struct Spanning {
 /// the flow is dense.
 let grid_plan<e> = (
   children: []Node<e>,
-  style: Computed,
-  cascade: Cascade,
-  ui: Interaction,
+  style: ref Computed,
+  cascade: ref Cascade,
+  ui: ref Interaction,
   id: string
 ) -> GridPlan => {
   var styles: []Computed = []

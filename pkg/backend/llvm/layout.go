@@ -19,7 +19,7 @@ import (
 // datalayout rather than hardcoding this; for now it lets us lay out the
 // sum-type payload blob.
 
-const pointerSize = 8
+const pointerSize = types.PointerSize
 
 // LLVMPrimitive returns the llir type for a Lyra primitive by value (the `stack`
 // representation), and ok=false for one whose representation isn't settled yet
@@ -255,197 +255,21 @@ func DataUnionType(dt types.DataType) (*lltypes.StructType, bool) {
 	return lltypes.NewStruct(tag, lltypes.NewArray(uint64(count), elem)), true
 }
 
-// SizeAndAlign returns the size and alignment (bytes) of t under the target
-// datalayout, ok=false for a type not settled yet (string, dynamic array) or
-// that needs monomorphization first (a bare generic parameter). A `shared`-
-// flavored value is pointer-sized regardless of its payload — it's a pointer —
-// which is where DATA_LAYOUT and ALLOCATION meet (and why a `shared` recursive
-// field gives a finite union).
+// SizeAndAlign returns the size and alignment (bytes) of t, already resolved: the one
+// engine, types.SizeAndAlign, which the front end asks too.
 func SizeAndAlign(t types.Type) (size, align int, ok bool) {
-	if types.AllocationOf(t) == types.Shared {
-		return pointerSize, pointerSize, true
-	}
-	if _, ok := t.(types.WeakType); ok {
-		return pointerSize, pointerSize, true // a weak reference is a non-owning pointer
-	}
-	if types.IsSeq(t) {
-		return pointerSize, pointerSize, true // a sequence value is a pointer to its box (seq_coro.go)
-	}
-	if _, ok := t.(types.DynamicArrayType); ok {
-		return pointerSize, pointerSize, true // a `[]T` value is a box pointer (dynarray.go)
-	}
-	if _, ok := t.(*types.LambdaType); ok {
-		// A function value is the closure fat pointer `{ i8* fn, i8* env }` (closures.go).
-		// Missing until 09/13, so no closure could capture another: `let f = …` then
-		// `() -> i64 => f(1)` failed to build with "cannot size captured binding f" — found
-		// when a lambda first needed to capture a local generic's closure values.
-		return 2 * pointerSize, pointerSize, true
-	}
-	switch v := t.(type) {
-	case types.PrimitiveType:
-		return primitiveSizeAndAlign(v.Name)
-	case types.VoidType:
-		// A `void` payload — `Ok()` of a `Result<void, e>` — holds nothing, so it takes no
-		// room; the variant is its tag alone, as a nullary constructor's is.
-		return 0, 1, true
-	case types.RawPointerType:
-		// A raw pointer is a machine pointer and nothing else — no header, no length,
-		// no ownership. Missing until 08/22, and the symptom was remote from the cause
-		// in the usual way: not "a pointer has no size" but *any aggregate containing
-		// one* failing to size, so `std.ffi`'s own `CBuffer` could not be captured by a
-		// closure ("cannot size captured binding") or held in a `[]T` ("cannot size
-		// dynamic array element type"). Found by a closure taking a `^u8` — which is
-		// what every scoped-callback FFI shape is.
-		return pointerSize, pointerSize, true
-	case types.NamedStructType:
-		return aggregateSizeAndAlign(fieldTypes(v.Fields))
-	case types.UnionType:
-		return unionSizeAndAlign(v)
-	case types.AnonymousStructType:
-		return aggregateSizeAndAlign(fieldTypes(v.Fields))
-	case types.TupleType:
-		return aggregateSizeAndAlign(v.Elements)
-	case types.StaticArrayType:
-		es, ea, ok := SizeAndAlign(v.ElementType)
-		if !ok {
-			return 0, 0, false
-		}
-		return alignUp(es, ea) * v.Size, ea, true // stride * count
-	case types.DataType:
-		return dataSizeAndAlign(v)
-	}
-	return 0, 0, false
+	return types.SizeAndAlign(t)
 }
 
-func primitiveSizeAndAlign(name types.PrimitiveTypeName) (int, int, bool) {
-	switch name {
-	case types.Int8, types.UInt8, types.Boolean:
-		return 1, 1, true
-	case types.Int16, types.UInt16, types.Float16:
-		return 2, 2, true
-	case types.Int32, types.UInt32, types.Float32, types.Rune:
-		return 4, 4, true
-	case types.Int64, types.UInt64, types.Float64,
-		types.UntypedInt, types.UntypedSignedInt, types.UntypedFloat:
-		return 8, 8, true
-	case types.Int128, types.UInt128:
-		return 16, 16, true // i128 is 16/16 on the mainstream 64-bit ABI
-	case types.String:
-		// Fat pointer { i8*, i64, i64 }: three pointer-sized words (data, byte
-		// length, rune count). See StringLLVMType.
-		return pointerSize * 3, pointerSize, true
-	}
-	return 0, 0, false
-}
-
-// aggregateSizeAndAlign lays out fields in order with C-style padding: each field
-// starts at the next multiple of its alignment, and the total is rounded up to the
-// aggregate's alignment (tail padding). An empty aggregate is {0, 1}.
-func aggregateSizeAndAlign(fields []types.Type) (int, int, bool) {
-	size, align := 0, 1
-	for _, f := range fields {
-		fs, fa, ok := SizeAndAlign(f)
-		if !ok {
-			return 0, 0, false
-		}
-		size = alignUp(size, fa) + fs
-		if fa > align {
-			align = fa
-		}
-	}
-	return alignUp(size, align), align, true
-}
-
-// unionSizeAndAlign sizes a C union: **max over members, not a sum**, with every member
-// at offset 0.
-//
-// This is the one function that has to know a union is not a struct, and it is where
-// getting it wrong is worst: a too-small union links cleanly and lets the C side write
-// past the end of a Lyra stack slot, which is a stack smash rather than a type error.
-// `TestExec_UnionLayoutMatchesC` compares every number here against C's own `sizeof`
-// and `_Alignof` through the vendored fixture, and the SDL3 test against a header
-// nobody wrote for Lyra.
-//
-// The trailing `alignUp` is what makes `SDL_Event` 128 rather than 125: C rounds a
-// union's size up to its alignment so an array of them is correctly strided.
-func unionSizeAndAlign(ut types.UnionType) (int, int, bool) {
-	size, align := 0, 1
-	for _, m := range ut.Members {
-		ms, ma, ok := SizeAndAlign(m.Type)
-		if !ok {
-			return 0, 0, false
-		}
-		if ms > size {
-			size = ms
-		}
-		if ma > align {
-			align = ma
-		}
-	}
-	return alignUp(size, align), align, true
-}
-
-// dataSizeAndAlign sizes a `data` value as the struct { tag, payload-blob }.
-func dataSizeAndAlign(dt types.DataType) (int, int, bool) {
-	tagBytes := tagBits(len(dt.Constructors)) / 8
-	payloadSize, payloadAlign, ok := maxVariantPayload(dt)
-	if !ok {
-		return 0, 0, false
-	}
-	// Layout { tag, [payload] } with the payload aligned to payloadAlign.
-	size := alignUp(tagBytes, max(payloadAlign, 1)) + payloadSize
-	align := max(tagBytes, payloadAlign)
-	return alignUp(size, align), align, true
-}
-
-// maxVariantPayload returns the max size and max alignment over all variants'
-// payload structs (a variant's payload is the struct of its flat field types).
 func maxVariantPayload(dt types.DataType) (size, align int, ok bool) {
-	align = 1
-	for _, c := range dt.Constructors {
-		ps, pa, ok := aggregateSizeAndAlign(c.FieldTypes())
-		if !ok {
-			return 0, 0, false
-		}
-		if ps > size {
-			size = ps
-		}
-		if pa > align {
-			align = pa
-		}
-	}
-	return size, align, true
+	return types.MaxVariantPayload(dt)
 }
 
-// tagBits returns the bit width of the tag integer for numVariants variants.
-func tagBits(numVariants int) int {
-	switch {
-	case numVariants <= 1<<8:
-		return 8
-	case numVariants <= 1<<16:
-		return 16
-	case numVariants <= 1<<32:
-		return 32
-	default:
-		return 64
-	}
-}
+func tagBits(numVariants int) int { return types.TagBits(numVariants) }
 
-func fieldTypes(fields []types.StructField) []types.Type {
-	out := make([]types.Type, len(fields))
-	for i, f := range fields {
-		out[i] = f.Type
-	}
-	return out
-}
+func fieldTypes(fields []types.StructField) []types.Type { return types.FieldTypes(fields) }
 
-// alignUp rounds n up to the next multiple of a (a is a power of two ≥ 1).
-func alignUp(n, a int) int {
-	if a <= 1 {
-		return n
-	}
-	return (n + a - 1) / a * a
-}
+func alignUp(n, a int) int { return types.AlignUp(n, a) }
 
 // bufferStride is the bytes a `[]T` buffer gives each element: its size rounded to its
 // alignment, and **never zero**. An element taking no space (`struct Marker {}`, 10/29) has

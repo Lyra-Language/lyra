@@ -120,7 +120,7 @@ let view = pure (theme: Theme) -> Node<NoEvent> => themed(theme, sheet(theme), [
 ])
 
 /// A labelled setting: its label at the start of the row, its control at the end.
-let setting = pure (label: string, control: Node<NoEvent>) -> Node<NoEvent> =>
+let setting = pure (label: string, control: ref Node<NoEvent>) -> Node<NoEvent> =>
   row([text(label), control]).aligned(SpaceBetween, CrossCenter).with_class("setting")
 
 /// A bar `level` of the way full: a component whose `track` and `fill` are styled from
@@ -194,7 +194,7 @@ let sheet = pure (theme: Theme) -> Sheet => {
 }
 
 /// Every element with a class, and its box in the window: `class x y w h`, a line each.
-let print_boxes = (laid: Laid<NoEvent>, origin: Point) -> void => {
+let print_boxes = (laid: ref Laid<NoEvent>, origin: Point) -> void => {
   if laid.class.len() > 0 {
     println("${laid.class} ${origin.x} ${origin.y} ${laid.size.w} ${laid.size.h}")
   }

@@ -162,6 +162,23 @@ func collectMemberExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 	}
 }
 
+// collectQualifiedConstant reads `vdp.SCREEN_WIDTH` — one token since all-caps names
+// through a namespace lexed as one (10/30) — as the member access it was before:
+// `vdp`, then the constant, each at its own span. A token holds no space, so the
+// namespace ends where the dot is. The driver turns one naming a constructor into
+// that constructor (eraseQualifiedNames).
+func collectQualifiedConstant(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
+	namespace, member, _ := strings.Cut(ctx.NodeText(node), ".")
+	objectLoc, propertyLoc := loc, loc
+	objectLoc.EndLine, objectLoc.EndCol = loc.StartLine, loc.StartCol+len(namespace)
+	propertyLoc.StartCol = objectLoc.EndCol + 1
+	return &ast.MemberExpr{
+		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+		Object:   &ast.IdentifierExpr{ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: objectLoc}}, Name: namespace},
+		Property: ast.IdentifierExpr{ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: propertyLoc}}, Name: member, IsConst: true},
+	}
+}
+
 func collectTupleIndexExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
 	object := CollectExpression(cst.Field(node, "object"), ctx)
 	// An inert placeholder (index 0), never a nil node — same typed-nil hazard as

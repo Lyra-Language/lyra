@@ -320,7 +320,7 @@ impl MusicPlayer {
   }
 
   /// The channels the song plays: ten, or with FM 3 extended thirteen.
-  let channels = pure (self) -> i16 =>
+  let channels = pure (self: ref) -> i16 =>
     if self.song.extended { CHANNELS } else { FIRST_OPERATOR }
 
   /// Stop the song: every channel it sounds let go on the next [frame].

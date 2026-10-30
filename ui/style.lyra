@@ -276,7 +276,7 @@ pub data GridFlow = FlowRow | FlowColumn | FlowRowDense | FlowColumnDense
 
 impl Style {
   /// This style laid over `base`: each field this one sets, else `base`'s.
-  pub let over = pure (self, base: Style) -> Style => Style {
+  pub let over = pure (self: ref, base: ref Style) -> Style => Style {
     color: self.color.or(base.color),
     background: self.background.or(base.background),
     border_color: self.border_color.or(base.border_color),
@@ -904,11 +904,11 @@ impl Cascade {
   /// The style for an element of `tag`, with `classes` (space-separated), marked as `part`
   /// (`""` for none) and asking for `inline`: the five layers, lowest first, over `under`.
   pub let style_of = pure (
-    self,
+    self: ref,
     tag: string,
     classes: string,
     part: string,
-    inline: Style,
+    inline: ref Style,
     under: []Rule = []
   ) -> Style => {
     var out = applied(under, tag, classes, Style {})
@@ -944,11 +944,11 @@ impl Cascade {
 
   /// [style_of] settled against what the parent passes down.
   pub let compute = pure (
-    self,
+    self: ref,
     tag: string,
     classes: string,
     part: string,
-    inline: Style,
+    inline: ref Style,
     under: []Rule = []
   ) -> Computed => {
     let s = self.style_of(tag, classes, part, inline, under)
@@ -1010,7 +1010,7 @@ impl Cascade {
 
   /// The cascade for a subtree drawn in `theme`, with `sheet` as its innermost global sheet:
   /// its text takes the theme's colour and font again.
-  pub let themed = pure (self, theme: Theme, sheet: Sheet) -> Cascade => Cascade {
+  pub let themed = pure (self: ref, theme: Theme, sheet: Sheet) -> Cascade => Cascade {
     self |
     theme: theme,
     globals: [...self.globals, ...sheet.rules],
@@ -1020,7 +1020,7 @@ impl Cascade {
   /// The cascade inside a component tagged `name`, with `classes`, whose scoped sheet is
   /// `sheet`.
   pub let in_component = pure (
-    self,
+    self: ref,
     name: string,
     classes: string,
     sheet: Sheet
@@ -1035,7 +1035,7 @@ impl Cascade {
 
   /// The cascade for the children of an element computed as `computed`: below a component's
   /// own top-level elements, the sheet of the component around reaches no further.
-  pub let inside = pure (self, computed: Computed) -> Cascade =>
+  pub let inside = pure (self: ref, computed: ref Computed) -> Cascade =>
     Cascade { self | inherited: computed, roots: [] }
 }
 
@@ -1046,7 +1046,7 @@ let applied = pure (
   rules: []Rule,
   tag: string,
   classes: string,
-  base: Style
+  base: ref Style
 ) -> Style => {
   var ranked: [](i64, i64) = []
   for k, rule in rules {

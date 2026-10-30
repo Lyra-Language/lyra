@@ -158,7 +158,7 @@ let view = pure (s: State) -> Node<Event> => column([
 let save = (
   renderer: SdlRenderer,
   fonts: Fonts,
-  laid: Laid<Event>,
+  laid: ref Laid<Event>,
   path: string
 ) -> bool => {
   var r = renderer

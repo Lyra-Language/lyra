@@ -404,7 +404,7 @@ impl Platform for ScriptPlatform {
 
 impl ScriptPlatform {
   /// How many windows have been opened beside the main one, closed or not.
-  pub let opened_count = pure (self) -> i64 => self.opened_windows
+  pub let opened_count = pure (self: ref) -> i64 => self.opened_windows
 
   /// The window `id` resized to `size`, held to its limits as a window's would be; the size
   /// it took.

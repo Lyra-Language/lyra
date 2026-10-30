@@ -94,6 +94,8 @@ func collectExpressionByKind(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expr
 		return collectFunctionCallExpr(node, ctx, loc)
 	case "member_expr":
 		return collectMemberExpr(node, ctx, loc, false)
+	case "qualified_const_name":
+		return collectQualifiedConstant(node, ctx, loc)
 	case "optional_member_expr":
 		return collectMemberExpr(node, ctx, loc, true)
 	case "tuple_index_expr":

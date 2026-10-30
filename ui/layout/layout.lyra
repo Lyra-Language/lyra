@@ -715,7 +715,7 @@ impl Node<e> {
     Node { self | class: if self.class.len() == 0 { classes } else { "${self.class} ${classes}" } }
 
   /// The node with `style` laid over its inline style.
-  pub let with_style = pure (self, style: Style) -> Node<e> =>
+  pub let with_style = pure (self, style: ref Style) -> Node<e> =>
     Node { self | style: style.over(self.style) }
 
   /// The node marked as part `name` of the component it is in, for a `Component::name` rule.
@@ -1152,7 +1152,7 @@ pub let layout_with<e> = (
   root: Node<e>,
   c: Constraints,
   fonts: mut Fonts,
-  ui: Interaction
+  ui: ref Interaction
 ) -> Laid<e> => {
   var cache: LayoutCache<e> = layout_cache()
   layout_cached(root, c, fonts, ui, cache)
@@ -1165,7 +1165,7 @@ pub let layout_cached<e> = (
   root: Node<e>,
   c: Constraints,
   fonts: mut Fonts,
-  ui: Interaction,
+  ui: ref Interaction,
   cache: mut LayoutCache<e>
 ) -> Laid<e> => {
   cache.laid_out = 0
@@ -1291,9 +1291,9 @@ pub let layout_cache<e> = pure () -> LayoutCache<e> =>
 let lay<e> = (
   node: Node<e>,
   c: Constraints,
-  cascade: Cascade,
+  cascade: ref Cascade,
   fonts: mut Fonts,
-  ui: Interaction,
+  ui: ref Interaction,
   id: string,
   cache: mut LayoutCache<e>
 ) -> Laid<e> => {
@@ -1365,7 +1365,7 @@ let refreshed<e> = (laid: Laid<e>, node: Node<e>) -> Laid<e> => {
 /// `node` as a field keeping a draft shows it: its value the text typed, while there is one
 /// ([FieldSpec.draft]) — what layout, editing and every caret position then read. Any other
 /// node is itself, not a copy: this is asked of every node laid out.
-let drafted<e> = pure (node: Node<e>, ui: Interaction, id: string) -> Node<e> => {
+let drafted<e> = pure (node: Node<e>, ui: ref Interaction, id: string) -> Node<e> => {
   if ui.drafts.len() == 0 { return node }
   match node.kind {
     Editable(spec) => if spec.draft {
@@ -1406,7 +1406,7 @@ let laid_children<e> = pure (node: Node<e>) -> []Node<e> => match node.kind {
 
 /// The framework's state that reaches the element identified as `id` and those inside it:
 /// focus, hover and press among them, and each one's own state — as a string to compare.
-let state_under = pure (ui: Interaction, id: string) -> string => {
+let state_under = pure (ui: ref Interaction, id: string) -> string => {
   let inside = (other: string) -> bool => other == id || other.starts_with("${id}/")
   // A window maximized or put back shows its maximize button otherwise (`window_buttons`) —
   // and is resized, so it is all laid out again then anyway.
@@ -1450,9 +1450,9 @@ let state_under = pure (ui: Interaction, id: string) -> string => {
 /// width depends on, so a resize or a scroll gives it back — else measured.
 let narrowest_of<e> = (
   node: Node<e>,
-  cascade: Cascade,
+  cascade: ref Cascade,
   fonts: mut Fonts,
-  ui: Interaction,
+  ui: ref Interaction,
   id: string,
   cache: mut LayoutCache<e>
 ) -> f32 => {
@@ -1475,7 +1475,7 @@ let narrowest_of<e> = (
 
 /// The focus, hover and press at or inside `id` — the part of [state_under] that can change a
 /// style, and so a width.
-let marks_under = pure (ui: Interaction, id: string) -> string => {
+let marks_under = pure (ui: ref Interaction, id: string) -> string => {
   let inside = (other: string) -> bool => other == id || other.starts_with("${id}/")
   [holder in [
     ui.focus,
@@ -1591,9 +1591,9 @@ let is_painted<e> = pure (kind: Kind<e>) -> bool => match kind {
 let lay_fresh<e> = (
   written: Node<e>,
   given: Constraints,
-  cascade: Cascade,
+  cascade: ref Cascade,
   fonts: mut Fonts,
-  ui: Interaction,
+  ui: ref Interaction,
   id: string,
   cache: mut LayoutCache<e>
 ) -> Laid<e> => {
@@ -1838,7 +1838,7 @@ let asked_below<e> = pure (
 
 /// The overflow across and down an element of `kind` styled `style` has: its style's, and a
 /// Scroll element's axis `OverflowAuto` where its style says nothing else.
-let overflows<e> = pure (kind: Kind<e>, style: Computed) -> (Overflow, Overflow) =>
+let overflows<e> = pure (kind: Kind<e>, style: ref Computed) -> (Overflow, Overflow) =>
   match kind {
     Scrolls(Horizontal, _) => (if style.overflow_x == OverflowVisible { OverflowAuto } else { style.overflow_x }, style.overflow_y),
     Scrolls(Vertical, _) => (style.overflow_x, if style.overflow_y == OverflowVisible { OverflowAuto } else { style.overflow_y }),
@@ -1886,8 +1886,8 @@ struct Styled {
 /// what a flex container or grid reads of an item before it lays the item out.
 let styled_at<e> = (
   node: Node<e>,
-  cascade: Cascade,
-  ui: Interaction,
+  cascade: ref Cascade,
+  ui: ref Interaction,
   id: string
 ) -> Styled => {
   // A theme reaches its own node; a component's sheet — and a control's insides — only what
@@ -1943,7 +1943,7 @@ let styled_at<e> = (
 /// `c` narrowed to the `width`, `height` and their least and greatest that `style` asks for —
 /// each within `c`, which wins, as a parent's constraints do. A least beats a greatest, as in
 /// CSS.
-let sized_by = pure (c: Constraints, style: Computed) -> Constraints => {
+let sized_by = pure (c: Constraints, style: ref Computed) -> Constraints => {
   let w = narrowed(c.min_w, c.max_w, style.width, style.min_width, style.max_width)
   let h = narrowed(c.min_h, c.max_h, style.height, style.min_height, style.max_height)
   Constraints { min_w: w.0, max_w: w.1, min_h: h.0, max_h: h.1 }
@@ -2014,7 +2014,7 @@ pub const BAR_MARGIN: f32 = 2.0
 
 impl Scroller {
   /// How far the content can scroll, across and down.
-  pub let room = pure (self) -> Size => Size {
+  pub let room = pure (self: ref) -> Size => Size {
     w: (self.content.w - self.port.w).max(0.0),
     h: (self.content.h - self.port.h).max(0.0),
   }
@@ -2023,7 +2023,7 @@ impl Scroller {
   /// content does not fit for `OverflowAuto`, never otherwise — each along its edge, a thumb
   /// as long as the port's share of the content (at least 20) at the offset's share of the
   /// room.
-  pub let bars = pure (self, size: Size) -> []Bar => {
+  pub let bars = pure (self: ref, size: Size) -> []Bar => {
     let spare = self.room()
     let show_x = self.x == OverflowScroll || (self.x == OverflowAuto && spare.w > 0.5)
     let show_y = self.y == OverflowScroll || (self.y == OverflowAuto && spare.h > 0.5)
@@ -2091,7 +2091,7 @@ struct Body<e> {
 /// pressed — as CSS's reach every element round the one they name — `:focus` when it has the
 /// focus, `:focus-visible` when that came from the keyboard, and `:focus-within` when it or
 /// something in it has it.
-let with_state = pure (classes: string, id: string, ui: Interaction) -> string => {
+let with_state = pure (classes: string, id: string, ui: ref Interaction) -> string => {
   let inside = (holder: string) -> bool => holder == id || holder.starts_with("${id}/")
   var out = classes
   for (state, holds) in [
@@ -2187,7 +2187,7 @@ let lay_select<e> = (
   spec: SelectSpec<e>,
   c: Constraints,
   space: Insets,
-  ctx: Ctx,
+  ctx: ref Ctx,
   fonts: mut Fonts,
   cache: mut LayoutCache<e>
 ) -> Body<e> => {
@@ -2257,7 +2257,7 @@ let lay_popup<e> = (
   open: bool,
   side: FloatSide,
   c: Constraints,
-  ctx: Ctx,
+  ctx: ref Ctx,
   fonts: mut Fonts,
   cache: mut LayoutCache<e>
 ) -> Body<e> => {
@@ -2309,7 +2309,7 @@ let lay_modal<e> = (
   children: []Node<e>,
   open: bool,
   c: Constraints,
-  ctx: Ctx,
+  ctx: ref Ctx,
   fonts: mut Fonts,
   cache: mut LayoutCache<e>
 ) -> Body<e> => {
@@ -2358,7 +2358,7 @@ let lay_modal<e> = (
 let lay_docked<e> = (
   children: []Node<e>,
   c: Constraints,
-  ctx: Ctx,
+  ctx: ref Ctx,
   fonts: mut Fonts,
   cache: mut LayoutCache<e>
 ) -> Body<e> => {
@@ -2417,7 +2417,7 @@ let modal_scrim<e> = pure (content: Node<e>) -> Node<e> => {
 let lay_tip<e> = (
   tip: Node<e>,
   at: Point,
-  ctx: Ctx,
+  ctx: ref Ctx,
   fonts: mut Fonts,
   cache: mut LayoutCache<e>
 ) -> Placed<e> => {
@@ -2465,7 +2465,7 @@ let lay_floating<e> = (
   index: i64,
   side: FloatSide,
   anchor: Size,
-  ctx: Ctx,
+  ctx: ref Ctx,
   fonts: mut Fonts,
   cache: mut LayoutCache<e>
 ) -> Placed<e> => {
@@ -2507,7 +2507,7 @@ let float_room = pure (window: Size) -> Size => Size {
 let lay_wrapped<e> = (
   children: []Node<e>,
   c: Constraints,
-  ctx: Ctx,
+  ctx: ref Ctx,
   fonts: mut Fonts,
   cache: mut LayoutCache<e>
 ) -> Body<e> => {
@@ -2537,7 +2537,7 @@ let lay_line<e> = (
   cross: CrossAlign,
   c: Constraints,
   fill: bool,
-  ctx: Ctx,
+  ctx: ref Ctx,
   fonts: mut Fonts,
   cache: mut LayoutCache<e>
 ) -> Body<e> => {
@@ -2631,7 +2631,7 @@ let lay_line<e> = (
 let lay_layers<e> = (
   children: []Node<e>,
   c: Constraints,
-  ctx: Ctx,
+  ctx: ref Ctx,
   fonts: mut Fonts,
   cache: mut LayoutCache<e>
 ) -> Body<e> => {
@@ -2694,7 +2694,7 @@ let lay_layers<e> = (
 let lay_slider<e> = (
   spec: SliderSpec<e>,
   c: Constraints,
-  ctx: Ctx,
+  ctx: ref Ctx,
   fonts: mut Fonts,
   cache: mut LayoutCache<e>
 ) -> Body<e> => {
@@ -2741,8 +2741,8 @@ pub let slider_fraction<e> = pure (spec: SliderSpec<e>) -> f32 =>
 let lay_field<e> = (
   spec: FieldSpec<e>,
   c: Constraints,
-  style: Computed,
-  ctx: Ctx,
+  style: ref Computed,
+  ctx: ref Ctx,
   fonts: mut Fonts
 ) -> Body<e> => {
   let empty = spec.value.len() == 0

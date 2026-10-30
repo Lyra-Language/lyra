@@ -240,7 +240,7 @@ A place is what `=` writes and `&` addresses: a binding, a field `p.x`, an eleme
 
 A root allows interior mutation when it is a `var` (also reassignable) or a `let mut` (not); a plain `let` allows neither. `var mut` says nothing `var` does not, and warns `lyra-W030`.
 
-**Parameter modes.** A bare parameter and `own` are by value (`own` transfers ownership). `mut` is a mutable borrow **on every type, scalars included**: the parameter is the caller's storage, so `n = n + 1`, `n += 1` or `&mut n` in the callee reaches the caller's `n` (`types.IsByRefParam`). The argument must be a mutable place — a `var`, or a field/element of one; a literal, a temporary or a `let` is `lyra-E001` — and a write through a `mut` parameter is an effect `pure` refuses in the function that writes; a *caller* pays for it by its argument (§ 5). `ref` is a read-only borrow, by reference except on a scalar, where it is the value; `own`/`ref` on a scalar are inert (`lyra-W010`). A `mut` scalar is what an in-out C pointer wraps as: `checkbox(label, open)` over ImGui's `bool *`. **A function with a by-reference parameter cannot be a value** (`lyra-E082`): a call through a function value passes every argument by value, so a nested lambda with one, or a named function with one referenced other than as a callee (`apply(inc, n)`), is refused — the latter segfaulted before 09/28.
+**Parameter modes.** A bare parameter and `own` are by value (`own` transfers ownership). `mut` is a mutable borrow **on every type, scalars included**: the parameter is the caller's storage, so `n = n + 1`, `n += 1` or `&mut n` in the callee reaches the caller's `n` (`types.IsByRefParam`). The argument must be a mutable place — a `var`, or a field/element of one; a literal, a temporary or a `let` is `lyra-E001` — and a write through a `mut` parameter is an effect `pure` refuses in the function that writes; a *caller* pays for it by its argument (§ 5). `ref` is a read-only borrow, by reference except on a scalar, where it is the value; `own`/`ref` on a scalar are inert (`lyra-W010`). A `mut` scalar is what an in-out C pointer wraps as: `checkbox(label, open)` over ImGui's `bool *`. **A large aggregate taken bare warns `lyra-W031`** (10/30): 256 bytes or more — a struct, a fixed array, a `data` or union type — is copied at every call, and a bare parameter is read-only already, so `ref` costs nothing but the copy. Not said where `ref` would not compile or not be safe: a function used as a value, a nested lambda, a generator or `async` function, an extern, a size depending on a type variable. **A function with a by-reference parameter cannot be a value** (`lyra-E082`): a call through a function value passes every argument by value, so a nested lambda with one, or a named function with one referenced other than as a callee (`apply(inc, n)`), is refused — the latter segfaulted before 09/28.
 
 **A `mut` argument is exclusive by place.** `mut` and `ref` parameters point into the caller's storage, so within one call, no other `mut` or `ref` argument may reach the place a `mut` argument names (`lyra-E001`). Places overlap when one path is a prefix of the other (`s` and `s.a`, or `s.a` twice) and not when they part at a field or tuple position: `f(s.music, s.chip)` is two slots, as disjoint as two variables. Two elements `xs[i]`/`xs[j]` always overlap (an index is a runtime value), as do a union's members (one slot). Two `ref`s may share; a `ref` scalar is exempt (passed by value), a `mut` scalar is not (`swap(n, n)`). This is about the slots arguments point into, not heap aliasing: two fields holding one reference-counted array still share its buffer, as two variables can.
 
@@ -868,9 +868,12 @@ target = "genesis"
   shapes.Wrap(v) = b else { … }`, `xs.map(shapes.Circle)`, and as a type `p: shapes.Pt`,
   `[]shapes.Shape`, `collections.HashMap<string, i64>`. **The qualifier says whose**: beside
   this module's own `Circle`, `shapes.Circle` is still shapes', and a qualified pattern is
-  refused against another module's type. The member must be `pub`. The name's second letter
-  must be lowercase or a digit — `lib.A` and `lib.RGB` read as constants, which is what keeps
-  `vdp.SCREEN_WIDTH` a constant — so such a type is imported by name instead.
+  refused against another module's type. The member must be `pub`. An all-caps name is a
+  constant's or a constructor's alike, bare or qualified (10/30): `lib.RGB { r: 1 }`,
+  `p: lib.RGB`, `lib.A(1)`, `lib.LOUD`, `lib.CD(n) =>` are lib's types and constructors and
+  `vdp.SCREEN_WIDTH` its constant — a bare `lib.LOUD` is the constructor when lib declares
+  one by that name. As bare, an all-caps constructor's payload is parenthesized (`lib.CD 5`
+  does not parse).
 - `pub extern` exports a foreign function as `pub let` does a binding; a call still needs
   `unsafe` (§8, `extern`).
 - **A member imported under another name** (`import lib.{ Box as B }`) is that member under

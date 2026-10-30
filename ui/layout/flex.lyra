@@ -39,9 +39,9 @@ import ui.style.{
 /// padding).
 let lay_flex<e> = (
   children: []Node<e>,
-  style: Computed,
+  style: ref Computed,
   c: Constraints,
-  ctx: Ctx,
+  ctx: ref Ctx,
   fonts: mut Fonts,
   cache: mut LayoutCache<e>
 ) -> Body<e> => {
@@ -376,7 +376,7 @@ let content_main<e> = (
   horizontal: bool,
   least: bool,
   cross_avail: f32,
-  ctx: Ctx,
+  ctx: ref Ctx,
   id: string,
   fonts: mut Fonts
 ) -> f32 => {
@@ -399,10 +399,10 @@ let content_main<e> = (
 /// asked for or its greatest; none for a scroll, which shows what does not fit.
 let item_least<e> = (
   child: Node<e>,
-  item: Computed,
+  item: ref Computed,
   horizontal: bool,
   cross_avail: f32,
-  ctx: Ctx,
+  ctx: ref Ctx,
   id: string,
   fonts: mut Fonts
 ) -> f32 => {
@@ -447,9 +447,9 @@ let baseline<e> = pure (laid: Laid<e>) -> Maybe<f32> => {
 let intrinsic_width<e> = (
   node: Node<e>,
   least: bool,
-  cascade: Cascade,
+  cascade: ref Cascade,
   fonts: mut Fonts,
-  ui: Interaction,
+  ui: ref Interaction,
   id: string,
   own: bool = true,
   contents: bool = false,
@@ -546,9 +546,9 @@ let children_width<e> = (
   node: Node<e>,
   least: bool,
   side_by_side: bool,
-  within: Cascade,
+  within: ref Cascade,
   fonts: mut Fonts,
-  ui: Interaction,
+  ui: ref Interaction,
   id: string,
   shrunk: bool = false
 ) -> f32 => {
@@ -576,9 +576,9 @@ let children_width<e> = (
 /// make an item's size infinite.
 let measured_width<e> = (
   node: Node<e>,
-  cascade: Cascade,
+  cascade: ref Cascade,
   fonts: mut Fonts,
-  ui: Interaction,
+  ui: ref Interaction,
   id: string
 ) -> f32 => {
   var scratch = layout_cache::<e>()

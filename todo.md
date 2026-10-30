@@ -91,11 +91,11 @@ Package management, versioning and separate compilation are out of scope by deci
   parameters are named `data` throughout.
 
 
-- **A large struct passed bare is a silent copy.** Sheliak's `pure (bus: GenesisBus, …)`
-  helpers copied a multi-kilobyte bus on every memory read — two thirds of its frame time,
-  found only by profiling (09/28); `ref` fixed it. A warning for a struct over some size
-  passed to a bare parameter the callee never moves or mutates — "take it by `ref`" — would
-  have said so at the declaration.
+- **[DONE 10/30] A large aggregate passed bare warns `lyra-W031`** (COMPLETED.md, 10/30); `ui`,
+  `std` and the examples take `ref` where it fired.
+- **[OPEN] `lyra-W031` is left standing in Vega (355), Termina (82) and Sheliak (4)** —
+  mechanical (`x: T` → `x: ref T`, an `impl`'s `self` → `self: ref`), for each repo's own
+  session; Vega's `Studio` (2 KB) and Sheliak's `GenesisBus` are the costly ones.
 
 - **[PARTIAL] The collector in Lyra — the bootstrap proper.** The Go collector is ~7.8k
   lines over a ~5.6k-line AST, so this is sliced rather than attempted.
@@ -508,8 +508,8 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] An inline-record constructor does not lower**: `data Shape = Square { side: i64 }`
   type-checks, then `Square { side: 3 }` is "struct instance lowering not implemented" in the
   backend, and a `Square { side } =>` arm "struct pattern on non-struct value" (10/29).
-- **[OPEN] A one-letter or all-caps type cannot be qualified** (`lib.A`, `lib.RGB`): the token
-  needs a lowercase second letter so `vdp.SCREEN_WIDTH` stays a constant. Import it by name.
+- **[DONE 10/30] An all-caps type or constructor through a namespace** — `lib.RGB`, `lib.A(1)`,
+  `lib.LOUD =>` (COMPLETED.md, 10/30).
 - **[DONE 10/19] A constructor is a function value** (`on_change: Width`), and **a lambda
   in a generic struct field is typed by it**. (COMPLETED.md, 10/19.)
 - **[OPEN] lui can write `on_change={Width}` through** rather than the typed lambda it

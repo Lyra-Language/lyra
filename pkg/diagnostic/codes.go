@@ -1342,4 +1342,13 @@ const (
 	// `mut` adds nothing. Write `var`, or `let mut` for a binding that is not
 	// reassignable but whose interior is.
 	CodeRedundantVarMut = "lyra-W030"
+
+	// CodeLargeByValueParam: a function takes a large aggregate (256 bytes or more) by a
+	// bare parameter, so every call copies it — a cost no profile but a frame's points at.
+	// A bare parameter is read-only already (lyra-E025), so `ref` changes nothing but the
+	// copy; the warning is at the declaration because that is where the fix is written.
+	// Not reported where `ref` would not compile — a function used as a value (lyra-E082),
+	// a nested lambda — or would not be safe: a generator or `async` function, whose frame
+	// outlives the call that lent it.
+	CodeLargeByValueParam = "lyra-W031"
 )

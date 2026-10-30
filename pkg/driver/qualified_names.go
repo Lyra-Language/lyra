@@ -10,7 +10,7 @@ import (
 
 // eraseQualifiedNames rewrites every constructor, struct literal and pattern name written
 // through a namespace import — `shapes.Circle(2)`, `shapes.Dot`, `shapes.Pt { x: 1 }`,
-// `shapes.Square { side } =>` — to the bare name, and records each node's location with the
+// `shapes.Square { side } =>`, and all-caps `lib.LOUD` — to the bare name, and records each node's location with the
 // module the qualifier named (symbols/qualified.go), before any pass reads the program.
 // A name it refuses for want of a namespace or a member stays dotted and is recorded as
 // reported, so the typechecker's "undefined" does not follow it. It returns its
@@ -91,6 +91,9 @@ func eraseQualifiedNames(program *ast.Program, st *symbols.SymbolTable) ([]diag.
 		if !ok {
 			continue
 		}
+		ast.RewriteStmt(stmt, func(e ast.Expression) ast.Expression {
+			return qualifiedConstructorValue(e, st)
+		})
 		ast.WalkStmt(stmt, func(s ast.Statement) bool {
 			erasePatterns(s)
 			return true
@@ -109,6 +112,35 @@ func eraseQualifiedNames(program *ast.Program, st *symbols.SymbolTable) ([]diag.
 		})
 	}
 	return diags, used
+}
+
+// qualifiedConstructorValue is the nullary constructor an all-caps member of a namespace
+// names — `lib.LOUD`, which parses as the member access `vdp.SCREEN_WIDTH` is, an
+// all-caps name being a constant's or a constructor's alike (tree-sitter-lyra,
+// `qualified_const_name`) — as the dotted constructor the walk above then erases. Any
+// other expression, and a member the module declares no constructor by, is returned as
+// it is: a constant stays a member access.
+func qualifiedConstructorValue(e ast.Expression, st *symbols.SymbolTable) ast.Expression {
+	m, ok := e.(*ast.MemberExpr)
+	if !ok || !m.Property.IsConst {
+		return e
+	}
+	object, ok := m.Object.(*ast.IdentifierExpr)
+	if !ok {
+		return e
+	}
+	path, ok := st.NamespaceIn(st.ModuleOfFile[m.GetLocation().File], object.Name)
+	if !ok {
+		return e
+	}
+	if _, ok := st.DataTypeWithConstructorIn(path, m.Property.Name); !ok {
+		return e
+	}
+	return &ast.DataConstructorExpr{
+		ExprBase:    ast.ExprBase{AstBase: ast.AstBase{Location: m.GetLocation()}},
+		Constructor: m.Property.Name,
+		Namespace:   object.Name,
+	}
 }
 
 func qualifiedError(loc ast.Location, message string) diag.Diagnostic {

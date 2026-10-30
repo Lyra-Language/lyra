@@ -148,7 +148,7 @@ let places = pure (x: f64) -> string => "${f64((x * 100.0).round()) / 100.0}"
 let save = (
   renderer: SdlRenderer,
   fonts: Fonts,
-  laid: Laid<Event>,
+  laid: ref Laid<Event>,
   path: string
 ) -> bool => {
   var r = renderer

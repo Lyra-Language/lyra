@@ -91,8 +91,8 @@ pub struct Moving {
 /// jumps if none does; what has arrived stops. Also whether a property that changes sizes
 /// started, which the layout just made must take in.
 pub let advance = pure (
-  motion: Maybe<Motion>,
-  target: Computed,
+  motion: ref Maybe<Motion>,
+  target: ref Computed,
   now: i64
 ) -> (Motion, bool) => {
   // First seen: nothing moves — a transition is a change, and there was none.
@@ -130,23 +130,23 @@ pub let advance = pure (
 }
 
 /// What `motion` shows at `now`: its target, each moving property at its place.
-pub let shown_at = pure (motion: Motion, now: i64) -> Computed => {
+pub let shown_at = pure (motion: ref Motion, now: i64) -> Computed => {
   var out = motion.target
   for m in motion.moving { out = blended(out, m.from, m.to, m.property, eased(m, now)) }
   out
 }
 
 /// Whether anything in `motion` is still moving at `now`.
-pub let in_motion = pure (motion: Motion, now: i64) -> bool =>
+pub let in_motion = pure (motion: ref Motion, now: i64) -> bool =>
   motion.moving.any((m) => !arrived(m, now))
 
 /// Whether `motion` moves a property that changes sizes.
-pub let moves_sizes = pure (motion: Motion) -> bool =>
+pub let moves_sizes = pure (motion: ref Motion) -> bool =>
   motion.moving.any((m) => SIZED.any((p) => p == m.property))
 
 /// `style` with the properties that change sizes taken from `shown` — what a layout lays an
 /// element out with while they move.
-pub let with_layout = pure (style: Computed, shown: Computed) -> Computed =>
+pub let with_layout = pure (style: ref Computed, shown: ref Computed) -> Computed =>
   Computed {
     style |
     padding: shown.padding,
@@ -163,7 +163,7 @@ pub let with_layout = pure (style: Computed, shown: Computed) -> Computed =>
   }
 
 /// The properties that change sizes, as text: the layout cache's key for a moving element.
-pub let layout_key = pure (s: Computed) -> string => {
+pub let layout_key = pure (s: ref Computed) -> string => {
   let p = s.padding
   "${p.top},${p.right},${p.bottom},${p.left};${s.gap},${s.row_gap},${s.column_gap};${s.width ?? -1.0},${s.height ?? -1.0},${s.min_width ?? -1.0},${s.max_width ?? -1.0},${s.min_height ?? -1.0},${s.max_height ?? -1.0};${s.border_width}"
 }
@@ -185,11 +185,11 @@ let covers = pure (named: string, property: string) -> bool =>
   named == "background" && (property == "background-color" || property == "background-image")
 
 /// Whether `m` has arrived by `now`.
-let arrived = pure (m: Moving, now: i64) -> bool =>
+let arrived = pure (m: ref Moving, now: i64) -> bool =>
   f32(now - m.start) >= m.delay + m.duration
 
 /// How far along `m` is at `now`, 0 to 1, after its timing: 0 while it waits.
-let eased = pure (m: Moving, now: i64) -> f32 => {
+let eased = pure (m: ref Moving, now: i64) -> f32 => {
   let elapsed = f32(now - m.start) - m.delay
   if elapsed <= 0.0 { return 0.0 }
   if m.duration <= 0.0 || elapsed >= m.duration { return 1.0 }
@@ -252,7 +252,7 @@ let slope_at = pure (a: f32, b: f32, t: f32) -> f32 => {
 }
 
 /// Whether `a` and `b` differ in `property`.
-pub let differs = pure (a: Computed, b: Computed, property: string) -> bool =>
+pub let differs = pure (a: ref Computed, b: ref Computed, property: string) -> bool =>
   match property {
     "opacity" => apart(a.own_opacity, b.own_opacity),
     "color" => a.color != b.color,
@@ -282,9 +282,9 @@ let apart = pure (a: f32, b: f32) -> bool => (a - b).abs() > 0.0001
 
 /// `into` with `property` at `p` of the way from `from`'s value to `to`'s.
 pub let blended = pure (
-  into: Computed,
-  from: Computed,
-  to: Computed,
+  into: ref Computed,
+  from: ref Computed,
+  to: ref Computed,
   property: string,
   p: f32
 ) -> Computed =>
