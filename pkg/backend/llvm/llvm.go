@@ -389,6 +389,7 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		return nil, l.symbolConflict
 	}
 	dropZeroSizedAccesses(m)
+	copyLargeAggregates(m)
 	b.coroSymbols = l.seqCoroSymbols
 	b.funcModule, b.stableNames = l.funcModule, l.stableNames
 	b.liveInfo = nil

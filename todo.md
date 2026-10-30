@@ -1273,9 +1273,9 @@ sets V on every add. What stands between that and a ROM:
   caching a module's analysis needs its dependencies' interfaces as keys. Cheaper first:
   parse a module directory's files in parallel (3s of parsing is serial), and memoize
   `resolveForLayout`'s instantiations (4s of lowering).
-- **[OPEN] One ThinLTO job is 80s of every edit to Vega's `face`**: `face_checks.check_all`,
-  its once-called checks inlined into one huge function (COMPLETED.md 10/30). A `@noinline`
-  (or cold) attribute, or Vega calling its checks through function values, would end it.
+- **[OPEN] Large aggregates are still built as whole values**, then split back to memory by
+  `copyLargeAggregates` (COMPLETED.md 10/30). Lowering a struct literal or record update
+  straight into its destination would make less IR to start with.
 - **[OPEN] Parts for other platforms, apps and live builds**: each builds whole. Cross builds
   need the platform's ThinLTO linker (lld for Linux, ld64 for iOS); `--live` relinks its
   generations from one module.

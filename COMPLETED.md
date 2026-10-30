@@ -66,8 +66,47 @@ Closures now go with their module's parts, which an edit to the file recompiles 
 called once) inlined into one function of 3.3 MB of code, optimized on one core and run
 again whenever `face` changes, since it imports from it. Read off the LTO cache's
 timestamps (one object 50 s after the rest) and `nm` on it. Smaller parts (100 functions
-for 400) changed nothing, as expected of a single function. Open: Lyra has no way to keep a
-function from being inlined.
+for 400) changed nothing, as expected of a single function. The cause turned out not to be
+inlining — see the next entry.
+
+### 10/30/26 — Large aggregates move through memory; `@noinline`
+
+**`@noinline` was the first answer and the wrong one.** Lyra gained it (a top-level
+function, and every specialization of a generic one, marked `noinline`; LANGUAGE.md), and
+Vega's forty checks marked with it were separate functions in the object — and the edit
+still took 100 s. A `--cc` wrapper timing each clang call put 80 s in the link; the
+linker's per-part objects (`-object_path_lto`), by time written, put most of it in
+`face_checks`; and clang alone took 82 s over that part, 2 MB of IR, where `face`'s 4 MB
+parts took 5. `-ftime-report`: the SLP vectorizer 42 s, the instruction scheduler 14.
+
+**The backend moved `Studio` as a whole value** — 1,431 whole loads and 1,017 whole stores
+in that part — and SROA splits each into one access a field (its `.fca.` names), so -O2 grew
+the part to 65 MB and `check_song_editor` from 2,700 instructions to 75,000, in blocks the
+vectorizer and scheduler are quadratic over. `storeAggregate` already turned a large
+load-and-store into a `memcpy`, but only where a site asked, and only with nothing between.
+Three shapes made them:
+
+- **a record update** (`Studio { s | doc: d }`): the source loaded whole, each field taken
+  out and retained, put back together with `insertvalue` into a value stored whole;
+- **a copy**, the value loaded and stored, with only an alloca or casts between;
+- **a value loaded first and stored later**, after calls — the update's source, kept to be
+  released — or stored twice.
+
+`copyLargeAggregates` (`aggregate_copies.go`) rewrites them once the module is built, as
+`dropZeroSizedAccesses` does: a field read from a whole load becomes a load of that field
+alone, where the whole load was; a value put together field by field is stored a field at a
+time where the whole store was; a copy with nothing that writes memory between becomes a
+`memcpy`; and a load used only by stores is copied to a slot of its own where it was
+loaded, and from the slot at each store. **Each keeps the moment memory is read**, which
+is what the 10/11 crash (a copy made after the releases had freed what it read) was about.
+The part compiles in 5.3 s; an -O2 build of Vega after a one-line edit in `face` is 31 s
+(100 before, 123 this morning).
+
+Two traps on the way. **llir wraps an argument with attributes** (`zeroext`) in an
+`*ir.Arg`, so a use count over `Operands()` missed the value inside and deleted a load still
+used. And **a function numbered before the rewrite keeps its numbers**: the new
+instructions, all 0, printed as `%0` beside a parameter of that name; `unnumber` clears
+them for printing to number afresh.
 
 ### 10/29/26 — An arm writing its scrutinee no longer frees what it bound
 
