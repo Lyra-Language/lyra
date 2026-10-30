@@ -326,9 +326,16 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
   graphs a bar a frame, painted, a drag across one a gesture, scrolled sideways together
   past the panel, the line under them saying what the step under the pointer plays; each
   graph's wave in a disclosure, its dots over the bars; Play heard as the game will hear
-  it, a line following it on the same `EveryFrame` as the entity preview. The sprite
-  editor's preview, onion skin, resizing and true colour to come, then the instrument and
-  song editors. `vega --ui` opens the new front end.
+  it, a line following it on the same `EveryFrame` as the entity preview. **The instrument
+  editor 10/29** (`face/instruments.lyra`): the algorithm drawn beside the channel's values,
+  the operators a CSS grid of sliders (`minmax(0, 1fr)` columns, so a narrow panel squeezes
+  them), each envelope drawn; with no drag-end event in `ui`, a run of edits to one field
+  is one undo step by amending the last (`doc.amend`, while `doc.revision` is the one it
+  left); a sample's wave; Import through the system's dialog; and the piano — pointer, the
+  Z and Q rows once it has the focus, or a phrase — heard live through the studio's one
+  `fm_preview` channel every frame while a note sounds and through its release. The
+  sprite editor's preview, onion skin, resizing and true colour to come, then the song
+  editor. `vega --ui` opens the new front end.
 8. **The switch**: `Vega.app` and the Linux releases built from the new front end; the
    ImGui front end, `mac_look` and `ui_checks.lyra` removed, and `bindings.imgui` with no
    user left in the workspace.
