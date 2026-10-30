@@ -667,6 +667,9 @@ type analyzer struct {
 	// lastUse it includes `own` params (Perceus reuse reclaims a consumed argument's
 	// cells), which is why it's computed separately.
 	reuseLastRef map[string]ast.Expression
+	// bound is, per enclosing function, every name it binds — its parameters and its
+	// body's binders — so a name none of them binds is a module-level one (mutableGlobal).
+	bound []map[string]bool
 }
 
 // lambda analyzes one function/lambda body under its own return-ownership.
@@ -679,10 +682,16 @@ func (a *analyzer) lambda(lam *ast.LambdaExpr) {
 	a.conditional = false
 	a.lastUse = a.computeLastUse(lam)
 	a.reuseLastRef = a.computeOwnedLastRef(lam)
+	binds := captures.BodyBinders(lam)
+	for _, p := range lam.Parameters {
+		binds[p.GetName()] = true
+	}
+	a.bound = append(a.bound, binds)
 	defer func() {
 		a.conditional = savedCond
 		a.lastUse = savedLast
 		a.reuseLastRef = savedReuse
+		a.bound = a.bound[:len(a.bound)-1]
 	}()
 	// The body is the function's return value: pass the return's ownership need
 	// down unconditionally. Whether it actually causes a retain is decided at the
@@ -1155,6 +1164,98 @@ func (a *analyzer) destructuringValue(d *ast.DestructuringDeclStmt) {
 	}
 }
 
+// mutableGlobal reports whether name, read at loc, is a module-level `var` (or `let mut`)
+// holding data: a binding no enclosing function binds, which every function may write.
+//
+// **Such a global's value is never borrowed past a statement.** A global owns what it holds
+// and releases it when reassigned or when a field or element of it is written (the backend's
+// slotIsOwning), and that write may happen inside any function a statement calls — `f(q)`
+// where `f` calls `pop()`, which reassigns `q`. No walk of the statement can see it, as
+// holdScrutinee sees an arm's write to a local, so a borrowed read of one is made a
+// temporary of its own: retained as it is read, released after its statement. Until 10/30 a
+// global was never released, so its borrows were safe and every reassignment leaked.
+//
+// A `let` global without `mut` is never written, and a name an enclosing function binds is
+// that binding. A name both resolves to only where the conservative answer, a retain, is
+// the cost: BindingIn falls back to the program-wide binding.
+func (a *analyzer) mutableGlobal(name string, loc ast.Location) bool {
+	for _, frame := range a.bound {
+		if frame[name] {
+			return false
+		}
+	}
+	if a.symTable == nil {
+		return false
+	}
+	decl, ok := a.symTable.BindingIn(a.symTable.ModuleOfFile[loc.File], name)
+	return ok && isMutableData(decl)
+}
+
+// holdGlobalPlace holds a managed value read out of a mutable global where it is borrowed —
+// `b.xs`, `q[i]`, `lib.queue` — for mutableGlobal's reason. The hold is on the place read
+// itself, not the global's name: the backend reads a field or element from the global's
+// storage, never through a loaded copy of the whole global, so a hold on `b` holds nothing
+// `b.xs` reads. Reports whether it held; the path's indexes are walked, the rest of it is
+// storage.
+func (a *analyzer) holdGlobalPlace(e ast.Expression, needOwned bool) bool {
+	if needOwned || !a.ownsManaged(e) || !a.rootedAtMutableGlobal(e) {
+		return false
+	}
+	a.table.Retain[e] = true
+	a.table.ReleaseTemp[e] = true
+	for x, ok := e, true; ok; x, ok = ast.PlaceObject(x) {
+		if ix, isIndex := x.(*ast.IndexExpr); isIndex {
+			a.expr(ix.Index, false)
+		}
+	}
+	return true
+}
+
+// rootedAtMutableGlobal reports whether the place path e starts at a mutable global, by its
+// own name or through its namespace.
+func (a *analyzer) rootedAtMutableGlobal(e ast.Expression) bool {
+	for x, ok := e, true; ok; x, ok = ast.PlaceObject(x) {
+		if m, isMember := x.(*ast.MemberExpr); isMember && a.namespacedMutableGlobal(m) {
+			return true
+		}
+		if id, isName := x.(*ast.IdentifierExpr); isName {
+			return a.mutableGlobal(id.Name, id.GetLocation())
+		}
+	}
+	return false
+}
+
+// namespacedMutableGlobal reports whether e is `lib.name` naming lib's mutable global.
+func (a *analyzer) namespacedMutableGlobal(e *ast.MemberExpr) bool {
+	ns, ok := e.Object.(*ast.IdentifierExpr)
+	if !ok || a.symTable == nil {
+		return false
+	}
+	for _, frame := range a.bound {
+		if frame[ns.Name] {
+			return false
+		}
+	}
+	path, ok := a.symTable.NamespaceIn(a.symTable.ModuleOfFile[e.GetLocation().File], ns.Name)
+	if !ok {
+		return false
+	}
+	decl, ok := a.symTable.BindingIn(path, e.Property.Name)
+	return ok && isMutableData(decl)
+}
+
+// isMutableData is a top-level binding the backend gives storage (a global, not a function)
+// that may be written after it is initialized.
+func isMutableData(decl *ast.VarDeclStmt) bool {
+	if decl == nil || decl.Value == nil {
+		return false
+	}
+	if _, isFunc := decl.Value.(*ast.LambdaExpr); isFunc {
+		return false
+	}
+	return decl.BindingKind == ast.BindingVar || (decl.BindingKind == ast.BindingLet && decl.IsMut)
+}
+
 // holdScrutinee keeps a `match` or `if let` scrutinee alive through its arms when an arm
 // could write the place it was read from.
 //
@@ -1171,8 +1272,8 @@ func (a *analyzer) destructuringValue(d *ast.DestructuringDeclStmt) {
 // statement, like a call's result. Only where an arm can write its root, so the ordinary
 // match on a binding costs nothing.
 //
-// A global rewritten by a function the arm calls needs no hold: a global's read is already
-// retained. A `let … else` binding outlives its statement and is retained as one.
+// A global rewritten by a function the arm calls needs no hold: a borrowed read of a mutable
+// global is already retained for its statement (mutableGlobal). A `let … else` binding outlives its statement and is retained as one.
 func (a *analyzer) holdScrutinee(scrutinee ast.Expression, arms ...ast.Expression) {
 	if scrutinee == nil || !a.ownsManaged(scrutinee) {
 		return
@@ -1287,6 +1388,13 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		if !a.ownsManaged(e) {
 			return
 		}
+		// A mutable global read where it is borrowed is held for its statement: a call in
+		// it may reassign the global and release what the borrow still reads (mutableGlobal).
+		if !needOwned && a.mutableGlobal(e.Name, e.GetLocation()) {
+			a.table.Retain[e] = true
+			a.table.ReleaseTemp[e] = true
+			return
+		}
 		last := a.lastUse[e]
 		switch {
 		case last && needOwned && !a.conditional:
@@ -1298,6 +1406,9 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		}
 
 	case *ast.MemberExpr:
+		if a.holdGlobalPlace(e, needOwned) {
+			return
+		}
 		// Field access borrows out of the aggregate; borrowing the object.
 		a.expr(e.Object, false)
 		if needOwned && a.ownsManaged(e) {
@@ -1323,6 +1434,9 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		// it (its per-type drop glue on release), so a bare bind would free it twice —
 		// a double-free / use-after-free. Mirrors the MemberExpr case. Previously an
 		// IndexExpr hit `default` and recorded nothing, so the retain was missing.
+		if a.holdGlobalPlace(e, needOwned) {
+			return
+		}
 		a.expr(e.Object, false)
 		a.expr(e.Index, false)
 		if needOwned && a.ownsManaged(e) {
@@ -1332,6 +1446,9 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 	case *ast.TupleIndexExpr:
 		// Positional tuple access (`pair.0`) — same rule as MemberExpr / IndexExpr: a
 		// managed element read into an owning position is duplicated, not moved.
+		if a.holdGlobalPlace(e, needOwned) {
+			return
+		}
 		a.expr(e.Object, false)
 		if needOwned && a.ownsManaged(e) {
 			a.table.Retain[e] = true

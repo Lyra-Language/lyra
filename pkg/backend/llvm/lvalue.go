@@ -134,7 +134,8 @@ func (l *lowerer) lvalueRootIsOwning(e ast.Expression) bool {
 	for {
 		switch t := e.(type) {
 		case *ast.IdentifierExpr:
-			slot, ok := l.locals[t.Name]
+			// A local first, then a module-level global, as a read resolves the name.
+			slot, ok := l.slotFor(t.Name, t.GetLocation())
 			if !ok {
 				return false
 			}
@@ -171,10 +172,21 @@ func (l *lowerer) lvalueRootIsOwning(e ast.Expression) bool {
 // freed the argument the caller was about to release — and it survived this long
 // because the ASan suite was not instrumenting memory accesses at all.
 //
+// A **module-level global** is the third: its initializer and every value stored into it
+// were coerced to owned, so it holds a +1 it never gives up, and overwriting it drops that
+// reference. It answered "borrowed" until 10/30, so every reassignment of a managed global,
+// in `main` or any function, leaked what it replaced. Releasing is safe only because a
+// global's value is never *borrowed* past a statement: a read of a mutable global in a
+// borrowing position is retained for its statement (ownership.mutableGlobal), since a call
+// inside it may reassign the global, which no analysis of the body could see.
+//
 // Both the whole-binding reassignment path (lowerVarReassignment) and the interior
 // lvalue path (releaseOldTarget) ask this one question, because they are the same
 // question: the two disagreeing is precisely a leak or a double free.
 func (l *lowerer) slotIsOwning(slot value.Value) bool {
+	if g, ok := slot.(*ir.Global); ok {
+		return !g.Immutable // a `const` table (const_data.go) is static data, never written
+	}
 	return l.byRefParams[slot] || l.slotIsFramed(slot)
 }
 

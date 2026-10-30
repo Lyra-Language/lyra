@@ -42,6 +42,14 @@ A binding / `own` parameter holds one owning reference. The pass records:
   `self.cur`, `xs[0]`) whose root an arm could write (`holdScrutinee`, `writesRoot`): what the
   arms bind is borrowed from it, and the write would free it under them. Retained as it is read,
   it is a temporary the backend releases after the arms, as it does a call's result.
+- **Both, on a read of a mutable global** — a module-level `var` (or `let mut`), by its name, a
+  field or element of it, or through its namespace (`mutableGlobal`, `holdGlobalPlace`), where
+  it is borrowed. A global owns what it holds and the backend releases it when the global is
+  reassigned or written into (`slotIsOwning`), and any call in the statement may do that —
+  invisible to a walk of it, unlike an arm's write to a local. So the read is a temporary of
+  its own, retained and released after its statement. The hold is on the outermost managed
+  place read (`b.xs`), never on the name inside it: the backend reads a field from the global's
+  storage, not a loaded copy. A name an enclosing function binds is that binding (`bound`).
 - **`LastUseTransfer` / `LastUseDrop`** — Perceus last use. `computeLastUse` finds an eligible
   binding's final textual reference (shadowed, parameter, reassigned and address-taken names are
   ineligible; for reuse, `computeOwnedLastRef` also refuses an `own` parameter whose name the body

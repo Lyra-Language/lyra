@@ -9,6 +9,29 @@ Newest first.
 
 ## Dated log
 
+### 10/30/26 — A managed global releases what it held
+`q = q.slice(1, q.len())` leaked the array it replaced — in `main` as well, which the todo
+entry had recorded as fine — and so did every reassignment of a managed global and every
+write into one (`b.xs = …`). The backend asked whether the slot owned its value, and a
+global's answered no: neither framed nor a `mut` parameter. Yet its initializer and every
+value stored into it were coerced to owned, so it held a +1 it never gave back.
+- **Releasing it alone would have been a use-after-free.** A global's value was lent freely —
+  `first(q)` passed the box unretained — and a local's analyses can lend safely only because a
+  local is written where they can see: `holdScrutinee` finds an arm's write to the scrutinee's
+  root by walking the arm. A global is written by any function a statement calls, which no
+  walk of the statement sees. The ownership pass's comment there claimed "a global's read is
+  already retained"; nothing did that.
+- **So both halves landed together.** The backend's `slotIsOwning` answers yes for a global
+  (not a `const` table), which the interior-write root test now reaches too, resolving through
+  globals as a read does. And a borrowed read of a mutable global — by name, a field or element
+  of it, or through its namespace — is retained and released after its statement
+  (`mutableGlobal`, `holdGlobalPlace`). The hold is on the outermost managed place: held on `b`,
+  `both(b.xs)` still freed `xs`, since the backend reads a field from the global's storage, not
+  from a loaded copy. A `let` global is never written and needs none.
+- `TestExec_ABorrowedGlobalOutlivesItsReassignment` is the borrow side — an argument, a loop's
+  source, a field, a match scrutinee and an element each outliving a call that reassigns the
+  global — and fails in all five cases with the holds turned off.
+
 ### 10/30/26 — An editor's root is the program's, not the module's directory
 The language server reported every function of Termina's `src/face/settings.lyra` "already
 defined" at itself. A file opened in an editor is the entry of its own analysis, and since
