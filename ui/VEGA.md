@@ -321,8 +321,14 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
   back — the placements as the game first shows them and the camera's starting screen and
   zone; Select drags a placement or the zone (its corner resizes it), Place puts an entity
   down, by whole tiles while Snap is on, a drag one gesture; and the side panel's entities,
-  placements and the chosen one's fields. The sprite editor's preview, onion skin, resizing
-  and true colour to come, then the sound, instrument and song editors. `vega --ui` opens the new front end.
+  placements and the chosen one's fields. **The sound editor 10/29** (`face/sounds.lyra`):
+  the sounds and their voice, note, length, loop and release; the volume, pitch and fine
+  graphs a bar a frame, painted, a drag across one a gesture, scrolled sideways together
+  past the panel, the line under them saying what the step under the pointer plays; each
+  graph's wave in a disclosure, its dots over the bars; Play heard as the game will hear
+  it, a line following it on the same `EveryFrame` as the entity preview. The sprite
+  editor's preview, onion skin, resizing and true colour to come, then the instrument and
+  song editors. `vega --ui` opens the new front end.
 8. **The switch**: `Vega.app` and the Linux releases built from the new front end; the
    ImGui front end, `mac_look` and `ui_checks.lyra` removed, and `bindings.imgui` with no
    user left in the workspace.
