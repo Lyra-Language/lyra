@@ -36,6 +36,10 @@ type TypeChecker struct {
 	// uninferredParams holds the lambda parameters reported as untypable — no annotation
 	// and no context — so each is reported once, at the parameter, not at every use.
 	uninferredParams map[*ast.Parameter]bool
+	// sharedDefaults holds, per struct-field default too binding to copy (a lambda), the
+	// instantiation it was first typed at, so a literal at another is refused once, by name,
+	// rather than as a mismatch in the shared node (applyDefaultFields).
+	sharedDefaults map[ast.Expression]sharedDefault
 	// constBuiltinCalls holds the float-builtin method calls that a `const` initializer's
 	// constancy walk accepted, pending the verification sweep at the end of the pass
 	// (verifyConstBuiltinCalls, typechecker_const.go). The walk runs before the
@@ -5687,7 +5691,7 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		return nil
 	}
 
-	tc.applyDefaultFields(expr, structType)
+	tc.applyDefaultFields(expr, structType, decl, typeSubst)
 
 	// Build a quick name->type lookup for the declared fields, as declared and substituted.
 	fieldTypes := make(map[string]types.Type, len(structType.Fields))

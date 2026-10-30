@@ -164,8 +164,15 @@ func collectNestedLambdas(program *ast.Program, entry *ast.LambdaExpr) []*ast.La
 		}
 	}
 	var out []*ast.LambdaExpr
+	// **One lambda, met twice, is lifted once.** A struct field's default that binds names
+	// (a lambda) is the declaration's own node, filled into every literal omitting the field
+	// (applyDefaultFields), so the walk reaches it once per literal. Listed twice, its body
+	// was lowered twice into one function — two `entry` blocks, "Terminator found in the
+	// middle of a basic block" from clang (10/30).
+	seen := map[*ast.LambdaExpr]bool{}
 	onExpr := func(e ast.Expression) bool {
-		if lam, ok := e.(*ast.LambdaExpr); ok && !topLevel[lam] {
+		if lam, ok := e.(*ast.LambdaExpr); ok && !topLevel[lam] && !seen[lam] {
+			seen[lam] = true
 			out = append(out, lam)
 		}
 		return true
@@ -214,8 +221,12 @@ func collectNestedLambdas(program *ast.Program, entry *ast.LambdaExpr) []*ast.La
 // are emitted once per specialization rather than once per node.
 func nestedLambdasIn(fn *ast.LambdaExpr) []*ast.LambdaExpr {
 	var out []*ast.LambdaExpr
+	// Once each, as collectNestedLambdas: a shared field default reaches here once per
+	// literal in the body.
+	seen := map[*ast.LambdaExpr]bool{}
 	onExpr := func(e ast.Expression) bool {
-		if lam, ok := e.(*ast.LambdaExpr); ok && lam != fn {
+		if lam, ok := e.(*ast.LambdaExpr); ok && lam != fn && !seen[lam] {
+			seen[lam] = true
 			out = append(out, lam)
 		}
 		return true

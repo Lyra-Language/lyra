@@ -1,7 +1,7 @@
 package typechecker
 
 import (
-	"reflect"
+	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -119,16 +119,20 @@ func (tc *TypeChecker) checkDefaultsAreTrailing(funcName string, lambda *ast.Lam
 //     fields from the *base*, so filling defaults there would overwrite what the base
 //     supplies with the declaration's default — the one case where "missing" does not
 //     mean "wanted the default".
-//   - **The appended expression is the declaration's own AST node**, not a copy, so two
-//     literals that both omit a field share it — **except a leaf**, which each literal gets
-//     a copy of (copyLeaf). Sharing is sound where the default's type cannot vary by site,
-//     and a generic struct is where it can: `shown: Maybe<Laid<e>> = None` is a
-//     `Maybe<Laid<i64>>` in one literal and a `Maybe<Laid<string>>` in the next, and one
-//     node records one type — "cannot assign Maybe<Laid<i64>> to Maybe<Laid<string>>"
-//     (10/27). A leaf has no child expressions, so its shallow copy is a whole one; a
-//     default with children (a lambda) is still shared, for want of the deep AST copier
-//     this compiler deliberately does not have (todo.md).
-func (tc *TypeChecker) applyDefaultFields(expr *ast.StructInstanceExpr, structType types.NamedStructType) {
+//   - **Each literal gets its own copy of the default** where nothing in it binds a name
+//     (ast.CopyBindingFree) — a leaf (10/27), and since 10/30 any tree of one: `[None]`,
+//     `(None, 0)`, a struct literal, a constructor applied. A generic struct's default is
+//     typed per instantiation — `shown: Maybe<Laid<e>> = None` is a `Maybe<Laid<i64>>` in
+//     one literal and a `Maybe<Laid<string>>` in the next — and one node records one type,
+//     so a shared one was "cannot assign Maybe<Laid<i64>> to Maybe<Laid<string>>".
+//   - **A default that binds a name is the declaration's own node**, shared by every
+//     literal: a lambda's parameters and a block's locals are registered against their
+//     nodes and typed by location, so a copy would share those with the original. Shared,
+//     it is typed by the first instantiation that fills it, and a literal at another one of
+//     a field whose type mentions the struct's parameters is refused by name (sharedDefault)
+//     rather than as a mismatch inside the default. Typing one per instantiation would
+//     need it lifted into a generic function the monomorphizer specializes (todo.md).
+func (tc *TypeChecker) applyDefaultFields(expr *ast.StructInstanceExpr, structType types.NamedStructType, decl *ast.TypeDeclStmt, typeSubst map[string]types.Type) {
 	if expr == nil || expr.BaseStruct != nil {
 		return
 	}
@@ -150,7 +154,11 @@ func (tc *TypeChecker) applyDefaultFields(expr *ast.StructInstanceExpr, structTy
 		if !ok {
 			continue // not an expression: the declaration's own diagnostic to report
 		}
-		value = copyLeaf(value)
+		if copied, ok := ast.CopyBindingFree(value); ok && !tc.holdsScope(copied) {
+			value = copied
+		} else if !tc.sharedDefaultFits(expr, declared, value, decl, typeSubst) {
+			continue
+		}
 		tc.typeTable.MarkDefault(value)
 		expr.Fields = append(expr.Fields, ast.StructField{
 			Name:  declared.Name,
@@ -159,23 +167,63 @@ func (tc *TypeChecker) applyDefaultFields(expr *ast.StructInstanceExpr, structTy
 	}
 }
 
-// copyLeaf is a fresh copy of expr when it has no child expressions — `None`, `[]`, a
-// literal, a name — and expr itself otherwise. Such a node holds nothing another node
-// points into, so copying its struct copies all of it.
-func copyLeaf(expr ast.Expression) ast.Expression {
-	hasChild := false
-	ast.WalkExprChildren(expr, func(ast.Statement) bool {
-		hasChild = true
-		return false
-	}, func(ast.Expression) bool {
-		hasChild = true
-		return false
+// holdsScope reports whether the collector registered a scope under any node of expr — the
+// guard beside CopyBindingFree's own test, which a node kind that binds and is not yet in
+// its list would otherwise slip past.
+func (tc *TypeChecker) holdsScope(expr ast.Expression) bool {
+	held := false
+	ast.WalkExpr(expr, nil, func(e ast.Expression) bool {
+		if _, ok := tc.scopeTable.Get(e); ok {
+			held = true
+		}
+		return !held
 	})
-	v := reflect.ValueOf(expr)
-	if hasChild || v.Kind() != reflect.Pointer || v.IsNil() {
-		return expr
+	return held
+}
+
+// sharedDefault is the instantiation a shared default was first typed at, and where.
+type sharedDefault struct {
+	instantiation string
+	at            ast.Location
+}
+
+// sharedDefaultFits reports whether literal expr may use the shared default for field: yes
+// unless the field's type mentions the struct's parameters and an earlier literal typed the
+// default at other arguments, which is refused here, once, naming why. Unsolved arguments
+// are not compared — the literal's own check reports what is missing.
+func (tc *TypeChecker) sharedDefaultFits(expr *ast.StructInstanceExpr, field types.StructField, def ast.Expression, decl *ast.TypeDeclStmt, typeSubst map[string]types.Type) bool {
+	if decl == nil || len(decl.GenericParams) == 0 {
+		return true
 	}
-	c := reflect.New(v.Elem().Type())
-	c.Elem().Set(v.Elem())
-	return c.Interface().(ast.Expression)
+	mentioned := map[string]bool{}
+	types.CollectTypeVars(field.Type, mentioned)
+	var args []string
+	depends := false
+	for _, p := range decl.GenericParams {
+		depends = depends || mentioned[p.Name]
+		arg := typeSubst[p.Name]
+		if arg == nil {
+			return true
+		}
+		args = append(args, types.Source(arg))
+	}
+	if !depends {
+		return true
+	}
+	inst := expr.Name + "<" + strings.Join(args, ", ") + ">"
+	if tc.sharedDefaults == nil {
+		tc.sharedDefaults = map[ast.Expression]sharedDefault{}
+	}
+	first, seen := tc.sharedDefaults[def]
+	if !seen {
+		tc.sharedDefaults[def] = sharedDefault{instantiation: inst, at: expr.GetLocation()}
+		return true
+	}
+	if first.instantiation == inst {
+		return true
+	}
+	tc.addError(expr.GetLocation(), SeverityError,
+		"%s: the default for %q binds names (a lambda, a block or a match), so it is one expression every literal shares, typed for %s at %s — it cannot also be %s's; write %q in this literal",
+		expr.Name, field.Name, first.instantiation, first.at.Pretty(), inst, field.Name)
+	return false
 }

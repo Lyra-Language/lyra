@@ -9,6 +9,34 @@ Newest first.
 
 ## Dated log
 
+### 10/30/26 — A generic struct's default is typed per instantiation, where it binds nothing
+A struct field's default is filled into each literal omitting the field, and was the
+declaration's one node, copied only as a leaf (10/27). Re-run first, the entry was narrower than
+the bug: a lambda default failed at a second instantiation, and so did any default with
+children — `slots: []Maybe<e> = [None]`, `(None, 0)` — "cannot assign []Maybe<i64> to
+[]Maybe<string>", one node holding one type.
+- **A deep copy is sound exactly where nothing binds a name**, so that is what it copies
+  (`ast.CopyBindingFree`): no statement, pattern, lambda or comprehension inside, and the
+  typechecker also refuses one where the collector registered a scope (`holdsScope`). A name
+  is registered in the scope table under its node and typed by its location, so a copied
+  lambda or block would share both with the original — the reason this compiler has no
+  copier, and why this one copies nothing else. Reflection over exported fields, as
+  `pkg/printer`, so a node kind added later needs no case; types are shared.
+- **A lambda default stays one node.** It is typed by the first instantiation that fills it,
+  and a literal at another, of a field whose type mentions the struct's parameters, is now
+  refused once and by name (`sharedDefaultFits`) rather than as a mismatch inside a default
+  the literal never wrote. Typing it per instantiation means lifting it into a generic
+  function — a synthesized top-level declaration, a mechanism this compiler does not have,
+  for a shape nothing in the workspace writes — so it was left in todo.md, decided with the
+  user.
+- **Found beside it, fixed: a lambda default filling two literals emitted invalid IR**, in a
+  plain struct too — `collectNestedLambdas` (and `nestedLambdasIn`) met the one node once per
+  literal and lowered its body twice into one function, two `entry` blocks; clang refused
+  "Terminator found in the middle of a basic block". Both lists dedupe now.
+- **Found beside it, recorded**: inside a generic function a lambda takes no context from a
+  type naming the function's own type variable (`(string) -> Maybe<t>`), so a default filled
+  there, or the same lambda written, is "cannot tell what `None` holds" (todo.md).
+
 ### 10/30/26 — A private generic struct as another module's type argument lays out
 `ui.layout`'s `Cached<e>` and `ui.interact`'s `Opened<e>` were `pub` only because, private,
 `HashMap<string, Cached<e>>` failed to lower with "cannot lay out data type Maybe" (10/21).

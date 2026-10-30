@@ -884,11 +884,16 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 10/22] `ui`: states as pseudo-classes** — `:hover`, `:active`, `:focus`,
   `:focus-visible`, `:focus-within`, `:checked`, `:disabled`, `:enabled`, class-level
   specificity; the class form dropped (COMPLETED.md, 10/22).
-- **[OPEN] A generic struct's lambda default has one type for every instantiation.** A leaf
-  default (`None`, `[]`, a literal) is copied per literal since 10/27, but one with children
-  is still the declaration's own node (`applyDefaultFields`), so `on_edit: (string) -> e = (_:
-  string) => panic("…")` is typed once for every `e`. It needs a deep AST copy, or an
-  elaboration per literal.
+- **[PARTIAL 10/30] A generic struct's default with children is typed per instantiation** —
+  copied per literal where it binds nothing (`[None]`, `(None, 0)`, a struct literal). **A
+  lambda default is still one node**, typed by its first instantiation; a literal at another is
+  refused by name. Typing it per instantiation needs it lifted into a generic function the
+  monomorphizer specializes (COMPLETED.md, 10/30).
+- **[OPEN] A lambda's body takes no context from a type naming the enclosing declaration's
+  type variable**: inside `let make<t>`, `let h: (string) -> Maybe<t> = (_: string) => None`,
+  a return or a field of that type are refused ("cannot tell what `None` holds"). `t` is the
+  declaration's own and plantable (`isConcreteEnoughToElaborate`); only bounded parameters are
+  tracked in scope (`genericBounds`), so nothing says so.
 - **[DONE 10/22] `ui`: a select** (HTML's `<select>`, `select`/`SelectSpec`, lui's
   `<Select>`) — its list floats over the page (`Laid.floats`) (COMPLETED.md, 10/22).
 - **[DONE 10/23] `ui`: a select's list scrolls and flips** — placed as a popup's content is
