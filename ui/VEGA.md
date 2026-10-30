@@ -339,8 +339,11 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
   in any font), scrolled a row at a time — rows in view only are drawn — and sideways with
   the channels; the order list painted beside it; Z/Q-row notes, hex digits, Shift-selected
   blocks with Copy, Cut, Paste and Transpose, each one undo step; Play and a typed note's
-  audition through `song_preview` on the same `EveryFrame`. The sprite editor's preview,
-  onion skin, resizing and true colour to come, then the import dialogs. `vega --ui` opens
+  audition through `song_preview` on the same `EveryFrame`. **The sprite editor's preview
+  and onion skin 10/29**: the preview in the side panel plays the animation chosen, or the
+  frames in turn, on the entity preview's `EveryFrame` (Enter on the canvas plays and
+  stops); the onion skin is the frame before as a second picture under the canvas's, at a
+  third of its opacity. Its resizing and true colour to come, then the import dialogs. `vega --ui` opens
   the new front end.
 8. **The switch**: `Vega.app` and the Linux releases built from the new front end; the
    ImGui front end, `mac_look` and `ui_checks.lyra` removed, and `bindings.imgui` with no
