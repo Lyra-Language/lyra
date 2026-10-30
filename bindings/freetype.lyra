@@ -113,6 +113,128 @@ pub let render_glyph = (
   })
 }
 
+/// Whether the font has colour glyphs — bitmaps (Apple's `sbix`, Google's `CBDT`) or layers
+/// (`COLR`) — which [render_color_glyph] draws.
+pub let has_color = pure (font: FtFont) -> bool =>
+  (read_i64(font.face.address() + FACE_FLAGS) & FACE_FLAG_COLOR) != 0
+
+/// A glyph in colour: `width` × `rows` pixels, row by row from the top, `0xAARRGGBB` each, not
+/// premultiplied; and where its top-left pixel sits from the pen, as [GlyphBitmap]'s.
+pub struct ColorBitmap {
+  width: i64,
+  rows: i64,
+  left: i64,
+  top: i64,
+  argb: []u32,
+}
+
+/// Glyph number `glyph` in colour, `pixels` pixels to the em — or `None` where it has no colour
+/// form (render it as [render_glyph] does), or cannot be drawn. **A font of bitmaps has them at a
+/// few sizes only** (its strikes: Apple Color Emoji's run to 160 pixels): the smallest strike at
+/// least `pixels` is chosen, else the largest, and its bitmap scaled to `pixels`, averaging
+/// what each pixel covers.
+pub let render_color_glyph = (
+  font: FtFont,
+  glyph: u32,
+  pixels: u32
+) -> Maybe<ColorBitmap> => {
+  let flags = read_i64(font.face.address() + FACE_FLAGS)
+  var strike: f32 = f32(pixels)
+  if (flags & FACE_FLAG_SCALABLE) == 0 {
+    let count = i64(read_i32(font.face.address() + FACE_NUM_FIXED_SIZES))
+    if count <= 0 { return None }
+    let sizes = read_pointer(font.face.address() + FACE_AVAILABLE_SIZES)
+    var best = -1
+    var best_ppem: f32 = 0.0
+    for i in 0..<count {
+      // `FT_Bitmap_Size.y_ppem`, 26.6 fixed point.
+      let ppem = f32(read_i64(sizes.address() + u64(i) * BITMAP_SIZE_BYTES + BITMAP_SIZE_Y_PPEM)) / 64.0
+      let better = if best < 0 { true }
+      else if best_ppem < f32(pixels) { ppem > best_ppem }
+      else { ppem >= f32(pixels) && ppem < best_ppem }
+      if better {
+        best = i
+        best_ppem = ppem
+      }
+    }
+    if best < 0 || unsafe { ft_select_size(font.face, i32(best)) } != 0 { return None }
+    strike = best_ppem
+  } else if unsafe { ft_set_pixel_sizes(font.face, 0, pixels) } != 0 { return None }
+  if unsafe { ft_load_glyph(font.face, glyph, LOAD_COLOR) } != 0 { return None }
+  let slot = read_pointer(font.face.address() + FACE_GLYPH)
+  if unsafe { ft_render_glyph(slot, RENDER_MODE_NORMAL) } != 0 { return None }
+  let bitmap = read_bitmap(slot.address() + SLOT_BITMAP)
+  if bitmap.pixel_mode != PIXEL_MODE_BGRA { return None }
+  let width = i64(bitmap.width)
+  let rows = i64(bitmap.rows)
+  var bgra: []u8 = []
+  for y in 0..<rows {
+    let row = unsafe { bitmap.buffer.offset(y * i64(bitmap.pitch)) }
+    for x in 0..<(width * 4) { bgra.push(unsafe { row.offset(x)^ }) }
+  }
+  let ratio = f32(pixels) / strike
+  let to_width = i64((f32(width) * ratio).round()).max(if width > 0 { 1 } else { 0 })
+  let to_rows = i64((f32(rows) * ratio).round()).max(if rows > 0 { 1 } else { 0 })
+  Some(ColorBitmap {
+    width: to_width,
+    rows: to_rows,
+    left: i64((f32(read_i32(slot.address() + SLOT_BITMAP_LEFT)) * ratio).round()),
+    top: i64((f32(read_i32(slot.address() + SLOT_BITMAP_TOP)) * ratio).round()),
+    argb: scaled_argb(bgra, width, rows, to_width, to_rows),
+  })
+}
+
+/// FreeType's premultiplied BGRA, `width` × `rows`, as `to_width` × `to_rows` straight ARGB:
+/// each pixel the average of the source pixels whose centres fall in it (the nearest one where
+/// none does — a bitmap made larger).
+let scaled_argb = pure (
+  bgra: []u8,
+  width: i64,
+  rows: i64,
+  to_width: i64,
+  to_rows: i64
+) -> []u32 => {
+  var out: []u32 = []
+  for ty in 0..<to_rows {
+    let y0 = ty * rows / to_rows
+    let y1 = ((ty + 1) * rows / to_rows).max(y0 + 1).min(rows)
+    for tx in 0..<to_width {
+      let x0 = tx * width / to_width
+      let x1 = ((tx + 1) * width / to_width).max(x0 + 1).min(width)
+      var b = 0
+      var g = 0
+      var r = 0
+      var a = 0
+      for y in y0..<y1 {
+        for x in x0..<x1 {
+          let k = (y * width + x) * 4
+          b += i64(bgra[k])
+          g += i64(bgra[k + 1])
+          r += i64(bgra[k + 2])
+          a += i64(bgra[k + 3])
+        }
+      }
+      let n = (y1 - y0) * (x1 - x0)
+      if a == 0 {
+        out.push(0x00FFFFFF)
+      } else {
+        // Unpremultiplied by the averaged alpha: the sums share the count, which cancels.
+        out.push((u32(a / n) << 24) | (straight(
+          r,
+          a
+        ) << 16) | (straight(g, a) << 8) | straight(
+          b,
+          a
+        ))
+      }
+    }
+  }
+  out
+}
+
+/// A premultiplied channel's sum over some pixels, straight again by their alpha's sum.
+let straight = pure (sum: i64, alpha: i64) -> u32 => u32((sum * 255 / alpha).min(255))
+
 /// Render a variable font as its instance at these design coordinates, one an axis in the
 /// font's order (`bindings.harfbuzz`'s `variation_axes` reads them): `wght` 700 for its
 /// bold. Whether the font took them — `false` for a font that does not vary.
@@ -138,6 +260,12 @@ let read_bitmap = pure (address: u64) -> FtBitmap => unsafe {
   at^
 }
 
+/// The C `long` stored at `address`.
+let read_i64 = pure (address: u64) -> i64 => unsafe {
+  let at: ^i64 = pointer_at(address)
+  at^
+}
+
 /// The `int` stored at `address`.
 let read_i32 = pure (address: u64) -> i32 => unsafe {
   let at: ^i32 = pointer_at(address)
@@ -147,6 +275,13 @@ let read_i32 = pure (address: u64) -> i32 => unsafe {
 /// Where `FT_FaceRec.glyph` and `FT_GlyphSlotRec`'s `bitmap`, `bitmap_left` and `bitmap_top`
 /// sit, in bytes, on LP64 (`TestFreetypeOffsets`).
 const FACE_GLYPH: u64 = 152
+/// And `FT_FaceRec`'s `face_flags`, `num_fixed_sizes` and `available_sizes`, and an
+/// `FT_Bitmap_Size`'s size and where its `y_ppem` sits in it.
+const FACE_FLAGS: u64 = 16
+const FACE_NUM_FIXED_SIZES: u64 = 56
+const FACE_AVAILABLE_SIZES: u64 = 64
+const BITMAP_SIZE_BYTES: u64 = 32
+const BITMAP_SIZE_Y_PPEM: u64 = 24
 const SLOT_BITMAP: u64 = 152
 const SLOT_BITMAP_LEFT: u64 = 192
 const SLOT_BITMAP_TOP: u64 = 196
@@ -159,6 +294,13 @@ const LOAD_TARGET_LIGHT: i32 = 0x10000
 const RENDER_MODE_NORMAL: i32 = 0
 const RENDER_MODE_LIGHT: i32 = 1
 const PIXEL_MODE_GRAY: u8 = 2
+
+/// `FT_LOAD_COLOR`, `FT_PIXEL_MODE_BGRA`, and the face flags `FT_FACE_FLAG_SCALABLE` and
+/// `FT_FACE_FLAG_COLOR`.
+const LOAD_COLOR: i32 = 0x100000
+const PIXEL_MODE_BGRA: u8 = 7
+const FACE_FLAG_SCALABLE: i64 = 1
+const FACE_FLAG_COLOR: i64 = 0x4000
 
 // ---------------------------------------------------------------------------------------
 // Foreign declarations
@@ -188,6 +330,8 @@ unsafe extern ft_new_face: (library: ^u8, path: ^u8, index: i64, face: ^mut ^u8)
 unsafe extern ft_done_face: (face: ^u8) -> i32
 @symbol("FT_Set_Pixel_Sizes")
 unsafe extern ft_set_pixel_sizes: (face: ^u8, width: u32, height: u32) -> i32
+@symbol("FT_Select_Size")
+unsafe extern ft_select_size: (face: ^u8, strike: i32) -> i32
 @symbol("FT_Load_Glyph")
 unsafe extern ft_load_glyph: (face: ^u8, glyph: u32, flags: i32) -> i32
 @symbol("FT_Render_Glyph")

@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 10/30/26 — Colour emoji in `ui.text`
+
+Found by Termina, whose output and command line showed an emoji as nothing. **No second atlas**:
+a page's texels are already ARGB — coverage was white at that alpha — so a colour glyph goes
+in the same pages, its slot marked `colored`, and is drawn as a `Picture` of its texels rather
+than in the `Glyphs` op. `Glyphs` could not carry it: the SDL renderer multiplies a vertex
+colour into the texture, but `ui.gpu`'s glyph instance takes only the texture's alpha, and a
+`Picture` is drawn in the texture's own colours by both, its opacity the text's alpha.
+
+- **`bindings.freetype.render_color_glyph`.** Apple Color Emoji (`sbix`) and Noto Color Emoji
+  (`CBDT`) are bitmaps at a few strikes only — `FT_Set_Pixel_Sizes` refuses any other size, which
+  is why `render_glyph` answered `None` and the glyph was left out. The smallest strike at least
+  the size is selected (`FT_Select_Size`, from `num_fixed_sizes`/`available_sizes`, read by
+  offset like the slot and held to `offsetof` by `TestFreetypeOffsets`) and box-filtered down
+  in premultiplied BGRA, then made straight. A scalable `COLR` font renders through
+  `FT_Render_Glyph` with `FT_LOAD_COLOR`; a glyph without a colour form falls back to coverage.
+- **Where an emoji comes from.** The emoji fonts are a fourth group of `SYSTEM_FALLBACKS`,
+  last, so ☀ keeps Apple Symbols' text form. **U+FE0F asks for the emoji**: `runs_of` moves the
+  character before it into a colour face's run, and `Fonts.cells` shapes a cell holding it in
+  one. Termina now takes its fallbacks from `SYSTEM_FALLBACKS` rather than a copy that had
+  drifted, and its command line joins a zero-width rune to its base's cell — painted a rune a
+  cell, U+FE0F was a cell of its own and never reached the ❤.
+- Test: `TestRun_UiColorEmoji` (skipped without an emoji font).
+
 ### 10/30/26 — Vega checks in 7.5 s, not 26; a line shifted no longer reshuffles the pool parts
 
 `lyrac check` on Vega took 26 s and a build with nothing changed 36. A CPU profile of the

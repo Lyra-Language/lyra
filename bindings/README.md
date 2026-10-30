@@ -756,7 +756,11 @@ embolden, oblique) -> Maybe<GlyphBitmap>`: 8-bit coverage with its bearing from 
 hinted as `Hinting` says (`HintNone`, `HintLight` — the default — or `HintFull`), and for a
 face a family lacks emboldened or slanted by FreeType's synthesis (`FT_GlyphSlot_Embolden`,
 `FT_GlyphSlot_Oblique`) before it is rendered; `set_design_coordinates` for a variable
-font's instance. **The two libraries each hold the font's variation**: set both, or HarfBuzz
+font's instance. `has_color(font)` / `render_color_glyph(font, glyph, pixels) ->
+Maybe<ColorBitmap>`: a colour glyph (`FT_LOAD_COLOR`) as straight ARGB, `None` where it has
+none; **a font of bitmaps (`sbix`, `CBDT`) has a few sizes only**, so the smallest strike at
+least `pixels` is selected (`FT_Select_Size`), else the largest, and box-filtered to `pixels`.
+**The two libraries each hold the font's variation**: set both, or HarfBuzz
 shapes one weight while FreeType draws another. Both fonts are `@must_release`. **FreeType's glyph slot and
 its bitmap are read by offset** (`FT_FaceRec.glyph` and three `FT_GlyphSlotRec` fields: no
 function answers them), held to `offsetof` by `TestFreetypeOffsets`. `brew install harfbuzz

@@ -59,6 +59,8 @@ import bindings.freetype.{
   open_ft_font,
   close_ft_font,
   render_glyph,
+  render_color_glyph,
+  has_color,
   set_design_coordinates,
   Hinting,
   HintNone,
@@ -75,6 +77,7 @@ import ui.draw.{
   GlyphQuad,
   DrawOp,
   Glyphs,
+  Picture,
   PictureSource
 }
 import ui.backend.{ Renderer, WindowId, MAIN_WINDOW }
@@ -235,7 +238,8 @@ pub const SYSTEM_FONTS: []string = [
 ]
 
 /// The fallback fonts [Fonts.add_system_fallbacks] looks for, a group each — Chinese, Japanese
-/// and Korean, then symbols — where macOS and the Linux distributions keep them. Arial Unicode
+/// and Korean, then symbols, then emoji in colour (last, so a symbol with a text form keeps it)
+/// — where macOS and the Linux distributions keep them. Arial Unicode
 /// covers all three of the first in one file; Noto Sans CJK likewise on Linux.
 pub const SYSTEM_FALLBACKS: [][]string = [
   [
@@ -252,6 +256,13 @@ pub const SYSTEM_FALLBACKS: [][]string = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/TTF/DejaVuSans.ttf",
     "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+  ],
+  [
+    "/System/Library/Fonts/Apple Color Emoji.ttc",
+    "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+    "/usr/share/fonts/noto/NotoColorEmoji.ttf",
+    "/usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf",
+    "/usr/share/fonts/noto-color-emoji/NotoColorEmoji.ttf",
   ],
 ]
 
@@ -305,7 +316,7 @@ impl Fonts {
   }
 
   /// Add, as fallbacks, the first there is of each group of [SYSTEM_FALLBACKS] — a font with
-  /// Chinese, Japanese and Korean, one of symbols — as `"system fallback 1"` and on; how many
+  /// Chinese, Japanese and Korean, one of symbols, one of emoji — as `"system fallback 1"` and on; how many
   /// were found.
   pub let add_system_fallbacks = (self: mut) -> i64 => {
     var found = 0
@@ -440,13 +451,19 @@ impl Fonts {
         count += 1
       }
       if count > 1 {
-        // A cluster: shaped in the first face that has its base, as a paragraph would be.
+        // A cluster: shaped in the first face that has its base, as a paragraph would be — a
+        // colour one first where it asks for an emoji.
         var face = order[0]
         for f in order {
           if has_glyph(self.faces[f].hb, first) {
             face = f
             break
           }
+        }
+        var asks_emoji = false
+        for c in cell.text { if i32(c) == EMOJI_SELECTOR { asks_emoji = true } }
+        if asks_emoji {
+          if let Some(f) = color_face(self.faces, order, first) { face = f }
         }
         let shaped = shape(self.faces[face].hb, cell.text.encode_utf8(), font.size)
         var width: f32 = 0.0
@@ -666,6 +683,7 @@ let open_face = (
     line_gap: at.line_gap / 1000.0,
     embolden: embolden,
     oblique: oblique,
+    color: has_color(ft),
   })
 }
 
@@ -832,8 +850,9 @@ impl GlyphAtlas {
   }
 
   /// `block`'s glyphs drawn in `color` with its top-left corner at `origin`, for a display
-  /// at `scale` pixels a unit: a [Glyphs] op for each page they are on, any glyph not yet in
-  /// the atlas rendered into it through `renderer` first. A glyph that cannot be rendered, or
+  /// at `scale` pixels a unit: a [Glyphs] op for each page they are on — and a colour glyph (an
+  /// emoji's) a [Picture] of its own, untinted — any glyph not yet in the atlas rendered into it
+  /// through `renderer` first. A glyph that cannot be rendered, or
   /// is larger than a page, is left out.
   pub let glyphs<r> where r: Renderer = (
     self: mut,
@@ -849,6 +868,7 @@ impl GlyphAtlas {
     // Each page's quads, by page number, in the order the pages were first needed.
     var order: []i64 = []
     var quads: [][]GlyphQuad = []
+    var pictures: []DrawOp = []
     for line in block.lines {
       for g in line.glyphs {
         // Its own face: a fallback's where the block's lacks its character.
@@ -875,6 +895,16 @@ impl GlyphAtlas {
           },
           texels: slot.texels,
         }
+        // A colour glyph is a picture of its own colours, only faded by the text's alpha.
+        if slot.colored {
+          pictures.push(Picture(
+            self.pages[slot.page].texture,
+            slot.texels,
+            quad.at,
+            f32(color.a) / 255.0
+          ))
+          continue
+        }
         var at = -1
         for i, page in order {
           if page == slot.page { at = i }
@@ -889,7 +919,7 @@ impl GlyphAtlas {
     }
     var ops: []DrawOp = []
     for i, page in order { ops.push(Glyphs(self.pages[page].texture, quads[i], color)) }
-    ops
+    [...ops, ...pictures]
   }
 
   /// Where glyph `glyph` of face number `index` at `pixels` to the em is in the atlas,
@@ -913,30 +943,45 @@ impl GlyphAtlas {
         return Some(slot)
       }
     }
-    let Some(bitmap) = render_glyph(
+    // An emoji font's glyph in its own colours; else, or where it has none, its coverage.
+    let colored = if face.color { render_color_glyph(
       face.ft,
       glyph,
-      u32(pixels),
-      hinting,
-      face.embolden,
-      face.oblique
-    ) else { return None }
-    var slot = AtlasSlot { left: f32(bitmap.left), top: f32(bitmap.top) }
-    if bitmap.width > 0 && bitmap.rows > 0 {
+      u32(pixels)
+    ) } else { None }
+    let (image, left, top) = match colored {
+      Some(c) => (Image { width: c.width, height: c.rows, argb: c.argb }, c.left, c.top),
+      None => {
+        let Some(bitmap) = render_glyph(
+          face.ft,
+          glyph,
+          u32(pixels),
+          hinting,
+          face.embolden,
+          face.oblique
+        ) else { return None }
+        (
+          Image {
+            width: bitmap.width,
+            height: bitmap.rows,
+            argb: [c in bitmap.coverage | white_at(c)],
+          },
+          bitmap.left,
+          bitmap.top
+        )
+      },
+    }
+    var slot = AtlasSlot { left: f32(left), top: f32(top), colored: colored.is_some() }
+    if image.width > 0 && image.height > 0 {
       let Some((page, at)) = self.place(
         renderer,
-        bitmap.width,
-        bitmap.rows
+        image.width,
+        image.height
       ) else { return None }
-      let image = Image {
-        width: bitmap.width,
-        height: bitmap.rows,
-        argb: [c in bitmap.coverage | white_at(c)],
-      }
       if !renderer.update(self.pages[page].texture, at, image) { return None }
       slot = AtlasSlot {
         slot |
-        texels: Rect { x: at.x, y: at.y, w: f32(bitmap.width), h: f32(bitmap.rows) },
+        texels: Rect { x: at.x, y: at.y, w: f32(image.width), h: f32(image.height) },
         page: page,
         generation: self.pages[page].generation,
       }
@@ -1043,9 +1088,9 @@ let white_at = pure (coverage: u8) -> u32 => (u32(coverage) << 24) | 0x00FFFFFF
 
 // ── Faces ────────────────────────────────────────────────────────────────────
 
-/// A font file opened for both libraries, its vertical metrics for one unit to the em, and
+/// A font file opened for both libraries, its vertical metrics for one unit to the em,
 /// whether its glyphs are emboldened or slanted as they are rendered (a bold or italic made for
-/// a family that lacks it).
+/// a family that lacks it), and whether it has colour glyphs (an emoji font's).
 struct Face {
   family: string,
   hb: HbFont,
@@ -1055,17 +1100,20 @@ struct Face {
   line_gap: f32,
   embolden: bool = false,
   oblique: bool = false,
+  color: bool = false,
 }
 
 /// Where a glyph is in the atlas — its `page`, and its `texels` there (empty for one with no
-/// ink) while the page is still at its `generation` — and where its bitmap's top-left corner
-/// is from the pen: `left` across, `top` up, in pixels.
+/// ink) while the page is still at its `generation` — where its bitmap's top-left corner is
+/// from the pen (`left` across, `top` up, in pixels), and whether its texels are its own
+/// colours rather than coverage to tint.
 struct AtlasSlot {
   texels: Rect = Rect {},
   left: f32 = 0.0,
   top: f32 = 0.0,
   page: i64 = 0,
   generation: i64 = 0,
+  colored: bool = false,
 }
 
 // ── Line breaking ────────────────────────────────────────────────────────────
@@ -1137,8 +1185,35 @@ struct Run {
 let runs_of = (paragraph: string, faces: []Face, order: []i64) -> []Run => {
   var runs: []Run = []
   var at = 0
+  // The character before, and where it began: an emoji selector after it moves it.
+  var before: rune = ' '
+  var before_at = 0
   for c in paragraph {
     let length = utf8_length(c)
+    // U+FE0F asks for the character before it as an emoji: into a colour face's run, if the
+    // run it is in is not one already and a colour face has it.
+    if i32(c) == EMOJI_SELECTOR && runs.len() > 0 && !faces[runs[runs.len() - 1].face].color {
+      if let Some(f) = color_face(faces, order, before) {
+        let last = runs[runs.len() - 1]
+        if last.start < before_at {
+          runs[runs.len() - 1] = Run { last | end: before_at }
+        } else {
+          runs = runs.slice(0, runs.len() - 1)
+        }
+        if runs.len() > 0 && runs[runs.len() - 1].face == f {
+          let joined = runs[runs.len() - 1]
+          runs[runs.len() - 1] = Run { joined | end: at + length }
+        } else {
+          runs.push(Run { start: before_at, end: at + length, face: f })
+        }
+        at += length
+        continue
+      }
+    }
+    if !is_mark(c) {
+      before = c
+      before_at = at
+    }
     if runs.len() > 0 {
       let last = runs[runs.len() - 1]
       if (is_mark(c) || c == ' ') && (is_mark(c) || has_glyph(faces[last.face].hb, c)) {
@@ -1163,6 +1238,18 @@ let runs_of = (paragraph: string, faces: []Face, order: []i64) -> []Run => {
     at += length
   }
   runs
+}
+
+/// U+FE0F, the variation selector asking for the character before it as an emoji, in colour.
+const EMOJI_SELECTOR: i32 = 0xFE0F
+
+/// The first face of `order` with colour glyphs that has `c`, for a character asked for as an
+/// emoji.
+let color_face = (faces: []Face, order: []i64, c: rune) -> Maybe<i64> => {
+  for f in order {
+    if faces[f].color && has_glyph(faces[f].hb, c) { return Some(f) }
+  }
+  None
 }
 
 /// Whether `c` combines with the character before it — the combining marks of the blocks most

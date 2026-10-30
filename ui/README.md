@@ -166,7 +166,11 @@ layer — implements the two traits; the display list is the whole contract.
   first family's missing glyph where none has — a combining mark, and a space its run's face
   has, staying in the run before it. Each glyph carries its face (`LineGlyph.face`); the block's
   `face` spaces its lines. Every rune, not only the BMP's. Adding a face forgets what was laid
-  out. Left to right: no bidi and no colour emoji yet (todo.md).
+  out. Left to right: no bidi yet (todo.md). **Colour glyphs** — an emoji font's bitmaps
+  (`sbix`, `CBDT`) or layers (`COLR`) — are rendered in their colours into the same atlas pages
+  and drawn as a `Picture` each, untinted and faded by the text's alpha; an emoji font is the
+  last of `SYSTEM_FALLBACKS`, so a symbol with a text form keeps it, and **U+FE0F after a
+  character** moves it to a colour face that has it.
   A glyph is rasterized at the size times the scale and drawn from a whole pixel.
 - **A painted element is drawn by the program** (`painted(paint, on_size)`, `ui/TERMINAL.md`
   §1): laid out as a box — its style's size, else all the room it is given, so a tall one in a

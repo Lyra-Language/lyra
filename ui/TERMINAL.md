@@ -204,10 +204,9 @@ pub struct FontSpec {
   question a cell at a time.
 - **Every rune**, not the BMP's: Lyra's runes are 32 bits and FreeType's maps take them —
   past ImGui's 16-bit `ImWchar`.
-- **Not in this step**: script itemizing (a run is one face, not one script), bidi, and
-  colour emoji (FreeType's BGRA bitmaps need a second, colour atlas and a `Picture` a
-  glyph); each stays in `todo.md`. A colour glyph is drawn as its outline's coverage where
-  there is one, else left out, as today.
+- **Not in this step**: script itemizing (a run is one face, not one script) and bidi;
+  each stays in `todo.md`. **Colour emoji came later (10/30)**: an emoji font's glyphs in their
+  own colours, in the same atlas pages, each drawn as a `Picture` (ui/README.md).
 
 ### Hinting
 

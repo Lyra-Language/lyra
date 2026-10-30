@@ -755,9 +755,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   so the default belongs to whatever opens the window (`ui.sdl3`, `ui.gpu`'s `open_app`).
 - **[OPEN] `ui.text`: left to right, runs by face only.** Fallback is built (10/22): a
   paragraph's runs are cut by the face that has each character. Not by script — a run of one
-  face mixing Latin and Hebrew is shaped as one — and no bidi, no colour emoji (FreeType's
-  BGRA bitmaps need a colour atlas). Also no text alignment (a line starts at its box's left)
-  and no ellipsis.
+  face mixing Latin and Hebrew is shaped as one — and no bidi. Colour emoji are drawn
+  (COMPLETED.md, 10/30), but not a ZWJ sequence's one glyph across a terminal's cells. Also no
+  text alignment (a line starts at its box's left) and no ellipsis.
 - **[DONE 10/22] `ui.text`: the atlas's pages** — a page a texture, added when a glyph fits
   in none, the least recently drawn emptied past `ATLAS_PAGES` (COMPLETED.md, 10/22).
 - **[OPEN] `ui.layout`: a `Picture` ignores opacity.** `DrawOp.Picture` has no colour to

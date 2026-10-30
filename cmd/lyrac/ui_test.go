@@ -604,6 +604,11 @@ int main(void) {
   printf("SLOT_BITMAP %zu\n", offsetof(FT_GlyphSlotRec, bitmap));
   printf("SLOT_BITMAP_LEFT %zu\n", offsetof(FT_GlyphSlotRec, bitmap_left));
   printf("SLOT_BITMAP_TOP %zu\n", offsetof(FT_GlyphSlotRec, bitmap_top));
+  printf("FACE_FLAGS %zu\n", offsetof(FT_FaceRec, face_flags));
+  printf("FACE_NUM_FIXED_SIZES %zu\n", offsetof(FT_FaceRec, num_fixed_sizes));
+  printf("FACE_AVAILABLE_SIZES %zu\n", offsetof(FT_FaceRec, available_sizes));
+  printf("BITMAP_SIZE_BYTES %zu\n", sizeof(FT_Bitmap_Size));
+  printf("BITMAP_SIZE_Y_PPEM %zu\n", offsetof(FT_Bitmap_Size, y_ppem));
   return 0;
 }
 `), 0o644); err != nil {
@@ -7276,6 +7281,94 @@ drawn from every face: glyphs rendered true, in one op true
 		program = strings.Replace(program, "  CJK\n", "", 1)
 	}
 	if got := runUiProgram(t, program); got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// Colour emoji (`ui.text`, `bindings.freetype`'s `render_color_glyph`): where the machine has an
+// emoji font among the system's fallbacks, 😀 is drawn as a picture of its own colours, sized
+// to the text from the font's nearest strike and faded by the text's alpha, beside the
+// tinted glyphs of the text around it; ❤ keeps its text face, and ❤ with U+FE0F, asking for
+// the emoji, moves to the colour face — in a paragraph and in a terminal's cell alike.
+func TestRun_UiColorEmoji(t *testing.T) {
+	t.Parallel()
+	found := false
+	for _, path := range []string{"/System/Library/Fonts/Apple Color Emoji.ttc", "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf", "/usr/share/fonts/noto/NotoColorEmoji.ttf", "/usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf", "/usr/share/fonts/noto-color-emoji/NotoColorEmoji.ttf"} {
+		if _, err := os.Stat(path); err == nil {
+			found = true
+		}
+	}
+	if !found {
+		t.Skip("no colour emoji font")
+	}
+	got := runUiProgram(t, `import ui.backend.{ Renderer }
+import ui.draw.{ Point, Color, TextureId, Image, DrawOp, Glyphs, Picture }
+import ui.text.{ Cell, FontSpec, TextBlock, fonts_new, glyph_atlas }
+
+/// A renderer that draws nothing, and keeps the glyph images it is given.
+struct Keeper {
+  textures: i64 = 0,
+  images: []Image = [],
+}
+
+impl Renderer for Keeper {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = (self, id, at, image) => {
+    if image.width < 1024 { self.images.push(image) }
+    true
+  }
+  draw = (self, window, background, ops) => {}
+}
+
+/// Whether an image has a pixel neither clear nor grey: colour.
+let colourful = pure (image: Image) -> bool => image.argb.any((p) => {
+  let r = (p >> 16) & 0xFF
+  let g = (p >> 8) & 0xFF
+  let b = p & 0xFF
+  (p >> 24) > 128 && (r != g || g != b)
+})
+
+/// The ops' kinds, in order: G a tinted run of glyphs, P a picture and its opacity.
+let kinds = pure (ops: []DrawOp) -> string => [op in ops | match op {
+  Glyphs(_, _, _) => "G",
+  Picture(_, _, _, opacity) => "P${opacity}",
+  _ => "?",
+}].join(" ")
+
+/// The face of each glyph of a block's first line.
+let faces = pure (block: TextBlock) -> []i64 => [g in block.lines[0].glyphs | g.face]
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  let _ = fonts.add_system_fallbacks()
+  let spec = FontSpec { family: "system", size: 32.0 }
+  var atlas = glyph_atlas()
+  var renderer = Keeper {}
+  let block = fonts.lay_out("A😀", spec, 1000.0)
+  let ops = atlas.glyphs(fonts, renderer, block, Point {}, 1.0, Color { r: 0, g: 0, b: 0, a: 128 })
+  println("A tinted, 😀 a picture at the text's alpha: ${kinds(ops)}")
+  let emoji = renderer.images[renderer.images.len() - 1]
+  println("😀 in colour ${colourful(emoji)}, about the text's size ${emoji.width >= 24 && emoji.width <= 44}")
+  let plain = faces(fonts.lay_out("A❤", spec, 1000.0))
+  let asked = faces(fonts.lay_out("A❤\uFE0F", spec, 1000.0))
+  println("❤ in a text face, ❤ with U+FE0F in another ${plain[1] != asked[1]}, A unmoved ${plain[0] == asked[0]}")
+  let row = fonts.cells([Cell { col: 0, text: "❤\uFE0F", width: 2 }, Cell { col: 2, text: "❤" }], spec, 19.0)
+  let cell_ops = atlas.glyphs(fonts, renderer, row, Point {}, 1.0, Color { r: 0, g: 0, b: 0 })
+  println("in cells, the selector's ❤ a picture and the plain one tinted: ${kinds(cell_ops)}")
+  fonts.close()
+  0
+}
+`)
+	want := `A tinted, 😀 a picture at the text's alpha: G P0.5019608
+😀 in colour true, about the text's size true
+❤ in a text face, ❤ with U+FE0F in another true, A unmoved true
+in cells, the selector's ❤ a picture and the plain one tinted: G P1
+`
+	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
 }
