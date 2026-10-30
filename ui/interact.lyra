@@ -2229,9 +2229,8 @@ pub let along_path<e> = pure (laid: Laid<e>, id: string) -> []Found<e> => {
 
 /// A popup open in a laid-out tree: its identity, its anchor's and its content's, the event
 /// dismissing it, and where in the window its anchor is and its content — with what floats
-/// from that, a submenu's popup — covers. (`pub` only because a private generic struct as
-/// another module's type argument does not lay out yet, todo.md.)
-pub struct Opened<e> {
+/// from that, a submenu's popup — covers.
+struct Opened<e> {
   id: string,
   anchor: string,
   content: string,

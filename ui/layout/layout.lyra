@@ -1268,9 +1268,8 @@ pub struct LayoutCache<e> {
   reused: i64 = 0,
 }
 
-/// One element's layout, and what it was laid out from. (`pub` only because a private generic
-/// struct as another module's type argument does not lay out yet, todo.md.)
-pub struct Cached<e> {
+/// One element's layout, and what it was laid out from.
+struct Cached<e> {
   node: Node<e>,
   c: Constraints,
   cascade: Cascade,

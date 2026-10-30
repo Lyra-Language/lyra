@@ -136,7 +136,21 @@ func (l *lowerer) lookupTypeDecl(name string) (*ast.TypeDeclStmt, bool) {
 	// Second, as typeKey does: a type argument's declaration lives where the
 	// specialization was requested. See specSiteKey.
 	if l.specSite.File != "" {
-		return l.res.SymbolTable.LookupTypeFrom(name, l.specSite)
+		if decl, ok := l.res.SymbolTable.LookupTypeFrom(name, l.specSite); ok {
+			return decl, true
+		}
+	}
+	// Last, **a name that carries no key means one declaration from anywhere**
+	// (KeyAmbiguousTypes leaves a type unkeyed only where it is declared once), so it is
+	// that declaration however far its type argument has travelled. Neither site above
+	// need see it: `Ev`, `main`'s private event type, sits five generic levels down in
+	// `Maybe<Entry<string, Cached<Ev>>>`, and where a non-generic function of `main`'s takes a
+	// `LayoutCache<Ev>` that instantiation is first laid out outside any specialization,
+	// from `ui.layout`'s private `Cached`, which cannot see `Ev`: "cannot lay out data type
+	// Maybe" until 10/30. Accepted only if the declaration found is itself unkeyed, so a
+	// name a pass forgot to key still fails loudly.
+	if decl, ok := l.res.SymbolTable.LookupType(name); ok && types.NominalKey(decl.Type) == "" {
+		return decl, true
 	}
 	return nil, false
 }

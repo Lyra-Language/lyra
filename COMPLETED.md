@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 10/30/26 — A private generic struct as another module's type argument lays out
+`ui.layout`'s `Cached<e>` and `ui.interact`'s `Opened<e>` were `pub` only because, private,
+`HashMap<string, Cached<e>>` failed to lower with "cannot lay out data type Maybe" (10/21).
+- **Re-run first, it looked fixed** — a private generic struct of a non-entry module, in
+  `HashMap`, a `[]T` and a `Maybe`, behind one and two public modules, and `ui` with both made
+  private, built for an example and for Vega's whole check. Five `ui` tests then failed with
+  the original message: the shapes tried had all laid the instantiation out first from a
+  generic call, whose specialization carries its caller as the site a type argument resolves
+  from. The trigger is a **non-generic** function of the caller's taking it — `frame`'s
+  `cache: mut LayoutCache<Ev>` — laid out outside any specialization, so the only site is the
+  declaration's: `Cached`'s, in `ui.layout`, which cannot see `main`'s private `Ev`. A debug
+  build printing the empty site found it; guessing had not. `pub` on `Cached` hid it because
+  the instantiation was then first laid out from elsewhere.
+- **An unkeyed name now resolves program-wide as a last resort** (`lookupTypeDecl`). A type
+  is left unkeyed only where it is declared once (`KeyAmbiguousTypes`), so its name means that
+  declaration from anywhere — which is what the symbol table's own doc said and the backend's
+  lookup did not act on. The answer is taken only if the declaration found is itself unkeyed,
+  so a name a pass forgot to stamp still fails loudly rather than picking one.
+- Both types are private again. `TestRun_APrivateGenericStructIsAnotherModulesTypeArgument`
+  holds the shape (fails on the old compiler, passes now), and so do the five `ui` tests.
+- Found on the way, recorded in todo.md: a generic struct literal's field takes no context
+  from a return type naming the function's own type variable (`() -> Cache<e> => Cache { m:
+  hashmap_new() }`), refused twice. Hit twice writing the reproductions.
+
 ### 10/30/26 — An inline-record variant is built and matched
 `data Shape = Square { side: i64 } | …` type-checked, and the backend refused both halves:
 `Square { side: 3 }` was "struct instance lowering not implemented", and `Square { side } =>`

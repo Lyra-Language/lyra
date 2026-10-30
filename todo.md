@@ -850,9 +850,12 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   setting and stepping from VoiceOver are tested headless only.
 - **[DONE 10/22] `ui.access`: a slider's value set as text** — read with the prelude's new
   `parse_f64` (COMPLETED.md, 10/22).
-- **[OPEN] Backend: a private generic struct as another module's type argument cannot be laid
-  out.** `HashMap<string, Cached<e>>` in `ui.layout` failed with "cannot lay out data type
-  Maybe" while `Cached` was private; it is `pub` meanwhile (its doc says why).
+- **[DONE 10/30] A private generic struct as another module's type argument lays out**; `ui`'s
+  `Cached<e>` and `Opened<e>` are private again (COMPLETED.md, 10/30).
+- **[OPEN] A generic struct literal's field gets no context from a return type naming the
+  function's own variable**: `let mk<e> = () -> Cache<e> => Cache { m: hashmap_new() }` is
+  "cannot infer type variables k, v", reported twice; `Cache<i64>` there, or a `let` annotation,
+  works. `ui.layout` writes `hashmap_new::<string, Cached<e>>()` for it.
 - **[DONE 10/27] A stated type reaches the value that needs it** in six positions: a field
   assignment, a generic struct literal's fields, a `None` default at two instantiations, a
   lambda constructor payload, an array element beside a typed sibling, and a method's
