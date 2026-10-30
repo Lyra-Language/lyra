@@ -333,9 +333,15 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
   is one undo step by amending the last (`doc.amend`, while `doc.revision` is the one it
   left); a sample's wave; Import through the system's dialog; and the piano — pointer, the
   Z and Q rows once it has the focus, or a phrase — heard live through the studio's one
-  `fm_preview` channel every frame while a note sounds and through its release. The
-  sprite editor's preview, onion skin, resizing and true colour to come, then the song
-  editor. `vega --ui` opens the new front end.
+  `fm_preview` channel every frame while a note sounds and through its release. **The song
+  editor 10/29** (`face/songs.lyra`), a tracker: the pattern grid one painted element, its
+  cells on a fixed pitch (`PaintCells`, in a `mono` family Vega loads, though the pitch holds
+  in any font), scrolled a row at a time — rows in view only are drawn — and sideways with
+  the channels; the order list painted beside it; Z/Q-row notes, hex digits, Shift-selected
+  blocks with Copy, Cut, Paste and Transpose, each one undo step; Play and a typed note's
+  audition through `song_preview` on the same `EveryFrame`. The sprite editor's preview,
+  onion skin, resizing and true colour to come, then the import dialogs. `vega --ui` opens
+  the new front end.
 8. **The switch**: `Vega.app` and the Linux releases built from the new front end; the
    ImGui front end, `mac_look` and `ui_checks.lyra` removed, and `bindings.imgui` with no
    user left in the workspace.
