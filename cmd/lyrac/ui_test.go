@@ -7864,3 +7864,42 @@ func TestRun_UiFollowExample(t *testing.T) {
 		t.Errorf("following the command: %v\n%s", err, out)
 	}
 }
+
+// The accessibility tree's focus is always one of its nodes: an element taking the keyboard
+// that is heard as none — a painted terminal, say — leaves the window focused, since
+// AccessKit panics at a focus outside its nodes (Termina went down at the first query).
+func TestRun_UiAccessFocusIsANode(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ ui_new }
+import ui.access.{ access_tree, access_id, WINDOW_KEY }
+import ui.backend.{ AxButton }
+import ui.draw.{ Size }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, Laid, LayoutCache, column, button, tight, layout_cache }
+
+data Ev = Pressed
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var ui = ui_new()
+  var cache: LayoutCache<Ev> = layout_cache()
+  let view: Node<Ev> = column([button("Go", Pressed)])
+  let laid: Laid<Ev> = ui.frame_within(view, tight(Size { w: 200.0, h: 100.0 }), fonts, cache)
+  var key = ""
+  for n in access_tree(laid, "").nodes {
+    if n.role == AxButton { key = n.key }
+  }
+  let pressable = access_tree(laid, key)
+  println("a button focused: ${pressable.focus != pressable.root}")
+  let painted = access_tree(laid, "painted")
+  println("a node-less key focused: window ${painted.focus == painted.root}")
+  println("no focus: window ${access_tree(laid, "").focus == access_id(WINDOW_KEY)}")
+  0
+}
+`)
+	want := "a button focused: true\na node-less key focused: window true\nno focus: window true\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}

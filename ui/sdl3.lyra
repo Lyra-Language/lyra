@@ -99,6 +99,7 @@ import bindings.sdl3.{
   DropComplete as SdlDropComplete,
   poll_window_event,
   wait_window_event,
+  WindowedEvent,
   modifiers,
   MOD_SHIFT,
   MOD_CTRL,
@@ -443,9 +444,15 @@ pub struct OtherWindow {
 impl Platform for SdlPlatform {
   next_events = (self, wait_ms) => {
     var events: [](WindowId, InputEvent) = []
+    // Every event waiting, read before any is handled, so `next` is never reassigned while
+    // an event bound out of it is read (COMPLETED.md 10/29: that freed typed text under it).
+    var waiting: []WindowedEvent = []
     var next = if wait_ms == 0 { poll_window_event() } else { wait_window_event(wait_ms) }
     while let Some(got) = next {
+      waiting.push(got)
       next = poll_window_event()
+    }
+    for got in waiting {
       // An event of a window this platform does not have — one just closed — goes nowhere.
       let Some(id) = self.id_of(got.window) else { continue }
       // A drop's files, gathered into one input when it completes.

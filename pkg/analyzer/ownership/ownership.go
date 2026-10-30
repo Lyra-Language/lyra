@@ -1112,6 +1112,7 @@ func (a *analyzer) stmt(s ast.AstNode) {
 		a.destructuringValue(s)
 	case *ast.IfDestructuringStmt:
 		a.destructuringValue(&s.DestructuringStatement)
+		a.holdScrutinee(s.DestructuringStatement.Value, s.Then)
 		a.block(s.Then, false)
 		if s.Else != nil {
 			a.block(s.Else, false)
@@ -1152,6 +1153,78 @@ func (a *analyzer) destructuringValue(d *ast.DestructuringDeclStmt) {
 	if d.Value != nil {
 		a.expr(d.Value, false)
 	}
+}
+
+// holdScrutinee keeps a `match` or `if let` scrutinee alive through its arms when an arm
+// could write the place it was read from.
+//
+// **What an arm binds is borrowed from the scrutinee** — a field read out of it, never
+// retained (the MatchExpr case). For a temporary that is sound: the backend releases it
+// only after the arms (releaseScrutineeAtMerge, pendingBase). For a *place* — `next`,
+// `self.cur`, `xs[0]` — the storage owns the value, and an arm that writes the storage
+// releases the value its bindings still read:
+//
+//	while let Some(got) = next { next = poll(); got.text }   // got.text freed
+//
+// That was `ui.sdl3`'s event loop, a use-after-free on every keystroke (10/29). So such a
+// scrutinee is made a temporary of its own: retained as it is read and released after the
+// statement, like a call's result. Only where an arm can write its root, so the ordinary
+// match on a binding costs nothing.
+//
+// A global rewritten by a function the arm calls needs no hold: a global's read is already
+// retained. A `let … else` binding outlives its statement and is retained as one.
+func (a *analyzer) holdScrutinee(scrutinee ast.Expression, arms ...ast.Expression) {
+	if scrutinee == nil || !a.ownsManaged(scrutinee) {
+		return
+	}
+	root := ast.RootIdentifierName(scrutinee)
+	if root == "" {
+		return
+	}
+	for _, arm := range arms {
+		if writesRoot(arm, root) {
+			a.table.Retain[scrutinee] = true
+			a.table.ReleaseTemp[scrutinee] = true
+			return
+		}
+	}
+}
+
+// writesRoot reports whether e could write the binding `root` or anything inside it:
+// reassigning it, assigning a field, element or tuple position of it (`+=` too), taking its
+// address, writing through any pointer, or handing it — or a place in it — to a call, which
+// may take it `mut` (a method's receiver included). A call that only reads is answered
+// true as well: the conservative direction, costing a retain.
+func writesRoot(e ast.Expression, root string) bool {
+	rooted := func(x ast.Expression) bool { return x != nil && ast.RootIdentifierName(x) == root }
+	found := false
+	ast.WalkExpr(e, func(s ast.Statement) bool {
+		switch s := s.(type) {
+		case *ast.VarReassignmentStmt:
+			found = found || s.Name == root
+		case *ast.LValueAssignmentStmt:
+			found = found || rooted(s.Target)
+		case *ast.DerefAssignmentStmt:
+			found = true
+		}
+		return !found
+	}, func(x ast.Expression) bool {
+		switch x := x.(type) {
+		case *ast.MathAssignOpExpr:
+			found = found || rooted(x.Left)
+		case *ast.AddressOfExpr:
+			found = found || rooted(x.Operand)
+		case *ast.FunctionCallExpr:
+			if m, ok := x.Function.(*ast.MemberExpr); ok && rooted(m.Object) {
+				found = true
+			}
+			for _, arg := range x.Arguments {
+				found = found || rooted(arg)
+			}
+		}
+		return !found
+	})
+	return found
 }
 
 // expr walks e, marking retains/temp-releases on managed sub-values. needOwned is
@@ -1372,6 +1445,16 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 					}
 				}
 			}
+		}
+		if _, reused := a.table.ReuseMatch[e]; !reused {
+			var arms []ast.Expression
+			for i := range e.MatchArms {
+				arms = append(arms, e.MatchArms[i].Body)
+				if g := e.MatchArms[i].Guard; g != nil {
+					arms = append(arms, g.Condition)
+				}
+			}
+			a.holdScrutinee(e.Scrutinee, arms...)
 		}
 		savedCond := a.conditional
 		a.conditional = true

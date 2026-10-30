@@ -18,6 +18,9 @@ not a formality.
 
 ### Backend — LLVM IR
 
+- **[OPEN] A function reassigning a managed global leaks what it replaced** (10/29, LSan).
+  `let pop = () -> void => { q = q.slice(1, q.len()) }` called twice leaks the first slice;
+  the same two assignments in `main` do not. Found writing `TestExec_AnArmWritingIts…`.
 - **[PARTIAL] Perceus reference counting.** Stages 1–3 (last-use, dup/drop fusion,
   reuse/FBIP on `shared`) are in.
   - Stage 4, reuse specialization (token-conditional dup, static-uniqueness fast path),

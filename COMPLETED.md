@@ -9,6 +9,41 @@ Newest first.
 
 ## Dated log
 
+### 10/29/26 — An arm writing its scrutinee no longer frees what it bound
+
+Termina crashed (a trace trap, malloc finding its heap corrupt) on the first character typed.
+ASan, through the `--cc` wrapper, named `ui.sdl3`'s event loop, rewritten on 10/27 for several
+windows to read the next event first:
+
+    while let Some(got) = next { next = poll_window_event(); … translate(got.event, …) … }
+
+**What an arm binds is borrowed from the scrutinee**, never retained, and for a temporary
+that is sound — the backend keeps it until the arms are done. For a place it is not: the
+storage owns the value, and reassigning it in the arm released the event, typed text and
+all, while `got` still read it. `match` and `if let` alike, and through a field of `self` or
+an element (`self.cur = …` under `match self.cur`, `xs = []` under `if let … = xs[0]`).
+
+- **Fixed in the ownership pass** (`holdScrutinee`): a place scrutinee whose root an arm could
+  write — reassigned, a field, element or position of it assigned, `+=`, its address taken,
+  anything written through a pointer, or the root handed to a call (a receiver included, since
+  it may be `mut`) — is marked both `Retain` and `ReleaseTemp`. It is then a temporary like a
+  call's result, released after the statement on every way out: the merge, `break`,
+  `continue`, `return`. Only such a match pays the retain; the common one, reading its
+  binding, does not. A global rewritten by a function the arm calls needs no hold, its read
+  already retained; a `let … else` binding outlives its statement and is retained as one.
+- **`ui.sdl3` reads every waiting event before handling any**, the order it had before 10/27,
+  so it never depended on the fix.
+- **A test of a freed string must read its bytes**: `got.text.len()` reads the length beside
+  the pointer and passed on the freed value; the tests measure a copy (`"${s}".len()`).
+  `buildAndRunASanWithPrelude` now logs the sanitizer's report beside a non-zero exit, which
+  it used to drop.
+- Writing the tests on Linux found a leak of its own — a function reassigning a managed
+  global leaks what it replaced (todo.md) — which the tests step round with an integer global.
+- **AccessKit took Termina down too**, at the first accessibility query (a screenshot tool's):
+  the terminal's painter holds the focus and is heard as no node, and AccessKit panics at a
+  focus outside its nodes. `access_tree` focuses the window then
+  (`TestRun_UiAccessFocusIsANode`).
+
 ### 10/29/26 — A namespace reaches a module's constructors and types
 
 `import shapes` reached `shapes.area(x)` and `shapes.ORIGIN` and none of the module's

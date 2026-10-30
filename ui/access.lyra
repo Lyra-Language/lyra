@@ -80,7 +80,9 @@ pub const WINDOW_KEY: string = "window"
 
 /// `laid` — the window's content, its top-left corner the window's — as assistive technology
 /// should hear it: a window holding its nodes (the system names the window by its title),
-/// with the element identified as `focus` (`""` for none) focused.
+/// with the element identified as `focus` (`""` for none) focused. An element heard as no node
+/// — a painted one, say, taking the keyboard — leaves the window focused: AccessKit refuses a
+/// focus outside its nodes, and takes the program down with it.
 pub let access_tree<e> = pure (laid: Laid<e>, focus: string) -> AccessTree => {
   var nodes: []AccessNode = []
   let children = gather(laid, Point {}, nodes)
@@ -92,10 +94,11 @@ pub let access_tree<e> = pure (laid: Laid<e>, focus: string) -> AccessTree => {
     bounds: Rect { x: 0.0, y: 0.0, w: laid.size.w, h: laid.size.h },
     children: children,
   })
+  let focused = access_id(focus)
   AccessTree {
     nodes: nodes,
     root: root,
-    focus: if focus.len() > 0 { access_id(focus) } else { root },
+    focus: if focus.len() > 0 && nodes.any((n) => n.id == focused) { focused } else { root },
   }
 }
 

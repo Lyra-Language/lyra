@@ -38,6 +38,10 @@ A binding / `own` parameter holds one owning reference. The pass records:
   borrowing position (`==`, match scrutinee, `++` operand, discarded statement, borrowed arg or
   receiver) — released after the statement. **Every owned producer needs this arm**; a missing one
   is a leak only LeakSanitizer reports.
+- **Both, on one scrutinee** — a `match`/`if let` scrutinee read from a place (`next`,
+  `self.cur`, `xs[0]`) whose root an arm could write (`holdScrutinee`, `writesRoot`): what the
+  arms bind is borrowed from it, and the write would free it under them. Retained as it is read,
+  it is a temporary the backend releases after the arms, as it does a call's result.
 - **`LastUseTransfer` / `LastUseDrop`** — Perceus last use. `computeLastUse` finds an eligible
   binding's final textual reference (shadowed, parameter, reassigned and address-taken names are
   ineligible; for reuse, `computeOwnedLastRef` also refuses an `own` parameter whose name the body

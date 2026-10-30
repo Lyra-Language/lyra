@@ -1,6 +1,7 @@
 package llvm
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"strings"
@@ -73,9 +74,17 @@ func buildAndRunASanWithPrelude(t *testing.T, src string) int {
 	ir := instrumentForASan(emitWithPrelude(t, src))
 	cmd := command(compileCached(t, lookClang(t), ir, "-fsanitize=address"))
 	cmd.Env = append(os.Environ(), asanOptions())
+	// A sanitizer's report is the only account of a failure, so it is kept: logged beside a
+	// non-zero exit, which a test expecting another status shows only when it fails.
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	asanRunSlots <- struct{}{}
 	defer func() { <-asanRunSlots }()
-	return exitCode(t, cmd.Run())
+	code := exitCode(t, cmd.Run())
+	if code != 0 && stderr.Len() > 0 {
+		t.Logf("exit %d, stderr:\n%s", code, stderr.String())
+	}
+	return code
 }
 
 // exitCode reads a process's exit status out of its Run error, failing the test on any
