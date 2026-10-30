@@ -828,6 +828,7 @@ func (tc *TypeChecker) narrowToAssignedPlaces(decl *ast.DestructuringDeclStmt, v
 		return nil
 	}
 	errorCount := len(tc.errors)
+	mark := tc.typeTable.Journal()
 	expected := make([]types.Type, len(tuple.Elements))
 	for i, stmt := range decl.Assigns {
 		expected[i] = tuple.Elements[i]
@@ -837,6 +838,9 @@ func (tc *TypeChecker) narrowToAssignedPlaces(decl *ast.DestructuringDeclStmt, v
 		}
 		expected[i] = place
 	}
+	// What was said is held back, and the types forgotten with it, so the place's own
+	// assignment infers it again and says it (TypeTable.Journal).
+	tc.typeTable.EndJournal(mark, tc.addedErrorSince(errorCount))
 	tc.errors = tc.errors[:errorCount]
 	context := types.TupleType{Name: tuple.Name, Elements: expected}
 	tc.propagateExpectedType(decl.Value, context)
@@ -4467,13 +4471,18 @@ func (tc *TypeChecker) inferArrayLiteralType(expr *ast.ArrayLiteralExpr) types.T
 				restoreExpected = tc.pushExpectedType(elemContext, el.GetLocation())
 			}
 			errorCount := len(tc.errors)
+			mark := tc.typeTable.Journal()
 			t = tc.inferExprType(el) // keep untyped (UntypedInt, etc.) so the annotation can widen
 			restoreExpected()
 			if elemContext == nil && len(expr.Elements) > 1 && (t == nil || tc.addedErrorSince(errorCount)) {
+				// Its errors held back, its types forgotten: inferred again below, it
+				// reports what it finds then (TypeTable.Journal).
 				tc.errors = tc.errors[:errorCount]
+				tc.typeTable.EndJournal(mark, true)
 				deferred = append(deferred, el)
 				continue
 			}
+			tc.typeTable.EndJournal(mark, false)
 			if t != nil && elemContext != nil {
 				var reported bool
 				t, reported = tc.elementTakesContext(el, t, elemContext)
@@ -5961,8 +5970,12 @@ func (tc *TypeChecker) inferStructGenericArgs(expr *ast.StructInstanceExpr, stru
 			vt = tc.inferExprType(f.Value)
 			restoreExpected()
 		} else {
+			// Quiet: what it says is said by the field loop below, which infers it again —
+			// so a value that said anything has its types forgotten (TypeTable.Journal).
 			errorCount := len(tc.errors)
+			mark := tc.typeTable.Journal()
 			vt = tc.inferExprType(f.Value)
+			tc.typeTable.EndJournal(mark, tc.addedErrorSince(errorCount))
 			tc.errors = tc.errors[:errorCount]
 		}
 		if vt == nil {

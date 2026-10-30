@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 10/30/26 — An error inside an expression inferred twice is reported
+
+Vega's Import image dialog had `[i in allowed | i < all.len()]` — a list of bools, the filter
+written without its third part — and `all[i]` indexing with it, inside
+`row([text("Palette"), select(SelectSpec { options: [i in offered | all[i]] … })])`, and
+`lyrac check` passed it. Alone, or in an annotated `let`, it was refused.
+
+**Three places infer an expression quietly and again later**, dropping the first attempt's
+errors on the promise that the second reports them: an array literal's element set aside
+for want of context (inferred again once a sibling settles the element type), a generic
+struct literal's field inferred before its type is settled, and a destructuring's places
+inferred for their context. But the first attempt cached a type for every expression it
+reached, and the second, finding them, inferred nothing — so an error under anything that
+still had a type (a call returning `Box<i64>` around the bad comprehension) was never said.
+Reduced: `rowof([lbl("p"), take([i in flags | all[i]])])`, `take` not even generic.
+
+**`TypeTable.Journal`** records each expression first given a type while a journal is open;
+`EndJournal(mark, true)` forgets them. The three places journal their quiet attempt and
+forget it when it said anything, so the second inference runs and reports. The other
+rollbacks (an arm's pattern walk, its nested-pattern check) do not infer expressions to
+infer again. `TestQuietInference_ReportsWhatTheSecondInferenceFinds` holds all three, each
+failing with the forgetting turned off. All 95 workspace programs with a `main` check as
+before (none hid such an error), and Vega's check time is unchanged.
+
 ### 10/30/26 — A syntax error is reported as the mistake, once
 
 Two broken lines measured it. An unclosed `add(1,` was `unexpected "= add(1, \n  let y"`, then

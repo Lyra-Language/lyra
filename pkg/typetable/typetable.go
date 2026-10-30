@@ -41,6 +41,10 @@ type TypeTable struct {
 	// default named the caller's local of the same name. The typechecker infers one in
 	// its module's scope, and the backend lowers it with the caller's locals hidden.
 	defaults map[ast.Expression]bool
+	// journaling counts the journals open (Journal), and added is every expression first
+	// given a type while one is: what EndJournal forgets.
+	journaling int
+	added      []ast.Expression
 }
 
 func New() *TypeTable {
@@ -108,7 +112,42 @@ func (t *TypeTable) Binding(loc ast.Location) (types.Type, bool) {
 }
 
 func (t *TypeTable) Set(expr ast.Expression, typ types.Type) {
+	if t.journaling > 0 {
+		if _, had := t.entries[expr]; !had {
+			t.added = append(t.added, expr)
+		}
+	}
 	t.entries[expr] = typ
+}
+
+// Journal starts recording the expressions given a type from here on, and answers the mark
+// EndJournal takes. Journals nest: an inner one ended without forgetting leaves what it
+// recorded to the outer.
+//
+// **An inference whose errors are thrown away must forget its types too.** The typechecker
+// infers some expressions twice — first without the context they may need, then with it —
+// and drops the first attempt's errors on the promise that the second reports them. But
+// the first attempt cached a type for every expression it reached, and the second, finding
+// them, infers nothing: an error inside was never reported (10/30: `all[i]` indexed with a
+// bool, in an array literal's later element, passed to a generic function).
+func (t *TypeTable) Journal() int {
+	t.journaling++
+	return len(t.added)
+}
+
+// EndJournal closes the journal `mark` opened; with forget, every expression it saw first
+// given a type has its type forgotten, so it is inferred again when next asked.
+func (t *TypeTable) EndJournal(mark int, forget bool) {
+	if forget {
+		for _, expr := range t.added[mark:] {
+			delete(t.entries, expr)
+		}
+		t.added = t.added[:mark]
+	}
+	t.journaling--
+	if t.journaling == 0 {
+		t.added = t.added[:0]
+	}
 }
 
 func (t *TypeTable) Get(expr ast.Expression) (types.Type, bool) {

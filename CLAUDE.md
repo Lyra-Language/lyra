@@ -191,6 +191,7 @@ Each of these produces something that looks like it works. Other docs cite them 
    | retain or release what a value owns | `emitOwnedValue` (`backend/llvm/owned_walk.go`) |
    | push a context type onto a value (width + `shared` flavor) | `propagateExpectedType` |
    | does storing this value here cross the flavor boundary? | `checkAllocationCompat` (both sides written) **and** `checkStoredFlavor` (one side unwritten) — a new storing position needs both, and the second walks the expression |
+   | infer an expression quietly, its errors thrown away, to infer it again later | `TypeTable.Journal` / `EndJournal(mark, forget)`: forget what the quiet attempt cached when it said anything, or the second finds it cached and reports nothing |
    | did this operand diverge? | `diverged(v, block)` (`backend/llvm/trap.go`) |
    | where a trap says it was | `l.here`, set through `l.at(loc)` and passed by `whereArgs` (`backend/llvm/trap.go`) |
    | is this CST node a comment? | `cst.IsComment` |
