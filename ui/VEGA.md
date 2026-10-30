@@ -343,8 +343,11 @@ Each step lands with tests in `cmd/lyrac/ui_test.go` (scripted, at `-O0`) and an
   and onion skin 10/29**: the preview in the side panel plays the animation chosen, or the
   frames in turn, on the entity preview's `EveryFrame` (Enter on the canvas plays and
   stops); the onion skin is the frame before as a second picture under the canvas's, at a
-  third of its opacity. Its resizing and true colour to come, then the import dialogs. `vega --ui` opens
-  the new front end.
+  third of its opacity. **The sprite editor's properties and true colour 10/30**: the name,
+  the size — typed in pixels as a draft that Resize makes, as the map's is, for a sprite a
+  console draws at any size, else chosen in whole tiles — the palette, and Make true colour
+  or Make indexed (`fit.made_*`, one edit); a true-colour picture's left brush made with
+  R, G, B and A sliders. The import dialogs to come. `vega --ui` opens the new front end.
 8. **The switch**: `Vega.app` and the Linux releases built from the new front end; the
    ImGui front end, `mac_look` and `ui_checks.lyra` removed, and `bindings.imgui` with no
    user left in the workspace.
