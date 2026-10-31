@@ -9,6 +9,22 @@ Newest first.
 
 ## Dated log
 
+### 10/30/26 — An emoji by default is drawn in colour on Linux too
+CI had failed every run since `ui.text: colour emoji` (61bf2451), on one test,
+`TestRun_UiColorEmoji`: on the Linux runner `A😀` drew 😀 as a grey glyph, no picture. A face
+was chosen for a character as the first of the fallbacks that has it, and a colour face first
+only after U+FE0F. The fallbacks are CJK, then symbols, then colour emoji, last so a symbol with
+a text form keeps it — and Linux's symbols face, DejaVu Sans, has a 😀; the Mac's, Apple
+Symbols, has none, so the Mac never saw it. Reproduced on the Mac by putting LastResort, which
+has every character, ahead of Apple Color Emoji: CI's output, line for line.
+- **A character that is an emoji by default goes to a colour face first** — Unicode's
+  Emoji_Presentation, a table of its ranges (`emoji_by_default`) — in a paragraph's runs
+  (`runs_of`) and in both of `Fonts.cells`' paths, a single character's and a cluster's.
+  ❤ and ☺, which have a text form first, still keep a text face until U+FE0F asks.
+- `TestRun_UiEmojiByDefaultOutranksATextFace` sets that order up explicitly — LastResort or
+  DejaVu Sans ahead of the colour face — so a Mac shows a regression too; it fails on the old
+  `ui.text`.
+
 ### 10/30/26 — A generic struct's default is typed per instantiation, where it binds nothing
 A struct field's default is filled into each literal omitting the field, and was the
 declaration's one node, copied only as a leaf (10/27). Re-run first, the entry was narrower than

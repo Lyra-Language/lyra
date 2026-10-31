@@ -7429,6 +7429,71 @@ in cells, the selector's ❤ a picture and the plain one tinted: G P1
 	}
 }
 
+// An emoji by default (😀, Emoji_Presentation) is drawn from a colour face even where a text
+// face earlier in the fallbacks has it too — Linux's DejaVu Sans has a 😀 of its own, and
+// TestRun_UiColorEmoji failed on CI only, a grey glyph where a picture belongs (10/30). The
+// order is made explicit here, so a Mac shows it too: LastResort has every character.
+func TestRun_UiEmojiByDefaultOutranksATextFace(t *testing.T) {
+	t.Parallel()
+	pick := func(paths ...string) string {
+		for _, path := range paths {
+			if _, err := os.Stat(path); err == nil {
+				return path
+			}
+		}
+		return ""
+	}
+	mono := pick("/System/Library/Fonts/LastResort.otf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf", "/usr/share/fonts/dejavu/DejaVuSans.ttf")
+	color := pick("/System/Library/Fonts/Apple Color Emoji.ttc", "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf", "/usr/share/fonts/noto/NotoColorEmoji.ttf", "/usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf", "/usr/share/fonts/noto-color-emoji/NotoColorEmoji.ttf")
+	if mono == "" || color == "" {
+		t.Skip("no text face with 😀 and colour emoji face")
+	}
+	got := runUiProgram(t, `import ui.backend.{ Renderer }
+import ui.draw.{ Point, Color, TextureId, Image, DrawOp, Glyphs, Picture }
+import ui.text.{ Cell, FontSpec, fonts_new, glyph_atlas }
+
+struct Keeper { textures: i64 = 0 }
+
+impl Renderer for Keeper {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = (self, id, at, image) => true
+  draw = (self, window, background, ops) => {}
+}
+
+/// The ops' kinds, in order: G a tinted run of glyphs, P a picture.
+let kinds = pure (ops: []DrawOp) -> string => [op in ops | match op {
+  Glyphs(_, _, _) => "G",
+  Picture(_, _, _, _) => "P",
+  _ => "?",
+}].join(" ")
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  if !fonts.add("mono", "`+mono+`") { return 2 }
+  fonts.add_fallback("mono")
+  if !fonts.add("emoji", "`+color+`") { return 3 }
+  fonts.add_fallback("emoji")
+  let spec = FontSpec { family: "system", size: 32.0 }
+  var atlas = glyph_atlas()
+  var renderer = Keeper {}
+  let block = fonts.lay_out("A😀", spec, 1000.0)
+  println("text: ${kinds(atlas.glyphs(fonts, renderer, block, Point {}, 1.0, Color { r: 0, g: 0, b: 0 }))}")
+  let row = fonts.cells([Cell { col: 0, text: "😀", width: 2 }, Cell { col: 2, text: "👍🏽", width: 2 }], spec, 19.0)
+  println("cells: ${kinds(atlas.glyphs(fonts, renderer, row, Point {}, 1.0, Color { r: 0, g: 0, b: 0 }))}")
+  fonts.close()
+  0
+}
+`)
+	want := "text: G P\ncells: P P\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // A row of cells (`ui.text`'s `Fonts.cells`, `ui.layout`'s `PaintCells`): unshaped, each glyph
 // centred on its cell's columns — a narrow one on its own, a wide one across two — a space
 // drawing nothing, a cell with a combining mark shaped as one cluster in one face, a bold

@@ -170,7 +170,10 @@ layer — implements the two traits; the display list is the whole contract.
   (`sbix`, `CBDT`) or layers (`COLR`) — are rendered in their colours into the same atlas pages
   and drawn as a `Picture` each, untinted and faded by the text's alpha; an emoji font is the
   last of `SYSTEM_FALLBACKS`, so a symbol with a text form keeps it, and **U+FE0F after a
-  character** moves it to a colour face that has it.
+  character** moves it to a colour face that has it. **A character that is an emoji by
+  default** (Unicode's Emoji_Presentation — 😀, ⌚, a flag's letters; `emoji_by_default`) goes
+  to a colour face first, in text and in cells alike, ahead of a text face that has it too:
+  Linux's DejaVu Sans has a 😀 of its own, and drew it grey until 10/30.
   A glyph is rasterized at the size times the scale and drawn from a whole pixel.
 - **A painted element is drawn by the program** (`painted(paint, on_size)`, `ui/TERMINAL.md`
   §1): laid out as a box — its style's size, else all the room it is given, so a tall one in a
