@@ -83,7 +83,7 @@ import ui.draw.{
   LayerEffect,
   radius,
 }
-import ui.backend.{ Renderer, Key, Modifiers, PointerButton, Chord }
+import ui.backend.{ Renderer, Key, Modifiers, PointerButton, Chord, Cursor }
 import ui.text.{ Fonts, FontSpec, Cell, TextBlock, GlyphAtlas, caret_x }
 import ui.style.{
   Style,
@@ -263,6 +263,8 @@ pub struct RawInput<e> {
   on_text: (TextInput) -> Maybe<e>,
   on_pointer: (PointerInput) -> Maybe<e>,
   caret: Maybe<Rect>,
+  /// Cursor shape to set while the pointer is over this element. `Arrow` for default.
+  cursor: Cursor = Arrow,
 }
 
 /// A key pressed or let go, and the modifiers held with it.

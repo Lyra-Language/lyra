@@ -1336,7 +1336,11 @@ impl Ui {
       Some(f) => if f.laid.field.is_some() { IBeam } else {
         match f.laid.kind {
           Pressable(_) => Hand,
-          _ => Arrow,
+          Painted(painter) => match painter.input {
+            Some(raw) => raw.cursor,
+            None => Arrow
+          },
+          _ => Arrow
         }
       },
       None => Arrow,
