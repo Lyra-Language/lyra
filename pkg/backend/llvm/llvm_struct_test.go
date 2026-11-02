@@ -415,7 +415,7 @@ let main = () -> u8 => {
 
 // A struct with no fields (10/29) — a marker implementing a trait, which had to be `data
 // Marker = Marker` — is built, stored in a struct and an array, returned, compared and
-// dispatched on. Under ASan, which crashed on a zero-sized store (dropZeroSizedAccesses),
+// dispatched on. Under ASan, which crashed on a zero-sized store (dropZeroSizedValues),
 // and through the paths that grow, shrink and copy a buffer of them, each of which was
 // `malloc(0)` or `realloc(p, 0)` before bufferStride.
 func TestExec_AStructWithNoFields(t *testing.T) {

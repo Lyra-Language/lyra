@@ -509,8 +509,8 @@ func (l *lowerer) lowerDataConstruction(block *ir.Block, dt types.DataType, ctor
 	// A lone `void` payload given a value — `Pressable(ev)` in a generic body at `e = void`,
 	// `ev` a void call or parameter — holds nothing: the value is lowered for its effects
 	// and the variant is its tag alone, as `Pressable()` is.
-	if len(fields) == 0 && len(args) == 1 && len(ctor.Params) == 1 {
-		if lone, err := l.lowerType(ctor.Params[0]); err != nil || !lone.Equal(lltypes.Void) {
+	if len(fields) == 0 && len(args) == 1 {
+		if !holdsLoneVoid(ctor) {
 			return nil, nil, fmt.Errorf("llvm: constructor %q expects no argument, got 1", ctorName)
 		}
 		v, next, err := l.lowerExpr(block, args[0])
@@ -670,7 +670,7 @@ func (l *lowerer) dataPayloadStructType(ctor types.DataTypeConstructor) (*lltype
 	fieldTypes := ctor.FieldTypes()
 	fields := make([]lltypes.Type, len(fieldTypes))
 	for i, p := range fieldTypes {
-		ft, err := l.lowerFieldType(p)
+		ft, err := l.lowerType(p)
 		if err != nil {
 			return nil, err
 		}
@@ -679,8 +679,20 @@ func (l *lowerer) dataPayloadStructType(ctor types.DataTypeConstructor) (*lltype
 	return lltypes.NewStruct(fields...), nil
 }
 
+// holdsLoneVoid reports whether ctor's payload is one `void` — `Pressable(e)` at `e = void` —
+// which FieldTypes answers as no fields, as it does a constructor with no payload at all.
+func holdsLoneVoid(ctor types.DataTypeConstructor) bool {
+	if len(ctor.Params) != 1 || len(ctor.FieldTypes()) != 0 {
+		return false
+	}
+	if tt, isTuple := ctor.Params[0].(types.TupleType); isTuple && types.IsAnonymousTupleName(tt.Name) {
+		return len(tt.Elements) == 1
+	}
+	return true
+}
+
 // holdsNothing reports whether v is a `void` value: no value or a void call
-// (isVoidResult), or a void field read back as its empty struct (lowerFieldType).
+// (isVoidResult), or a void value proper, the empty struct (lowerType).
 func holdsNothing(v value.Value) bool {
 	if isVoidResult(v) {
 		return true
@@ -723,7 +735,7 @@ func findConstructor(dt types.DataType, name string) (types.DataTypeConstructor,
 // non-int mismatch it can't reconcile is a loud error, never a panic.
 func (l *lowerer) coerceAggregateElem(block *ir.Block, v value.Value, dst lltypes.Type, src ast.Expression) (value.Value, error) {
 	// A void element (`Checkable(b, f(b))` at `e = void`) was lowered for its effects; its
-	// field is the empty struct lowerFieldType gives it.
+	// field is the empty struct lowerType gives it.
 	if empty, ok := dst.(*lltypes.StructType); ok && len(empty.Fields) == 0 && empty.TypeName == "" && holdsNothing(v) {
 		return constant.NewZeroInitializer(empty), nil
 	}

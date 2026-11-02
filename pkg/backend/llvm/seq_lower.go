@@ -332,8 +332,8 @@ func (l *lowerer) inlineCallee(block *ir.Block, call *ast.FunctionCallExpr, lamb
 	var slot value.Value
 	retSigned := false
 	if !lambda.IsGenerator && lambda.ReturnType.Type != nil {
-		if _, isVoid := lambda.ReturnType.Type.(types.VoidType); !isVoid {
-			retType, err = l.lowerType(lambda.ReturnType.Type)
+		if !l.isVoidType(lambda.ReturnType.Type) {
+			retType, err = l.lowerResultType(lambda.ReturnType.Type)
 			if err != nil {
 				return nil, nil, err
 			}

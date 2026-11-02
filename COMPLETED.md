@@ -9,6 +9,49 @@ Newest first.
 
 ## Dated log
 
+### 11/01/26 — A void value is the empty struct: `Node<void>` compiles
+`ui`'s `Pressable(on_click) => [on_click]` at `e = void` binds a void value and holds it in an
+array, and the backend could do neither, so `Node<NoEvent>` stood in for a tree raising nothing.
+Probing the neighbours found every position failing, a binding, a parameter, a return, a push,
+a capture, `Maybe<void>`, most as clang's "void type only allowed for function results": the
+backend lowered `void` to LLVM's `void`, which is a function's result and nothing else.
+- **`lowerType(void)` is `{}` now, and a function's result alone is LLVM's `void`**
+  (`lowerResultType`, at the eight sites lowering one). The wrapper `lowerFieldType`, which had
+  done this for fields since 10/27, folded into it. A `{}` needed nothing else: `SizeAndAlign`
+  already sized void 0, `bufferStride` gives a `[]void` its bytes as it does `struct Marker {}`,
+  and `dropZeroSizedValues` removes its loads, stores and phis.
+- **A void call's non-value is settled once, in `lowerExpr`**: a call whose recorded type is void
+  answers `voidValue`, a constant, so a plain statement `noop()` emits nothing new, and no
+  binding, argument, element or capture has a case to learn. **A call alone** — first written
+  for any void expression, which made `let r = if c { x = 1; } else { x = 2; }` compile: its
+  refusal stands, since branches ending in statements have no value to bind
+  (`TestEmit_BindingAVoidExpressionErrors` said so).
+- **A void arm beside a value arm still means no value** (`voidBesideAValue`, at `if` and `match`):
+  a statement `match` with one arm `add(1)` and another ending in `n * 2` was "produce different
+  types ({} and i64)" for the first run of this, in `std.zip`, `std.rar`, `std.sevenzip` and
+  `ui`, because the void arm had become a value. Both void is a value, `{}`.
+- **A merge over nothing builds no phi** (11/02, what Linux's ASan run found and the Mac suite
+  did not). With a void call a `{}`, `if c { f() } else { g() }` became `phi {}`, and at -O0
+  clang 15's AArch64 IRTranslator segfaults on a phi with no registers: nine tests, through
+  `std.json` and `std.sevenzip`. **Not every such phi crashes**: the case written here for an
+  `if` joined at void held one and passed, and Apple's clang takes them all, so
+  `TestEmit_ZeroSizedMergeBuildsNoPhi` reads the IR rather than trusting a build to fail. The
+  fix went in the module pass that already drops zero-sized loads and stores, not in `joinPhi`:
+  `??` builds its own phi. `struct Marker {}` and `{ {} }` had the same crash, Marker's since
+  10/29.
+- **`??` and `?` at `e = void`**, found by that test's neighbours: `??` refused a Some with no
+  field to read, and `let v = r?` handed back no value to bind. Each now answers `voidValue`.
+- **A lone void payload** has nothing in the union to read, so a pattern's binding of it (`ev` of
+  `Pressable(ev)` or `Pressable ev`, top-level and nested) is bound to that value directly
+  (`voidPayloadBinding`); `FieldTypes` still answers no fields.
+- **"Is it void?" asks `isVoidType`**, under the substitution and through an alias: three sites
+  tested the written type, so `let quiet = () -> Nothing => {}` over `alias Nothing = void` was
+  "block has no value", and rule 8's note on aliases applied.
+- **`NoEvent` is gone**, its only uses in this repo; Vega and Termina never wrote it.
+  `examples/ui/settings.lyra` over `Node<void>` printed the same boxes and drew the same PNG, byte
+  for byte, as over `Node<NoEvent>`. There is still no void literal, so a test's
+  `button("Go", NoEvent)` became `button("Go", nothing())`, a call of a void function.
+
 ### 11/01/26 — A body binding over a bounded parameter is not the parameter
 Asked to fix "a `pure` parameter captured by a lambda cannot be passed on", re-run first: it
 could. The entry was written the morning of 10/27 and `6576c47f` fixed it that evening (`suppliedEffect`'s

@@ -392,6 +392,9 @@ func (l *lowerer) aggPatternBind(block *ir.Block, val value.Value, pat ast.Patte
 		if !ok {
 			return fmt.Errorf("llvm: %q is not a constructor of %s", p.Name, dt.Name)
 		}
+		if sub := voidPayloadBinding(p, ctor); sub != nil {
+			return l.aggPatternBind(block, voidValue(), sub, types.VoidType{})
+		}
 		positions, err := payloadPositions(p, ctor)
 		if err != nil {
 			return err
@@ -785,6 +788,9 @@ func (l *lowerer) dropReclaimedPayload(block *ir.Block, token value.Value, scrut
 // the tag switch, which can't also test the payload and fall through to another
 // arm (see patternHasTest).
 func (l *lowerer) bindDataPayload(armBlock *ir.Block, p *ast.DataPattern, ctor types.DataTypeConstructor, slot value.Value, unionTy *lltypes.StructType) error {
+	if sub := voidPayloadBinding(p, ctor); sub != nil {
+		return l.aggPatternBind(armBlock, voidValue(), sub, types.VoidType{})
+	}
 	positions, err := payloadPositions(p, ctor)
 	if err != nil {
 		return err
@@ -865,11 +871,31 @@ func payloadFieldPatterns(p *ast.DataPattern, ctor types.DataTypeConstructor) ([
 	return positions.Columns, err
 }
 
+// voidPayloadBinding is the pattern a lone `void` payload is matched by — the `ev` of
+// `Pressable(ev)` or `Pressable ev` at `e = void` — or nil where ctor has no such payload or
+// nothing matches it. The value is not in the union, so a site binding a data pattern's names
+// binds this one to voidValue itself.
+func voidPayloadBinding(p *ast.DataPattern, ctor types.DataTypeConstructor) ast.Pattern {
+	if p.Pattern == nil || !holdsLoneVoid(ctor) {
+		return nil
+	}
+	if tp, isTuple := p.Pattern.(*ast.TuplePattern); isTuple {
+		if len(tp.Elements) != 1 {
+			return nil
+		}
+		return tp.Elements[0]
+	}
+	return p.Pattern
+}
+
 // payloadPositions is payloadFieldPatterns with the rest kept: a `...rest` in the payload
 // (`Tri(a, ...more)`) lines up as it does in a tuple, and the sites that bind need to know
 // what it covers.
 func payloadPositions(p *ast.DataPattern, ctor types.DataTypeConstructor) (ast.Positions, error) {
 	flat := ctor.FieldTypes()
+	if voidPayloadBinding(p, ctor) != nil {
+		return ast.Positions{}, nil // nothing in the union to read; the binder bound it
+	}
 	if p.Pattern == nil {
 		if len(flat) != 0 {
 			return ast.Positions{}, fmt.Errorf("llvm: constructor %q has a payload but the pattern binds none", p.Name)

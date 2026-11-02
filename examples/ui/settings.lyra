@@ -29,7 +29,6 @@ import ui.text.{ fonts_new, glyph_atlas }
 import ui.style.{ Style, Sheet, Rule, Theme, insets, insets_xy, light_theme, dark_theme }
 import ui.layout.{
   Node,
-  NoEvent,
   Laid,
   Edges,
   MainStart,
@@ -98,7 +97,7 @@ let main = () -> u8 => {
 }
 
 /// The screen: a title, a card of settings, a paragraph, and a card in the dark theme.
-let view = pure (theme: Theme) -> Node<NoEvent> => themed(theme, sheet(theme), [
+let view = pure (theme: Theme) -> Node<void> => themed(theme, sheet(theme), [
   column([
     text("Settings").with_class("title"),
     column([
@@ -120,12 +119,12 @@ let view = pure (theme: Theme) -> Node<NoEvent> => themed(theme, sheet(theme), [
 ])
 
 /// A labelled setting: its label at the start of the row, its control at the end.
-let setting = pure (label: string, control: ref Node<NoEvent>) -> Node<NoEvent> =>
+let setting = pure (label: string, control: ref Node<void>) -> Node<void> =>
   row([text(label), control]).aligned(SpaceBetween, CrossCenter).with_class("setting")
 
 /// A bar `level` of the way full: a component whose `track` and `fill` are styled from
 /// outside, by `Meter::track` and `Meter::fill`.
-let meter = pure (level: f32) -> Node<NoEvent> => component("Meter", METER, [
+let meter = pure (level: f32) -> Node<void> => component("Meter", METER, [
   stack([
     sized(Some(METER_WIDTH), Some(6.0)).with_part("track"),
     positioned(
@@ -144,7 +143,7 @@ const METER: Sheet = Sheet { rules: [Rule {
 }] }
 
 /// A switch, on or off: a pill with its knob at one end.
-let toggle = pure (on: bool) -> Node<NoEvent> => component("Toggle", TOGGLE, [
+let toggle = pure (on: bool) -> Node<void> => component("Toggle", TOGGLE, [
   stack([
     sized(Some(36.0), Some(20.0)).with_part(if on { "on" } else { "off" }),
     positioned(
@@ -194,7 +193,7 @@ let sheet = pure (theme: Theme) -> Sheet => {
 }
 
 /// Every element with a class, and its box in the window: `class x y w h`, a line each.
-let print_boxes = (laid: ref Laid<NoEvent>, origin: Point) -> void => {
+let print_boxes = (laid: ref Laid<void>, origin: Point) -> void => {
   if laid.class.len() > 0 {
     println("${laid.class} ${origin.x} ${origin.y} ${laid.size.w} ${laid.size.h}")
   }

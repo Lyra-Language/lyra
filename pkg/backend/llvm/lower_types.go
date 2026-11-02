@@ -3,7 +3,9 @@ package llvm
 import (
 	"fmt"
 
+	"github.com/llir/llvm/ir/constant"
 	lltypes "github.com/llir/llvm/ir/types"
+	"github.com/llir/llvm/ir/value"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -16,7 +18,7 @@ import (
 func (l *lowerer) lowerTypeList(ts []types.Type) ([]lltypes.Type, error) {
 	out := make([]lltypes.Type, len(ts))
 	for i, t := range ts {
-		lt, err := l.lowerFieldType(t)
+		lt, err := l.lowerType(t)
 		if err != nil {
 			return nil, err
 		}
@@ -25,19 +27,29 @@ func (l *lowerer) lowerTypeList(ts []types.Type) ([]lltypes.Type, error) {
 	return out, nil
 }
 
-// lowerFieldType is lowerType for a field of an aggregate — a struct's, a tuple's, a
-// variant's payload. A `void` one (`Checkable(bool, e)` or `struct W<e> { ev: e }` at
-// `e = void`) holds nothing, as layout sizes it, so it is the empty struct: LLVM has no
-// void field, and `{ i1, void }` was invalid IR.
-func (l *lowerer) lowerFieldType(t types.Type) (lltypes.Type, error) {
-	lt, err := l.lowerType(t)
-	if err != nil {
-		return nil, err
+// lowerResultType is lowerType for what a function returns: a void one returns nothing, LLVM's
+// `void`, wherever its value is the empty struct (lowerType). A value a void call is used
+// as is made in lowerExpr.
+func (l *lowerer) lowerResultType(t types.Type) (lltypes.Type, error) {
+	if l.isVoidType(t) {
+		return lltypes.Void, nil
 	}
-	if lt.Equal(lltypes.Void) {
-		return lltypes.NewStruct(), nil
+	return l.lowerType(t)
+}
+
+// isVoidType reports whether t is `void` under the active substitution, through an alias or a
+// newtype: `e` at `e = void`, and `alias Nothing = void`.
+func (l *lowerer) isVoidType(t types.Type) bool {
+	if t == nil {
+		return false
 	}
-	return lt, nil
+	_, isVoid := l.stripNewtype(l.applyTypeSubst(t)).(types.VoidType)
+	return isVoid
+}
+
+// voidValue is a void value: the empty struct, as a constant, so making one emits nothing.
+func voidValue() value.Value {
+	return constant.NewZeroInitializer(lltypes.NewStruct())
 }
 
 func (l *lowerer) lowerTypeDeclarations(program *ast.Program) error {
@@ -522,9 +534,11 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 		}
 		return irType, nil
 	case types.VoidType:
-		// Only a function return type is void (the typechecker rejects a void
-		// value elsewhere); a void function lowers to an LLVM `void` return.
-		return lltypes.Void, nil
+		// **A void value is the empty struct**, as layout sizes it: a generic body at `e =
+		// void` binds one, passes it and holds it in an array, and LLVM's `void` is a
+		// function's result and nothing else (10/27 for a field, 11/01 everywhere). A
+		// function's result asks lowerResultType.
+		return lltypes.NewStruct(), nil
 	case types.TupleType:
 		// A named tuple resolves to the struct type registered in the declaration
 		// pass (key by t.Name, not GetName() which renders the full shape — see
@@ -745,7 +759,7 @@ func (l *lowerer) resolveTupleType(t types.Type) (types.TupleType, bool) {
 // the whole reason this feature is small; a closure, whose lifted body takes the
 // environment as a leading parameter, is refused at the call instead.
 func (l *lowerer) lowerCFunctionPointer(t *types.LambdaType) (lltypes.Type, error) {
-	ret, err := l.lowerType(t.ReturnType.Type)
+	ret, err := l.lowerResultType(t.ReturnType.Type)
 	if err != nil {
 		return nil, err
 	}

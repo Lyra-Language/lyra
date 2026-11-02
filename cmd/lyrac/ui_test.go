@@ -252,7 +252,7 @@ func TestRun_UiLayout(t *testing.T) {
 import ui.text.{ fonts_new }
 import ui.style.{ Style, insets }
 import ui.layout.{
-  Node, NoEvent, Laid, Edges, Constraints, CENTER, Vertical,
+  Node, Laid, Edges, Constraints, CENTER, Vertical,
   MainStart, MainCenter, MainEnd, SpaceBetween, SpaceAround, SpaceEvenly,
   CrossStart, CrossCenter, CrossEnd, CrossStretch,
   row, column, expanded, stack, positioned, padding, align, sized, scroll,
@@ -261,8 +261,8 @@ import ui.layout.{
 
 let main = () -> u8 => {
   var fonts = fonts_new()
-  let box = (w: f32, h: f32) -> Node<NoEvent> => sized(Some(w), Some(h))
-  let open = (w: Maybe<f32>, h: Maybe<f32>) -> Node<NoEvent> => sized(w, h)
+  let box = (w: f32, h: f32) -> Node<void> => sized(Some(w), Some(h))
+  let open = (w: Maybe<f32>, h: Maybe<f32>) -> Node<void> => sized(w, h)
   let screen = loose(Size { w: 300.0, h: 200.0 })
   // A row: two boxes 10 apart, the middle one growing into the rest.
   show("row", layout(row([box(40.0, 20.0), expanded(box(0.0, 10.0)), box(30.0, 30.0)]).with_style(Style { gap: Some(10.0) }), screen, fonts))
@@ -296,9 +296,9 @@ let main = () -> u8 => {
 }
 
 /// A laid tree on one line: each node's size, and in brackets its children at their offsets.
-let show = (name: string, laid: Laid<NoEvent>) -> void => println("${name} ${shape(laid)}")
+let show = (name: string, laid: Laid<void>) -> void => println("${name} ${shape(laid)}")
 
-let shape = pure (laid: Laid<NoEvent>) -> string => {
+let shape = pure (laid: Laid<void>) -> string => {
   var out = "${laid.size.w}x${laid.size.h}"
   if laid.clips { out = out ++ " clip" }
   if laid.children.len() > 0 {
@@ -347,7 +347,7 @@ func TestRun_UiCascade(t *testing.T) {
 	got := runUiProgram(t, `import ui.draw.{ Size, Color }
 import ui.text.{ fonts_new }
 import ui.style.{ Style, Sheet, Rule, Theme, light_theme, dark_theme, specificity }
-import ui.layout.{ Node, NoEvent, Laid, column, text, themed, component, layout, loose }
+import ui.layout.{ Node, Laid, column, text, themed, component, layout, loose }
 
 let main = () -> u8 => {
   println("specificity ${specificity("Text", "Text", "a b")} ${specificity(".b", "Text", "a b")} ${specificity("Text.a", "Text", "a b")} ${specificity("Row", "Text", "a")} ${specificity(".c", "Text", "a b")} ${specificity("X::p", "Text", "")}")
@@ -374,7 +374,7 @@ let main = () -> u8 => {
   let inner = Sheet { rules: [rule(".outer", 9)] }
   let card_sheet = Sheet { rules: [rule("Text", 10), rule("Badge::dot", 11)] }
   let badge_sheet = Sheet { rules: [rule(".dot", 12), rule(".own", 14)] }
-  let tree: Node<NoEvent> = themed(theme, globals, [
+  let tree: Node<void> = themed(theme, globals, [
     column([
       text("").with_class("spec"),
       text("").with_class("order"),
@@ -417,7 +417,7 @@ let main = () -> u8 => {
 }
 
 /// An empty column, which no rule matches.
-let blank = pure () -> Node<NoEvent> => column([])
+let blank = pure () -> Node<void> => column([])
 
 /// A rule setting the colour gray n, so which rule won can be read back.
 let rule = pure (selector: string, n: u8) -> Rule => Rule { selector: selector, style: Style { color: Some(gray(n)) } }
@@ -426,7 +426,7 @@ let gray = pure (n: u8) -> Color => Color { r: n, g: n, b: n }
 
 /// Each element with a class: its colour's gray, font size, opacity and whether it has a
 /// background.
-let report = (laid: Laid<NoEvent>) -> void => {
+let report = (laid: Laid<void>) -> void => {
   if laid.class.len() > 0 {
     let s = laid.style
     println("${laid.class}: ${s.color.r} ${s.font.size} ${s.opacity} ${s.background.is_some()}")
@@ -1268,7 +1268,6 @@ import ui.text.{ fonts_new }
 import ui.style.{ Theme, Sheet, light_theme, dark_theme }
 import ui.layout.{
   Node,
-  NoEvent,
   LayoutCache,
   layout_cache,
   layout_cached,
@@ -1307,7 +1306,7 @@ let main = () -> u8 => {
 /// again (given back whole).
 let cached = () -> void => {
   var fonts = fonts_new()
-  var cache: LayoutCache<NoEvent> = layout_cache()
+  var cache: LayoutCache<void> = layout_cache()
   let size = loose(Size { w: 200.0, h: 200.0 })
   for (theme, words) in [
     (light_theme(), ["a", "b", "c"]),
@@ -1321,7 +1320,7 @@ let cached = () -> void => {
   }
 }
 
-let view = pure (theme: Theme, words: []string) -> Node<NoEvent> =>
+let view = pure (theme: Theme, words: []string) -> Node<void> =>
   themed(theme, Sheet {}, [column([w in words | text(w)])])
 
 data Ev = Pressed
@@ -1379,7 +1378,7 @@ import ui.sdl3.{ geometry_calls }
 import ui.draw.{ Point, Size, Color, DrawOp, Rect, Fill, radius, rgb }
 import ui.text.{ fonts_new, glyph_atlas }
 import ui.style.{ Style, insets }
-import ui.layout.{ Node, NoEvent, column, row, text, scroll, Vertical, layout, loose, paint }
+import ui.layout.{ Node, column, row, text, scroll, Vertical, layout, loose, paint }
 
 /// Ten boxes, each with a label in it: two calls, the boxes and the labels; the same in a
 /// scroll, whose clip begins and ends a run of calls; and two boxes overlapping a label, the
@@ -1397,8 +1396,8 @@ let main = () -> u8 => {
   var platform = window.platform
   var renderer = window.renderer
   var atlas = glyph_atlas()
-  let boxes: Node<NoEvent> = column([i in 0..<10 | labelled_box("item ${i}")])
-  let scrolled: Node<NoEvent> = scroll(Vertical, 0.0, boxes)
+  let boxes: Node<void> = column([i in 0..<10 | labelled_box("item ${i}")])
+  let scrolled: Node<void> = scroll(Vertical, 0.0, boxes)
   for (name, view) in [("boxes", boxes), ("scrolled", scrolled)] {
     let laid = layout(view, loose(Size { w: 400.0, h: 600.0 }), fonts)
     let ops = paint(laid, Point {}, 1.0, fonts, atlas, renderer)
@@ -1414,7 +1413,7 @@ let main = () -> u8 => {
   0
 }
 
-let labelled_box = pure (label: string) -> Node<NoEvent> =>
+let labelled_box = pure (label: string) -> Node<void> =>
   row([text(label)]).with_style(Style {
     background: Some(rgb(0xDDE6F5)),
     padding: Some(insets(8.0)),
@@ -1676,7 +1675,7 @@ import ui.style.{
   AlignCenter,
   BasisLength,
 }
-import ui.layout.{ Node, NoEvent, Laid, flex, sized, layout, loose }
+import ui.layout.{ Node, Laid, flex, sized, layout, loose }
 
 let main = () -> u8 => {
   var fonts = fonts_new()
@@ -1718,8 +1717,8 @@ let main = () -> u8 => {
   show("row-reverse", flex([block("a", 50.0, 20.0), block("b", 80.0, 20.0)]).with_style(Style { flex_direction: Some(FlexRowReverse) }), fonts)
   // A column 200 tall: a grows into what b leaves, both as wide as the column.
   show("column", flex([
-    sized::<NoEvent>(None, None).keyed("a").with_style(Style { height: Some(50.0), grow: Some(1.0) }),
-    sized::<NoEvent>(None, None).keyed("b").with_style(Style { height: Some(30.0) }),
+    sized::<void>(None, None).keyed("a").with_style(Style { height: Some(50.0), grow: Some(1.0) }),
+    sized::<void>(None, None).keyed("b").with_style(Style { height: Some(30.0) }),
   ]).with_style(Style { flex_direction: Some(FlexColumn), height: Some(200.0) }), fonts)
   show("align center", flex([block("a", 50.0, 20.0), block("b", 50.0, 40.0)]).with_style(Style { height: Some(100.0), align_items: Some(AlignCenter) }), fonts)
   // An item no narrower than its min-content: a wrapping row of 60 and 40 shrinks to 60, not 30.
@@ -1730,13 +1729,13 @@ let main = () -> u8 => {
   0
 }
 
-let block = pure (key: string, w: f32, h: f32) -> Node<NoEvent> =>
-  sized::<NoEvent>(None, None).keyed(key).with_style(Style { width: Some(w), height: Some(h) })
+let block = pure (key: string, w: f32, h: f32) -> Node<void> =>
+  sized::<void>(None, None).keyed(key).with_style(Style { width: Some(w), height: Some(h) })
 
-let grown = pure (key: string, grow: f32, style: Style) -> Node<NoEvent> =>
-  sized::<NoEvent>(None, None).keyed(key).with_style(Style { style | grow: Some(grow), basis: Some(BasisLength(0.0)), height: Some(20.0) })
+let grown = pure (key: string, grow: f32, style: Style) -> Node<void> =>
+  sized::<void>(None, None).keyed(key).with_style(Style { style | grow: Some(grow), basis: Some(BasisLength(0.0)), height: Some(20.0) })
 
-let show = (name: string, view: Node<NoEvent>, fonts: mut Fonts) -> void => {
+let show = (name: string, view: Node<void>, fonts: mut Fonts) -> void => {
   let laid = layout(view, loose(Size { w: 300.0, h: 400.0 }), fonts)
   var line = "${name} (${laid.size.w}x${laid.size.h}):"
   for p in laid.children {
@@ -1797,7 +1796,7 @@ import ui.style.{
   minmax,
   repeat_tracks,
 }
-import ui.layout.{ Node, NoEvent, flex, grid, sized, layout, loose }
+import ui.layout.{ Node, flex, grid, sized, layout, loose }
 
 let main = () -> u8 => {
   var fonts = fonts_new()
@@ -1843,7 +1842,7 @@ let main = () -> u8 => {
     justify_items: Some(AlignCenter),
     align_items: Some(AlignCenter),
   }), 300.0, fonts)
-  show("fr rows", grid([sized::<NoEvent>(None, None).keyed("a"), sized::<NoEvent>(None, None).keyed("b")]).with_style(Style {
+  show("fr rows", grid([sized::<void>(None, None).keyed("a"), sized::<void>(None, None).keyed("b")]).with_style(Style {
     grid_rows: Some([fr(1.0), fr(3.0)]),
     height: Some(100.0),
   }), 300.0, fonts)
@@ -1851,17 +1850,17 @@ let main = () -> u8 => {
 }
 
 /// A cell 20 tall, as wide as its column.
-let cell = pure (key: string) -> Node<NoEvent> =>
-  sized::<NoEvent>(None, None).keyed(key).with_style(Style { height: Some(20.0) })
+let cell = pure (key: string) -> Node<void> =>
+  sized::<void>(None, None).keyed(key).with_style(Style { height: Some(20.0) })
 
-let block = pure (key: string, w: f32, h: f32) -> Node<NoEvent> =>
-  sized::<NoEvent>(None, None).keyed(key).with_style(Style { width: Some(w), height: Some(h) })
+let block = pure (key: string, w: f32, h: f32) -> Node<void> =>
+  sized::<void>(None, None).keyed(key).with_style(Style { width: Some(w), height: Some(h) })
 
 /// Two "words", 60 and 40 wide: min-content 60, max-content 100.
-let words = pure (key: string) -> Node<NoEvent> =>
+let words = pure (key: string) -> Node<void> =>
   flex([block("w1", 60.0, 10.0), block("w2", 40.0, 10.0)]).keyed(key).with_style(Style { flex_wrap: Some(Wrap) })
 
-let show = (name: string, view: Node<NoEvent>, width: f32, fonts: mut Fonts) -> void => {
+let show = (name: string, view: Node<void>, width: f32, fonts: mut Fonts) -> void => {
   let laid = layout(view, loose(Size { w: width, h: 400.0 }), fonts)
   var line = "${name} (${laid.size.w}x${laid.size.h}):"
   for p in laid.children {
@@ -1902,7 +1901,7 @@ import ui.backend.{ MAIN_WINDOW, Renderer, Resized, DarkMode }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new }
 import ui.style.{ Style, Sheet, Rule, Media, Viewport, Landscape, light_theme, fr, repeat_tracks }
-import ui.layout.{ Node, NoEvent, Laid, column, grid, sized, themed, layout_with, loose, interaction_new }
+import ui.layout.{ Node, Laid, column, grid, sized, themed, layout_with, loose, interaction_new }
 
 struct Blank {
   textures: i64 = 0,
@@ -1935,11 +1934,11 @@ let sheet = Sheet { rules: [
   Rule { selector: "SizedBox", style: Style { height: Some(20.0) }, media: [Media { max_width: Some(499.0), not: true }, Media { min_height: Some(900.0) }] },
 ] }
 
-let view = pure (_: i64) -> Node<NoEvent> => themed(light_theme(), sheet, [
+let view = pure (_: i64) -> Node<void> => themed(light_theme(), sheet, [
   column([grid([cell(), cell().with_class("wide"), cell(), cell()])]),
 ])
 
-let cell = pure () -> Node<NoEvent> => sized::<NoEvent>(None, None)
+let cell = pure () -> Node<void> => sized::<void>(None, None)
 
 /// What the sheet makes at each viewport: the grid's columns and each cell's height.
 let cascade = () -> void => {
@@ -1963,17 +1962,17 @@ let resizing = () -> void => {
   ], Size { w: 900.0, h: 400.0 })
   var renderer = Blank {}
   var fonts = fonts_new()
-  var host = host_of(sandbox(view, (n: i64, _: NoEvent) => n, Color { r: 0, g: 0, b: 0 }), 0, platform)
+  var host = host_of(sandbox(view, (n: i64, _: void) => n, Color { r: 0, g: 0, b: 0 }), 0, platform)
   while host.step(platform, renderer, fonts) {
     let size = platform.window_size(MAIN_WINDOW)
     println("resized to ${size.w}x${size.h}: ${describe(the_grid(host.main_laid()))}, laid out ${host.windows[0].cache.laid_out}, given back ${host.windows[0].cache.reused}")
   }
 }
 
-let the_grid = pure (laid: Laid<NoEvent>) -> Laid<NoEvent> => laid.children[0].laid.children[0].laid
+let the_grid = pure (laid: Laid<void>) -> Laid<void> => laid.children[0].laid.children[0].laid
 
 /// How many columns a grid's cells make, and their heights.
-let describe = pure (g: Laid<NoEvent>) -> string => {
+let describe = pure (g: Laid<void>) -> string => {
   var xs: []f32 = []
   for p in g.children { if !xs.any((x) => x == p.at.x) { xs.push(p.at.x) } }
   "${xs.len()} columns, heights ${[p in g.children | "${p.laid.size.h}"].join(" ")}"
@@ -2003,7 +2002,7 @@ import ui.script.{ timed_platform, Played }
 import ui.backend.{ MAIN_WINDOW, Renderer, Resized }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new }
-import ui.layout.{ Node, NoEvent, sized }
+import ui.layout.{ Node, sized }
 
 struct Blank {
   textures: i64 = 0,
@@ -2029,7 +2028,7 @@ let main = () -> u8 => {
   var renderer = Blank {}
   var fonts = fonts_new()
   let app = App {
-    sandbox(view, (n: i64, _: NoEvent) => n, Color { r: 0, g: 0, b: 0 }) |
+    sandbox(view, (n: i64, _: void) => n, Color { r: 0, g: 0, b: 0 }) |
     min_size: Size { w: 360.0, h: 480.0 },
     max_size: Size { w: 1000.0 },
   }
@@ -2041,7 +2040,7 @@ let main = () -> u8 => {
   0
 }
 
-let view = pure (_: i64) -> Node<NoEvent> => sized::<NoEvent>(None, None)
+let view = pure (_: i64) -> Node<void> => sized::<void>(None, None)
 `)
 	want := "360x900\n1000x480\n500x600\n"
 	if got != want {
@@ -2063,7 +2062,7 @@ import ui.script.{ timed_platform, Waited }
 import ui.backend.{ MAIN_WINDOW, Renderer }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new }
-import ui.layout.{ Node, NoEvent, sized }
+import ui.layout.{ Node, sized }
 
 struct Blank {
   textures: i64 = 0,
@@ -2093,7 +2092,7 @@ let main = () -> u8 => {
   var platform = timed_platform([Waited(10), Waited(10), Waited(10)], Size { w: 200.0, h: 64.0 })
   var renderer = Blank {}
   var fonts = fonts_new()
-  let app = App { sandbox(view, (n: i64, _: NoEvent) => n, Color { r: 0, g: 0, b: 0 }) | window: Some(spec) }
+  let app = App { sandbox(view, (n: i64, _: void) => n, Color { r: 0, g: 0, b: 0 }) | window: Some(spec) }
   var host = host_of(app, 0, platform)
   host.live = true
   var pass = 0
@@ -2110,7 +2109,7 @@ let main = () -> u8 => {
   0
 }
 
-let view = pure (_: i64) -> Node<NoEvent> => sized::<NoEvent>(None, None)
+let view = pure (_: i64) -> Node<void> => sized::<void>(None, None)
 `)
 	want := `pass 0: 200x64 '', least 0x0, most 0x0
 pass 1: 320x64 'second', least 0x0, most 0x0
@@ -2128,7 +2127,7 @@ import ui.script.{ timed_platform, Played }
 import ui.backend.{ MAIN_WINDOW, Renderer, Resized }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new }
-import ui.layout.{ Node, NoEvent, sized }
+import ui.layout.{ Node, sized }
 
 struct Blank {
   textures: i64 = 0,
@@ -2146,14 +2145,14 @@ impl Renderer for Blank {
 /// Opened at 300x300 below a least width of 360: across, it is held at 360 and only its
 /// height follows; held both ways, it stays as it opened.
 let main = () -> u8 => {
-  let blank = App { sandbox(view, (n: i64, _: NoEvent) => n, Color { r: 0, g: 0, b: 0 }) | min_size: Size { w: 360.0 } }
+  let blank = App { sandbox(view, (n: i64, _: void) => n, Color { r: 0, g: 0, b: 0 }) | min_size: Size { w: 360.0 } }
   show(App { blank | resize_x: false })
   println("--")
   show(App { blank | resize_x: false, resize_y: false })
   0
 }
 
-let show = (app: App<i64, NoEvent>) -> void => {
+let show = (app: App<i64, void>) -> void => {
   var platform = timed_platform([
     Played(Resized(Size { w: 500.0, h: 600.0 })),
     Played(Resized(Size { w: 100.0, h: 100.0 })),
@@ -2167,7 +2166,7 @@ let show = (app: App<i64, NoEvent>) -> void => {
   }
 }
 
-let view = pure (_: i64) -> Node<NoEvent> => sized::<NoEvent>(None, None)
+let view = pure (_: i64) -> Node<void> => sized::<void>(None, None)
 `)
 	want := "360x600\n360x100\n--\n360x300\n360x300\n"
 	if got != want {
@@ -2243,7 +2242,7 @@ let main = () -> u8 => {
 `, "controls": `import ui.draw.{ Size }
 import ui.text.{ fonts_new }
 import ui.style.{ Style }
-import ui.layout.{ Node, NoEvent, SliderSpec, FieldSpec, flex, sized, slider, text_input, layout, loose }
+import ui.layout.{ Node, SliderSpec, FieldSpec, flex, sized, slider, text_input, layout, loose }
 
 data Ev = Moved(f32) | Typed(string)
 
@@ -2309,7 +2308,7 @@ import ui.sdl3.{ capture }
 import ui.draw.{ Point, Size, Color, Image, rgb, rgba, BoxShadow, Gradient, ColorStop, LinearGradient, RadialGradient }
 import ui.text.{ fonts_new, glyph_atlas }
 import ui.style.{ Style }
-import ui.layout.{ Node, NoEvent, sized, stack, positioned, Edges, layout, loose, paint }
+import ui.layout.{ Node, sized, stack, positioned, Edges, layout, loose, paint }
 
 /// A card with a shadow under it, a left-to-right gradient, and a radial one, drawn by SDL's
 /// 2D renderer: the pixels where a shadow falls, either side of a stop, and well clear.
@@ -2319,8 +2318,8 @@ let main = () -> u8 => {
   var platform = window.platform
   var renderer = window.renderer
   var atlas = glyph_atlas()
-  let view: Node<NoEvent> = stack([
-    sized::<NoEvent>(Some(300.0), Some(220.0)).with_style(Style { background: Some(rgb(0xFFFFFF)) }),
+  let view: Node<void> = stack([
+    sized::<void>(Some(300.0), Some(220.0)).with_style(Style { background: Some(rgb(0xFFFFFF)) }),
     positioned(Edges { left: Some(20.0), top: Some(20.0) }, box(Style {
       background: Some(rgb(0xFFFFFF)),
       box_shadow: Some([BoxShadow { y: 10.0, blur: 12.0, color: rgba(0x00000080) }]),
@@ -2347,8 +2346,8 @@ let main = () -> u8 => {
 }
 
 /// A box 100 × 60, rounded.
-let box = pure (style: Style) -> Node<NoEvent> =>
-  sized::<NoEvent>(Some(100.0), Some(60.0)).with_style(Style { style | radius: Some(10.0) })
+let box = pure (style: Style) -> Node<void> =>
+  sized::<void>(Some(100.0), Some(60.0)).with_style(Style { style | radius: Some(10.0) })
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -2419,7 +2418,7 @@ import ui.text.{ fonts_new, glyph_atlas }
 import ui.backend.{ Renderer }
 import ui.draw.{ TextureId }
 import ui.style.{ Style, Sheet, Rule, light_theme }
-import ui.layout.{ Node, NoEvent, Laid, column, sized, themed, layout_with, loose, interaction_new, paint }
+import ui.layout.{ Node, Laid, column, sized, themed, layout_with, loose, interaction_new, paint }
 
 /// A renderer that draws nothing.
 struct Blank {
@@ -2439,8 +2438,8 @@ impl Renderer for Blank {
 /// single class, either order; and a card hovered through the element under the pointer.
 let main = () -> u8 => {
   var fonts = fonts_new()
-  let card = sized::<NoEvent>(Some(100.0), Some(50.0)).with_class("card")
-  let view: Node<NoEvent> = themed(light_theme(), sheet, [column([card, sized::<NoEvent>(Some(10.0), Some(10.0), [sized::<NoEvent>(Some(4.0), Some(4.0))]).with_class("card")])])
+  let card = sized::<void>(Some(100.0), Some(50.0)).with_class("card")
+  let view: Node<void> = themed(light_theme(), sheet, [column([card, sized::<void>(Some(10.0), Some(10.0), [sized::<void>(Some(4.0), Some(4.0))]).with_class("card")])])
   var ui = interaction_new()
   for hovered in ["", "#/0/1/0"] {
     ui.hover = hovered
@@ -2796,7 +2795,7 @@ import ui.script.{ timed_platform, Dragged, Waited, Step }
 import ui.backend.{ Renderer }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new }
-import ui.layout.{ Node, NoEvent, row, sized }
+import ui.layout.{ Node, row, sized }
 
 /// A renderer that draws nothing, counting the frames and the sizes they were laid out at.
 struct Blank {
@@ -2825,7 +2824,7 @@ let main = () -> u8 => {
   var platform = timed_platform(steps, Size { w: 800.0, h: 400.0 })
   var renderer = Blank {}
   var fonts = fonts_new()
-  let app = sandbox(view, (n: i64, _: NoEvent) => n, Color { r: 0, g: 0, b: 0 })
+  let app = sandbox(view, (n: i64, _: void) => n, Color { r: 0, g: 0, b: 0 })
   let window = running(app, 0, platform, renderer, fonts)
   follow_resizes(window)
   var passes = 0
@@ -2837,7 +2836,7 @@ let main = () -> u8 => {
   0
 }
 
-let view = pure (_: i64) -> Node<NoEvent> => row([sized::<NoEvent>(None, Some(20.0))])
+let view = pure (_: i64) -> Node<void> => row([sized::<void>(None, Some(20.0))])
 `)
 	want := `pass 1: 2 frames, last at 600x400, root 600 wide, 1 drags
 pass 2: 2 frames, last at 600x400, root 600 wide, 2 drags
@@ -3137,7 +3136,7 @@ import ui.style.{
   light_theme,
 }
 import ui.motion.{ progress, mix_color }
-import ui.layout.{ Node, NoEvent, Laid, LayoutCache, layout_cache, column, sized, themed, tight }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, sized, themed, tight }
 
 /// Transitions frame by frame, at clock times set by hand.
 let main = () -> u8 => {
@@ -3151,7 +3150,7 @@ let main = () -> u8 => {
 
   var ui = ui_new()
   var fonts = fonts_new()
-  var cache: LayoutCache<NoEvent> = layout_cache()
+  var cache: LayoutCache<void> = layout_cache()
   let _ = at(ui, cache, fonts, 0, false)
   println("first frame moves nothing: ${ui.animating()}")
   for now in [0, 50, 100, 150, 250, 400] {
@@ -3172,7 +3171,7 @@ let main = () -> u8 => {
 }
 
 /// The frame at now, each box on or off.
-let at = (ui: mut Ui, cache: mut LayoutCache<NoEvent>, fonts: mut Fonts, now: i64, on: bool) -> Laid<NoEvent> => {
+let at = (ui: mut Ui, cache: mut LayoutCache<void>, fonts: mut Fonts, now: i64, on: bool) -> Laid<void> => {
   ui.now = now
   ui.frame_within(view(on), tight(Size { w: 300.0, h: 300.0 }), fonts, cache)
 }
@@ -3181,11 +3180,11 @@ let round3 = pure (x: f32) -> f32 => f32((x * 1000.0).round()) / 1000.0
 
 /// A box fading (and its child with it), a box whose background is named in its transition
 /// and whose radius is not, a box whose padding moves after a delay, and one with all.
-let view = pure (on: bool) -> Node<NoEvent> => themed::<NoEvent>(light_theme(), sheet, [column([
-  sized::<NoEvent>(Some(100.0), Some(20.0), [sized::<NoEvent>(Some(10.0), Some(10.0)).keyed("child")]).with_class(if on { "fade on" } else { "fade" }).keyed("fade"),
-  sized::<NoEvent>(Some(100.0), Some(20.0)).with_class(if on { "named on" } else { "named" }).keyed("named"),
-  column([sized::<NoEvent>(Some(10.0), Some(10.0))]).with_class(if on { "pad on" } else { "pad" }).keyed("pad"),
-  sized::<NoEvent>(Some(100.0), Some(20.0)).with_class(if on { "every on" } else { "every" }).keyed("every"),
+let view = pure (on: bool) -> Node<void> => themed::<void>(light_theme(), sheet, [column([
+  sized::<void>(Some(100.0), Some(20.0), [sized::<void>(Some(10.0), Some(10.0)).keyed("child")]).with_class(if on { "fade on" } else { "fade" }).keyed("fade"),
+  sized::<void>(Some(100.0), Some(20.0)).with_class(if on { "named on" } else { "named" }).keyed("named"),
+  column([sized::<void>(Some(10.0), Some(10.0))]).with_class(if on { "pad on" } else { "pad" }).keyed("pad"),
+  sized::<void>(Some(100.0), Some(20.0)).with_class(if on { "every on" } else { "every" }).keyed("every"),
 ])])
 
 let sheet = Sheet { rules: [
@@ -3200,7 +3199,7 @@ let sheet = Sheet { rules: [
 ] }
 
 /// What each box draws with.
-let describe = pure (laid: Laid<NoEvent>) -> string => {
+let describe = pure (laid: Laid<void>) -> string => {
   let fade = find(laid, "fade")
   let child = find(laid, "child")
   let named = find(laid, "named")
@@ -3210,7 +3209,7 @@ let describe = pure (laid: Laid<NoEvent>) -> string => {
   "fade ${round3(fade.style.opacity)} (child ${round3(child.style.opacity)}), named ${bg.r},${bg.g},${bg.b} radius ${named.style.radius}, pad ${pad.size.h} tall, every ${round3(every.style.opacity)} blur ${round3(every.style.filter_blur)}"
 }
 
-let find = pure (laid: Laid<NoEvent>, key: string) -> Laid<NoEvent> => {
+let find = pure (laid: Laid<void>, key: string) -> Laid<void> => {
   if laid.id.ends_with(key) { return laid }
   for c in laid.children {
     let f = find(c.laid, key)
@@ -3256,7 +3255,7 @@ import ui.backend.{ Renderer }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new }
 import ui.style.{ Style, Rule, Sheet, Transition, TimingLinear, light_theme }
-import ui.layout.{ Node, NoEvent, Laid, column, sized, themed }
+import ui.layout.{ Node, Laid, column, sized, themed }
 
 struct Blank {
   textures: i64 = 0,
@@ -3278,7 +3277,7 @@ let main = () -> u8 => {
   var platform = timed_platform(steps, Size { w: 200.0, h: 400.0 })
   var renderer = Blank {}
   var fonts = fonts_new()
-  let window = running(sandbox(view, (n: i64, _: NoEvent) => n, Color { r: 0, g: 0, b: 0 }), 0, platform, renderer, fonts)
+  let window = running(sandbox(view, (n: i64, _: void) => n, Color { r: 0, g: 0, b: 0 }), 0, platform, renderer, fonts)
   var said = -1
   while step_running(window) {
     let c = window.platform.clock
@@ -3296,9 +3295,9 @@ let sheet = Sheet { rules: [
   Rule { selector: ".box:hover", style: Style { opacity: Some(0.2) } },
 ] }
 
-let view = pure (_: i64) -> Node<NoEvent> => themed::<NoEvent>(light_theme(), sheet, [column([sized::<NoEvent>(Some(100.0), Some(100.0)).with_class("box").keyed("box")])])
+let view = pure (_: i64) -> Node<void> => themed::<void>(light_theme(), sheet, [column([sized::<void>(Some(100.0), Some(100.0)).with_class("box").keyed("box")])])
 
-let find = pure (laid: Laid<NoEvent>, key: string) -> Laid<NoEvent> => {
+let find = pure (laid: Laid<void>, key: string) -> Laid<void> => {
   if laid.id.ends_with(key) { return laid }
   for c in laid.children {
     let f = find(c.laid, key)
@@ -6141,13 +6140,13 @@ func TestRun_UiDisabledIsLaidOutAtOnce(t *testing.T) {
 import ui.draw.{ Size, Color }
 import ui.text.{ fonts_new }
 import ui.style.{ Style, Rule, Sheet, light_theme }
-import ui.layout.{ Node, NoEvent, LayoutCache, layout_cache, column, button, themed, tight }
+import ui.layout.{ Node, LayoutCache, layout_cache, column, button, themed, tight }
 
 let main = () -> u8 => {
   var ui = ui_new()
   var fonts = fonts_new()
   if !fonts.add_system_font() { return 1 }
-  var cache: LayoutCache<NoEvent> = layout_cache()
+  var cache: LayoutCache<void> = layout_cache()
   let states: []bool = [false, true, false]
   for off in states {
     let laid = ui.frame_within(view(off), tight(Size { w: 200.0, h: 100.0 }), fonts, cache)
@@ -6157,8 +6156,10 @@ let main = () -> u8 => {
   0
 }
 
-let view = pure (off: bool) -> Node<NoEvent> =>
-  themed::<NoEvent>(light_theme(), sheet, [column([button("Go", NoEvent).disabled_if(off)])])
+let view = pure (off: bool) -> Node<void> =>
+  themed::<void>(light_theme(), sheet, [column([button("Go", nothing()).disabled_if(off)])])
+
+let nothing = pure () -> void => {}
 
 let sheet = Sheet { rules: [
   Rule { selector: "Button:disabled", style: Style { background: Some(Color { r: 1, g: 2, b: 3 }) } },
@@ -7491,6 +7492,47 @@ let main = () -> u8 => {
 	want := "text: G P\ncells: P P\n"
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A tree that raises nothing is a `Node<void>`, and a button in one still raises its nothing: a
+// `Pressable(on_click)` at `e = void` binds a void value and holds it in the `[]void` a click
+// answers, through the real input path. Until 11/01 this did not compile; `NoEvent` stood in.
+func TestRun_UiNodeOfVoidRaisesItsEvents(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new }
+import ui.script.{ script_platform }
+import ui.backend.{ PointerMoved, PointerDown, PointerUp, Primary }
+import ui.draw.{ Size, Point }
+import ui.text.{ Fonts, fonts_new }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, button, tight }
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var ui = ui_new()
+  var cache: LayoutCache<void> = layout_cache()
+  var platform = script_platform([], Size { w: 300.0, h: 100.0 })
+  let laid = frame(ui, cache, fonts)
+  let go = laid.children[0]
+  let at = Point { x: go.at.x + go.laid.size.w / 2.0, y: go.at.y + go.laid.size.h / 2.0 }
+  var events = 0
+  for input in [PointerMoved(at), PointerDown(Primary, at, 1), PointerUp(Primary, at)] {
+    events += ui.handle(frame(ui, cache, fonts), input, platform).len()
+  }
+  println("a click raised ${events}")
+  0
+}
+
+let frame = (ui: mut Ui, cache: mut LayoutCache<void>, fonts: mut Fonts) -> Laid<void> =>
+  ui.frame_within(view(), tight(Size { w: 300.0, h: 100.0 }), fonts, cache)
+
+let nothing = pure () -> void => {}
+
+let view = pure () -> Node<void> => column([button("Go", nothing())])
+`)
+	if got != "a click raised 1\n" {
+		t.Errorf("got %q", got)
 	}
 }
 

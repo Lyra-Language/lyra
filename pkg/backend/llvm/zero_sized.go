@@ -7,16 +7,18 @@ import (
 	"github.com/llir/llvm/ir/value"
 )
 
-// dropZeroSizedAccesses removes every load and store of a value that takes no space — a
-// `struct Marker {}`, an element of a `[]Marker`, a `void` payload's `{}` — once the module
-// is built, rather than at each of the many sites that move a value through memory.
+// dropZeroSizedValues removes every load, store and phi of a value that takes no space — a
+// `struct Marker {}`, an element of a `[]Marker`, a `void` value's `{}` — once the module is
+// built, rather than at each of the many sites that move a value through memory or merge one.
 //
-// **Such an access means nothing, and one tool does not survive it.** clang drops a
+// **Such an instruction means nothing, and two tools do not survive it.** clang drops a
 // zero-sized store, but its AddressSanitizer checks one at `address - 1`, finds the
 // allocation's red zone, and crashes writing the report ("nested bug in the same thread",
-// 10/29: `[Marker {}, Marker {}]` under the backend's ASan tests). A load is replaced by
-// the value it could only have produced, `zeroinitializer`, wherever it was used.
-func dropZeroSizedAccesses(m *ir.Module) {
+// 10/29: `[Marker {}, Marker {}]` under the backend's ASan tests). And at -O0, clang 15's
+// AArch64 IRTranslator segfaults on a phi with no registers (11/02: `if c { f() } else { g() }`
+// over void calls), as Apple's clang does not, so only Linux showed it. A load or a phi is
+// replaced by the value it could only have produced, `zeroinitializer`, wherever it was used.
+func dropZeroSizedValues(m *ir.Module) {
 	for _, f := range m.Funcs {
 		replaced := map[value.Value]value.Value{}
 		for _, block := range f.Blocks {
@@ -30,6 +32,11 @@ func dropZeroSizedAccesses(m *ir.Module) {
 				case *ir.InstLoad:
 					if takesNoSpace(in.ElemType) {
 						replaced[in] = constant.NewZeroInitializer(in.ElemType)
+						continue
+					}
+				case *ir.InstPhi:
+					if takesNoSpace(in.Type()) {
+						replaced[in] = constant.NewZeroInitializer(in.Type())
 						continue
 					}
 				}

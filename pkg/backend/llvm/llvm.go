@@ -388,7 +388,7 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 	if l.symbolConflict != nil {
 		return nil, l.symbolConflict
 	}
-	dropZeroSizedAccesses(m)
+	dropZeroSizedValues(m)
 	copyLargeAggregates(m)
 	b.coroSymbols = l.seqCoroSymbols
 	b.funcModule, b.stableNames = l.funcModule, l.stableNames
@@ -746,6 +746,14 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 	// of its own, yet copying one duplicates every managed field inside it — gating on
 	// the LLVM type skipped exactly those copies, which is what left them unretained.
 	ty, _ := l.recordedType(expr)
+	// **A void call has a value**, the empty struct: it is an instruction with none, or nil
+	// from a builtin, and at `e = void` a generic body binds it, passes it and puts it in an
+	// array. A constant, so a plain statement `noop()` costs nothing. A call alone: an `if`
+	// whose branches end in statements still has no value, and binding it is still refused
+	// (lowerVarDecl). Not where the call diverged: end is sealed.
+	if _, isCall := expr.(*ast.FunctionCallExpr); isCall && isVoidResult(v) && end.Term == nil && l.isVoidType(ty) {
+		return voidValue(), end, nil
+	}
 	if v != nil && l.needsDrop(ty) {
 		if l.ownership().ShouldRetain(expr) {
 			// Deep: retain every managed reference reachable by value from v, which for

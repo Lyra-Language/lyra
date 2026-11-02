@@ -73,7 +73,7 @@ func isI8Ptr(t lltypes.Type) bool {
 // the bitcast an indirect call needs — they must agree exactly or the call is
 // undefined behavior.
 func (l *lowerer) closureFnSignature(params []types.Type, ret types.Type) (lltypes.Type, []lltypes.Type, error) {
-	retTy, err := l.lowerType(ret)
+	retTy, err := l.lowerResultType(ret)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -256,7 +256,7 @@ func (l *lowerer) declareClosure(fn *ast.LambdaExpr) error {
 	if fn.ReturnType.Type == nil {
 		return fmt.Errorf("llvm: a lambda used as a value needs a return type annotation")
 	}
-	retTy, err := l.lowerType(fn.ReturnType.Type)
+	retTy, err := l.lowerResultType(fn.ReturnType.Type)
 	if err != nil {
 		return err
 	}
@@ -318,7 +318,7 @@ func (l *lowerer) defineClosure(fn *ast.LambdaExpr) error {
 	// The body's module, for the same reason declareClosure enters it.
 	defer l.enterModuleOf(fn.GetLocation())()
 	irFn := l.closures[l.closureKeyFor(fn)]
-	retTy, err := l.lowerType(fn.ReturnType.Type)
+	retTy, err := l.lowerResultType(fn.ReturnType.Type)
 	if err != nil {
 		return err
 	}
@@ -345,7 +345,7 @@ func (l *lowerer) defineClosure(fn *ast.LambdaExpr) error {
 		return err
 	}
 
-	if _, isVoid := fn.ReturnType.Type.(types.VoidType); isVoid {
+	if l.isVoidType(fn.ReturnType.Type) {
 		end, err := l.lowerForEffect(entry, fn.Body)
 		if err != nil {
 			return err

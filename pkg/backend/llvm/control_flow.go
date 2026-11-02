@@ -1005,6 +1005,9 @@ func (l *lowerer) lowerIf(block *ir.Block, e *ast.IfExpr) (value.Value, *ir.Bloc
 	if (thenReaches && isVoidResult(thenVal)) || (elseReaches && isVoidResult(elseVal)) {
 		return nil, mergeBlock, nil
 	}
+	if thenReaches && elseReaches && voidBesideAValue(thenVal, elseVal) {
+		return nil, mergeBlock, nil
+	}
 	var incomings []*ir.Incoming
 	if thenReaches {
 		incomings = append(incomings, ir.NewIncoming(thenVal, thenEnd))
@@ -1023,6 +1026,15 @@ func (l *lowerer) lowerIf(block *ir.Block, e *ast.IfExpr) (value.Value, *ir.Bloc
 		return nil, nil, err
 	}
 	return phi, mergeBlock, nil
+}
+
+// voidBesideAValue reports whether one of two joined values is a void value and the other is
+// not: `if c { noop() } else { n += 1; n }`, an `if` or a `match` used as a statement with one
+// branch happening to end in an expression. Nothing joins them; it has no value, as a branch
+// ending in a statement gives it none. Both void is a value, the empty struct: at `e = void`
+// `let v = if c { a } else { b }` binds it.
+func voidBesideAValue(a, b value.Value) bool {
+	return holdsNothing(a) != holdsNothing(b)
 }
 
 // joinPhi builds a merge phi, refusing operands that do not share a type.

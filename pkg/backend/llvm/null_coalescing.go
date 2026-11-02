@@ -52,8 +52,11 @@ func (l *lowerer) lowerNullCoalescing(block *ir.Block, e *ast.NullCoalescingExpr
 		return nil, nil, fmt.Errorf(
 			"llvm: `??` on a %s, which can never be null — remove the `??` (lyra-E049)", opT)
 	}
+	// A Maybe<void>'s Some holds its payload as nothing at all: no field to read, and the
+	// one value there is to produce.
 	fieldTypes := shape.success.FieldTypes()
-	if len(fieldTypes) != 1 {
+	loneVoid := holdsLoneVoid(shape.success)
+	if len(fieldTypes) != 1 && !loneVoid {
 		return nil, nil, fmt.Errorf(
 			"llvm: `??` on a Maybe whose Some carries %d fields", len(fieldTypes))
 	}
@@ -87,13 +90,16 @@ func (l *lowerer) lowerNullCoalescing(block *ir.Block, e *ast.NullCoalescingExpr
 
 	// Some: the payload, coerced to +1 when managed — the scrutinee still owns (and
 	// drops) its copy, so this is a duplicate, never a move: the match-arm binding rule.
-	payload, err := l.extractDataPayload(someBlock, scrut, shape.success)
-	if err != nil {
-		return nil, nil, err
-	}
-	someVal := someBlock.NewExtractValue(payload, 0)
-	if err := l.deepRetain(someBlock, someVal, fieldTypes[0]); err != nil {
-		return nil, nil, err
+	someVal := voidValue()
+	if !loneVoid {
+		payload, err := l.extractDataPayload(someBlock, scrut, shape.success)
+		if err != nil {
+			return nil, nil, err
+		}
+		someVal = someBlock.NewExtractValue(payload, 0)
+		if err := l.deepRetain(someBlock, someVal, fieldTypes[0]); err != nil {
+			return nil, nil, err
+		}
 	}
 	someBlock.NewBr(mergeBlock)
 

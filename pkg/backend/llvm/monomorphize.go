@@ -104,7 +104,7 @@ func (l *lowerer) declareSpecialization(inst typetable.Instantiation) error {
 	// made the bug look like it was about generics rather than about visibility.
 	defer l.enterModuleOf(inst.Func.GetLocation())()
 
-	retType, err := l.lowerType(inst.Func.ReturnType.Type)
+	retType, err := l.lowerResultType(inst.Func.ReturnType.Type)
 	if err != nil {
 		return err
 	}

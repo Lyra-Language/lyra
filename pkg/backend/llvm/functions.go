@@ -380,7 +380,7 @@ func (l *lowerer) declareFunctionAs(name string, fn *ast.LambdaExpr) (*ir.Func, 
 	if fn.ReturnType.Type == nil {
 		return nil, fmt.Errorf("llvm: function %q needs a return type annotation", name)
 	}
-	retType, err := l.lowerType(fn.ReturnType.Type)
+	retType, err := l.lowerResultType(fn.ReturnType.Type)
 	if err != nil {
 		return nil, err
 	}
@@ -450,7 +450,7 @@ func (l *lowerer) defineFunctionInto(irFn *ir.Func, fn *ast.LambdaExpr, name str
 		return fmt.Errorf("llvm: %s is a `gen` function, and lazy sequences are not lowered yet — they type-check today and lower in a later stage (todo.md, Lazy sequences)", name)
 	}
 	defer l.enterModuleOf(fn.GetLocation())()
-	retType, err := l.lowerType(fn.ReturnType.Type)
+	retType, err := l.lowerResultType(fn.ReturnType.Type)
 	if err != nil {
 		return err
 	}
@@ -467,7 +467,7 @@ func (l *lowerer) defineFunctionInto(irFn *ir.Func, fn *ast.LambdaExpr, name str
 		return fmt.Errorf("%w (in %q)", err, name)
 	}
 
-	if _, isVoid := fn.ReturnType.Type.(types.VoidType); isVoid {
+	if l.isVoidType(fn.ReturnType.Type) {
 		// A void function: lower the body for effect (it may be empty or end in a
 		// non-expression statement) and return void.
 		end, err := l.lowerForEffect(entry, fn.Body)

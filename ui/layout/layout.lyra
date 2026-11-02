@@ -16,7 +16,7 @@ module ui.layout
 //! **A node is generic in the program's event type** `e`: a control names the event its use
 //! stands for (`button("Save", Save)`, `checkbox(…, ToggleLoud)`, a slider's or a field's
 //! `(value) -> e`), and `ui.interact` answers those events — the program decides what they do.
-//! A tree that raises none is a `Node<NoEvent>`. **Write the event type on the view** (its
+//! A tree that raises none is a `Node<void>`. **Write the event type on the view** (its
 //! return type, or a binding's): a leaf such as `text("…")` raises none, so only the context
 //! says which `e` it is — and it reaches through a chain of its builder methods
 //! (`text("Title").with_class("title")`), each of which returns its receiver's type.
@@ -365,10 +365,6 @@ pub struct FieldSpec<e> {
   /// field shows the value the step leaves: a number field's ([number_field]).
   on_step: Maybe<(i64) -> e> = None,
 }
-
-/// The event type of a tree that raises none: `Node<NoEvent>`. (Not `Node<void>`, which does
-/// not compile yet — todo.md.)
-pub data NoEvent = NoEvent
 
 /// What an element is, to assistive technology: AccessKit's roles, the ones `ui` has.
 pub data Role =

@@ -76,6 +76,9 @@ mid-stream. So:
   reached**, which is sealed with `unreachable`. `lowerIf` does the same for an unreachable
   merge. `lowerVarDecl` refuses binding a void initializer with an error naming the
   binding.
+- A merge over a value taking no space builds no phi in the finished IR: `dropZeroSizedValues`
+  (`zero_sized.go`) removes it, as it does such a load or store. clang 15 at -O0 on AArch64
+  segfaults on one, and not on every one, so a test asserts on the IR.
 
 ### `panic`, `never` and `diverged`
 

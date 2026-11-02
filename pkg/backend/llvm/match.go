@@ -263,6 +263,12 @@ func (m *matchMerge) value() (value.Value, *ir.Block, error) {
 	if m.void {
 		return nil, m.block, nil
 	}
+	// So is a void value beside another arm's: the `if`'s twin (voidBesideAValue).
+	for _, in := range m.incomings[1:] {
+		if voidBesideAValue(m.incomings[0].X, in.X) {
+			return nil, m.block, nil
+		}
+	}
 	// The arms agree by the typechecker's reckoning; joinPhi is rule 5 repeating the
 	// check so a gap there is reported here rather than by clang, naming a register.
 	phi, err := joinPhi(m.block, m.incomings, "match arms", m.loc)

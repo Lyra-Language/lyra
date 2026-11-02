@@ -178,10 +178,10 @@ func (l *lowerer) lowerTryExpr(block *ir.Block, e *ast.TryExpr) (value.Value, *i
 	// +1 it owes (the operand still owns its copy) is the Retain the ownership pass
 	// recorded on this node, which lowerExpr's wrapper applies to the value returned
 	// here — the same duplicate-never-move rule a match arm's binding follows.
-	// A void payload (`Ok()` of a `Result<void, e>`) has no field to read, and the `?`
-	// is a statement: nil in an open block is a void result (isVoidResult).
+	// A void payload (`Ok()` of a `Result<void, e>`) has no field to read: the value is the
+	// empty struct, for a generic body at `e = void` that binds it (`let v = r?`).
 	if len(opShape.success.FieldTypes()) == 0 {
-		return nil, okBlock, nil
+		return voidValue(), okBlock, nil
 	}
 	payload, err := l.extractDataPayload(okBlock, scrut, opShape.success)
 	if err != nil {

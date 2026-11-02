@@ -910,10 +910,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   and a combining accent, or an emoji sequence, takes several Left presses; needs UAX #29.
 - **[OPEN] `ui.interact`: a field's caret does not blink**, and typing is not coalesced into
   one undo step a word. Blinking wants phase 4's timers.
-- **[OPEN] `ui.layout`: `Node<void>` does not compile.** A void field beside others takes no
-  space since 10/27 (`Checkable(bool, e)`), but `ui` also binds a void value and holds it in
-  an array (`Pressable(event) => [event]`, a `[]void`), which the backend refuses; `NoEvent`
-  stands in. Needs void as a zero-sized value: a binding, an element.
+- **[DONE 11/01] `Node<void>` compiles**: a void value is the empty struct everywhere but a
+  function's result, so one can be bound, passed and held in an array. `NoEvent` is gone
+  (COMPLETED.md, 11/01).
 - **[OPEN] lyrafmt is not idempotent on a long struct literal holding a lambda**: `App { view:
   (f: Form) -> Node<Ev> => view(theme, f), update: update, background: … }` past 90 columns is
   re-indented differently on a second `-w`, so `--check` fails right after a format. A match
