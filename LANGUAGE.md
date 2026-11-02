@@ -729,8 +729,13 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
   reaches a `[]pure () -> i64` unchecked. **A bounded parameter is not a value of that kind,
   from a closure either**: `(v) => g(v)` inside a function taking `g: pure (i64) -> i64`
   costs what `g`'s bound permits, as the function's own `g(v)` does, since whoever supplied
-  `g` was held to it; a binding of the same name in the function's body hides it (until 10/27
-  the closure's call was charged every effect).
+  `g` was held to it, and handed on bare to a bounded parameter it satisfies what its bound
+  says (until 10/27 the closure's call was charged every effect). **A binding of the same name
+  anywhere in the function's body hides it**, at every use, before the binding too: `let g =
+  noisy` is a function value like any other, called or handed on (until 11/01 the function's
+  own uses still took the parameter's bound, and a `pure` function ran `noisy`). A whole-value
+  alias from the body's own `match` (`match f { g => g(1) }`, a multi-clause function's renamed
+  parameter) is the parameter.
 - **A construction takes the weaker bound its context declares.** A function with a stronger
   bound is usable where a weaker one is declared, and so is one wrapped fresh: `Some(f)`, `f` a
   `pure (i64) -> string`, is a `Maybe<(i64) -> string>` in a field, argument or binding

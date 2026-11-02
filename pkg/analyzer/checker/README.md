@@ -49,7 +49,10 @@ Returns two results: `pure` violations (`lyra-E007`) and missing-bound warnings 
 - Reporting-only arm: a nested lambda's parameter defaults are held to the enclosing bound at the
   definition (inference bills the call sites via the default-args desugar).
 - **A call's callee is resolved in this order**: a declaration (`calleeFor`), the enclosing
-  function's parameter (charged its declared bound, or deferred to the caller as a callback),
+  function's parameter whose name the body does not bind again (`callable.values`,
+  `unshadowedParams`; charged its declared bound, or deferred to the caller as a callback;
+  a whole-value alias from the body's own match counts as the parameter, a storage question
+  asks `callable.params`, which keeps every name),
   an outer function's bounded parameter called from a closure inside it (`capturedBound`,
   charged that bound; frames carry their parameters' bounds, hidden by a body binding of the
   name), a local function value (`calleeValueType` — **every effect**: its type's bound is not

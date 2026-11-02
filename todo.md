@@ -876,9 +876,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] lui: an import's module is its path from the importing file**, `/` as `.` — right
   when both are under the program's root as written, else `module="…"`. Imports are one level:
   an imported file's own imports are not read.
-- **[OPEN] Purity: a `pure` parameter captured by a lambda cannot be passed on** — `(x) =>
-  twice(g, x)` inside a function taking `g: pure (i64) -> i64` is E007 at `g`, though `g`'s
-  bound is checked where it was given; calling `g` there is fine (10/26).
+- **[DONE 11/01] A body binding over a bounded parameter is not the parameter** — a `pure`
+  function could run `let g = noisy; g(1)` (COMPLETED.md, 11/01). Passing a captured `pure`
+  parameter on had worked since 10/27; this entry had gone unclosed.
 - **[DONE 10/27] Grammar: `if let` as an arm's expression** — the collector erases it to the
   braced form, as a bare `break` (COMPLETED.md, 10/27).
 - **[DONE 10/22] `ui`: states as pseudo-classes** — `:hover`, `:active`, `:focus`,

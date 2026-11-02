@@ -519,23 +519,7 @@ func addMatchAliases(lam *ast.LambdaExpr, params map[string]int) {
 	if !ok {
 		return
 	}
-	// The scrutinee is the parameter itself for a one-parameter function and a tuple of
-	// them otherwise — clauseScrutinee's two cases, which arm patterns mirror.
-	scrutinees := []ast.Expression{match.Scrutinee}
-	if tuple, isTuple := match.Scrutinee.(*ast.TupleLiteralExpr); isTuple {
-		scrutinees = tuple.Elements
-	}
-	// Which parameter each scrutinee position names; -1 for a position that is any other
-	// expression, whose arm bindings alias no parameter.
-	paramAt := make([]int, len(scrutinees))
-	for i, s := range scrutinees {
-		paramAt[i] = -1
-		if id, isIdent := s.(*ast.IdentifierExpr); isIdent {
-			if idx, isParam := params[id.Name]; isParam {
-				paramAt[i] = idx
-			}
-		}
-	}
+	scrutinees, paramAt := scrutineeParams(match, params)
 
 	// A name is dropped rather than guessed at when two arms disagree about which position
 	// it names (`(a, b) => …` beside `(b, a) => …`): there is no single argument to charge
@@ -564,6 +548,110 @@ func addMatchAliases(lam *ast.LambdaExpr, params map[string]int) {
 	for n := range ambiguous {
 		delete(params, n)
 	}
+}
+
+// unshadowedParams is params without the names the body binds again: the parameters a use of
+// the name can be trusted to mean, at a call through it or where it is handed on.
+//
+// **A name the body binds again is not the parameter**, and which of the two a use means is
+// more than a frame can say, so neither is trusted — the rule buildLambdaFrame gives a closure.
+// Answered by name alone, `let g = noisy` beside `g: pure (i64) -> i64` was charged what the
+// bound permits, and a `pure` function ran `noisy` unrefused (11/01). Flow-insensitive, like
+// that rule: a use before the rebinding is refused too, the reporting direction.
+//
+// A question about the parameter's *storage* still asks params: an alias taken before the
+// rebinding shares it just the same.
+func unshadowedParams(params map[string]int, body ast.Expression) map[string]int {
+	rebound := reboundParams(params, body)
+	if len(rebound) == 0 {
+		return params
+	}
+	out := make(map[string]int, len(params))
+	for name, idx := range params {
+		if !rebound[name] {
+			out[name] = idx
+		}
+	}
+	return out
+}
+
+// reboundParams is the names of params that body binds, anywhere — captures.BodyBinders, the
+// one binder walk — but for what addMatchAliases counted: a body-level match's whole-value
+// binding of a parameter's position (`match f { g => g() }`) is that parameter, and is what a
+// multi-clause function's renamed parameter is. Only that binding: a piece of it, another
+// position's, or a `let g` in the arm's body is a name of its own.
+func reboundParams(params map[string]int, body ast.Expression) map[string]bool {
+	rebound := map[string]bool{}
+	note := func(name string) {
+		if _, isParam := params[name]; isParam {
+			rebound[name] = true
+		}
+	}
+	noteBody := func(e ast.Expression) {
+		if e == nil {
+			return
+		}
+		for name := range captures.BodyBinders(&ast.LambdaExpr{Body: e}) {
+			note(name)
+		}
+	}
+	match, isMatch := body.(*ast.MatchExpr)
+	if !isMatch {
+		noteBody(body)
+		return rebound
+	}
+	noteBody(match.Scrutinee)
+	scrutinees, paramAt := scrutineeParams(match, params)
+	for _, arm := range match.MatchArms {
+		noteBody(arm.Body)
+		if arm.Guard != nil {
+			noteBody(arm.Guard.Condition)
+		}
+		parts := armPatterns(arm.Pattern, len(scrutinees))
+		if parts == nil {
+			ast.EachPatternBinding(arm.Pattern, func(b ast.PatternBinding) { note(b.Name) })
+			continue
+		}
+		for i, pat := range parts {
+			alias := ""
+			if paramAt[i] >= 0 {
+				if n := wholeArgumentAlias(pat); n != "" {
+					if idx, ok := params[n]; ok && idx == paramAt[i] {
+						alias = n
+					}
+				}
+			}
+			ast.EachPatternBinding(pat, func(b ast.PatternBinding) {
+				if b.Name == alias {
+					alias = "" // the alias's one binding; `g @ Some(g)` has another
+					return
+				}
+				note(b.Name)
+			})
+		}
+	}
+	return rebound
+}
+
+// scrutineeParams is a body-level match's scrutinee positions — the parameter itself for a
+// one-parameter function and a tuple of them otherwise, clauseScrutinee's two cases, which arm
+// patterns mirror — and which parameter each names, -1 for a position that is any other
+// expression, whose arm bindings alias no parameter.
+func scrutineeParams(match *ast.MatchExpr, params map[string]int) ([]ast.Expression, []int) {
+	scrutinees := []ast.Expression{match.Scrutinee}
+	if tuple, isTuple := match.Scrutinee.(*ast.TupleLiteralExpr); isTuple {
+		scrutinees = tuple.Elements
+	}
+	paramAt := make([]int, len(scrutinees))
+	for i, s := range scrutinees {
+		paramAt[i] = -1
+		if id, isIdent := s.(*ast.IdentifierExpr); isIdent {
+			if idx, isParam := params[id.Name]; isParam {
+				paramAt[i] = idx
+			}
+		}
+	}
+	return scrutinees, paramAt
 }
 
 // armPatterns splits an arm's pattern into one per scrutinee position, or nil when it does
@@ -1011,7 +1099,7 @@ func (c *purityChecker) suppliedEffect(arg ast.Expression, capture []scopeBindin
 			}
 			return c.impureLambdas[lam], true
 		}
-		if params := c.frames.paramsFor(enclosing); params != nil {
+		if params := c.frames.valueParamsFor(enclosing); params != nil {
 			if idx, isParam := params[a.Name]; isParam {
 				if b := declaredBound(enclosing, idx); b != nil {
 					return boundEffect(b), true
@@ -1150,8 +1238,12 @@ type scopeFrames struct {
 	lambdaFrames map[*ast.LambdaExpr]scopeBindings
 	lambdaMut    map[*ast.LambdaExpr]map[string]bool
 	lambdaParams map[*ast.LambdaExpr]map[string]int
-	methodFrames map[*ast.TraitMethodImpl]scopeBindings
-	methodParams map[*ast.TraitMethodImpl]map[string]int
+	// lambdaValueParams is valueParamsFor's memo.
+	lambdaValueParams map[*ast.LambdaExpr]map[string]int
+	// methodValueParams is methodValueParamsFor's memo.
+	methodValueParams map[*ast.TraitMethodImpl]map[string]int
+	methodFrames      map[*ast.TraitMethodImpl]scopeBindings
+	methodParams      map[*ast.TraitMethodImpl]map[string]int
 	// arenaScopes are the `with`-block scopes whose sole binding (the arena
 	// handle) must read as interior-mutable despite being a plain `let`. Reachable
 	// only from a program that already fails to check (lyra-E050 refuses `with`);
@@ -1169,14 +1261,16 @@ type scopeFrames struct {
 // pipeline always passes the collected table).
 func newScopeFrames(program *ast.Program, scopeTable *symbols.ScopeTable) *scopeFrames {
 	f := &scopeFrames{
-		scopeTable:   scopeTable,
-		lambdaFrames: map[*ast.LambdaExpr]scopeBindings{},
-		lambdaMut:    map[*ast.LambdaExpr]map[string]bool{},
-		lambdaParams: map[*ast.LambdaExpr]map[string]int{},
-		methodFrames: map[*ast.TraitMethodImpl]scopeBindings{},
-		methodParams: map[*ast.TraitMethodImpl]map[string]int{},
-		arenaScopes:  map[*symbols.Scope]bool{},
-		forInScopes:  map[*symbols.Scope]bool{},
+		scopeTable:        scopeTable,
+		lambdaFrames:      map[*ast.LambdaExpr]scopeBindings{},
+		lambdaMut:         map[*ast.LambdaExpr]map[string]bool{},
+		lambdaParams:      map[*ast.LambdaExpr]map[string]int{},
+		lambdaValueParams: map[*ast.LambdaExpr]map[string]int{},
+		methodValueParams: map[*ast.TraitMethodImpl]map[string]int{},
+		methodFrames:      map[*ast.TraitMethodImpl]scopeBindings{},
+		methodParams:      map[*ast.TraitMethodImpl]map[string]int{},
+		arenaScopes:       map[*symbols.Scope]bool{},
+		forInScopes:       map[*symbols.Scope]bool{},
 	}
 	if scopeTable == nil {
 		return f
@@ -1237,6 +1331,33 @@ func (f *scopeFrames) paramsFor(lambda *ast.LambdaExpr) map[string]int {
 	}
 	params := callableParams(lambda)
 	f.lambdaParams[lambda] = params
+	return params
+}
+
+// valueParamsFor is unshadowedParams of lambda's parameters, memoized. A clause not yet
+// desugared binds its own names: its body is walked and its patterns are its parameters.
+func (f *scopeFrames) valueParamsFor(lambda *ast.LambdaExpr) map[string]int {
+	if lambda == nil {
+		return nil // a top-level initializer, which has no parameters to mean
+	}
+	if params, ok := f.lambdaValueParams[lambda]; ok {
+		return params
+	}
+	params := unshadowedParams(f.paramsFor(lambda), lambda.Body)
+	for _, clause := range lambda.LambdaClauses {
+		params = unshadowedParams(params, clause.Body)
+	}
+	f.lambdaValueParams[lambda] = params
+	return params
+}
+
+// methodValueParamsFor is valueParamsFor for a trait-impl method.
+func (f *scopeFrames) methodValueParamsFor(m *ast.TraitMethodImpl) map[string]int {
+	if params, ok := f.methodValueParams[m]; ok {
+		return params
+	}
+	params := unshadowedParams(f.methodParamsFor(m), m.Clause.Body)
+	f.methodValueParams[m] = params
 	return params
 }
 
@@ -2454,8 +2575,11 @@ type callable struct {
 	// Nil for a method: trait methods have no mut/own/ref modifier syntax yet, and a nil
 	// map reads false, which is exactly what the method walk did by omitting the test.
 	mutBorrows map[string]bool
-	// params maps a parameter name to its position, for callback detection.
+	// params maps a parameter name to its position, for what a name says about storage.
 	params map[string]int
+	// values is params without the names the body binds again (unshadowedParams): what a call
+	// through a name, or a name handed on as a function, can trust to be the parameter.
+	values map[string]int
 	// ownParams are the `own` parameters: a value the caller gave up, so a write through a
 	// local sharing its buffer is the callee's own business (see aliasSources).
 	ownParams map[string]bool
@@ -2627,6 +2751,7 @@ func lambdaCallable(lam *ast.LambdaExpr, defCapture []scopeBindings, inf *infere
 		mutBorrows: inf.frames.mutBorrowsFor(lam),
 		ownParams:  ownParamsOf(lam),
 		params:     inf.frames.paramsFor(lam),
+		values:     inf.frames.valueParamsFor(lam),
 		note:       func(ex ast.Expression) { inf.allocSites.noteLambda(lam, ex) },
 		boundAt:    func(idx int) *types.LambdaType { return declaredBound(lam, idx) },
 		walk: func(onStmt func(ast.Statement) bool, onExpr func(ast.Expression) bool) {
@@ -2659,6 +2784,7 @@ func methodCallable(m *ast.TraitMethodImpl, base []scopeBindings, inf *inference
 		mutBorrows: methodMutBorrows(params, signature),
 		ownParams:  methodOwnParams(params, signature),
 		params:     params,
+		values:     inf.frames.methodValueParamsFor(m),
 		note:       func(ex ast.Expression) { inf.allocSites.noteMethod(m, ex) },
 		boundAt:    func(idx int) *types.LambdaType { return signatureBound(signature, idx) },
 		walk: func(onStmt func(ast.Statement) bool, onExpr func(ast.Expression) bool) {
@@ -3199,7 +3325,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int, map[strin
 				// The method's own base effect **plus** whatever this site supplies for
 				// its callback parameters. The second half is what the free-function walk
 				// used to omit; see callable.
-				eff := methodCallEffect(method, ex, c.capture, inf, c.params, foundCallbacks, mutArg(method.Name.GetName(), ex))
+				eff := methodCallEffect(method, ex, c.capture, inf, c.values, foundCallbacks, mutArg(method.Name.GetName(), ex))
 				found |= eff
 				c.charge(ex, inf.impureMethods[method]&^inf.guaranteed[method], method.Name.GetName())
 				if eff&PurityEffects != 0 {
@@ -3209,7 +3335,7 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int, map[strin
 					if inf.methodBase(method)&PurityEffects != 0 {
 						c.pure(ex.GetLocation(),
 							"pure function calls non-pure trait method %q", method.Name.GetName())
-					} else if methodCallbackEffect(method, ex, c.capture, inf, c.params)&PurityEffects != 0 {
+					} else if methodCallbackEffect(method, ex, c.capture, inf, c.values)&PurityEffects != 0 {
 						c.pure(ex.GetLocation(),
 							"pure function calls trait method %q with an impure callback argument; "+
 								"the callback's effects are this call's", method.Name.GetName())
@@ -3234,13 +3360,13 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int, map[strin
 				if target, ok := inf.calleeFor(inf.allocSites.table(), ex, c.capture, name); ok {
 					// The callee's *base* effect plus whatever this site supplies for its
 					// callback parameters.
-					eff := callEffect(target, ex, c.capture, inf, c.params, foundCallbacks, mutArg(name, ex))
+					eff := callEffect(target, ex, c.capture, inf, c.values, foundCallbacks, mutArg(name, ex))
 					found |= eff
 					c.charge(ex, inf.impureLambdas[target], name)
 					if eff&PurityEffects != 0 {
 						c.reportImpureCall(target, ex, name, inf)
 					}
-				} else if idx, isParam := c.params[name]; isParam {
+				} else if idx, isParam := c.values[name]; isParam {
 					if bound := c.boundAt(idx); bound != nil {
 						// The parameter's *type* constrains it (`f: pure () -> t`), so
 						// what calling it can do is known from the signature alone:
@@ -3395,7 +3521,7 @@ func (c *callable) reportImpureCall(target *ast.LambdaExpr, call *ast.FunctionCa
 			continue // arity mismatch — the typechecker reports it
 		}
 		arg := call.Arguments[idx]
-		if argumentEffect(arg, c.capture, inf, c.params, nil)&PurityEffects == 0 {
+		if argumentEffect(arg, c.capture, inf, c.values, nil)&PurityEffects == 0 {
 			continue
 		}
 		c.pure(arg.GetLocation(),

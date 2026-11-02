@@ -9,6 +9,37 @@ Newest first.
 
 ## Dated log
 
+### 11/01/26 — A body binding over a bounded parameter is not the parameter
+Asked to fix "a `pure` parameter captured by a lambda cannot be passed on", re-run first: it
+could. The entry was written the morning of 10/27 and `6576c47f` fixed it that evening (`suppliedEffect`'s
+`capturedBound` rung, pinned by `TestDeclaredBound_ClosureOverABoundedParameter`), without
+closing it. Eleven shapes ran right. What probing its neighbours found instead was a hole:
+checking that the closure's rule could not be fooled by a local of the same name, the
+**function's own body** could.
+
+    let f = pure (g: pure (i64) -> i64) -> i64 => {
+      let g = noisy
+      g(1)
+    }
+
+was accepted, and so `pure` ran `noisy`. The purity pass answers "is this name a parameter?" from
+a map of names, and three rungs took yes for "this use means the parameter": the bounded call,
+the effect-polymorphic call (charged to the caller's argument, not to `noisy`), and an argument
+handed on (`argumentEffect`, `suppliedEffect`). A `let` of a function literal escaped only
+because `calleeFor` resolves it first; a `let g = noisy`, a payload's `Some(g)`, a `for g in
+fs` did not. The closure's path had the rule all along: `buildLambdaFrame` drops a bound the body
+binds again.
+- **The same rule now holds for the body** (`unshadowedParams`, read through `callable.values`):
+  a name the body binds again, by `captures.BodyBinders`, is not trusted at those rungs, and
+  falls to the function-value rung — every effect. Flow-insensitive, as the frame's is, so a use
+  before the rebinding is refused too; the reporting direction, and neither the suite nor
+  Vega, Termina or Sheliak write it.
+- **A whole-value alias from the body's own match is excepted**, or every multi-clause function
+  with a renamed parameter would have broken: that is what `addMatchAliases` counted. Only that
+  one binding — a `let g` inside the alias's own arm is still a name of its own.
+- **`callable.params` keeps every name**: an alias of the parameter's storage taken before the
+  rebinding still writes the caller's buffer, so storage questions must not lose it.
+
 ### 10/30/26 — An emoji by default is drawn in colour on Linux too
 CI had failed every run since `ui.text: colour emoji` (61bf2451), on one test,
 `TestRun_UiColorEmoji`: on the Linux runner `A😀` drew 😀 as a grey glyph, no picture. A face
