@@ -794,11 +794,17 @@ target = "genesis"
 - **`sms` and `gg`** are the Master System and Game Gear: a Z80 with 8 KB of RAM, no operating
   system, no heap, no floating point. `lyrac build` makes a cartridge (`.sms`, `.gg`) with our own
   LLVM Z80 target (`tools/llvm-z80.sh`, `$LYRA_Z80_LLVM`), linking only what `main` and the
-  interrupt handlers reach, into at most 48 KB. `i32` and wider are emulated, and **a `for` keeps
+  interrupt handlers reach, into at most 48 KB, or 1 MB with `@banked` tables. `i32` and wider are emulated, and **a `for` keeps
   an `i64` index** in the source; the Z80 target narrows a counter it can bound. A trap ends in a red screen, with no message: a cartridge has no room for the text.
   `lyrac run` refuses, as Sheliak's window does not play them yet.
+- **`@banked`** on a `const` table of literals puts it in a ROM bank: the linker chooses one, up
+  to 16 KB a table, and the rest of the program keeps the first 32 KB. Using the table selects its
+  bank, into the window at 8000. **One bank is in view at a time**, so a reference to one
+  table stops being good once another has been used, and copying between two takes a copy in RAM
+  between. An interrupt handler may use tables, as the bank it interrupted is put back. Each use
+  costs about 80 T-states. On other targets it is an ordinary table.
 - **`std.sms`** is their library: `std.sms.vdp` (`init`, `show`, `load_palette`, `load_tiles`,
-  `set_cell`, `set_sprite`, `end_sprites`, `wait_vblank`, `send_sprites`,
+  `set_backdrop`, `set_cell`, `set_sprite`, `end_sprites`, `wait_vblank`, `send_sprites`,
   `interrupt_each_frame`) and `std.sms.pad` (`read`, `held`). `examples/sms/` has two small games.
 - **`host` means "a program with an operating system"**, and which one is the build's choice,
   not the code's: **`lyrac build --target <platform>`** — `ios`, `ios-simulator`,

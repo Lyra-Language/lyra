@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // The Z80 linker: tools/llvm-z80's objects into a Master System or Game Gear cartridge. Each
@@ -14,7 +15,7 @@ import (
 // helpers are most of a small game otherwise.
 
 const (
-	z80CodeStart  = 0x0100
+	z80CodeStart  = 0x0140
 	z80HeaderAt   = 0x7FF0
 	z80HeaderEnd  = 0x8000
 	z80ROMEnd     = 0xC000
@@ -27,6 +28,19 @@ const (
 	z80CallBCAt   = 0x0068
 	z80Otir       = "__z80_otir"
 	z80OtirAt     = 0x006A
+	z80Bank       = "__z80_bank"
+	z80BankAt     = 0x0130
+
+	// The mapper's register for the window at 8000, which reads as nothing, so what it was
+	// set to is kept here too for an interrupt to put back.
+	z80BankRegister = 0xFFFF
+	z80BankShadow   = 0xDFF8
+	z80BankWindow   = 0x8000
+	z80BankSize     = 0x4000
+	z80FirstBank    = 2
+	z80MostBanks    = 64
+	z80BankSection  = ".bank."
+	z80BankSymbol   = "__lyra_bank."
 
 	emZ80 = elf.Machine(220)
 
@@ -54,6 +68,8 @@ type z80Section struct {
 	address int
 	load    int
 	reached bool
+	// bank is the ROM bank of a z80Banked section.
+	bank int
 }
 
 type z80Kind int
@@ -62,6 +78,7 @@ const (
 	z80ROM z80Kind = iota
 	z80Data
 	z80BSS
+	z80Banked
 )
 
 type z80Reloc struct {
@@ -101,6 +118,13 @@ func LinkZ80(objects []Object) (*Z80Image, error) {
 		sections = append(sections, found...)
 	}
 
+	bankedByName := map[string]*z80Section{}
+	for _, s := range sections {
+		if s.kind == z80Banked {
+			bankedByName[strings.TrimPrefix(s.name, z80BankSection)] = s
+		}
+	}
+
 	// What is reached, from the roots.
 	var missing []string
 	seen := map[string]bool{}
@@ -120,7 +144,16 @@ func LinkZ80(objects []Object) (*Z80Image, error) {
 			visit(t.section)
 			return
 		}
-		if t.name == z80CallBC || t.name == z80Otir {
+		if t.name == z80CallBC || t.name == z80Otir || t.name == z80Bank {
+			return
+		}
+		if strings.HasPrefix(t.name, z80BankSymbol) {
+			if s := bankedByName[strings.TrimPrefix(t.name, z80BankSymbol)]; s != nil {
+				visit(s)
+			} else if !seen[t.name] {
+				seen[t.name] = true
+				missing = append(missing, t.name)
+			}
 			return
 		}
 		if sym, ok := globals[t.name]; ok {
@@ -143,12 +176,13 @@ func LinkZ80(objects []Object) (*Z80Image, error) {
 
 	// ROM, skipping the header: code and constants, then what .data starts as.
 	rom := make([]byte, z80CodeStart)
+	var fixedEnd int
 	place := func(size int) int {
 		at := len(rom)
 		if at < z80HeaderEnd && at+size > z80HeaderAt {
 			at = z80HeaderEnd
 		}
-		if at+size > z80ROMEnd {
+		if at+size > fixedEnd {
 			return -1
 		}
 		for len(rom) < at+size {
@@ -157,13 +191,24 @@ func LinkZ80(objects []Object) (*Z80Image, error) {
 		return at
 	}
 	total := 0
+	banked := false
 	for _, s := range sections {
-		if s.reached && s.kind != z80BSS {
+		if s.reached && s.kind == z80Banked {
+			banked = true
+		} else if s.reached && s.kind != z80BSS {
 			total += s.size
 		}
 	}
+	// With banks the window at 8000 is theirs, so what is not banked has the first 32 KB.
+	fixedEnd = z80ROMEnd
+	if banked {
+		fixedEnd = z80HeaderAt
+	}
 	tooBig := func() error {
-		return fmt.Errorf("code and constants take %d bytes; a cartridge without bank switching holds %d", total, z80ROMEnd-z80CodeStart-16)
+		if banked {
+			return fmt.Errorf("code and constants not `@banked` take %d bytes; with banks they have %d", total, z80HeaderAt-z80CodeStart)
+		}
+		return fmt.Errorf("code and constants take %d bytes; a cartridge holds %d without banks: mark large tables `@banked`", total, z80ROMEnd-z80CodeStart-16)
 	}
 	for _, s := range sections {
 		if s.reached && s.kind == z80ROM {
@@ -210,7 +255,28 @@ func LinkZ80(objects []Object) (*Z80Image, error) {
 		return nil, fmt.Errorf("globals take %d bytes of RAM; %d is the most that leaves the stack room", ram-z80RAMStart, z80StackTop-z80StackSpare-z80RAMStart)
 	}
 
+	bankCount, err := placeZ80Banks(sections)
+	if err != nil {
+		return nil, err
+	}
+	if bankCount > 0 {
+		image := make([]byte, (z80FirstBank+bankCount)*z80BankSize)
+		copy(image, rom)
+		rom = image
+		for _, s := range sections {
+			if s.reached && s.kind == z80Banked {
+				copy(rom[s.bank*z80BankSize+s.address-z80BankWindow:], s.data)
+			}
+		}
+	}
+
 	resolve := func(t z80Target) int {
+		if strings.HasPrefix(t.name, z80BankSymbol) {
+			return bankedByName[strings.TrimPrefix(t.name, z80BankSymbol)].bank
+		}
+		if t.name == z80Bank {
+			return z80BankAt
+		}
 		if t.section != nil {
 			return t.section.address + t.value
 		}
@@ -230,6 +296,9 @@ func LinkZ80(objects []Object) (*Z80Image, error) {
 		base := s.address
 		if s.kind == z80Data {
 			base = s.load
+		}
+		if s.kind == z80Banked {
+			base = s.bank*z80BankSize + s.address - z80BankWindow
 		}
 		for _, r := range s.relocs {
 			value := int64(resolve(r.target)) + r.addend
@@ -258,6 +327,43 @@ func LinkZ80(objects []Object) (*Z80Image, error) {
 	return &Z80Image{ROM: rom, DataSize: dataSize, BSSSize: bssSize, Used: total}, nil
 }
 
+// placeZ80Banks gives each reached banked table a bank and its address in the window, largest
+// first, each in the first bank it fits, and answers how many banks that took.
+func placeZ80Banks(sections []*z80Section) (int, error) {
+	var tables []*z80Section
+	for _, s := range sections {
+		if s.reached && s.kind == z80Banked {
+			tables = append(tables, s)
+		}
+	}
+	sort.SliceStable(tables, func(i, j int) bool { return tables[i].size > tables[j].size })
+	var used []int
+	for _, s := range tables {
+		name := strings.TrimPrefix(strings.TrimPrefix(s.name, z80BankSection), "lyra_const_")
+		if s.size > z80BankSize {
+			return 0, fmt.Errorf("%s is %d bytes, and a `@banked` table must fit a %d-byte bank: split it", name, s.size, z80BankSize)
+		}
+		at := -1
+		for i, full := range used {
+			if full+s.size <= z80BankSize {
+				at = i
+				break
+			}
+		}
+		if at < 0 {
+			used = append(used, 0)
+			at = len(used) - 1
+		}
+		s.bank = z80FirstBank + at
+		s.address = z80BankWindow + used[at]
+		used[at] += s.size
+	}
+	if z80FirstBank+len(used) > z80MostBanks {
+		return 0, fmt.Errorf("banked tables take %d banks; a 1 MB cartridge has %d", len(used), z80MostBanks-z80FirstBank)
+	}
+	return len(used), nil
+}
+
 // readZ80Object adds an object's global symbols to globals, a strong one over a weak one,
 // and answers its sections that take up room in the program.
 func readZ80Object(index int, object Object, globals map[string]z80Symbol) ([]*z80Section, error) {
@@ -276,6 +382,11 @@ func readZ80Object(index int, object Object, globals map[string]z80Symbol) ([]*z
 		}
 		s := &z80Section{object: index, name: sec.Name, size: int(sec.Size)}
 		switch {
+		case strings.HasPrefix(sec.Name, z80BankSection):
+			s.kind = z80Banked
+			if s.data, err = sec.Data(); err != nil {
+				return nil, err
+			}
 		case sec.Type == elf.SHT_NOBITS:
 			s.kind = z80BSS
 		case sec.Type != elf.SHT_PROGBITS:
@@ -366,6 +477,10 @@ func writeZ80Startup(rom []byte, dataLoad, dataSize, bssStart, bssSize int, addr
 	put(0x66, 0xED, 0x45)                        // retn
 	put(z80CallBCAt, 0xC5, 0xC9)                 // push bc; ret
 	put(z80OtirAt, 0x43, 0x4A, 0xED, 0xB3, 0xC9) // ld b, e; ld c, d; otir; ret
+	shadowLo, shadowHi := word(z80BankShadow)
+	registerLo, registerHi := word(z80BankRegister)
+	// __z80_bank(bank in HL, table in DE) -> table in HL.
+	put(z80BankAt, 0x7D, 0x32, registerLo, registerHi, 0x32, shadowLo, shadowHi, 0xEB, 0xC9) // ld a, l; ld (reg), a; ld (shadow), a; ex de, hl; ret
 
 	at := startAt
 	lo, hi = word(z80StackTop)
@@ -374,6 +489,7 @@ func writeZ80Startup(rom []byte, dataLoad, dataSize, bssStart, bssSize int, addr
 	for _, reg := range []struct{ value, low byte }{{0, 0xFC}, {0, 0xFD}, {1, 0xFE}, {2, 0xFF}} {
 		at = put(at, 0x3E, reg.value, 0x32, reg.low, 0xFF) // ld a, n; ld (nn), a
 	}
+	at = put(at, 0x32, shadowLo, shadowHi) // ld (shadow), a: the bank the last line set
 	if dataSize > 0 {
 		a, b := word(dataLoad)
 		c, d := word(z80RAMStart)
@@ -400,6 +516,7 @@ func writeZ80Startup(rom []byte, dataLoad, dataSize, bssStart, bssSize int, addr
 	// The interrupt saves what a compiled handler may use. Reading the status acknowledges
 	// it, and bit 7 says a frame's rather than a line's.
 	at = put(irqAt, 0xF5, 0xC5, 0xD5, 0xE5, 0xDD, 0xE5) // push af, bc, de, hl, ix
+	at = put(at, 0x3A, shadowLo, shadowHi, 0xF5)        // ld a, (shadow); push af
 	at = put(at, 0xDB, 0xBF, 0xB7)                      // in a, (0xBF); or a
 	vblank, hasVblank := address(z80Vblank)
 	hblank, hasHblank := address(z80Hblank)
@@ -423,8 +540,10 @@ func writeZ80Startup(rom []byte, dataLoad, dataSize, bssStart, bssSize int, addr
 			at = put(at, 0, 0, 0)
 		}
 	}
-	at = put(at, 0xDD, 0xE1, 0xE1, 0xD1, 0xC1, 0xF1, 0xFB, 0xED, 0x4D) // pop ix, hl, de, bc, af; ei; reti
-	if at > z80CodeStart {
+	// The bank the interrupted code had, in case the handler used another.
+	at = put(at, 0xF1, 0x32, shadowLo, shadowHi, 0x32, registerLo, registerHi) // pop af; ld (shadow), a; ld (reg), a
+	at = put(at, 0xDD, 0xE1, 0xE1, 0xD1, 0xC1, 0xF1, 0xFB, 0xED, 0x4D)         // pop ix, hl, de, bc, af; ei; reti
+	if at > z80BankAt {
 		return fmt.Errorf("the interrupt overran its room (%#x)", at)
 	}
 	return nil
@@ -435,9 +554,20 @@ func writeZ80Startup(rom []byte, dataLoad, dataSize, bssStart, bssSize int, addr
 func Z80Cartridge(img *Z80Image, gameGear bool) []byte {
 	size := 0x8000
 	sizeCode := byte(0xC)
-	if len(img.ROM) > z80HeaderAt {
-		size = z80ROMEnd
-		sizeCode = 0xD
+	switch {
+	case len(img.ROM) <= z80HeaderAt:
+	case len(img.ROM) <= z80ROMEnd:
+		size, sizeCode = z80ROMEnd, 0xD
+	case len(img.ROM) <= 0x10000:
+		size, sizeCode = 0x10000, 0xE
+	case len(img.ROM) <= 0x20000:
+		size, sizeCode = 0x20000, 0xF
+	case len(img.ROM) <= 0x40000:
+		size, sizeCode = 0x40000, 0x0
+	case len(img.ROM) <= 0x80000:
+		size, sizeCode = 0x80000, 0x1
+	default:
+		size, sizeCode = 0x100000, 0x2
 	}
 	rom := make([]byte, size)
 	copy(rom, img.ROM)

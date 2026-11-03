@@ -81,6 +81,14 @@ pub let load_palette<const N: i64> = (first: u8, colors: ref [N]u8) -> void => {
   for color in colors { data(color) }
 }
 
+/// The colour an empty screen shows: colour 0 of the background's palette. Call in the vertical
+/// blank, or a line of the old colour may show.
+pub let set_backdrop = (color: u8) -> void => {
+  control(0)
+  control(WRITE_CRAM)
+  data(color)
+}
+
 /// Tiles from pattern `first` on, 32 bytes each.
 pub let load_tiles<const N: i64> = (first: u16, tiles: ref [N]u8) -> void => {
   vram_address(first * 32)

@@ -1,0 +1,39 @@
+// More art than the 32 KB that stays in view: each `@banked` table is in a ROM bank, and using
+// it brings that bank into the window at 8000. Holding a button shows the next table's colour.
+//
+//   lyrac build banks.lyra          # -> banks.sms, a 128 KB cartridge
+//
+// **Only one bank is in view at a time.** Using a table selects its bank, so a reference taken
+// to one table is not good once another has been used; an interrupt's are put back for it.
+
+import std.sms.vdp
+import std.sms.pad
+
+@banked
+const RED: [16000]u8 = #[0x03; 16000]
+@banked
+const GREEN: [16000]u8 = #[0x0C; 16000]
+@banked
+const BLUE: [16000]u8 = #[0x30; 16000]
+@banked
+const WHITE: [16000]u8 = #[0x3F; 16000]
+
+let main = () -> void => {
+  vdp.init()
+  vdp.show()
+  var shown: u8 = 0
+  var was_held = false
+  loop {
+    vdp.wait_vblank()
+    let color = match shown {
+      0 => RED[15999],
+      1 => GREEN[15999],
+      2 => BLUE[15999],
+      _ => WHITE[15999],
+    }
+    vdp.set_backdrop(color)
+    let held = pad.held(pad.read(), pad.BUTTON_1)
+    if held && !was_held { shown = (shown + 1) % 4 }
+    was_held = held
+  }
+}

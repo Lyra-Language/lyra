@@ -1326,7 +1326,7 @@ target, 10/11). In order:
   `clock_gettime`, `localtime_r`, std.io's `open`/`mkdir`/`readlink`).
 - **[OPEN] The web** — the backend's 64-bit pointers and `i64` `size_t` (`layout.go`'s
   `pointerSize`, the libc declarations, `coro.size.i64`) need a per-target width first.
-- **[PARTIAL] A Z80 backend, for new Master System and Game Gear games**: `target = "sms"` builds and runs on `smscheck`, about 2,000 T-states an entity (`tools/llvm-z80/README.md`). Next: a third-party emulator check, then bank switching past 48 KB and Vega's assets. Speed left: spills in tight loops, and frames at about 100 T-states a call.
+- **[PARTIAL] A Z80 backend, for new Master System and Game Gear games**: `target = "sms"` builds games up to 1 MB with `@banked` tables, about 2,000 T-states an entity (`tools/llvm-z80/README.md`). Next: Vega's assets and game code on it, with scrolling and sound in `std.sms`. Speed left: spills in tight loops, frames at about 100 T-states a call.
 
 ## Target introspection
 

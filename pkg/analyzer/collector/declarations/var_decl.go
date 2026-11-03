@@ -368,9 +368,13 @@ func collectDeclarationAttributes(node *sitter.Node, value ast.Expression, ctx *
 				collectNoInlineAttribute(attr, value, ctx)
 				continue
 			}
+			if name == "banked" {
+				collectBankedAttribute(attr, value, ctx)
+				continue
+			}
 			if name != "borrowed" {
 				ctx.AddError(attr, diag.SeverityError,
-					"unknown attribute `@%s` on a declaration; a function takes `@borrowed`, `@noinline` or `@interrupt(vblank)`", name)
+					"unknown attribute `@%s` on a declaration; a table takes `@banked`, and a function `@borrowed`, `@noinline` or `@interrupt(vblank)`", name)
 				continue
 			}
 			if cst.Field(attr, "args") != nil {
@@ -385,6 +389,27 @@ func collectDeclarationAttributes(node *sitter.Node, value ast.Expression, ctx *
 			lambda.ReturnsBorrowed = true
 		}
 	}
+}
+
+// collectBankedAttribute reads `@banked`, on a const table: its initializer carries the mark
+// (ast.ArrayLiteralExpr.Banked) to the backend.
+func collectBankedAttribute(attr *sitter.Node, value ast.Expression, ctx *collector_ctx.Ctx) {
+	if cst.Field(attr, "args") != nil {
+		ctx.AddError(attr, diag.SeverityError, "`@banked` takes no arguments; the linker chooses the bank")
+	}
+	switch table := value.(type) {
+	case *ast.ArrayLiteralExpr:
+		table.Banked = table.Fixed
+		if table.Fixed {
+			return
+		}
+	case *ast.ArrayRepeatExpr:
+		table.Banked = table.Fixed
+		if table.Fixed {
+			return
+		}
+	}
+	ctx.AddError(attr, diag.SeverityError, "`@banked` puts a table in a ROM bank, so it goes on a `const` initialized with `#[…]`")
 }
 
 // collectNoInlineAttribute reads `@noinline`: the function is never inlined into a caller.

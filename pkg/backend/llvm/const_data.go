@@ -222,6 +222,12 @@ func (l *lowerer) declareStaticConsts() error {
 		// Private, but not unnamed_addr: `&TILES` makes the address observable, so two
 		// tables with the same words must stay two tables.
 		g.Linkage = enum.LinkagePrivate
+		// On the Z80 a `@banked` table has a section of its own, which the linker gives a
+		// bank; selectBanks makes every use reach it through that bank.
+		if l.arch == Z80 && isBanked(vd.Value) {
+			g.Linkage = enum.LinkageInternal
+			g.Section = bankSectionPrefix + symbol
+		}
 		l.globals[l.funcKey(vd.Name, vd.GetLocation())] = g
 	}
 	return nil

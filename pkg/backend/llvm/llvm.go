@@ -198,6 +198,11 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
+	if b.arch == Z80 {
+		if err := selectBanks(m); err != nil {
+			return nil, err
+		}
+	}
 	// A coroutine's `define` needs an attribute the IR library cannot spell
 	// (seq_coro.go), added to the text on the way out.
 	return []byte(addCoroutineAttributes(m.String(), b.coroSymbols)), nil

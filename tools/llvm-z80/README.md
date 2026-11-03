@@ -28,6 +28,14 @@ linked into LLVM's tree; `patches/` tell LLVM the triple, data layout, ELF machi
 - **Counters**: `Z80NarrowLoops` rewrites a counter ScalarEvolution can bound as an i16.
 - **Flags**: nothing the allocator inserts changes them (`ld`, `inc rr`, `dec rr`).
 
+## Banks
+
+Not the target's business but the backend's and linker's: `selectBanks` (`pkg/backend/llvm/banks.go`)
+makes each use of a `@banked` table go through `__z80_bank`, and `pkg/rom/z80.go` gives the tables their
+banks, from 2 up, largest first. The bank's number is the "address" of `__lyra_bank.<table>`. The
+interrupt saves and restores the current bank, from a copy in RAM at DFF8 since the register reads
+as nothing.
+
 ## Testing
 
 `test/run.py` runs `test/*.ll` on Sheliak's Z80 core (`sheliak/build/z80run`), each answer also
@@ -42,4 +50,3 @@ random programs. Both at -O2 and -O0. The helpers come from `runtime/sms/runtime
   Genesis IR has; IR emitted for the Z80 has none.
 - Registers run out fast: a loop with four live 16-bit values spills, about 250 T-states a pass where
   hand-written code would take perhaps a quarter of that. Frames cost about 100 T-states a call.
-- Nothing banks past 48 KB.

@@ -11,6 +11,8 @@ type ArrayRepeatExpr struct {
 	Count Expression // The count: any expression for `[v; n]`, a compile-time constant for `#[v; n]`
 	// Fixed is the `#[v; n]` spelling, a `[N]T`; ArrayLiteralExpr.Fixed's twin.
 	Fixed bool
+	// Banked is `@banked` on the const this initializes (ArrayLiteralExpr.Banked).
+	Banked bool
 	// CountAsWritten is Count as the author spelled it, kept when the typechecker folded a
 	// `#[v; N]` count to a literal (arrayRepeatCount). Nil when nothing was folded away.
 	//

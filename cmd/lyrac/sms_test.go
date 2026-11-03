@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -157,6 +158,115 @@ func TestSMS_AFrameStaysWithinItsBudget(t *testing.T) {
 	}
 }
 
+// Tables larger together than a cartridge holds without banks, read from main and from an
+// interrupt between: each read answers from its own table's bank, a wrong bank being another
+// table's number (or the window's fixed-ROM nothing), and the interrupted code's bank comes back.
+func TestSMS_BankedTablesAreReadFromTheirBanks(t *testing.T) {
+	t.Parallel()
+	got := smsProgramScreen(t, "banked", `
+@banked const FIRST: [12000]u8 = #[11; 12000]
+@banked const SECOND: [12000]u8 = #[22; 12000]
+@banked const THIRD: [12000]u8 = #[33; 12000]
+@banked const FOURTH: [12000]u8 = #[44; 12000]
+@banked const FIFTH: [6000]u16 = #[55; 6000]
+
+var frames: u16 = 0
+var wrong: u16 = 0
+
+@interrupt(vblank)
+let each_frame = () -> void => {
+  frames += 1
+  if FOURTH[11999] != 44 { wrong += 1 }
+}
+
+let add_up<const N: i64> = (table: ref [N]u8) -> u16 => {
+  var total: u16 = 0
+  var i: u16 = 0
+  while i < 300 {
+    total += u16(table[i])
+    i += 1
+  }
+  total
+}
+
+let main = () -> void => {
+  vdp.init()
+  vdp.interrupt_each_frame()
+  var passes: u8 = 0
+  // Long enough that interrupts land inside the sums.
+  while passes < 60 {
+    if FIRST[0] != 11 || SECOND[6000] != 22 || THIRD[11999] != 33 || FIFTH[5999] != 55 { wrong += 1 }
+    if add_up(SECOND) != 6600 || add_up(THIRD) != 9900 { wrong += 1 }
+    passes += 1
+  }
+  answer(wrong == 0 && frames > 5)
+}`)
+	if got != smsGreen {
+		t.Errorf("the screen is %s, want green (%s); red is a table read from the wrong bank", got, smsGreen)
+	}
+}
+
+// The example: a cartridge larger than the Z80 sees, its size and checksum as the header says, and
+// a table's own colour on the screen, red until a button brings the next table's.
+func TestSMS_ABankedCartridgeIsWhatItsHeaderSays(t *testing.T) {
+	t.Parallel()
+	z80ToolchainOrSkip(t)
+	root := repoRoot(t)
+	smscheck := smscheckOrSkip(t, root)
+	setenv(t, "LYRA_STD", root)
+	out := filepath.Join(t.TempDir(), "banks.sms")
+	_, stderr, code := captureRun(t, "build", "-o", out, filepath.Join(root, "examples", "sms", "banks.lyra"))
+	if code != 0 {
+		t.Fatalf("build exited %d: %s", code, stderr)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 0x20000 || data[0x7FFF]&0x0F != 0xF {
+		t.Fatalf("%d bytes, the header's size code %#x; want 128 KB, 0xF", len(data), data[0x7FFF]&0x0F)
+	}
+	var sum uint16
+	for i, b := range data {
+		if i < 0x7FF0 || i >= 0x8000 {
+			sum += uint16(b)
+		}
+	}
+	if binary.LittleEndian.Uint16(data[0x7FFA:]) != sum {
+		t.Errorf("the header's checksum is wrong")
+	}
+	if got := smsScreen(t, smscheck, out, "60", "").dominant(); got != "ff0000" {
+		t.Errorf("the screen is %s, want the first table's red", got)
+	}
+	if got := smsScreen(t, smscheck, out, "60", "1").dominant(); got != "00ff00" {
+		t.Errorf("with the button held the screen is %s, want the next table's green", got)
+	}
+}
+
+// A table too large for a bank says so by name.
+func TestSMS_ATableLargerThanABankIsRefused(t *testing.T) {
+	t.Parallel()
+	z80ToolchainOrSkip(t)
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lyra.toml"), []byte("target = \"sms\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "large.lyra")
+	code := `
+@banked const HUGE: [17000]u8 = #[1; 17000]
+let main = () -> void => { unsafe { port_write(0xBE, HUGE[5]) } }
+`
+	if err := os.WriteFile(src, []byte(code), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, status := captureRun(t, "build", "-o", filepath.Join(dir, "large.sms"), src)
+	if status == 0 || !strings.Contains(stderr, "HUGE") || !strings.Contains(stderr, "must fit") {
+		t.Errorf("exited %d: %s", status, stderr)
+	}
+}
+
 // What a program does, as the screen says: green when every answer is right. A wrong answer
 // sets red itself, and a trap the runtime's red.
 const smsPrelude = `
@@ -192,7 +302,7 @@ func smsProgramScreen(t *testing.T, name, source string) string {
 		t.Fatalf("build exited %d: %s", code, stderr)
 	}
 	// Clearing video memory takes the first half second.
-	return smsScreen(t, smscheck, out, "120", "").dominant()
+	return smsScreen(t, smscheck, out, "400", "").dominant()
 }
 
 const (
