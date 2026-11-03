@@ -1015,6 +1015,7 @@ compiler checks each type crosses (`pkg/backend/FFI.md` has the table and the ba
 - `p^ = v` **releases** the old value (as `xs[i] = v` does). Match-arm / `if let` bindings borrow, so `&mut s` and `h.s = v` on them are refused, as reassigning them already is (`lyra-E025`) — copy into a binding first.
 - `&mut` on a closure-captured binding is **`lyra-E024`** (captures are by value). Watch for `s.with_cstring((p) => f(p, &mut size))` — take the pointer outside. `&n` is fine.
 - Only storage has an address: `&f()` is `lyra-E059`; `^` on a non-pointer is `lyra-E060`.
+- **A binding a raw pointer may point into lives to the end of its scope**, not to its last use: its address taken (`&xs[0]`), or named in a call whose result carries a raw pointer (`xs.data()`, `s.cstring_ptr()`, a program's own `first_of(xs)`, a `CBuffer` a function returns; 11/02). So the pointer can be read on a later line, and C can keep it past the call that received it, until a later one. Past the scope's end, or a `push` that reallocates, it dangles; and a temporary's lasts only its statement (`let p = mk().data()`).
 - Arithmetic is `p.offset(n) -> ^T` only (elements, signed, preserves mutability). No `p[i]`.
 - **`p.address() -> u64`** is the pointer as a number, in bytes — what hardware is told about
   memory (the Genesis's Z80 plays a sample from the cartridge at its address); `pointer_at`
@@ -1037,7 +1038,7 @@ compiler checks each type crosses (`pkg/backend/FFI.md` has the table and the ba
 
 **`std.ffi` helpers** (`unsafe` appears once in the library, not at call sites; *`unsafe` marks handing a pointer out to keep, not lending one for a call*):
 - `CBuffer { ptr, len }` with bounds-checked `buf.get(i)`.
-- `s.cstring()` — NUL-terminated `[]u8`; keep it alive while using its pointer.
+- `s.cstring()` — NUL-terminated `[]u8`; bind it to use its pointer past the statement.
 - `xs.data()` / `xs.data_mut()` (`mut` receiver) — base address, no copy; trap on empty; dynamic arrays only.
 - `with_cstring(s, f)` (`pure noalloc`, not `unsafe`), `with_cstrings(a, b, f)`.
 - `is_null`, `to_maybe` — convert C's NULL convention to `Maybe` after the `extern` (a `Maybe` cannot cross: `lyra-E063`).

@@ -235,11 +235,31 @@ func OwnsManaged(t types.Type, symTable *symbols.SymbolTable, loc ast.Location) 
 // a guarantee this walk may rely on. Without the set it recursed until the stack ended,
 // taking `lyrac` and the language server down with it.
 func ownsManaged(t types.Type, symTable *symbols.SymbolTable, loc ast.Location, seen map[string]bool) bool {
+	return searchComponents(t, symTable, loc, seen, func(c types.Type) (bool, bool) {
+		return true, IsManaged(c)
+	})
+}
+
+// holdsRawPointer reports whether a value of t carries a raw pointer directly — `^u8`, a newtype
+// of one, a struct or `Maybe` holding one. It stops at a managed value: what sits behind a box
+// is that box's, and the walk's termination rests on stopping there.
+func holdsRawPointer(t types.Type, symTable *symbols.SymbolTable, loc ast.Location) bool {
+	return searchComponents(t, symTable, loc, nil, func(c types.Type) (bool, bool) {
+		if _, isPointer := c.(types.RawPointerType); isPointer {
+			return true, true
+		}
+		return false, IsManaged(c)
+	})
+}
+
+// searchComponents walks a type's components through aliases, instantiations and newtypes,
+// and answers the first thing decide settles. decide gives its answer and whether it has one.
+func searchComponents(t types.Type, symTable *symbols.SymbolTable, loc ast.Location, seen map[string]bool, decide func(types.Type) (bool, bool)) bool {
 	if t == nil {
 		return false
 	}
-	if IsManaged(t) {
-		return true
+	if answer, decided := decide(t); decided {
+		return answer
 	}
 	resolved := resolveNamedType(t, symTable, loc)
 	// A transparent **alias** registers its target with no wrapper, so the name resolves
@@ -258,7 +278,7 @@ func ownsManaged(t types.Type, symTable *symbols.SymbolTable, loc ast.Location, 
 			seen = map[string]bool{}
 		}
 		seen[u.Name] = true
-		return ownsManaged(resolved, symTable, loc, seen)
+		return searchComponents(resolved, symTable, loc, seen, decide)
 	}
 	// A generic instantiation is the one arm this does not share with SharedMutablePath,
 	// and the difference is a cycle guard rather than an oversight: that walk carries a
@@ -280,7 +300,7 @@ func ownsManaged(t types.Type, symTable *symbols.SymbolTable, loc ast.Location, 
 		// recordedType, which normalizes an instantiation to its substituted struct — so it
 		// framed and deep-released *both* bindings. Drop twice, dup never.
 		inst, ok := instantiateDecl(pt, symTable, loc)
-		return ok && ownsManaged(inst, symTable, loc, seen)
+		return ok && searchComponents(inst, symTable, loc, seen, decide)
 	}
 	// A newtype is the one component that can lead back to itself without passing through
 	// something managed, so it is the one whose name is remembered.
@@ -294,7 +314,7 @@ func ownsManaged(t types.Type, symTable *symbols.SymbolTable, loc ast.Location, 
 		seen[ct.Name] = true
 	}
 	return eachComponent(resolved, func(_ string, comp types.Type) bool {
-		return ownsManaged(comp, symTable, loc, seen)
+		return searchComponents(comp, symTable, loc, seen, decide)
 	})
 }
 
@@ -760,8 +780,11 @@ func (a *analyzer) computeLastUse(lam *ast.LambdaExpr) map[ast.Expression]bool {
 	// Names whose address has been taken are ineligible — see addressTakenNames.
 	addrTaken := map[string]bool{}
 	ast.WalkExpr(lam.Body, onStmt, func(e ast.Expression) bool {
-		if le, ok := e.(*ast.AddressOfExpr); ok {
+		switch le := e.(type) {
+		case *ast.AddressOfExpr:
 			noteAddressTaken(le, addrTaken)
+		case *ast.FunctionCallExpr:
+			a.notePointerHandedOut(le, addrTaken)
 		}
 		return true
 	})
@@ -836,6 +859,8 @@ func (a *analyzer) computeOwnedLastRef(lam *ast.LambdaExpr) map[string]ast.Expre
 			collectNames(le.Body, loopUsed)
 		case *ast.AddressOfExpr:
 			noteAddressTaken(le, addrTaken)
+		case *ast.FunctionCallExpr:
+			a.notePointerHandedOut(le, addrTaken)
 		}
 		return true
 	})
@@ -1027,6 +1052,37 @@ func tailConstruction(e ast.Expression) ast.Expression {
 func noteAddressTaken(e *ast.AddressOfExpr, into map[string]bool) {
 	if root := ast.RootIdentifierName(e.Operand); root != "" {
 		into[root] = true
+	}
+}
+
+// notePointerHandedOut pins what a call borrowed when its result carries a raw pointer, which
+// may point into it: `let p = xs.data()` is `&xs[0]` by another name, and `xs` would otherwise
+// be freed at that statement, before anything read through `p`, or C kept it past a later call.
+//
+// **By the result's type, not by the callee's name**, so `xs.data()`, `s.cstring_ptr()`, a
+// program's own `b.first_byte()` and a `first_of(xs)` are all one rule. A call handing back a
+// pointer that does not point into its arguments pins for nothing, and pays what
+// noteAddressTaken's does: the release moves to the end of the binding's scope.
+func (a *analyzer) notePointerHandedOut(call *ast.FunctionCallExpr, into map[string]bool) {
+	t, ok := a.typeOf(call)
+	if !ok || !holdsRawPointer(t, a.symTable, call.GetLocation()) {
+		return
+	}
+	// Every name in them, not a place's root: `of_wrap(Wrap { items: xs })` hands back a pointer
+	// into `xs` through a literal that is gone by the next statement.
+	pin := func(e ast.Expression) {
+		ast.WalkExpr(e, nil, func(n ast.Expression) bool {
+			if id, ok := n.(*ast.IdentifierExpr); ok {
+				into[id.Name] = true
+			}
+			return true
+		})
+	}
+	if member, isDot := call.Function.(*ast.MemberExpr); isDot {
+		pin(member.Object)
+	}
+	for _, arg := range call.Arguments {
+		pin(arg)
 	}
 }
 

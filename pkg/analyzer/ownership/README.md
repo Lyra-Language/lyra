@@ -123,6 +123,10 @@ binding is excluded from last use in **both** `computeLastUse` and `computeOwned
 the **root** of the place (`&xs[0]` pins `xs`). A raw pointer keeps storage alive without counting
 as a reference, so otherwise `CBuffer { ptr: unsafe { &xs[0] }, len: 3 }` frees `xs`.
 
+**A call whose result carries a raw pointer pins every name in its receiver and arguments**
+(`notePointerHandedOut`, by the result's type through `holdsRawPointer`): `let p = xs.data()` is
+`&xs[0]` by another name. A temporary has nothing to pin, and lasts its statement.
+
 Remove the pin → use-after-free. Remove the arm → double free for a value shared out of the block
 (`TestExec_UnsafeBlockRetainsWhatItShares`).
 

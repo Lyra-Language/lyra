@@ -9,6 +9,34 @@ Newest first.
 
 ## Dated log
 
+### 11/02/26 — A raw pointer pins what it may point into
+Asked to fix a buffer C keeps past the call, freed at its last Lyra use, for which the entry
+wanted a spelled keep-alive or a check. Reproducing it found the smaller program first:
+
+    let p = unsafe { xs.data() }
+    unsafe { c_puts(p) }
+
+emitted `data`, then the release, then `puts`: a use-after-free in two lines, with no C keeping
+anything. The same two lines through `&xs[0]` were correct. `noteAddressTaken` has pinned that
+since the `CBuffer` bug, because "a raw pointer keeps storage alive without counting as a
+reference", and `data()`, being ordinary Lyra in `std.ffi`, was a method call to the pass.
+- **So neither of the entry's two.** A spelling would have had to be remembered, which is what
+  `let _ = pointers.len()` already was, three times, in `bindings/sdl3/process.lyra` and
+  `bindings/pty/pty.lyra`; those are gone. A check that an array outlives a block answers nothing
+  a scope-exit release does not make true.
+- **By the result's type, not `data`'s name** (`notePointerHandedOut`): a program's own
+  `b.first_byte()` and `first_of(xs)` had the same use-after-free. A pointer that does not point
+  into the arguments pins for nothing, and a pin only moves a release to the scope's end.
+- **Every name in the receiver and arguments, not a place's root**: `of_holder(Holder { items: xs,
+  n: 1 })` was still a use-after-free with roots only, the literal being gone by the next statement.
+- **`holdsRawPointer` shares `ownsManaged`'s walk** (`searchComponents`) rather than copying it. Its
+  alias, instantiation and newtype-cycle arms have each been a real bug, so `CBuffer` and
+  `Maybe<^u8>` get them for nothing.
+- **Left open: a temporary**, `let p = mk().data()`, has no binding to pin (todo.md).
+- ASan is the test, on Linux: eight of the ten first cases were `heap-use-after-free` there before
+  the fix. macOS's stays silent on these, so `TestEmit_ARawPointerKeepsItsArrayPastItsRead` reads
+  the order off the IR, which a Mac can check.
+
 ### 11/02/26 — A trailing `if let … else …` is an unannotated function's value
 `let f = (m: Maybe<i64>) => { if let Some(v) = m { v + 1 } else { 0 } }` inferred `void`, while
 the same function spelled with `if` or `match` inferred `i64`, so `let x: i64 = f(…)` read

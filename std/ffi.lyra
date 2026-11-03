@@ -151,8 +151,9 @@ impl string {
   /// worth adding here later; a name around a `[]u8` is not a step toward it.
   ///
   /// The buffer is the caller's to keep alive, and nothing in the language enforces that:
-  /// `let escapes = (xs: []u8) -> ^u8 => &xs[0]` compiles. Bind it, use it, and let it fall
-  /// out of scope after the call.
+  /// `let escapes = (xs: []u8) -> ^u8 => &xs[0]` compiles. Bind it and take the pointer: a
+  /// binding a pointer was taken from lives to the end of its scope. A temporary's pointer
+  /// lasts only its statement.
   ///
   /// # Panics
   /// Traps if `self` contains a NUL byte, because C cannot represent one: the string would
@@ -267,6 +268,9 @@ impl []t {
   /// **Dynamic arrays only.** A `[N]T` carries its size in its type, so it cannot be a
   /// generic parameter until const generics exist (todo.md); a fixed buffer still spells
   /// this `&xs[0]` by hand, which is what this function is.
+  ///
+  /// **The array stays until its scope ends**, however long C keeps the pointer within it, so
+  /// nothing need mention it again afterwards.
   ///
   /// **The pointer is valid until the next mutation.** `push` reallocates the element
   /// buffer, so a pointer taken before one addresses memory the array no longer owns. That

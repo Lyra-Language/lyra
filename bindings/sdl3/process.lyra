@@ -106,10 +106,9 @@ pub let run_process = (args: []string) -> Maybe<(i64, string)> => {
     sdl_set_number_property(props, PROP_STDOUT.cstring_ptr(), STDIO_APP)
     sdl_set_boolean_property(props, PROP_STDERR_TO_STDOUT.cstring_ptr(), true)
   }
+  // SDL reads `pointers` here, not when the property is set: `data()` keeps it to the end of
+  // this function.
   let process = unsafe { sdl_create_process_with_properties(props) }
-  // SDL reads `pointers` here, not when the property is set, and an array is freed after
-  // its last use: this one keeps it until now.
-  let _ = pointers.len()
   unsafe { sdl_destroy_properties(props) }
   if process == nullptr { return None }
   var size: u64 = 0
@@ -142,9 +141,8 @@ pub let create_process_to_file = (args: []string, output: string) -> Maybe<Proce
     sdl_set_pointer_property(props, PROP_STDOUT_STREAM.cstring_ptr(), stream)
     sdl_set_boolean_property(props, PROP_STDERR_TO_STDOUT.cstring_ptr(), true)
   }
+  // As in `run_process`: the array is read at the create.
   let process = unsafe { sdl_create_process_with_properties(props) }
-  // As in `run_process`: the array is read at the create, and must live until then.
-  let _ = pointers.len()
   unsafe { sdl_destroy_properties(props) }
   // The program holds the file now; this side's handle is not needed.
   let _ = unsafe { sdl_close_io(stream) }

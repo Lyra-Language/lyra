@@ -66,8 +66,6 @@ pub let spawn = (
   let fd = unsafe {
     lyra_pty_spawn(argv.data(), envp.data(), dir_ptr, i32(cols), i32(rows), &mut child)
   }
-  // The arrays are read during the call; keep them until it returns.
-  let _ = argv.len() + envp.len() + dir.len()
   if fd < 0 { None } else { Some(Pty { fd: fd, pid: child }) }
 }
 
