@@ -382,8 +382,8 @@ layer — implements the two traits; the display list is the whole contract.
   scroll are a window's, input goes to the window it happened in, and a window laid out before
   an event `update` had since is laid out again before it takes input (`Host.version`); every
   window is drawn again after an event, and only the window an input happened in after an
-  input that raised none. Menus and shortcuts are every window's; `OnResize`, `OnFocus` and
-  `OnWindowState` are the main window's; an edit of the focused field and a file dialog go to
+  input that raised none. Menus and shortcuts are every window's; `OnResize`, `OnFocus`,
+  `OnWindowState` and `OnPlaced` are the main window's; an edit of the focused field and a file dialog go to
   the window last focused; a drawn title bar (`App.title_bar`) is the main window's.
   **A dock's tab crosses windows**: dragged out of its window over another's dock, it aims there
   as at its own (`DockDrop.foreign`, the preview in that window alone), and let go there that

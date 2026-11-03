@@ -359,6 +359,10 @@ pub data Subscription<e> =
   | OnFocus((bool) -> e)
   /// The window minimized, maximized, made fullscreen or put back, each time it is.
   | OnWindowState((WindowState) -> e)
+  /// The window moved, resized, minimized, maximized, made fullscreen or put back, each time it
+  /// is: where it is now and its state, for a program that keeps it between runs (a maximized
+  /// window's place is the system's, which the state says).
+  | OnPlaced((WindowPlacement, WindowState) -> e)
   /// Files dropped on the window, by path, one drop's together — on a Mac also a file opened
   /// from Finder, which the system hands over as a drop.
   | OnFilesDropped(([]string) -> e)
@@ -741,11 +745,14 @@ impl Host<s, e> {
             return false
           }
         },
-        Resized(size) => if k == 0 { self.heard(at, platform, (sub) => match sub {
-          OnResize(make) => Some(make(size)),
-          _ => None,
-        }) } else { self.moved(k, at, platform) },
-        WindowPlaced(_) => if k > 0 { self.moved(k, at, platform) },
+        Resized(size) => if k == 0 {
+          self.heard(at, platform, (sub) => match sub {
+            OnResize(make) => Some(make(size)),
+            _ => None,
+          })
+          self.main_placed(at, platform)
+        } else { self.moved(k, at, platform) },
+        WindowPlaced(_) => if k > 0 { self.moved(k, at, platform) } else { self.main_placed(at, platform) },
         AppearanceChanged(look) => {
           for j in 0..<self.windows.len() { self.windows[j].dirty = true }
           self.heard(at, platform, (sub) => match sub {
@@ -765,10 +772,13 @@ impl Host<s, e> {
           _ => None,
         }) },
         WindowStateChanged(state) =>
-          if k == 0 { self.heard(at, platform, (sub) => match sub {
-            OnWindowState(make) => Some(make(state)),
-            _ => None,
-          }) },
+          if k == 0 {
+            self.heard(at, platform, (sub) => match sub {
+              OnWindowState(make) => Some(make(state)),
+              _ => None,
+            })
+            self.main_placed(at, platform)
+          },
         FilesDropped(paths) => self.heard(at, platform, (sub) => match sub {
           OnFilesDropped(make) => Some(make(paths)),
           _ => None,
@@ -1066,6 +1076,19 @@ impl Host<s, e> {
       size: platform.window_size(id)
     }
     self.dispatch((list.on_moved)(self.windows[k].key, place), now, platform)
+  }
+
+  /// The main window moved, resized or changed state: where it is now, to [Subscription.OnPlaced].
+  let main_placed<p> where p: Platform = (self: mut, now: i64, platform: mut p) -> void => {
+    let place = WindowPlacement {
+      place: platform.window_position(MAIN_WINDOW),
+      size: platform.window_size(MAIN_WINDOW)
+    }
+    let state = platform.window_state(MAIN_WINDOW)
+    self.heard(now, platform, (sub) => match sub {
+      OnPlaced(make) => Some(make(place, state)),
+      _ => None,
+    })
   }
 
   /// A tab of window `k`'s dock being docked (`drop`, as it was before `input`) carried past the

@@ -2989,6 +2989,69 @@ a window scrolled to its end, then taller, clamps: window 0,180
 	}
 }
 
+// The main window moved, resized or changed state is heard through OnPlaced, with where it is
+// and its state as they are now, as a program keeping it between runs needs.
+func TestRun_UiOnPlaced(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, WindowPlacement, Subscription, OnPlaced, Command, running, step_running }
+import ui.script.{ timed_platform, parse_steps }
+import ui.backend.{ Renderer, WindowState }
+import ui.draw.{ Size, Point, Color, TextureId }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, text }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, window, background, ops) => {}
+}
+
+data Ev = Placed(WindowPlacement, WindowState)
+
+let update = (s: i64, e: Ev) -> (i64, []Command<Ev>) => match e {
+  Placed(at, state) => {
+    let spot = match at.place {
+      Some(p) => "${p.x},${p.y}",
+      None => "nowhere",
+    }
+    println("${spot} ${at.size.w}x${at.size.h} maximized ${state.maximized}")
+    (s + 1, [])
+  },
+}
+
+let main = () -> u8 => {
+  let Ok(steps) = parse_steps("place:30,40 resize:500,350 maximize restore") else { return 1 }
+  var platform = timed_platform(steps, Size { w: 400.0, h: 300.0 })
+  var renderer = Blank {}
+  var fonts = fonts_new()
+  let app = App {
+    view: pure (s: i64) -> Node<Ev> => text("placed"),
+    update: update,
+    subscriptions: (_: i64) -> []Subscription<Ev> => [OnPlaced(Placed)],
+    background: Color { r: 0, g: 0, b: 0 },
+  }
+  let window = running(app, 0, platform, renderer, fonts)
+  while step_running(window) {}
+  0
+}
+`)
+	want := `30,40 400x300 maximized false
+30,40 500x350 maximized false
+30,40 500x350 maximized true
+30,40 500x350 maximized false
+`
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 // The interface's scale (App.interface_scale): the state's factor given the platform, the
 // window laid out in units that many times larger — fewer of them across — and its pixels a
 // unit that many times more, which the renderers read from ui.backend (Vega's interface size,

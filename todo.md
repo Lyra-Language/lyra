@@ -981,6 +981,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   error now says a type parameter is lowercase and gives the list fixed (`<R>` is `<r>`).
   **[OPEN]** the errors the parser's recovery leaves after it — "unknown type \"R\"",
   "unknown type \"Renderer\"" — still follow it.
+- **[OPEN] A value copied before a call that changes it** — `(s, proceed(s, then))`, with `s` passed `mut`, copies `s` first and drops what the call did, silently (Vega's Don't Save did nothing, 11/02). Warn when an aggregate is read and then passed `mut` later in the same tuple or argument list.
+- **[OPEN] `==` on a type holding a function value passes `lyrac check`** — it is refused only by the backend ("structural equality on … is not implemented"); the typechecker should refuse it with a position (Vega's `Work`, 11/02).
 
 ## Functional / imperative blend
 
