@@ -256,6 +256,12 @@ func (tc *TypeChecker) inferLambdaReturnType(funcName string, lambda *ast.Lambda
 
 	inferred, ok := tc.typeTable.Get(value)
 	if !ok || inferred == nil {
+		// Every branch empty: nothing to infer from, and nothing there to be a value.
+		if branchesAreEmpty(value) {
+			lambda.ReturnType.Type = types.VoidType{}
+			lambda.ReturnTypeInferred = true
+			return
+		}
 		// An untypable parameter was reported, and the body's type is lost with it: the
 		// return type is that error's consequence, not a second one.
 		for i := range lambda.Parameters {
@@ -299,6 +305,29 @@ func defaultUntyped(t types.Type) types.Type {
 		return types.PrimitiveType{Name: types.Float64}
 	}
 	return t
+}
+
+// branchesAreEmpty reports whether e is an `if` or `match` (a trailing `if let` being one)
+// whose every path runs through a block holding nothing.
+func branchesAreEmpty(e ast.Expression) bool {
+	switch v := e.(type) {
+	case *ast.BlockExpr:
+		if len(v.Statements) == 0 {
+			return true
+		}
+		last, ok := blockValueExpr(v)
+		return ok && branchesAreEmpty(last)
+	case *ast.IfExpr:
+		return v.Else != nil && branchesAreEmpty(v.Then) && branchesAreEmpty(v.Else)
+	case *ast.MatchExpr:
+		for i := range v.MatchArms {
+			if !branchesAreEmpty(v.MatchArms[i].Body) {
+				return false
+			}
+		}
+		return len(v.MatchArms) > 0
+	}
+	return false
 }
 
 // blockValueExpr returns the expression a block evaluates to — its final statement, when
@@ -443,8 +472,10 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 		stmts := block.Statements
 		for i, stmt := range stmts {
 			// The tail may be an `if let … else …` standing for its value (block_tail.go);
-			// rewritten here, where the statements before it have been checked.
-			if i == len(stmts)-1 && declaredReturn != nil && !isVoidType(declaredReturn) {
+			// rewritten here, where the statements before it have been checked. With no
+			// return type written too: inference reads it as it reads an `if` (until 11/02
+			// it was void, and its branches' value dropped in silence).
+			if i == len(stmts)-1 && !isVoidType(declaredReturn) {
 				if tail := tc.valueTail(block); tail != nil {
 					stmt = tail
 				}

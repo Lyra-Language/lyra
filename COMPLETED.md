@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 11/02/26 — A trailing `if let … else …` is an unannotated function's value
+`let f = (m: Maybe<i64>) => { if let Some(v) = m { v + 1 } else { 0 } }` inferred `void`, while
+the same function spelled with `if` or `match` inferred `i64`, so `let x: i64 = f(…)` read
+"cannot assign void". The silent half was worse: `{ 1 } else { "s" }` compiled, its value
+dropped, where `if` and `match` refuse it. `valueTail` already made the tail
+a value; `checkBlockReturn` asked it only when a return type was written.
+- **The entry's worry was callbacks, and they are not at risk.** Passed to `(i64) -> void`, a
+  lambda's return type is filled in from that context before its body is walked, so it never
+  reaches inference, and an `if let` there is still a statement. A generic `(i64) -> r` does
+  ask the lambda, and learns `r = i64` from its branches, or `void` from two void calls. What is left is a function with neither annotation nor context, and there the choice is `if`'s.
+- **So branches that disagree are refused** rather than falling back to `void`. Falling back
+  would have kept every old program compiling, and a value would still vanish whenever one branch
+  happened to end in a call of the wrong type. Measured first: `lyrac check` over all 403 `.lyra`
+  files in lyra, Vega, Termina and Sheliak changed no diagnostic. **A cost, the same as `if`'s:**
+  an arm ending in a one-armed `if` is now "`if` used as a value must have an `else` branch"
+  in an unannotated function; `-> void` says what was meant.
+- **The refusal says `if let`** (`MatchExpr.IfLet`, beside `OptionalChain`): it read "match
+  arms have incompatible types" to someone who had written no match, with a declared return as
+  well.
+- **Branches all empty are void, for all three spellings** (`branchesAreEmpty`). `if let … { }
+  else { }` had been void as a statement and would have regressed to what `if c { } else { }`
+  and an empty `match` always answered: "cannot infer the return type — annotate it (needed when
+  a function calls itself…)". Nothing there called itself, and nothing there was a value.
+
 ### 11/01/26 — A void value is the empty struct: `Node<void>` compiles
 `ui`'s `Pressable(on_click) => [on_click]` at `e = void` binds a void value and holds it in an
 array, and the backend could do neither, so `Node<NoEvent>` stood in for a tree raising nothing.

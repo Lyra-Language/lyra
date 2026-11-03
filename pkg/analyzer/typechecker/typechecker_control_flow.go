@@ -657,9 +657,13 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr, requireType bool) typ
 		}
 		next, ok := branchCommonType(commonType, armType)
 		if !ok {
+			what := "match arms"
+			if expr.IfLet {
+				what = "`if let` branches"
+			}
 			tc.addError(expr.GetLocation(), SeverityError,
-				"match arms have incompatible types: %s vs %s",
-				promoteToDefault(commonType), promoteToDefault(armType))
+				"%s have incompatible types: %s vs %s",
+				what, promoteToDefault(commonType), promoteToDefault(armType))
 			return nil
 		}
 		commonType = next

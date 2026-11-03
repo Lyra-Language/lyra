@@ -21,6 +21,9 @@ type MatchExpr struct {
 	// (collector, postfix_expr.go), so a scrutinee that is not a Maybe is reported as a
 	// misused `?.` (lyra-E083) rather than as a pattern that cannot match.
 	OptionalChain bool
+	// IfLet marks the match a trailing `if let … else …` stands for in value position
+	// (typechecker.valueTail), so arms that disagree are reported as the branches written.
+	IfLet bool
 }
 
 type MatchArm struct {

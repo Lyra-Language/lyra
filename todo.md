@@ -1363,9 +1363,9 @@ target, 10/11). In order:
   the payloads (`settleOpenArguments`).
 - **[DONE 09/28] `if let … else …` is a value where a block's value is used**, as the
   `match` it means; any other statement tail there is refused by the typechecker.
-- **[OPEN] An unannotated function ending in `if let … else …` infers `void`.** Only a
-  declared return makes the tail a value, so a callback's statement-shaped `if let` keeps
-  its meaning; decide whether inference should read it as a value, as it reads `if`.
+- **[DONE 11/02] An unannotated function ending in `if let … else …` is its value**, as an
+  `if` is: branches that disagree are refused, where a `void` context is not asking
+  (COMPLETED.md, 11/02).
 - **[DONE 09/28] Bound-call effects group impls by trait identity**, not name: no false
   E007 from another module's same-named trait, and an impl written through an alias counts.
 - **[OPEN] A partial ordering for floats.** A second `PartialOrd`-style type vs a widened

@@ -5,8 +5,8 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
-// The last statement of a block whose value is used — a function body with a return
-// type, the block of a value-position `if` branch or `let` initializer — and what it
+// The last statement of a block whose value is used — a function body not declared
+// `void`, the block of a value-position `if` branch or `let` initializer — and what it
 // means when that statement is not an expression. Both walks that treat a tail as a
 // value ask here: checkBlock (inferBlockType) and its twin checkBlockReturn.
 //
@@ -51,6 +51,7 @@ func (tc *TypeChecker) valueTail(block *ast.BlockExpr) *ast.ExpressionStmt {
 		match := &ast.MatchExpr{
 			ExprBase:  ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 			Scrutinee: d.Value,
+			IfLet:     true,
 			MatchArms: []ast.MatchArm{
 				{Pattern: d.Pattern, Body: s.Then},
 				{
