@@ -538,11 +538,20 @@ let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool, breaks: []bool,
       // and then at 6 when the file was formatted again, the second pass reading its own
       // break as the source-written kind. Found by the idempotence check over the repo,
       // which is the check that exists for exactly this.
+      //
+      // The body after a `=>` the planner broke is that branch's other case, one deeper than
+      // the line it left, which a head that is itself a continuation tells apart.
       out.push(10)
       line += 1
       previous_line_level = line_level
       previous_line_last_kind = last_kind
-      line_level = if scopes.len() == 0 { 1 } else { scopes[scopes.len() - 1].level + 1 }
+      line_level = if introduces_body(previous_line_last_kind) {
+        previous_line_level + 1
+      } else if scopes.len() == 0 {
+        1
+      } else {
+        scopes[scopes.len() - 1].level + 1
+      }
       starts_line = true
       push_indent(line_level, out)
     } else if rule && plain && breaks[i] {
@@ -785,6 +794,12 @@ let break_chain = (bytes: []u8, leaves: []Leaf, inside: []i64, in_interp: []bool
 ///
 /// **Never before a `{`.** `=> {` opens a block whose contents already take lines of their
 /// own, so breaking there buys nothing and leaves a brace alone on a line.
+///
+/// **Never inside a brace opened on the same line**, where the `=>` is not what began the
+/// line: `App { view: (f: Form) -> Node =>` / `view(f), update: update }` splits one field
+/// from the fields after it, and `match x { Some(y) =>` / `y, None => 0 }` one arm from the
+/// next. That brace's list is what to explode, and each element then has a line of its own
+/// to break its `=>` on.
 let break_arrow = (
   bytes: []u8,
   leaves: []Leaf,
@@ -813,6 +828,7 @@ let break_arrow = (
     // at the top level or directly inside a brace is a declaration's or a match arm's,
     // and those are the two this repo writes with the body on the next line.
     if inside[i] >= 0 && leaves[inside[i]].kind != "{" { continue }
+    if inside[i] >= from { continue }
     if i + 1 > to || leaves[i + 1].kind == "{" { continue }
     if continued[i + 1] { continue }
     if !all_whitespace(bytes, leaves[i].end, leaves[i + 1].start) { continue }

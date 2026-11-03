@@ -9,6 +9,31 @@ Newest first.
 
 ## Dated log
 
+### 11/02/26 — lyrafmt formats a broken `=>` the same the second time
+
+`lyrafmt -w` followed by `--check` could fail: a long `App { view: (f: Form) -> Node<Ev> =>
+view(theme, f), update: update, … }` came out with the lambda's body at one indent and went
+to another on the next run.
+
+- **The cause was two answers to one question.** A break the planner asked for took its level
+  from the enclosing delimiter (its contents' level, plus one). The same break read from the
+  source on the next run is a body after a line-ending `=>`, one deeper than the line above.
+  They agree only when that line sits at the delimiter's own level. They differ for a head
+  that is itself a continuation (`let f =` / `pure (a) =>`), and for a head sharing its line
+  with the brace it sits in. The planned branch now asks what the written one asks.
+- **Agreeing was not enough for the second shape.** `break_arrow` took any `=>` directly inside
+  a brace for a declaration's or an arm's, but a struct field's lambda is there too, and so is
+  the first arm of a `match` on one line. Stable, it would still read `App { view: … =>` /
+  `view(f), update: update }`, one field split from the rest. A `=>` whose brace opens on its
+  line is now passed over, the brace's list explodes, and each element can break its own `=>`.
+  A field already on a line of its own still breaks after its `=>`.
+- **Checked by formatting every file twice, at narrowed budgets.** The repos are already
+  formatted at 90, so a sweep at 90 alone exercises almost no breaks. Building the formatter
+  with `WIDTH` at 90, 60 and 40 over 395 files of `lyra`, Vega, Termina and Sheliak found 1, 9
+  and 6 files unstable, one of them in Vega at 90; the fix leaves none. One file was not
+  checked, Termina's `settings.lyra`, which does not parse today. At 90 the old and new
+  formatters differ on one file, that same one in Vega, and on nothing in `lyra`.
+
 ### 11/02/26 — A value chosen from what is held is a view (`lyra-W022`)
 `match if c { a } else { b } { Some(x) => set_cursor(x) }` warned that `x` was unreleased, though
 both are views of bindings released later: a diagnostic recommending a double free, the harm the

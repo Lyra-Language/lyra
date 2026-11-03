@@ -912,11 +912,13 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/01] `Node<void>` compiles**: a void value is the empty struct everywhere but a
   function's result, so one can be bound, passed and held in an array. `NoEvent` is gone
   (COMPLETED.md, 11/01).
-- **[OPEN] lyrafmt is not idempotent on a long struct literal holding a lambda**: `App { view:
-  (f: Form) -> Node<Ev> => view(theme, f), update: update, background: … }` past 90 columns is
-  re-indented differently on a second `-w`, so `--check` fails right after a format. A match
-  arm `Docked(spec) =>` over one such literal (`Docked(Spec { tree: …, on_change: (t: i64) ->
-  i64 => f(…) })`) does it too: its lambda's body goes in 8 columns, then 6 (10/27).
+- **[DONE 11/02] lyrafmt is idempotent on a broken `=>`**: a planned break now indents as a
+  written one does, and a `=>` sharing its line with its brace explodes the brace instead
+  (COMPLETED.md, 11/02).
+- **[OPEN] lyrafmt leaves a long line whose last token is a comma**: that comma belongs to an
+  exploded list, `widest_list` picks that list and has nothing to add, so `foo(a, b),` never
+  breaks its own arguments. Skipping a line's last comma fixes it and reformats 37 of lyra's
+  234 formatted files.
 - **[OPEN] `ui.sdl3`'s platform half is untested.** Nothing headless sends it input: bind
   `SDL_PushEvent` and script events, as `std.game`'s `--hold` scripts a pad.
 - **[OPEN] A rounded clip is square on SDL's renderer** (`PushClip`'s radii are ignored):

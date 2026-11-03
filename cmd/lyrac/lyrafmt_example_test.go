@@ -518,6 +518,74 @@ func TestExample_LyrafmtBreaksAfterArrow(t *testing.T) {
 	}
 }
 
+// **A broken `=>` formats the same the second time** (11/02). Its body took a level from the
+// enclosing delimiter when the planner broke it and from the line above when the next run
+// read that break from the source, and the two differ wherever the head is not at the
+// delimiter's own level: a head that continues a line, or one sharing its line with the
+// brace it sits in. Sharing is refused now, since it split one field or arm from the next.
+// An empty want asks only that the second run change nothing.
+func TestExample_LyrafmtBrokenArrowIsIdempotent(t *testing.T) {
+	t.Parallel()
+	bin := buildLyrafmt(t)
+	cases := []struct{ name, src, want string }{
+		{
+			"a struct literal holding a lambda explodes rather than splitting its first field",
+			"let main = () -> u8 => {\n  App { view: (f: Form) -> Node<Ev> => view(theme, f), update: update, background: Color { r: 0, g: 0 } }.run()\n}\n",
+			"let main = () -> u8 => {\n  App {\n    view: (f: Form) -> Node<Ev> => view(theme, f),\n    update: update,\n    background: Color { r: 0, g: 0 }\n  }.run()\n}\n",
+		},
+		{
+			"a match on one line explodes rather than splitting its first arm",
+			"let main = () -> u8 => {\n  check(\"a name\", match found { Some(rect) => rect.width == wanted && rect.x == 0 && rect.y == 0 && rect.z == 0, None => false })\n}\n",
+			"",
+		},
+		{
+			"an arm's body holding such a literal",
+			"let pick = (m: Mode) -> Mode => match m {\n  other => other,\n  Docked(spec) =>\n    Docked(Spec { tree: make_tree(spec), on_change: (t: i64) -> i64 => f(t, some_argument_x) })\n}\n",
+			"let pick = (m: Mode) -> Mode => match m {\n  other => other,\n  Docked(spec) =>\n    Docked(Spec {\n      tree: make_tree(spec),\n      on_change: (t: i64) -> i64 => f(t, some_argument_x)\n    })\n}\n",
+		},
+		{
+			"a field on a line of its own still breaks after its arrow",
+			"let app = App {\n  view: (form: Form, state: State) -> Node<Ev> => view_the_whole_form(theme, form, state, more),\n  update: update,\n}\n",
+			"let app = App {\n  view: (form: Form, state: State) -> Node<Ev> =>\n    view_the_whole_form(theme, form, state, more),\n  update: update,\n}\n",
+		},
+		{
+			"a head that continues its line puts the body one deeper",
+			"let f =\n  pure (a: i64) -> i64 => a_rather_long_function_name(a, b) + another_rather_long_function_name(a, b)\n",
+			"let f =\n  pure (a: i64) -> i64 =>\n    a_rather_long_function_name(a, b) + another_rather_long_function_name(a, b)\n",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			widest := 0
+			for _, line := range strings.Split(c.src, "\n") {
+				widest = max(widest, utf8.RuneCountInString(line))
+			}
+			if widest <= 90 {
+				t.Fatalf("the widest input line is %d characters, so nothing would break it", widest)
+			}
+			dir := t.TempDir()
+			format := func(name, src string) string {
+				path := filepath.Join(dir, name)
+				if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				got, err := command(t, bin, path).Output()
+				if err != nil {
+					t.Fatalf("formatting: %v\n%s", err, src)
+				}
+				return string(got)
+			}
+			once := format("once.lyra", c.src)
+			if c.want != "" && once != c.want {
+				t.Errorf("formatted:\n%s\nwant:\n%s", once, c.want)
+			}
+			if twice := format("twice.lyra", once); twice != once {
+				t.Errorf("not idempotent. First run:\n%s\nSecond run:\n%s", once, twice)
+			}
+		})
+	}
+}
+
 // **Each attribute in a list is a line of its own** (09/27). An `attribute_list` holds every
 // attribute above a declaration, and its children were owned by the list, so the second
 // `@link` above a `module` — and the second of any two on an `extern` — was indented as a
