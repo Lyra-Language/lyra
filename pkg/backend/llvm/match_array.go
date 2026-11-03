@@ -135,6 +135,30 @@ func (l *lowerer) lowerArrayMatch(block *ir.Block, e *ast.MatchExpr, box value.V
 				return nil, nil, err
 			}
 			current = next
+		case *ast.OrPattern:
+			// `[] | [_]`: each alternative's tests fail over to the next, and any that holds
+			// reaches one body. No alternative binds (lyra-E090), so none allocates a tail
+			// and there is no frame to release.
+			body := fn.NewBlock("")
+			for _, alt := range p.Alternatives {
+				ap, ok := alt.(*ast.ArrayPattern)
+				if !ok {
+					return nil, nil, fmt.Errorf("llvm: alternative %T in an array match", alt)
+				}
+				failed := fn.NewBlock("")
+				matched, err := l.lowerArrayPatternMatch(current, failed, ap, box, length, elemAt, elemLL, arrType.ElementType, isBool, signed)
+				if err != nil {
+					return nil, nil, err
+				}
+				matched.NewBr(body)
+				current = failed
+			}
+			next := fn.NewBlock("")
+			current.NewBr(next)
+			if err := l.lowerGuardedArmBody(body, arm.Guard, arm.Body, next, lowerBody); err != nil {
+				return nil, nil, err
+			}
+			current = next
 		default:
 			return nil, nil, fmt.Errorf("llvm: match pattern %T not implemented for an array scrutinee", arm.Pattern)
 		}
@@ -200,7 +224,7 @@ func (l *lowerer) lowerArrayPatternMatch(current, next *ir.Block, p *ast.ArrayPa
 		var t value.Value
 		var err error
 		switch test.(type) {
-		case *ast.LiteralPattern, *ast.RangePattern, *ast.RegexPattern:
+		case *ast.LiteralPattern, *ast.RangePattern, *ast.RegexPattern, *ast.OrPattern:
 			t, err = l.scalarMatchTest(afterLen, elemAt(afterLen, int64(i)), test, isBool, signed)
 			if err != nil {
 				return nil, err

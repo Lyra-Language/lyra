@@ -36,11 +36,11 @@ func TestExample_TimeZoneMatchesGo(t *testing.T) {
 	probe := filepath.Join(t.TempDir(), "probe.lyra")
 	if err := os.WriteFile(probe, []byte(`module main
 import std.collections.{ parse_args }
-import std.temporal.{ load_time_zone, offset_at, abbreviation_at, is_dst_at }
+import std.temporal.{ offset_at, abbreviation_at, is_dst_at, TimeZone }
 
 let main = () -> u8 => {
   let args = parse_args([])
-  let Some(zone) = load_time_zone(args.positional[0]) else {
+  let Some(zone) = TimeZone.load(args.positional[0]) else {
     println("no such zone")
     return 1
   }
@@ -178,17 +178,17 @@ func TestExample_ZonedDateTimeMatchesGo(t *testing.T) {
 	probe := filepath.Join(t.TempDir(), "probe.lyra")
 	if err := os.WriteFile(probe, []byte(`module main
 import std.collections.{ parse_args }
-import std.temporal.{ load_time_zone, instant, to_zoned_date_time }
+import std.temporal.{ to_zoned_date_time, Instant, TimeZone }
 
 let main = () -> u8 => {
   let args = parse_args([])
-  let Some(zone) = load_time_zone(args.positional[0]) else {
+  let Some(zone) = TimeZone.load(args.positional[0]) else {
     println("no such zone")
     return 1
   }
   for i in 1..<args.positional.len() {
     let at = match args.positional[i].parse_i64() { Some(v) => v, None => 0 }
-    let Some(moment) = instant(at) else {
+    let Some(moment) = Instant.new(at) else {
       println("out of range")
       continue
     }
@@ -267,7 +267,7 @@ func offsetString(seconds int) string {
 	return out
 }
 
-// **What `Show` writes, `parse_zoned_date_time` reads back** (09/22) — the round trip the
+// **What `Show` writes, `ZonedDateTime.parse` reads back** (09/22) — the round trip the
 // other four temporal types already had and this one did not, at the type you would most
 // want to store in a file.
 //
@@ -287,7 +287,10 @@ func TestExample_ZonedDateTimeRoundTrips(t *testing.T) {
 	if err := os.WriteFile(probe, []byte(`module main
 import std.collections.{ parse_args }
 import std.temporal.{
-  load_time_zone, instant, to_zoned_date_time, parse_zoned_date_time, to_instant,
+  Instant,
+  TimeZone,
+  ZonedDateTime,
+  to_zoned_date_time, to_instant,
   epoch_second,
 }
 
@@ -295,18 +298,18 @@ import std.temporal.{
 /// came out — so a round trip that loses information shows up as a different number.
 let main = () -> u8 => {
   let args = parse_args([])
-  let Some(zone) = load_time_zone(args.positional[0]) else {
+  let Some(zone) = TimeZone.load(args.positional[0]) else {
     println("no such zone")
     return 1
   }
   for i in 1..<args.positional.len() {
     let at = match args.positional[i].parse_i64() { Some(v) => v, None => 0 }
-    let Some(moment) = instant(at) else {
+    let Some(moment) = Instant.new(at) else {
       println("out of range")
       continue
     }
     let written = "${moment.to_zoned_date_time(zone)}"
-    match parse_zoned_date_time(written) {
+    match ZonedDateTime.parse(written) {
       Some(read_back) => println("${read_back.to_instant().epoch_second()}"),
       None => println("unreadable: ${written}"),
     }
@@ -378,7 +381,7 @@ func TestExample_ParseZonedDateTimeEdges(t *testing.T) {
 	probe := filepath.Join(t.TempDir(), "probe.lyra")
 	if err := os.WriteFile(probe, []byte(`module main
 import std.io.{ read_stdin }
-import std.temporal.{ parse_zoned_date_time, parse_instant, to_instant, epoch_second }
+import std.temporal.{ to_instant, epoch_second, Instant, ZonedDateTime }
 
 /// One string per line in, its instant (or "none") out — read both ways, since a string
 /// with an offset and no zone is an instant and not a zoned date-time.
@@ -386,9 +389,9 @@ let main = () -> u8 => {
   for line in read_stdin().lines() {
     let text = line.trim()
     if text.len() == 0 { continue }
-    match parse_zoned_date_time(text) {
+    match ZonedDateTime.parse(text) {
       Some(z) => println("${z.to_instant().epoch_second()}"),
-      None => match parse_instant(text) {
+      None => match Instant.parse(text) {
         Some(i) => println("instant ${i.epoch_second()}"),
         None => println("none"),
       },

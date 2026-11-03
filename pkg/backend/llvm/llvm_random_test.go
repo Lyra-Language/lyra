@@ -24,8 +24,8 @@ func TestExec_RngSeededIsReproducible(t *testing.T) {
 	const src = `
 module main
 let main = () -> void => {
-  var a = rng_seeded(42);
-  var b = rng_seeded(42);
+  var a = Rng.seeded(42);
+  var b = Rng.seeded(42);
   var i = 0;
   while i < 5 {
     println("${a.below(1000)} ${b.below(1000)}");
@@ -48,7 +48,7 @@ let main = () -> void => {
 }
 
 // Seed 0 must not be a fixed point. xorshift maps 0 to 0, so a generator that
-// stored the seed verbatim would emit zero forever — and `rng_seeded(0)` is the
+// stored the seed verbatim would emit zero forever — and `Rng.seeded(0)` is the
 // most natural thing a caller reaching for a fixed seed would write, so this is a
 // trap rather than an edge case.
 func TestExec_RngSeedZeroIsNotAFixedPoint(t *testing.T) {
@@ -56,7 +56,7 @@ func TestExec_RngSeedZeroIsNotAFixedPoint(t *testing.T) {
 	const src = `
 module main
 let main = () -> void => {
-  var r = rng_seeded(0);
+  var r = Rng.seeded(0);
   var i = 0;
   var zeros = 0;
   while i < 20 {
@@ -79,7 +79,7 @@ func TestExec_RngBelowIsInRangeAndSpread(t *testing.T) {
 	const src = `
 module main
 let main = () -> void => {
-  var r = rng_seeded(12345);
+  var r = Rng.seeded(12345);
   var i = 0;
   while i < 2000 {
     println("${r.below(10)}");
@@ -122,7 +122,7 @@ func TestExec_RngBelowOne(t *testing.T) {
 	const src = `
 module main
 let main = () -> void => {
-  var r = rng_seeded(7);
+  var r = Rng.seeded(7);
   println("${r.below(1)} ${r.below(1)} ${r.below(1)}");
 }
 `
@@ -138,7 +138,7 @@ func TestExec_RngBelowRejectsNonPositiveBound(t *testing.T) {
 	const src = `
 module main
 let main = () -> void => {
-  var r = rng_seeded(7);
+  var r = Rng.seeded(7);
   println("${r.below(0)}");
 }
 `
@@ -155,7 +155,7 @@ func TestExec_RngBetweenIsInclusive(t *testing.T) {
 	const src = `
 module main
 let main = () -> void => {
-  var r = rng_seeded(999);
+  var r = Rng.seeded(999);
   var lo = 0;
   var hi = 0;
   var bad = 0;
@@ -191,7 +191,7 @@ func TestExec_RngBetweenSingleValue(t *testing.T) {
 	const src = `
 module main
 let main = () -> void => {
-  var r = rng_seeded(3);
+  var r = Rng.seeded(3);
   println("${r.between(5, 5)} ${r.between(5, 5)}");
 }
 `
@@ -207,7 +207,7 @@ func TestExec_RngBetweenNegativeRange(t *testing.T) {
 	const src = `
 module main
 let main = () -> void => {
-  var r = rng_seeded(2024);
+  var r = Rng.seeded(2024);
   var bad = 0;
   var i = 0;
   while i < 500 {
@@ -270,7 +270,7 @@ func TestCheck_SeededRngIsDetLegalAndAmbientIsNot(t *testing.T) {
 		const src = `
 module main
 let roll = det (seed: u64) -> i64 => {
-  var rng = rng_seeded(seed);
+  var rng = Rng.seeded(seed);
   rng.below(6)
 }
 let main = () -> void => { println("${roll(7)}") }

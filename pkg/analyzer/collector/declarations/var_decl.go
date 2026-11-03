@@ -93,6 +93,9 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 
 	if inherent != nil {
 		genericParameters = applyInherentReceiver(node, nameNode, kind, isMut, initExpr, genericParameters, inherent, ctx)
+		if lambda, ok := initExpr.(*ast.LambdaExpr); ok && lambda.AssociatedTo != nil {
+			name, _ = ast.AssociatedName(lambda.AssociatedTo, name)
+		}
 	}
 
 	// Lift the declaration's `where` bounds onto the lambda, for the same reason the

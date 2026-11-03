@@ -133,9 +133,9 @@ let main = () -> u8 => {
   u8(o.inner.s.len() * 10 + keep.inner.s.len() + xs[0].0.len())
 }`, 35},
 		{"hashmap churn", `module main
-import std.collections.{ HashMap, hashmap_new, insert, replace, remove, len }
+import std.collections.{ HashMap, insert, replace, remove, len }
 let main = () -> u8 => {
-  var m: HashMap<string, string> = hashmap_new()
+  var m: HashMap<string, string> = HashMap.new()
   for i in 0..<40 { m.insert("k" ++ "${i %% 10}", "v" ++ "${i}") }
   let _ = m.remove("k" ++ "3")
   let _ = m.replace("k" ++ "4", "again")

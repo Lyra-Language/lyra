@@ -76,7 +76,7 @@ let main = () -> u8 => {
   for s in all { total = total + shapes.area(s) + radius(s) }
   let b: shapes.Box<i64> = shapes.Wrap(4)
   let shapes.Wrap(inner) = b else { return 1 }
-  let m: collections.HashMap<string, i64> = collections.hashmap_new()
+  let m: collections.HashMap<string, i64> = collections.HashMap.new()
   let built = [5].map(shapes.Circle)
   u8(total + mine(Circle("abc")) + sum(shapes.Pt { x: 1, y: 2 }) + inner + m.len() + radius(built[0]))
 }

@@ -8,10 +8,10 @@ import flight_booker_view.{
   State,
   ONE_WAY_FLIGHT
 }
-import std.temporal.{ today }
+import std.temporal.{ PlainDate }
 
 let main = () -> u8 => {
-  let today_date = today()
+  let today_date = PlainDate.today()
   let state = State {
     flight_type: ONE_WAY_FLIGHT,
     flight_1_date_str: "${today_date}",

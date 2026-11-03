@@ -266,7 +266,7 @@ pub let open_url = (url: string) -> void =>
 /// Seed raylib's own generator, which is **not** the one `std.prelude` provides.
 ///
 /// Reach for [raylib_random] only when raylib's own sequence is what matters — sharing a
-/// seed with a raylib example, say. For everything else `rng_seeded` in the prelude is
+/// seed with a raylib example, say. For everything else `Rng.seeded` in the prelude is
 /// deterministic, `det`-legal and does not depend on a graphics library.
 pub let set_random_seed = (seed: u32) -> void => unsafe { rl_set_random_seed(seed) }
 

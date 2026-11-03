@@ -343,6 +343,10 @@ Semantics are in `LANGUAGE.md`; these are the compiler-side traps.
   before registration, since `DeclareOverload` keys on the receiver's type.
 - Refusals are `lyra-E089`; `collectStatementByKind` reaches the node only below the top
   level, and refuses it there.
+- A member with no `self` is an **associated function**: the same declaration under
+  `ast.AssociatedName` (`Dice.seeded`, which no source can spell), with
+  `LambdaExpr.AssociatedTo` holding the type. `typechecker/associated.go` resolves `Type.name`
+  from the type, never from that name: an alias or a second module may spell it differently.
 - A block's `where` (`InherentTarget.Bounds`) is merged into each member's
   `GenericParams`, never only into `LambdaExpr.GenericBounds`: the list is what
   `pushGenericBounds` puts in scope. A member with no list is given its signature's.
@@ -671,7 +675,7 @@ classification reaches call lowering. `FromTriple` (lyrac, from the platform) /
 **`pkg/docgen`** — `Collect(res, opts) []Module` + `RenderMarkdown(m)`; the model knows nothing
 of Markdown.
 - Pages group by receiver (`pageSections`, `Module.Partition`): types/traits, impls, free
-  functions, `## Methods on \`T\``, values. Group on `types.HeadName`, display `typeName`
+  functions, `## Functions on \`T\`` (associated) and `## Methods on \`T\``, values. Group on `types.HeadName`, display `typeName`
   (not the same string); borrow modifiers are not part of a group.
 - **Signatures are re-rendered from the AST in source syntax** — never sliced from source or
   via `Type.GetName()`. Member names use `ast.MethodName.Key()`. Guard:

@@ -528,9 +528,11 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   (COMPLETED.md, 10/19.)
 - **[DONE 09/29] `?.`/`?[` are safe navigation**, desugared by the collector (`lyra-E083` on
   a non-Maybe); and **nullary constructors are or-pattern alternatives**. (COMPLETED.md, 09/29.)
-- **[OPEN] Or-pattern alternatives that bind nothing but test a payload** (`Some(_) | None`),
-  and alternations below the top of a pattern (`Some(1 | 2)`, `(1 | 2, _)`, both refused
-  today). Neither needed yet.
+- **[DONE 11/03] Or-pattern alternatives that test a payload** (`Some(_) | None`), and
+  alternations at any depth (`Some(1 | 2)`, `(1 | 2, _)`). An alternative that binds stays
+  refused, now by name (`lyra-E090`). (COMPLETED.md, 11/03.)
+- **[OPEN] Or-pattern alternatives that bind** (`Some(x) | Other(x)`), under Rust's rule that
+  each binds the same names at the same types. Nothing has asked for it.
 - **[DONE 10/08] `loop { … }` and `while cond { … }`**; `for` only iterates, and the
   C-style `for init; cond; post` is gone. (COMPLETED.md, 10/08.)
 - **[DONE 10/08] `while let p = v { … }`**, erased by the collector into `loop { if let … }`.
@@ -541,8 +543,13 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   clause and the two-name form's element (COMPLETED.md, 10/29).
 - **[DONE 10/29] A private method's hint says it is private**, not "import it".
   (COMPLETED.md, 10/29.)
-- **[OPEN] Type-namespaced associated functions.** `Rng.seeded(42)` is `lyra-E035`;
-  building the feature is a separate decision (`Trait::method` half-exists).
+- **[DONE 11/03] `Type.function()` associated functions**: a member of `impl Type` with no
+  `self`, and a trait function through the type it is implemented for. (COMPLETED.md, 11/03.)
+- **[OPEN] `Self` in an `impl Type` block.** `let make = () -> Self` is refused as a mismatch
+  against `Self`, in a method as much as an associated function; it could mean the block's type.
+- **[DONE 11/03] std's collections, dates and randomness construct through their types**:
+  `HashMap.new()`, `Set.new()`, `Rng.seeded(n)`, `PlainDate.new(…)`, `Duration.days(n)`.
+  (COMPLETED.md, 11/03.)
 - **[OPEN] Operator overload on a `data` type:** with a `Sub` impl, `Empty - 1` parses as
   `Empty(-1)`. Contrived; if it bites, lint it rather than change the grammar.
 - **[IDEA] Warn on `Some - 1` with spaces on both sides**, which reads as subtraction.

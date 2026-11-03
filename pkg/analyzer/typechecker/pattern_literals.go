@@ -45,6 +45,11 @@ func (tc *TypeChecker) checkPatternLiterals(pat ast.Pattern, t types.Type) {
 	case *ast.BindingPattern:
 		tc.checkPatternLiterals(p.Pattern, t)
 
+	case *ast.OrPattern:
+		for _, alt := range p.Alternatives {
+			tc.checkPatternLiterals(alt, t)
+		}
+
 	case *ast.LiteralPattern:
 		s, isStr := p.Value.(string)
 		if !isStr {

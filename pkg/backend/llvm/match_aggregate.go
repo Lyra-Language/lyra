@@ -255,11 +255,11 @@ func (l *lowerer) aggPatternTest(block *ir.Block, val value.Value, pat ast.Patte
 		// A `data` sub-pattern's test is its tag check (`extractvalue`-the-tag ==
 		// the variant index), ANDed with a value test for each payload field that
 		// imposes one (`Some(0)`, or a nested data pattern). The payload test is
-		// computed unconditionally and ANDed after the tag check: when the tag
-		// doesn't match, the payload blob reinterpreted as this variant is
-		// meaningless, but the tag comparison has already forced the whole
-		// condition false — so reading those bits is harmless (they stay within the
-		// union's own stack blob, sized to the largest variant).
+		// computed unconditionally and ANDed after the tag check, so when the tag
+		// doesn't match, the tests run on zeroes rather than on another variant's bits
+		// reinterpreted as this one's. An integer's test would survive those bits, and a
+		// string's would not: it hands them to memcmp as a pointer (11/03; `Some("a")`
+		// against a `None`, on whatever the blob held).
 		dt, ok := l.resolveDataType(valType)
 		if !ok {
 			return nil, fmt.Errorf("llvm: data pattern on non-data value of type %s", valType)
@@ -290,6 +290,9 @@ func (l *lowerer) aggPatternTest(block *ir.Block, val value.Value, pat ast.Patte
 			payload, err := l.extractDataPayload(block, val, ctor)
 			if err != nil {
 				return nil, err
+			}
+			if cond != nil {
+				payload = block.NewSelect(cond, payload, constant.NewZeroInitializer(payload.Type()))
 			}
 			fieldTypes := ctor.FieldTypes()
 			for i, fp := range fieldPatterns {
@@ -349,7 +352,7 @@ func (l *lowerer) aggPatternBind(block *ir.Block, val value.Value, pat ast.Patte
 		}
 		return l.aggPatternBind(block, val, p.Pattern, valType)
 	case nil, *ast.WildcardPattern, *ast.LiteralPattern, *ast.RangePattern, *ast.RegexPattern, *ast.OrPattern:
-		return nil // no binding: an alternation's alternatives bind nothing (grammar)
+		return nil // no binding: an alternation's alternatives bind nothing (lyra-E090)
 	case *ast.StructPattern:
 		st, ok := l.resolveStructType(valType)
 		if !ok {
@@ -519,20 +522,28 @@ func dataMatchHasPayloadTest(e *ast.MatchExpr, dt types.DataType) bool {
 		// take the compact tag switch, which cannot express "this tag *and* this value",
 		// and the literal would then reach a path that refuses it. A binding contributes no
 		// test of its own, so what an arm tests is always what is inside the wrapper.
-		dp, ok := ast.UnwrapBinding(arm.Pattern).(*ast.DataPattern)
-		if !ok {
-			continue
+		// An alternation is its constructors: `Some(_) | None` switches, `Some(0) | None`
+		// cannot.
+		alternatives := []ast.Pattern{ast.UnwrapBinding(arm.Pattern)}
+		if or, isOr := alternatives[0].(*ast.OrPattern); isOr {
+			alternatives = or.Alternatives
 		}
-		ctor, _, ok := findConstructor(dt, dp.Name)
-		if !ok {
-			continue
-		}
-		fps, err := payloadFieldPatterns(dp, ctor)
-		if err != nil {
-			continue
-		}
-		if slices.ContainsFunc(fps, patternHasTest) {
-			return true
+		for _, alt := range alternatives {
+			dp, ok := alt.(*ast.DataPattern)
+			if !ok {
+				continue
+			}
+			ctor, _, ok := findConstructor(dt, dp.Name)
+			if !ok {
+				continue
+			}
+			fps, err := payloadFieldPatterns(dp, ctor)
+			if err != nil {
+				continue
+			}
+			if slices.ContainsFunc(fps, patternHasTest) {
+				return true
+			}
 		}
 	}
 	return false
@@ -669,10 +680,11 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, whole value.
 			cases = append(cases, ir.NewCase(constant.NewInt(tagTy, int64(idx)), armBlock))
 			switched[idx] = true
 		case *ast.OrPattern:
-			// `Pencil | Eraser`: one case per alternative, all to this arm. Alternatives
-			// are nullary constructors (grammar), so there is no payload to bind; one an
-			// earlier arm already claimed is skipped, as a repeated constructor arm is,
-			// since a `switch` may not name a tag twice.
+			// `Pencil | Eraser`, `Some(_) | None`: one case per alternative, all to this arm.
+			// No alternative binds (lyra-E090) and none tests a payload (those took the
+			// ladder above), so a tag is all there is; one an earlier arm already claimed is
+			// skipped, as a repeated constructor arm is, since a `switch` may not name a tag
+			// twice.
 			for _, alt := range p.Alternatives {
 				dp, ok := alt.(*ast.DataPattern)
 				if !ok {

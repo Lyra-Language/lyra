@@ -2,7 +2,7 @@
 
 <script target="ui">
   import ui.app.{ Command, Subscription }
-  import std.temporal.{ PlainDate, parse_plain_date }
+  import std.temporal.{ PlainDate }
 
   pub data Event =
   FlightTypeSelected(i64)
@@ -33,7 +33,7 @@
       flight_2_disabled: flight_type == ONE_WAY_FLIGHT
     }, []),
     Flight1Edited(flight_1_date_str) => {
-      let flight_1_date = parse_plain_date(flight_1_date_str)
+      let flight_1_date = PlainDate.parse(flight_1_date_str)
       match flight_1_date {
         Some(date) => {
           let book_btn_disabled = if s.flight_type == RETURN_FLIGHT && s.flight_2_date <= date {
@@ -55,7 +55,7 @@
       }
     },
     Flight2Edited(flight_2_date_str) => {
-      let flight_2_date = parse_plain_date(flight_2_date_str)
+      let flight_2_date = PlainDate.parse(flight_2_date_str)
       match flight_2_date {
         Some(date) => {
           let book_btn_disabled = if s.flight_type == RETURN_FLIGHT && date <= s.flight_1_date {

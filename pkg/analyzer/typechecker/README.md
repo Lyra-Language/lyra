@@ -18,6 +18,7 @@ implementation.
 | `typechecker_traits.go` | impl conformance, `checkTraitImplMethodBody` |
 | `typechecker_trait_default.go` | trait default methods |
 | `typechecker_ufcs.go` / `typechecker_overload.go` | UFCS, receiver-keyed overloading |
+| `associated.go` | `Type.name(…)`: associated functions and trait functions through a type |
 | `typechecker_on_demand.go` | on-demand return inference for destructures |
 | `instantiate.go` | generic call instantiation |
 | `contextual_lambda.go` | lambda parameter/return elaboration |
@@ -401,6 +402,15 @@ A destructure (`let (w, h) = viewport()`) is the one position that can't defer a
   impl/trait context are cleared and restored — `withParamScope` copies enclosing params, which
   would otherwise leak the caller's names in (false accept).
 - Only destructures trigger it; no eager inference elsewhere.
+
+## Associated functions (`associated.go`)
+
+`Type.name(…)` is rewritten to the direct call it is, as a method call is, and `Trait::name(…)`
+for a trait function the type implements. Resolution starts from the type (`typeIdentity`: its
+head with aliases expanded, and the declaration that names), so `alias D = Dice` and `a.Dice`
+beside `b.Dice` mean what they should. A `Type.name` value has no parent to rewrite through, so
+`TypeTable.AssociatedFunction` tells the backend. The rewrite removes the only mention of the type
+that lyra-W004 could see, hence `noteTypeNameUse`.
 
 ## UFCS (`typechecker_ufcs.go`)
 

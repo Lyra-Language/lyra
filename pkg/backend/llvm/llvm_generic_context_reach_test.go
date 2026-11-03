@@ -15,7 +15,7 @@ func TestExec_AStatedTypeReachesTheValue(t *testing.T) {
 	t.Parallel()
 	out := buildAndRunWithPrelude(t, `
 module main
-import std.collections.{ HashMap, hashmap_new }
+import std.collections.{ HashMap }
 struct Cache { seen: HashMap<string, i64> }
 struct Tagged<e> { seen: HashMap<string, e>, tag: e }
 data K<e> = L | Ev(e)
@@ -31,10 +31,10 @@ let boxed = () -> Node<Click> => Node { ev: Some(Clicked) }
 let sized<e> = () -> Node<e> => Node { ev: None }
 let text<e> = (s: string) -> Node<e> => Node { ev: None }
 let main = () -> void => {
-  var c = Cache { seen: hashmap_new() }
-  c.seen = hashmap_new()
+  var c = Cache { seen: HashMap.new() }
+  c.seen = HashMap.new()
   c.seen.insert("a", 1)
-  var t = Tagged { seen: hashmap_new(), tag: 7 }
+  var t = Tagged { seen: HashMap.new(), tag: 7 }
   t.seen.insert("b", t.tag)
   let n: Nd<string> = mk()
   let a: Host<i64> = Host { n: 1 }

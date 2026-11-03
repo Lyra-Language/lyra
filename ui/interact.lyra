@@ -167,7 +167,7 @@ import ui.layout.{
 import ui.style.{ OverflowClip, Computed }
 import ui.motion.{ Motion, advance, shown_at, in_motion, moves_sizes }
 import ui.style
-import std.collections.{ HashMap, hashmap_new }
+import std.collections.{ HashMap }
 
 /// An edit of the focused text field a program asks for ([Ui.edit_focused], the host's
 /// `Command.EditField`): Edit's items, whose keys the Mac's own bar holds — AppKit gives ⌘A,
@@ -258,7 +258,7 @@ pub struct Found<e> {
 }
 
 /// No focus, nothing hovered or held, no element's state.
-pub let ui_new = pure () -> Ui => Ui { state: interaction_new(), motions: hashmap_new() }
+pub let ui_new = pure () -> Ui => Ui { state: interaction_new(), motions: HashMap.new() }
 
 /// How far a scroll moves for a line of a wheel, in units.
 pub const SCROLL_LINE: f32 = 40.0
@@ -298,7 +298,7 @@ impl Ui {
     self.state.shown = self.sizes_shown()
     self.tip_rested()
     var laid = layout_cached(view, c, fonts, self.state, cache)
-    var present: HashMap<string, bool> = hashmap_new()
+    var present: HashMap<string, bool> = HashMap.new()
     note_ids(laid, present)
     // A tooltip whose element is gone goes with it.
     if !present.contains_key(self.tip_wanted) { self.tip_wanted = "" }
@@ -464,7 +464,7 @@ impl Ui {
 
   /// What each element moving a size shows at `now`, for the layout.
   let sizes_shown = pure (self: ref) -> HashMap<string, Computed> => {
-    var out: HashMap<string, Computed> = hashmap_new()
+    var out: HashMap<string, Computed> = HashMap.new()
     for (id, motion) in self.motions.entries() {
       if moves_sizes(motion) { out.insert(id, shown_at(motion, self.now)) }
     }
@@ -878,7 +878,7 @@ impl Ui {
   /// with the focus inside gives it back to its anchor's.
   let popups_followed<e> = (self: mut, laid: Laid<e>) -> void => {
     let now = open_popups(laid)
-    var returns: HashMap<string, string> = hashmap_new()
+    var returns: HashMap<string, string> = HashMap.new()
     for p in now {
       if self.popups.any((q) => q.id == p.id) {
         for q in self.popups {

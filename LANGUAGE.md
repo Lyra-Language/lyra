@@ -44,7 +44,7 @@ The reference for Lyra's semantics as implemented. Compiler internals live in `l
 
 **A struct may have no fields** (10/29): `struct Marker {}`, built as `Marker {}` — a marker type implementing a trait, which had to be `data Marker = Marker` before. It takes no space: an array of them holds nothing but its length, and every two are equal.
 
-`P { base | f: v }` is a copy of `base` with the listed fields replaced; `{ base | f: v }` is the anonymous form. **The base is any postfix expression** — a name, a call (`Duration { duration() | days: 1 }`), a field, an index, or a parenthesized expression for anything else; an operator needs those parentheses, since `|` is also bitwise or and only a postfix base keeps the two readings apart. The base must have the literal's type, each update must name one of its fields (no field is added), and a kept managed field is a copy with its own reference. A literal gives each field one value, and a struct pattern names each field once (`lyra-E075`). There is no `...base` spread in a struct literal: `...` is an array literal's element (`lyra-E068`).
+`P { base | f: v }` is a copy of `base` with the listed fields replaced; `{ base | f: v }` is the anonymous form. **The base is any postfix expression** — a name, a call (`Duration { Duration.zero() | days: 1 }`), a field, an index, or a parenthesized expression for anything else; an operator needs those parentheses, since `|` is also bitwise or and only a postfix base keeps the two readings apart. The base must have the literal's type, each update must name one of its fields (no field is added), and a kept managed field is a copy with its own reference. A literal gives each field one value, and a struct pattern names each field once (`lyra-E075`). There is no `...base` spread in a struct literal: `...` is an array literal's element (`lyra-E068`).
 
 **A default — a field's (`zone: Zone = THIRDS`) or a parameter's (`by: i64 = SCALE`) — is read
 where it is declared**: it may name its module's constants and private values, which the
@@ -84,17 +84,24 @@ A literal that cannot hold its value is a compile error **in every position, flo
   backslash, `"\n"` the newline, and `"\x41"` is `"A"` — so an arm after an equal one spelled
   differently is unreachable (`lyra-W021`). An escape a literal refuses is refused here too.
 - **A pattern may name alternatives with `|`** — `1 | 2 | 3`, `"get" | "post"`,
-  `'a'..<='f' | 'A'..<='F'` — matching when any of them does, and counting as all of them
-  for exhaustiveness (`true | false` covers `bool`). **Literals, ranges and nullary
-  constructors** (`Pencil | Eraser`, `LOUD | QUIET`, since 09/29): an alternative that binds
-  raises a rule every language with or-patterns states explicitly (Rust requires every
-  alternative to bind the same names at the same types) and nothing has needed it, so
-  `Some(x) | None` is a syntax error rather than an undecided meaning — and so, for now, is
-  `Some(_) | None`, whose payload binds nothing. An alternation covers what any alternative
-  covers for `lyra-W021`, so `Pencil | Eraser => …, Eraser => …` warns. Top level only:
-  `Some(1 | 2)` and `(1 | 2, _)` are refused. `|` is also the bitwise operator; position
-  tells them apart, so `match a | b { 3 | 7 => … }` is a bitor scrutinee matched against an
-  alternation.
+  `'a'..<='f' | 'A'..<='F'`, `Pencil | Eraser`, `Some(_) | None`, `(0, _) | (_, 0)`,
+  `{ x: 0 } | { y: 0 }`, `[] | [_]` — matching when any of them does, and counting as all of
+  them for exhaustiveness (`true | false` covers `bool`). **At any depth**: `Some(1 | 2)`,
+  `(1 | 2, _)`, `{ x: 1 | 2 }`, `[1 | 2, ...rest]`; and in every position a pattern may test,
+  `if let Some(0) | None = m` among them.
+  - **An alternative tests; it does not bind** (`lyra-E090`). `Some(x) | None` raises a rule
+    every language with or-patterns states explicitly (Rust requires every alternative to bind
+    the same names at the same types) and nothing has needed it. A name on the whole alternation
+    is fine, since it binds whichever matched: `w @ Some(_) | None`. A bare name or `_` is no
+    alternative, as `x | 1` is the bitwise expression's spelling and `_ | 1` is `_`.
+  - **A payload written without parentheses ends at the `|`**: `Some 1 | None` is two
+    alternatives, and `Some(1 | 2)` is how a payload holds an alternation.
+  - An alternation covers what any alternative covers for `lyra-W021`, so `Pencil | Eraser =>
+    …, Eraser => …` warns. A plain `let` refuses one (`lyra-E077`), even one that covers its
+    type, since it binds nothing.
+  - `|` is also the bitwise operator; position tells them apart, so `match a | b { 3 | 7 => … }`
+    is a bitor scrutinee matched against an alternation, and `(LOW | HIGH)` is an expression
+    until a `=>` follows it.
 
 ### Nominal types (`type`) and aliases (`alias`)
 
@@ -252,7 +259,7 @@ A `let`/`var`, a `for` variable or a pattern binding may take a name already in 
 
 ### Compound assignment
 
-`+= -= *= /= %= &= |= ~= <<= >>=` target any place `=` accepts (`counts[i].n += 1`) under the same writability rules. **The right side binds every arithmetic and bitwise operator**: `r += x & 0x60` is `r += (x & 0x60)` (before 09/28 the bitwise ones closed the assignment first). **Not a desugaring**: the address is computed once, so `xs[idx()] += 5` calls `idx` once. An overloaded operator is reached through it.
+`+= -= *= /= %= &= |= ~= <<= >>=` target any place `=` accepts (`counts[i].n += 1`) under the same writability rules. **The right side binds every arithmetic and bitwise operator**: `r += x & 0x60` is `r += (x & 0x60)` (before 09/28 the bitwise ones closed the assignment first). **Not a desugaring**: the path's operands run once, so `xs[idx()] += 5` calls `idx` once. The place is read before the right side runs, and an index out of range traps there, and it is written after: where `f` reassigns `g`, `g[1] += f()` adds to the old element and stores into the new array. An overloaded operator is reached through it.
 
 ### Tuple assignment
 
@@ -412,7 +419,7 @@ UTF-8, immutable `{ptr, byte_len, rune_count}`. The language is **rune-indexed**
 
 - Key implements `Hash` (`hash: (Self) -> u64`; provided for ints, `rune`, `bool`, `string`). Invariant: `==`-equal values hash alike. Combine fields with `hash_combine`; the map finalizes every hash. No `Eq` bound (structural `==` works on type variables).
 - `insert` returns nothing; `replace` returns the displaced value; `remove` returns the value (`let _ = m.remove(k)`) — avoids `lyra-W006` on discarded `Maybe`.
-- Constructors `hashmap_new`, `hashmap_with_capacity` take type arguments from annotation or turbofish.
+- Constructors `HashMap.new`, `HashMap.with_capacity` take type arguments from annotation or turbofish.
 
 ### JSON (`std.json`)
 
@@ -452,9 +459,9 @@ by slice against `examples/calendar`; what exists is what that program has neede
   Lyra has no field privacy**: a three-field struct could be forged as 30 February by any
   module, and a day count has no invalid values. `year()`/`month()`/`day()` are O(1)
   computed methods (Howard Hinnant's civil algorithms).
-- **Constructors are bare functions** (no associated functions, `lyra-E035`):
-  `plain_date(y, m, d) -> Maybe<PlainDate>` **rejects** a date that does not exist, like
-  Temporal's constructor; `parse_plain_date(s)` reads `YYYY-MM-DD` and `±YYYYYY-MM-DD`
+- **Constructors are associated functions** (see "Calling on a type name"):
+  `PlainDate.new(y, m, d) -> Maybe<PlainDate>` **rejects** a date that does not exist, like
+  Temporal's constructor; `PlainDate.parse(s)` reads `YYYY-MM-DD` and `±YYYYYY-MM-DD`
   exactly (not `2026-9-18`, not `-000000`), and `show` writes the same forms.
 - Properties: `day_of_week()` (**1 = Monday**, ISO), `day_of_year()`, `week_of_year()` (ISO:
   a week belongs to the year of its Thursday), `days_in_month()`, `days_in_year()`,
@@ -464,30 +471,30 @@ by slice against `examples/calendar`; what exists is what that program has neede
   then weeks and days; clock fields count in whole days. `with_day(n)` clamps.
   `until(other)`/`since(other)` answer days. `Ord`, so `<` and `sorted()` work.
 - **`Duration`** — Temporal's ten fields, not a count of nanoseconds, since a month has no
-  fixed length. Builders `years`/`months`/`weeks`/`days(n)`, `duration()` for the zero,
-  `negated()`. No field privacy, so a mixed-sign duration can be written; `add` applies it
+  fixed length. Builders `Duration.years`/`months`/`weeks`/`days(n)`, `Duration.zero()` for the
+  zero, `negated()`. No field privacy, so a mixed-sign duration can be written; `add` applies it
   in Temporal's field order.
-- **`today()`** — `Now.plainDateISO()`: the system clock plus the local zone's current UTC
-  offset, read from `localtime_r`'s `tm_gmtoff`. An `extern` rather than a builtin, because
+- **`PlainDate.today()`** — `Now.plainDateISO()`: the system clock plus the local zone's current
+  UTC offset, read from `localtime_r`'s `tm_gmtoff`. An `extern` rather than a builtin, because
   `struct tm` has **one layout on both platforms** (56 bytes, `tm_gmtoff` at 40 — measured),
   unlike `struct dirent`. It reads the clock, so it is neither `pure` nor `det`; take a
   `PlainDate` parameter and call it once at the edge.
 - **`PlainTime`** — `type PlainTime = i64`, nanoseconds since midnight, for `PlainDate`'s
-  reason. `plain_time(h, m = 0, s = 0) -> Maybe` rejects `24:00` and `:60`;
-  `parse_plain_time` reads `HH:MM`, `HH:MM:SS` and a one-to-nine-digit fraction; `show`
+  reason. `PlainTime.new(h, m = 0, s = 0) -> Maybe` rejects `24:00` and `:60`;
+  `PlainTime.parse` reads `HH:MM`, `HH:MM:SS` and a one-to-nine-digit fraction; `show`
   writes seconds always and a fraction only when there is one. `hour()`/`minute()`/
   `second()`, `Ord`. A day is exactly 24 hours: a wall-clock time has no zone.
 - **`PlainDateTime`** — a **struct** `{ date, time }`, safely: any existing date with any
   existing time exists, so the invariant lives in the fields' types. `d.to_plain_date_time(t)`,
-  `parse_plain_date_time("…T…")` (a `T`, not a space), `add`/`subtract` (calendar units
+  `PlainDateTime.parse("…T…")` (a `T`, not a space), `add`/`subtract` (calendar units
   first, then clock units **carrying whole days**: 23:30 + 1h is the next day),
   `until`/`since` balanced **days down to nanoseconds**, every field sharing the whole's sign.
-- `Duration` clock builders `hours`/`minutes`/`seconds(n)`, and **`parse_duration`** for ISO
+- `Duration` clock builders `Duration.hours`/`minutes`/`seconds(n)`, and **`Duration.parse`** for ISO
   8601 (`PT30M`, `-P1DT2H3.5S`) — fields **as written, not balanced** (`PT90M` stays ninety
   minutes); refuses units out of order or repeated, an empty `P` or `T`, and a fraction on
   anything but seconds.
-- **`now_plain_date_time()`** — `Now.plainDateTimeISO()`, the clock plus the local offset;
-  `today()` is its date. A wall-clock reading, so it can go backwards across a DST change.
+- **`PlainDateTime.now()`** — `Now.plainDateTimeISO()`, the clock plus the local offset;
+  `PlainDate.today()` is its date. A wall-clock reading, so it can go backwards across a DST change.
 - **`PlainTime` arithmetic**: `add`/`subtract` **wrap at midnight** and ignore the calendar
   units, days included (a time has no date to carry into); `until`/`since` never wrap and
   balance **hours down to nanoseconds** (23:00 until 01:00 is `-22h`).
@@ -498,9 +505,9 @@ by slice against `examples/calendar`; what exists is what that program has neede
   `compare_durations(a, b) -> Maybe<Ordering>` — a function, not `Ord`, since the order is
   partial; field-identical durations are `Equal` even with calendar units.
   `total(unit: TimeUnit) -> Maybe<f64>`, `TimeUnit` being `Days` down to `Nanoseconds`.
-- **`TimeZone`** — a zone's rules, read from the system's IANA database (`/usr/share/zoneinfo`, RFC 8536), not from libc: `load_time_zone(name)`, `offset_at`, `abbreviation_at`, `is_dst_at`, `next_transition`, all in epoch seconds. The database is `TZDIR` when set and non-empty, else `/usr/share/zoneinfo` — which is how a test pins the data it reads, since a country changing its rules moves the system copy under every test that reads it. The **64-bit block** is the one read, so a transition past 2038 survives, and **the POSIX footer** (`EST5EDT,M3.2.0,M11.1.0`) governs every instant from the last transition on — a table stops around 2037 and the rule after it does not, so a schedule projecting a decade ahead needs it. POSIX writes its offsets **west**-positive (`EST5` is −5·3600 east), `Mm.w.d` means the `w`th `d`-day of month `m` with 5 meaning the last, and `Jn`/`n` are the two day-count forms. `next_transition` projects from the rule once past the table. POSIX only, as `std.path` is. A name reaching the filesystem is checked: `..` and a leading `/` are refused.
-- **`Instant`** — `type Instant = i128`, nanoseconds since the epoch (an `i64` of them runs out in 2262), range ±10⁸ days as Temporal's is. `instant(sec, nsec)`, `now_instant()`, `epoch_second`/`epoch_nanosecond`/`nanosecond_of_second`, `add`/`subtract` (**calendar units refused** — a day is not a fixed length of time where a zone changes offset), `until`/`since` balanced hours-down, `Ord`, and `Show` as `…Z`.
-- **`ZonedDateTime`** — a struct `{ instant, zone }`, and the local fields are computed, never stored: the clock reading `01:30` on a fall-back morning names two instants, so a struct holding `01:30` could not say which. `to_zoned_date_time(zone)`, `now_in_zone`, `to_instant`, `offset_seconds`, `abbreviation`, `is_dst`, `to_plain_date_time`/`to_plain_date`/`to_plain_time`. `Show` is RFC 9557's `2026-09-22T14:30:00-04:00[America/New_York]` — all three parts, since any two are ambiguous — and **`parse_zoned_date_time` reads it back**: the bracketed zone is required, the offset optional, and where it is written *it decides*, which is how `01:30-04:00` and `01:30-05:00` name two different instants on a fall-back morning. An offset the zone was not using is refused (Temporal's `offset: 'reject'`). Not `pure`: it reads the zone database. `parse_instant` is the same for `…Z` or any offset, and is `pure` — an offset names an instant without a zone. **`<=>` compares instants and `==` is structural** (instant *and* zone), which is Temporal's `compare`/`equals` split.
+- **`TimeZone`** — a zone's rules, read from the system's IANA database (`/usr/share/zoneinfo`, RFC 8536), not from libc: `TimeZone.load(name)`, `offset_at`, `abbreviation_at`, `is_dst_at`, `next_transition`, all in epoch seconds. The database is `TZDIR` when set and non-empty, else `/usr/share/zoneinfo` — which is how a test pins the data it reads, since a country changing its rules moves the system copy under every test that reads it. The **64-bit block** is the one read, so a transition past 2038 survives, and **the POSIX footer** (`EST5EDT,M3.2.0,M11.1.0`) governs every instant from the last transition on — a table stops around 2037 and the rule after it does not, so a schedule projecting a decade ahead needs it. POSIX writes its offsets **west**-positive (`EST5` is −5·3600 east), `Mm.w.d` means the `w`th `d`-day of month `m` with 5 meaning the last, and `Jn`/`n` are the two day-count forms. `next_transition` projects from the rule once past the table. POSIX only, as `std.path` is. A name reaching the filesystem is checked: `..` and a leading `/` are refused.
+- **`Instant`** — `type Instant = i128`, nanoseconds since the epoch (an `i64` of them runs out in 2262), range ±10⁸ days as Temporal's is. `Instant.new(sec, nsec)`, `Instant.now()`, `epoch_second`/`epoch_nanosecond`/`nanosecond_of_second`, `add`/`subtract` (**calendar units refused** — a day is not a fixed length of time where a zone changes offset), `until`/`since` balanced hours-down, `Ord`, and `Show` as `…Z`.
+- **`ZonedDateTime`** — a struct `{ instant, zone }`, and the local fields are computed, never stored: the clock reading `01:30` on a fall-back morning names two instants, so a struct holding `01:30` could not say which. `to_zoned_date_time(zone)`, `ZonedDateTime.now`, `to_instant`, `offset_seconds`, `abbreviation`, `is_dst`, `to_plain_date_time`/`to_plain_date`/`to_plain_time`. `Show` is RFC 9557's `2026-09-22T14:30:00-04:00[America/New_York]` — all three parts, since any two are ambiguous — and **`ZonedDateTime.parse` reads it back**: the bracketed zone is required, the offset optional, and where it is written *it decides*, which is how `01:30-04:00` and `01:30-05:00` name two different instants on a fall-back morning. An offset the zone was not using is refused (Temporal's `offset: 'reject'`). Not `pure`: it reads the zone database. `Instant.parse` is the same for `…Z` or any offset, and is `pure` — an offset names an instant without a zone. **`<=>` compares instants and `==` is structural** (instant *and* zone), which is Temporal's `compare`/`equals` split.
 - **Disambiguation** — `PlainDateTime.to_zoned_date_time(zone, how)` going the other way, where a wall clock is not a moment: `02:30` never happens on a spring-forward morning and `01:30` happens twice on a fall-back one. `possible_instants` answers 0, 1 or 2 candidates; `Disambiguation` is `Compatible` (the default: forward across a gap, the first of a repeat), `Earlier`, `Later`, `Reject` (`None`). Temporal's option, and its defaults.
 - **`ZonedDateTime.add`/`subtract`** — **calendar units move the wall clock and clock units move the timeline**: a week after 09:00 is 09:00, while 168 hours after it is 08:00 or 10:00 when the clocks changed. This is what a `Duration`'s split between calendar and clock fields is *for*; the calendar part is resolved by `how`, since a monthly 02:30 meets the March morning that has no 02:30.
 - Not built: a `reject` overflow on arithmetic,
@@ -583,7 +590,7 @@ impl Person {
 }
 ```
 
-**Sugar for top-level methods, erased by the collector** (10/07): each member is exactly
+**Sugar for top-level functions, erased by the collector** (10/07): each member is exactly
 `let say_hi = (self: Person) => …` written at the top level, so everything in "Calling on a
 receiver" above applies unchanged — both spellings, receiver-keyed overloading (the same
 name in `impl Person` and `impl Robot`), `pub`, privacy, `///` docs on each member. Any type
@@ -591,14 +598,14 @@ may head a block — a builtin, or a bare variable: `impl t where t: Ord { … }
 generic fallback (`self: t`) the prelude's `min`/`max` are. The free form stays, and nothing
 has to move into a block.
 
-- **A member is a `let` binding a function whose first parameter is `self`**, written with
-  every form a top-level `let` takes (modifiers, attributes, `<…>`/`where`, the
-  `let f(self) => …` sugar). `self` takes the block's type: write `self`, or `self: mut` /
-  `self: ref` for the mode — the mode binds to the type, as everywhere, so it stays after
-  the colon.
+- **A member is a `let` binding a function**, written with every form a top-level `let` takes
+  (modifiers, attributes, `<…>`/`where`, the `let f(self) => …` sugar). `self` takes the block's
+  type: write `self`, or `self: mut` / `self: ref` for the mode — the mode binds to the type, as
+  everywhere, so it stays after the colon. **A member with no `self` first is an associated
+  function**, called through the type's name (see "Calling on a type name").
 - **Refused (`lyra-E089`):** `var`/`let mut`, a non-function, a destructuring or constant,
-  a member without `self` (a constructor is a bare function outside the block), a `self`
-  that writes its own type, and a block below the top level.
+  a `self` that writes its own type, a member with no `self` in a block whose type has no name
+  to call it through (a type variable, an array, a tuple), and a block below the top level.
 - **Generic targets:** `impl Box<t> { … }` — variables lexical, as a trait impl's. A member
   with no `<…>` list needs none; one that writes a list (`let map<u> = …`) gets the
   target's variables appended after its own, so a turbofish binds what the member wrote
@@ -627,13 +634,13 @@ let describe<t> where t: Show = (v: t) -> string => "value ${v}"
 
 Solved from argument types first, then:
 - **Turbofish** `f::<i64>()` — positional, declaration order; beats context.
-- **Context** (annotation, declared return type, parameter slot) — binds **only variables no parameter mentions**, and only on declarations that declare their `<…>` list. This is what makes `hashmap_with_capacity<k,v>(cap)` callable. A context reaches the value through an `if`'s branches, a block's tail and a match arm, never a statement inside them: `let q = make()` in a branch of a `-> Maybe<i64>` body is unsolvable, as it is in the body itself. Nor a call's receiver or a field read's object, which are not the value: in `m.flat_map(f).flat_map(g)` under `-> Maybe<string>` only the last call has the context, and the first solves its result from `f`. **Except a method whose result is its receiver** (10/21): when every declaration of the name the file can reach returns the type its `self` takes, as written — a builder's `with_class(self: Node<e>, …) -> Node<e>` — the receiver is the call's value as far as its type goes, and the context reaches it, through any number of such links: `text("Title").with_class("title")` in a `Node<Msg>` view solves `text<e>`'s return-only `e`. A name with any other candidate (`flat_map` changes its receiver's type) keeps the barrier.
+- **Context** (annotation, declared return type, parameter slot) — binds **only variables no parameter mentions**, and only on declarations that declare their `<…>` list. This is what makes `HashMap.with_capacity(cap)` callable. A context reaches the value through an `if`'s branches, a block's tail and a match arm, never a statement inside them: `let q = make()` in a branch of a `-> Maybe<i64>` body is unsolvable, as it is in the body itself. Nor a call's receiver or a field read's object, which are not the value: in `m.flat_map(f).flat_map(g)` under `-> Maybe<string>` only the last call has the context, and the first solves its result from `f`. **Except a method whose result is its receiver** (10/21): when every declaration of the name the file can reach returns the type its `self` takes, as written — a builder's `with_class(self: Node<e>, …) -> Node<e>` — the receiver is the call's value as far as its type goes, and the context reaches it, through any number of such links: `text("Title").with_class("title")` in a `Node<Msg>` view solves `text<e>`'s return-only `e`. A name with any other candidate (`flat_map` changes its receiver's type) keeps the barrier.
 
 ### A lambda literal's missing annotations
 
 `(x) => x * 7` takes its missing parameter and return types from the function type its context expects: an annotated binding, a return position, or an argument slot of any call — a function, a trait method (`3.apply((x) => x * 7)`), a method through a `where` bound, a function-typed field. **A generic struct's field is a context too**, for what it states: against `on_change: (i64) -> e`, `(v) => Width(v)` gets `v: i64` before `e` is known, and its return once the body has solved `e`. So is a constructor's payload (`Scope((_) => sheet)` for `Scope((Theme) -> Sheet)`).
 
-A written type reaches a generic value the same way wherever it stands: a field assignment's place (`self.cache = hashmap_new()`), a struct literal's field and its annotation (`let a: Only<i64> = Only { cache: hashmap_new() }`), an array element's typed sibling (`[boxed(), sized()]`), and the receiver of a method whose return settles it (`[[text("a")]].flatten()` as a `[]Node<Ev>`). What a value solves stands: the context fills only what it left open.
+A written type reaches a generic value the same way wherever it stands: a field assignment's place (`self.cache = HashMap.new()`), a struct literal's field and its annotation (`let a: Only<i64> = Only { cache: HashMap.new() }`), an array element's typed sibling (`[boxed(), sized()]`), and the receiver of a method whose return settles it (`[[text("a")]].flatten()` as a `[]Node<Ev>`). What a value solves stands: the context fills only what it left open.
 - Only blanks are filled; a written annotation wins and is checked.
 - A slot type mentioning a variable the call has not solved (the `u` of `(t) -> u`) is left blank for the body to solve; the enclosing declaration's own variable (`(t) -> t` inside `<t>`) is filled in.
 - An arity mismatch fills nothing.
@@ -672,7 +679,25 @@ A lowercase type name is a type variable wherever it appears. What a written `<�
 
 ### Calling on a type name
 
-There isn't any. `Rng.seeded(42)` is **`lyra-E035`** (constructors are bare: `rng_seeded`). A trait gets its own message, since `Trait::method(…)` is valid.
+**`Type.name(…)` calls a member of `impl Type { … }` with no `self`** (11/03):
+
+```lyra
+impl Dice {
+  pub let seeded = pure (seed: i64) -> Dice => Dice { state: seed }
+  pub let roll = (self: mut) -> i64 => { … }
+}
+var d = Dice.seeded(42)
+```
+
+It is a top-level function under a name of its own, and a call is the direct call it stands for: generics, defaults, `pure`, `unsafe` and `pub` all mean what they mean on any function.
+
+- **The type is what the call means**, not its spelling. `alias D = Dice` makes `D.seeded` the same function, whichever name the block or the call wrote, and `a.Dice.seeded` and `b.Dice.seeded` are two. Reach is a method's: `pub`, in a module this file imports in any form, in this file's own module, or in the prelude. Its name is not in scope bare, so `seeded(42)` is undefined and two types may each declare a `new`.
+- **A generic target solves as a generic function does**: `impl Box<t> { let of = (v: t) -> Box<t> => … }` gives `Box.of(5)` a `Box<i64>`, and `let b: Box<i64> = Box.empty()` takes `t` from the context. A turbofish goes after the name, and binds the member's own list: `Box.of::<i64>(5)`. `Box::<i64>.of(5)` does not parse.
+- **Any type with a name**: `impl string { let dash = () => "-" }` is `string.dash()`. A type variable, an array and a tuple have nothing to write before the dot (`lyra-E089`).
+- **A value of the name wins nothing it did not win before**: `data Unit = Unit` leaves `Unit.code()` a method call on the value unless the type declares a `code`, and a `const IO` leaves `IO.abs()` a call on the constant. A local or parameter named `string` shadows the builtin.
+- **As a value**: `let f = Dice.seeded`, `xs.map(Dice.seeded)`. A generic one is refused, having no one signature to hand over; wrap the call in a lambda.
+- **A trait function, at the impl the type names**: with `impl Zero for Vec2`, `Vec2.zero()` is `Zero::zero()` with nothing left for the context to say. An `impl` block's function of that name comes first. Only a trait method with no receiver is reached this way, since `v.area()` already says what `Shape.area(v)` could. A generic target names its head and no one impl, so the arguments come from the context, which must be that type: `let b: Box<i64> = Box.zero()`.
+- **Refused, `lyra-E035`**: a type with no such function, the message naming a method (`roll takes self`) or free function of the name where there is one; a private function from another module; two declarations of one type's name through an alias; a type as a value (`let x = Dice`, `Dice.state`). A trait gets its own message, since `Trait::method(…)` is the form.
 
 ### Calling without a receiver
 
@@ -988,7 +1013,7 @@ lyrac doc std/prelude/prelude.lyra -o ../lyra-website/src/content/docs/reference
 
 ### Randomness
 
-`random_seed() -> u64` is the only builtin; `std/prelude/rand.lyra` has `rng_seeded(seed)`, `rng_from_entropy()`, `rng.next_u64()`, `rng.below(bound)` (half-open, unbiased via rejection), `rng.between(lo, hi)` (inclusive), and ambient `random_below`/`random_between`. xorshift64* — **not cryptographic**. A seeded draw is `EffectMut` (so `det`-legal); anything reaching `random_seed` is `EffectRand` (`det` refuses).
+`random_seed() -> u64` is the only builtin; `std/prelude/rand.lyra` has `Rng.seeded(seed)`, `Rng.from_entropy()`, `rng.next_u64()`, `rng.below(bound)` (half-open, unbiased via rejection), `rng.between(lo, hi)` (inclusive), and ambient `random_below`/`random_between`. xorshift64* — **not cryptographic**. A seeded draw is `EffectMut` (so `det`-legal); anything reaching `random_seed` is `EffectRand` (`det` refuses).
 
 ### Float math
 

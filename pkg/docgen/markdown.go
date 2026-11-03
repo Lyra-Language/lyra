@@ -106,6 +106,7 @@ func pageSections(m Module) []section {
 	// left here *is* the module's free functions — constructors and ambient helpers.
 	add("Functions", free)
 	for _, g := range groups {
+		add("Functions on `"+g.Receiver+"`", g.Functions)
 		add("Methods on `"+g.Receiver+"`", g.Decls)
 	}
 	// After the Lyra functions and before the values: an extern is what the module

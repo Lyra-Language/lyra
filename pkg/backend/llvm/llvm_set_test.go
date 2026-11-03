@@ -12,10 +12,10 @@ import (
 // setPreamble declares `show` and `of`, the two helpers every test below uses: a set's
 // members sorted and joined with commas, and a set built from an array.
 const setPreamble = `module main
-import std.collections.{ Set, set_new }
+import std.collections.{ Set }
 let show = (s: Set<i64>) -> string => s.members().sorted().map((x) => "${x}").join(",")
 let of = (xs: []i64) -> Set<i64> => {
-  var s = set_new::<i64>()
+  var s = Set.new::<i64>()
   for x in xs { let _ = s.insert(x) }
   s
 }
@@ -88,8 +88,8 @@ func TestExec_SetRelations(t *testing.T) {
 func TestExec_SetIdentitiesOverAGrownTable(t *testing.T) {
 	t.Parallel()
 	out := buildAndRunWithPrelude(t, setPreamble+`let main = () -> void => {
-  var evens = set_new::<i64>()
-  var threes = set_new::<i64>()
+  var evens = Set.new::<i64>()
+  var threes = Set.new::<i64>()
   for i in 0..<300 {
     if i %% 2 == 0 { let _ = evens.insert(i) }
     if i %% 3 == 0 { let _ = threes.insert(i) }
@@ -117,9 +117,9 @@ func TestExec_SetIdentitiesOverAGrownTable(t *testing.T) {
 func TestExec_SetCombinationsOfStringsASan(t *testing.T) {
 	t.Parallel()
 	src := `module main
-import std.collections.{ Set, set_new }
+import std.collections.{ Set }
 let of = (prefix: string, from: i64, to: i64) -> Set<string> => {
-  var s = set_new::<string>()
+  var s = Set.new::<string>()
   for i in from..<to { let _ = s.insert(prefix ++ "${i}") }
   s
 }

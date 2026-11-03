@@ -40,7 +40,7 @@
 
 import std.io.{ read_file, write_file }
 import std.json.{ parse_json, JsonValue }
-import std.collections.{ HashMap, hashmap_new, Set, set_new }
+import std.collections.{ HashMap, Set }
 
 let main = () -> u8 => {
   let args = program_args()
@@ -187,19 +187,19 @@ const HOST_OWNED: []string = [
 ]
 
 let load_api = (doc: JsonValue) -> Api => {
-  var typedefs = hashmap_new::<string, JsonValue>()
+  var typedefs = HashMap.new::<string, JsonValue>()
   for t in doc.field("typedefs").unwrap_or(JsonNull).elements() {
     typedefs.insert(text_of(t, "name"), description(t.field("type").unwrap_or(JsonNull)))
   }
-  var structs = set_new::<string>()
+  var structs = Set.new::<string>()
   for s in doc.field("structs").unwrap_or(JsonNull).elements() {
     structs.insert(text_of(s, "name"))
   }
-  var enums = set_new::<string>()
+  var enums = Set.new::<string>()
   for e in doc.field("enums").unwrap_or(JsonNull).elements() {
     enums.insert(text_of(e, "name"))
   }
-  var helpers = set_new::<string>()
+  var helpers = Set.new::<string>()
   for f in doc.field("functions").unwrap_or(JsonNull).elements() {
     if flag(f, "is_default_argument_helper") { helpers.insert(text_of(f, "name")) }
   }
@@ -408,11 +408,11 @@ let read_function = pure (f: JsonValue, api: Api) -> Outcome => {
 /// setter of the field it sets. The method comes first (functions are read before fields)
 /// and is what ImGui means to be called, so the accessor is dropped and listed in `dropped`.
 let disambiguate = (fns: []Function, dropped: mut []string) -> []Function => {
-  var free = set_new::<string>()
+  var free = Set.new::<string>()
   for f in fns {
     if receiver_of(f) == "" { free.insert(f.name) }
   }
-  var seen = set_new::<string>()
+  var seen = Set.new::<string>()
   var out: []Function = []
   for f in fns {
     let r = receiver_of(f)
@@ -684,7 +684,7 @@ let render = (doc: JsonValue, fns: []Function, skipped: []string) -> string => {
   }
   out.push("")
   out.push("// ── Externs ─────────────────────────────────────────────────────────────────")
-  var declared = set_new::<string>()
+  var declared = Set.new::<string>()
   for f in fns {
     if declared.insert(f.symbol) {
       out.push("")
@@ -719,7 +719,7 @@ let render_cpp = pure (accessors: []string) -> string => {
 
 /// Every handle a wrapper mentions, as `(C name, Lyra name)`, sorted by Lyra name.
 let handles_used = (fns: []Function) -> [](string, string) => {
-  var seen = set_new::<string>()
+  var seen = Set.new::<string>()
   var out: [](string, string) = []
   for f in fns {
     for p in f.params {

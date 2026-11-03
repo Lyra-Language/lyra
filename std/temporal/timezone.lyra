@@ -18,7 +18,7 @@ module std.temporal
 //! Windows, and no way to ask in Lyra source which system this is being compiled for.
 //!
 //! ```
-//! let Some(zone) = load_time_zone("America/New_York") else { return }
+//! let Some(zone) = TimeZone.load("America/New_York") else { return }
 //! println("${zone.offset_at(1773000000)} ${zone.abbreviation_at(1773000000)}")
 //! ```
 
@@ -55,18 +55,18 @@ pub struct ZoneType {
   abbreviation: string,
 }
 
-/// The zone the system knows by `name`, or `None` when it has no such zone.
-///
-/// **The name is a path component, and is checked like one.** It reaches the filesystem,
-/// so `..` and a leading `/` are refused rather than joined: a caller passing along
-/// something a user typed should not be able to read `/etc/passwd` by calling it a zone.
-pub let load_time_zone = (name: string) -> Maybe<TimeZone> => {
-  if !names_a_zone(name) { return None }
-  let Some(data) = read_bytes(zoneinfo_dir().join(name)) else { return None }
-  parse_tzif(name, data)
-}
-
 impl TimeZone {
+  /// The zone the system knows by `name`, or `None` when it has no such zone.
+  ///
+  /// **The name is a path component, and is checked like one.** It reaches the filesystem,
+  /// so `..` and a leading `/` are refused rather than joined: a caller passing along
+  /// something a user typed should not be able to read `/etc/passwd` by calling it a zone.
+  pub let load = (name: string) -> Maybe<TimeZone> => {
+    if !names_a_zone(name) { return None }
+    let Some(data) = read_bytes(zoneinfo_dir().join(name)) else { return None }
+    parse_tzif(name, data)
+  }
+
   /// The offset from UTC, in seconds east, that `self` was using at `epoch_second`.
   pub let offset_at = pure (self, epoch_second: i64) -> i64 =>
     self.rule_at(epoch_second).offset

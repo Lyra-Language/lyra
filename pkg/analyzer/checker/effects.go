@@ -45,7 +45,7 @@ const (
 	EffectAlloc
 	// EffectRand: reaches for randomness nobody supplied — in practice, calls
 	// `random_seed()` for OS entropy, directly or through the prelude's
-	// `random_below`/`rng_from_entropy`. Non-deterministic, so it breaks `pure` and
+	// `random_below`/`Rng.from_entropy`. Non-deterministic, so it breaks `pure` and
 	// `det`. A *seeded* RNG value reached through a local binding (`rng.below(100)`)
 	// is arithmetic over ordinary data and carries only EffectMut, which is what
 	// lets `det` code use reproducible randomness.
@@ -225,7 +225,7 @@ var builtinEffects = map[string]Effect{
 	// rather than being written down.** A seeded generator is arithmetic over its
 	// own state, so `rng.below(100)` carries only EffectMut — legal in `det`, which
 	// forbids Input/Rand/Time and not mutation. The prelude's `random_below(100)`
-	// and `rng_from_entropy()` reach `random_seed`, so bottom-up inference gives
+	// and `Rng.from_entropy()` reach `random_seed`, so bottom-up inference gives
 	// *them* the Rand bit, and `det` code is refused them. Nobody had to enumerate
 	// which randomness is deterministic: asking for a seed you were not given is
 	// what is non-deterministic, and that is the one place the bit is charged.

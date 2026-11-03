@@ -19,10 +19,13 @@ import (
 // receiver-keyed overloading reads the `self` type at registration. Everything after the
 // collector sees an ordinary declaration — the block leaves no trace in the AST.
 //
-// What cannot be desugared into a method is refused (lyra-E089) rather than hoisted as
-// written: a `var`, a non-function, and a function with no `self` would each still compile
-// as a top-level declaration, so a block that quietly admitted them would hold things that
-// are not methods of the type it names.
+// A member with no `self` is an **associated function**, called `Type.name(…)`. It takes its
+// place among the top-level functions under the name applyInherentReceiver's caller gives it
+// (ast.AssociatedName), and otherwise gets what a method gets from the block.
+//
+// What is neither is refused (lyra-E089) rather than hoisted as written: a `var` and a
+// non-function would each still compile as a top-level declaration, so a block that quietly
+// admitted them would hold things that do not belong to the type it names.
 func applyInherentReceiver(
 	node, nameNode *sitter.Node,
 	kind ast.BindingKind,
@@ -46,21 +49,27 @@ func applyInherentReceiver(
 		return generics
 	}
 	if len(lambda.Parameters) == 0 || lambda.Parameters[0].GetName() != "self" {
-		ctx.AddErrorCoded(nameNode, diag.SeverityError, diag.CodeInherentMember,
-			"`%s` in `impl %s` takes no `self`, so it is not a method of %s; declare it outside the block (a constructor is a bare function, e.g. `let new_thing = …`)",
-			name, target.Text, target.Text)
-		return generics
+		// `Type.name(…)` needs a type the call can write. A variable, an array and a tuple
+		// have no name to put before the dot.
+		if _, named := ast.AssociatedName(target.Type, name); !named {
+			ctx.AddErrorCoded(nameNode, diag.SeverityError, diag.CodeInherentMember,
+				"`%s` in `impl %s` takes no `self`, and %s has no name to call it through; declare it outside the block",
+				name, target.Text, target.Text)
+			return generics
+		}
+		lambda.AssociatedTo = target.Type
+	} else {
+		self := &lambda.Parameters[0]
+		if self.Type != nil {
+			ctx.AddErrorCoded(nameNode, diag.SeverityError, diag.CodeInherentMember,
+				"`self` in `impl %s` takes its type from the block; write `self`, `self: mut` or `self: ref`",
+				target.Text)
+			return generics
+		}
+		// The parameter is registered in the lambda's scope by pointer into this slice, so the
+		// scope sees the type too.
+		self.Type = target.Type
 	}
-	self := &lambda.Parameters[0]
-	if self.Type != nil {
-		ctx.AddErrorCoded(nameNode, diag.SeverityError, diag.CodeInherentMember,
-			"`self` in `impl %s` takes its type from the block; write `self`, `self: mut` or `self: ref`",
-			target.Text)
-		return generics
-	}
-	// The parameter is registered in the lambda's scope by pointer into this slice, so the
-	// scope sees the type too.
-	self.Type = target.Type
 
 	// `impl Box<t>` has no written list, its variables being lexical as a trait impl's are.
 	// A member with no list of its own needs none; one that writes a list makes it
@@ -73,13 +82,15 @@ func applyInherentReceiver(
 			}
 		}
 	}
-	if len(target.Bounds) == 0 {
+	if len(target.Bounds) == 0 && lambda.AssociatedTo == nil {
 		return generics
 	}
 	// The block's `where` reaches a body only through the member's list, which is what puts
 	// a bound in scope — so a member that wrote none is given the one it implies: every
 	// variable its signature mentions, in the order written (`self`'s first). Without all
-	// of them the list would be authoritative and refuse the rest.
+	// of them the list would be authoritative and refuse the rest. An associated function
+	// takes one regardless: with no receiver to solve them, a variable only its return
+	// mentions (`empty: () -> Box<t>`) is solved from the context, which takes a list.
 	if len(generics) == 0 {
 		var names []string
 		for i := range lambda.Parameters {

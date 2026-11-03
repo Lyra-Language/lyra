@@ -12,6 +12,9 @@ type TypeTable struct {
 	// callees records which declaration an overloaded call resolved to; see
 	// calleetable.go for why only those are recorded.
 	callees map[*ast.FunctionCallExpr]*ast.LambdaExpr
+	// associated records the function a `Type.name` written as a value names. A call is
+	// rewritten to the function it reaches; a value has no parent to rewrite through.
+	associated map[*ast.MemberExpr]*ast.LambdaExpr
 	// unresolvedCallees marks calls whose callee the typechecker refused; see
 	// calleetable.go for why the later passes must be told rather than guess.
 	unresolvedCallees map[*ast.FunctionCallExpr]bool
@@ -153,4 +156,21 @@ func (t *TypeTable) EndJournal(mark int, forget bool) {
 func (t *TypeTable) Get(expr ast.Expression) (types.Type, bool) {
 	typ, ok := t.entries[expr]
 	return typ, ok
+}
+
+// SetAssociatedFunction records the function a `Type.name` written as a value names.
+func (t *TypeTable) SetAssociatedFunction(m *ast.MemberExpr, fn *ast.LambdaExpr) {
+	if t.associated == nil {
+		t.associated = map[*ast.MemberExpr]*ast.LambdaExpr{}
+	}
+	t.associated[m] = fn
+}
+
+// AssociatedFunction is the function a `Type.name` value names, when it names one.
+func (t *TypeTable) AssociatedFunction(m *ast.MemberExpr) (*ast.LambdaExpr, bool) {
+	if t == nil {
+		return nil, false
+	}
+	fn, ok := t.associated[m]
+	return fn, ok
 }

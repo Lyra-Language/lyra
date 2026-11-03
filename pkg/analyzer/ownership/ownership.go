@@ -995,6 +995,8 @@ func patternHasValueTest(pat ast.Pattern) bool {
 		})
 	case *ast.TuplePattern:
 		return slices.ContainsFunc(p.Elements, patternHasValueTest)
+	case *ast.OrPattern:
+		return true
 	}
 	return false
 }

@@ -21,12 +21,12 @@ func TestRun_APrivateGenericStructIsAnotherModulesTypeArgument(t *testing.T) {
 	dir := t.TempDir()
 	for name, text := range map[string]string{
 		"lib.lyra": `module lib
-import std.collections.{ HashMap, hashmap_new }
+import std.collections.{ HashMap }
 pub data Kind<e> = Press(e, i64) | Plain
 pub struct Node<e> { kind: Kind<e>, label: string }
 struct Cached<e> { node: Node<e>, hits: i64 }
 pub struct Cache<e> { by_key: HashMap<string, Cached<e>> }
-pub let cache_new<e> = () -> Cache<e> => Cache { by_key: hashmap_new::<string, Cached<e>>() }
+pub let cache_new<e> = () -> Cache<e> => Cache { by_key: HashMap.new::<string, Cached<e>>() }
 pub let put<e> = (c: mut Cache<e>, key: string, node: Node<e>) -> void => {
   c.by_key.insert(key, Cached { node: node, hits: 1 })
 }

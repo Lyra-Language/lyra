@@ -1300,3 +1300,19 @@ let run = pure (fs: []pure () -> i64) -> i64 => {
 		t.Errorf("unexpected message: %q", errs[0].Message)
 	}
 }
+
+// An associated function is checked as the direct call the type-name call is rewritten to, so
+// its name in the message is the one both the bound and the reader know.
+func TestPurity_AnAssociatedFunctionsEffectIsItsCallers(t *testing.T) {
+	diags := checkPurity(t, `struct Pt { x: i64 }
+impl Pt {
+  let noisy = () -> i64 => { println("x"); 1 }
+  let quiet = pure () -> i64 => 1
+}
+let clean = pure () -> i64 => Pt.quiet()
+let dirty = pure () -> i64 => Pt.noisy()
+`)
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, `calls impure function "Pt.noisy"`) {
+		t.Errorf("expected one report about Pt.noisy, got: %v", diags)
+	}
+}

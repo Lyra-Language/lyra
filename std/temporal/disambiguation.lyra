@@ -57,8 +57,8 @@ impl PlainDateTime {
   /// would leave the range an `Instant` can hold.
   ///
   /// ```
-  /// let Some(zone) = load_time_zone("America/New_York") else { return }
-  /// let Some(meeting) = parse_plain_date_time("2026-11-01T01:30") else { return }
+  /// let Some(zone) = TimeZone.load("America/New_York") else { return }
+  /// let Some(meeting) = PlainDateTime.parse("2026-11-01T01:30") else { return }
   /// let Some(first) = meeting.to_zoned_date_time(zone) else { return }     // 01:30 EDT
   /// let Some(second) = meeting.to_zoned_date_time(zone, Later) else { return } // 01:30 EST
   /// ```
@@ -115,15 +115,19 @@ impl ZonedDateTime {
     amount: Duration,
     how: Disambiguation = Compatible
   ) -> Maybe<ZonedDateTime> => {
-    let calendar = Duration { duration() | years: amount.years, months: amount.months,
-      weeks: amount.weeks, days: amount.days }
+    let calendar = Duration {
+      Duration.zero() | years: amount.years,
+      months: amount.months,
+      weeks: amount.weeks,
+      days: amount.days
+    }
     var moment = self.instant
     if has_calendar_part(calendar) {
       let local = self.to_plain_date_time().add(calendar)
       let Some(resolved) = local.to_zoned_date_time(self.zone, how) else { return None }
       moment = resolved.instant
     }
-    let exact = Duration { duration() | hours: amount.hours, minutes: amount.minutes,
+    let exact = Duration { Duration.zero() | hours: amount.hours, minutes: amount.minutes,
       seconds: amount.seconds, milliseconds: amount.milliseconds,
       microseconds: amount.microseconds, nanoseconds: amount.nanoseconds }
     let Some(shifted) = moment.add(exact) else { return None }

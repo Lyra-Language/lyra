@@ -103,6 +103,10 @@ type Decl struct {
 	// Keying on it and displaying something else is the same discipline the signature
 	// renderer follows.
 	ReceiverKey string
+	// Associated and AssociatedKey are the same two facts for an associated function,
+	// `Dice.seeded`: the type it is called through, whose group it is listed with.
+	Associated    string
+	AssociatedKey string
 }
 
 // IsMethod reports whether this declaration takes a `self` receiver — which in a
@@ -208,12 +212,14 @@ func sortDecls(decls []Decl) {
 	})
 }
 
-// MethodGroup is the methods on one receiver type, in the order they should be listed.
+// MethodGroup is what belongs to one type, in the order it should be listed: its methods, and
+// the functions called through its name.
 type MethodGroup struct {
 	// Receiver is the display name (`Maybe<t>`, `string`), Key the grouping identity.
-	Receiver string
-	Key      string
-	Decls    []Decl
+	Receiver  string
+	Key       string
+	Functions []Decl
+	Decls     []Decl
 }
 
 // Partition splits a module's functions into the free ones and the methods, grouped by
@@ -229,19 +235,26 @@ type MethodGroup struct {
 func (m Module) Partition() (rest []Decl, free []Decl, groups []MethodGroup) {
 	byKey := map[string]*MethodGroup{}
 	var order []string
+	group := func(display, key string) *MethodGroup {
+		g, ok := byKey[key]
+		if !ok {
+			g = &MethodGroup{Receiver: display, Key: key}
+			byKey[key] = g
+			order = append(order, key)
+		}
+		return g
+	}
 	for _, d := range m.Decls {
 		switch {
 		case d.Kind != KindFunction:
 			rest = append(rest, d)
+		case d.AssociatedKey != "":
+			g := group(d.Associated, d.AssociatedKey)
+			g.Functions = append(g.Functions, d)
 		case !d.IsMethod():
 			free = append(free, d)
 		default:
-			g, ok := byKey[d.ReceiverKey]
-			if !ok {
-				g = &MethodGroup{Receiver: d.Receiver, Key: d.ReceiverKey}
-				byKey[d.ReceiverKey] = g
-				order = append(order, d.ReceiverKey)
-			}
+			g := group(d.Receiver, d.ReceiverKey)
 			g.Decls = append(g.Decls, d)
 		}
 	}
@@ -309,20 +322,33 @@ func declFor(stmt ast.AstNode) (Decl, bool) {
 	switch s := stmt.(type) {
 	case *ast.VarDeclStmt:
 		kind := KindValue
-		var receiver, receiverKey string
+		var receiver, receiverKey, associated, associatedKey string
+		signature := bindingSignature(s)
 		if fn, isFn := s.Value.(*ast.LambdaExpr); isFn {
 			kind = KindFunction
 			receiver, receiverKey = receiverOf(fn)
+			// Headed by the name it is called by, and signed as it is written: the name it
+			// is stored under is no source.
+			if fn.AssociatedTo != nil {
+				if head, ok := types.HeadName(fn.AssociatedTo); ok {
+					associated, associatedKey = typeName(fn.AssociatedTo), head
+					written := *s
+					written.Name = strings.TrimPrefix(s.Name, head+".")
+					signature = bindingSignature(&written)
+				}
+			}
 		}
 		return Decl{
-			Name:        s.Name,
-			Kind:        kind,
-			Signature:   bindingSignature(s),
-			Doc:         s.Doc,
-			IsPublic:    s.IsPublic,
-			Location:    s.GetLocation(),
-			Receiver:    receiver,
-			ReceiverKey: receiverKey,
+			Name:          s.Name,
+			Kind:          kind,
+			Signature:     signature,
+			Doc:           s.Doc,
+			IsPublic:      s.IsPublic,
+			Location:      s.GetLocation(),
+			Receiver:      receiver,
+			ReceiverKey:   receiverKey,
+			Associated:    associated,
+			AssociatedKey: associatedKey,
 		}, true
 
 	case *ast.TypeDeclStmt:

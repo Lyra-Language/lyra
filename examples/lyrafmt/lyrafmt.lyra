@@ -72,7 +72,7 @@
 // Exit 0 when nothing is wrong (or, under `--check`, nothing would change), 1 otherwise,
 // 2 for usage.
 
-import std.collections.{ parse_args, HashMap, hashmap_new }
+import std.collections.{ parse_args, HashMap }
 import std.io.{ read_file, read_stdin, write_file, read_dir, is_symlink }
 import std.ffi
 import bindings.treesitter.{
@@ -466,7 +466,7 @@ let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool, breaks: []bool,
   var scopes: []Scope = []
   // The level of the line each token sits on, by the token's start — read back for an
   // opener's anchor, so a block indents from the line of the construct that opened it.
-  var level_at: HashMap<i64, i64> = hashmap_new()
+  var level_at: HashMap<i64, i64> = HashMap.new()
   var line_level = 0
   var previous_line_level = 0
   var previous_line_last_kind = ""

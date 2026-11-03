@@ -10,9 +10,9 @@ module std.temporal
 //!
 //! The mapping from Temporal, stated once so each declaration need not:
 //!
-//!   - **Constructors are bare functions**, because Lyra has no associated functions
-//!     (`lyra-E035`): Temporal's `new Temporal.PlainDate(2026, 9, 18)` is
-//!     `plain_date(2026, 9, 18)`, and `Temporal.Now.plainDateISO()` is `today()`.
+//!   - **Constructors are associated functions**: Temporal's
+//!     `new Temporal.PlainDate(2026, 9, 18)` is `PlainDate.new(2026, 9, 18)`, and
+//!     `Temporal.Now.plainDateISO()` is `PlainDate.today()`.
 //!   - **Properties are methods** in snake_case: `date.dayOfWeek` is `d.day_of_week()`.
 //!   - **An option bag is a defaulted parameter**, and Temporal's default is kept.
 //!   - **Temporal throws `RangeError`; Lyra answers `None`** where the input can be bad
@@ -25,9 +25,9 @@ module std.temporal
 //! function arrives when the calendar needs it, shaped the way Temporal shapes it.
 //!
 //! ```
-//! import std.temporal.{ today, months }
+//! import std.temporal.{ Duration, PlainDate, PlainDateTime }
 //!
-//! let next = today().add(months(1))   // 31 Jan → 28 or 29 Feb
+//! let next = PlainDate.today().add(Duration.months(1))   // 31 Jan → 28 or 29 Feb
 //! ```
 
 /// An amount of time, field by field — Temporal's `Duration`.
@@ -66,118 +66,118 @@ pub struct Duration {
   nanoseconds: i64,
 }
 
-/// The empty duration — every field zero, and the base for a record update when a duration
-/// needs more than one unit: `Duration { duration() | days: 1, hours: 2 }`.
-pub let duration = pure () -> Duration => Duration {
-  years: 0, months: 0, weeks: 0, days: 0, hours: 0, minutes: 0, seconds: 0,
-  milliseconds: 0, microseconds: 0, nanoseconds: 0,
-}
-
-/// `n` years.
-pub let years = pure (n: i64) -> Duration => Duration { duration() | years: n }
-
-/// `n` months. Added to a date, it keeps the day of the month where that day exists and
-/// clamps it to the month's last day where it does not.
-pub let months = pure (n: i64) -> Duration => Duration { duration() | months: n }
-
-/// `n` weeks — exactly `7 * n` days, whatever the month.
-pub let weeks = pure (n: i64) -> Duration => Duration { duration() | weeks: n }
-
-/// `n` days.
-pub let days = pure (n: i64) -> Duration => Duration { duration() | days: n }
-
-/// `n` hours.
-pub let hours = pure (n: i64) -> Duration => Duration { duration() | hours: n }
-
-/// `n` minutes.
-pub let minutes = pure (n: i64) -> Duration => Duration { duration() | minutes: n }
-
-/// `n` seconds.
-pub let seconds = pure (n: i64) -> Duration => Duration { duration() | seconds: n }
-
-/// The duration an ISO 8601 string names — `PT30M`, `P1DT2H`, `-P1W`, `PT1.5S` — or `None`.
-///
-/// Temporal's `Duration.from(string)`. The fields are kept **as written, not balanced**:
-/// `PT90M` is ninety minutes, not an hour and a half, which is Temporal's rule and matters
-/// because the two are different durations once a date is involved.
-///
-/// What is refused, and why:
-///
-///   - units out of order (`P1D1Y`) or repeated (`P1D2D`), which ISO 8601 forbids;
-///   - a `P` with nothing after it, and a `T` with no clock unit after it;
-///   - a fraction on anything but seconds. ISO 8601 and Temporal allow `PT1.5H`; nothing
-///     here has written one, so it is refused rather than half-supported.
-pub let parse_duration = pure (text: string) -> Maybe<Duration> => {
-  let runes = text.to_runes()
-  var i = 0
-  var sign = 1
-  if i < runes.len() && (runes[i] == '+' || runes[i] == '-') {
-    if runes[i] == '-' { sign = 0 - 1 }
-    i += 1
+impl Duration {
+  /// The empty duration — every field zero, and the base for a record update when a duration
+  /// needs more than one unit: `Duration { Duration.zero() | days: 1, hours: 2 }`.
+  pub let zero = pure () -> Duration => Duration {
+    years: 0, months: 0, weeks: 0, days: 0, hours: 0, minutes: 0, seconds: 0,
+    milliseconds: 0, microseconds: 0, nanoseconds: 0,
   }
-  if i >= runes.len() || runes[i] != 'P' { return None }
-  i += 1
-  var out = duration()
-  var any = false
-  // The date units, in order: each must come after the last one seen.
-  var rank = 0
-  while i < runes.len() && runes[i] != 'T' {
-    let Some((n, next)) = number_at(runes, i) else { return None }
-    if next >= runes.len() { return None }
-    let unit = runes[next]
-    let r = date_rank(unit)
-    if r <= rank { return None }
-    rank = r
-    if unit == 'Y' { out = Duration { out | years: sign * n } }
-    else if unit == 'M' { out = Duration { out | months: sign * n } }
-    else if unit == 'W' { out = Duration { out | weeks: sign * n } }
-    else { out = Duration { out | days: sign * n } }
-    any = true
-    i = next + 1
-  }
-  if i < runes.len() {
-    // After a `T`: the clock units, in order, and at least one of them.
+
+  /// `n` years.
+  pub let years = pure (n: i64) -> Duration => Duration { Duration.zero() | years: n }
+
+  /// `n` months. Added to a date, it keeps the day of the month where that day exists and
+  /// clamps it to the month's last day where it does not.
+  pub let months = pure (n: i64) -> Duration => Duration { Duration.zero() | months: n }
+
+  /// `n` weeks — exactly `7 * n` days, whatever the month.
+  pub let weeks = pure (n: i64) -> Duration => Duration { Duration.zero() | weeks: n }
+
+  /// `n` days.
+  pub let days = pure (n: i64) -> Duration => Duration { Duration.zero() | days: n }
+
+  /// `n` hours.
+  pub let hours = pure (n: i64) -> Duration => Duration { Duration.zero() | hours: n }
+
+  /// `n` minutes.
+  pub let minutes = pure (n: i64) -> Duration => Duration { Duration.zero() | minutes: n }
+
+  /// `n` seconds.
+  pub let seconds = pure (n: i64) -> Duration => Duration { Duration.zero() | seconds: n }
+
+  /// The duration an ISO 8601 string names — `PT30M`, `P1DT2H`, `-P1W`, `PT1.5S` — or `None`.
+  ///
+  /// Temporal's `Duration.from(string)`. The fields are kept **as written, not balanced**:
+  /// `PT90M` is ninety minutes, not an hour and a half, which is Temporal's rule and matters
+  /// because the two are different durations once a date is involved.
+  ///
+  /// What is refused, and why:
+  ///
+  ///   - units out of order (`P1D1Y`) or repeated (`P1D2D`), which ISO 8601 forbids;
+  ///   - a `P` with nothing after it, and a `T` with no clock unit after it;
+  ///   - a fraction on anything but seconds. ISO 8601 and Temporal allow `PT1.5H`; nothing
+  ///     here has written one, so it is refused rather than half-supported.
+  pub let parse = pure (text: string) -> Maybe<Duration> => {
+    let runes = text.to_runes()
+    var i = 0
+    var sign = 1
+    if i < runes.len() && (runes[i] == '+' || runes[i] == '-') {
+      if runes[i] == '-' { sign = 0 - 1 }
+      i += 1
+    }
+    if i >= runes.len() || runes[i] != 'P' { return None }
     i += 1
-    if i >= runes.len() { return None }
-    var clock_rank = 0
-    while i < runes.len() {
+    var out = Duration.zero()
+    var any = false
+    // The date units, in order: each must come after the last one seen.
+    var rank = 0
+    while i < runes.len() && runes[i] != 'T' {
       let Some((n, next)) = number_at(runes, i) else { return None }
       if next >= runes.len() { return None }
-      if runes[next] == '.' {
-        // A fraction, which only seconds may carry.
-        let Some((f, after)) = number_at(runes, next + 1) else { return None }
-        if after >= runes.len() || runes[after] != 'S' || clock_rank >= 3 { return None }
-        let written = after - (next + 1)
-        if written > 9 { return None }
-        var ns = f
-        for _ in 0..<(9 - written) { ns = ns * 10 }
-        out = Duration { out |
-          seconds: sign * n,
-          milliseconds: sign * (ns / 1000000),
-          microseconds: sign * (ns / 1000 % 1000),
-          nanoseconds: sign * (ns % 1000),
-        }
-        clock_rank = 3
-        any = true
-        i = after + 1
-        continue
-      }
       let unit = runes[next]
-      let r = clock_rank_of(unit)
-      if r <= clock_rank { return None }
-      clock_rank = r
-      if unit == 'H' { out = Duration { out | hours: sign * n } }
-      else if unit == 'M' { out = Duration { out | minutes: sign * n } }
-      else { out = Duration { out | seconds: sign * n } }
+      let r = date_rank(unit)
+      if r <= rank { return None }
+      rank = r
+      if unit == 'Y' { out = Duration { out | years: sign * n } }
+      else if unit == 'M' { out = Duration { out | months: sign * n } }
+      else if unit == 'W' { out = Duration { out | weeks: sign * n } }
+      else { out = Duration { out | days: sign * n } }
       any = true
       i = next + 1
     }
-    if clock_rank == 0 { return None }
+    if i < runes.len() {
+      // After a `T`: the clock units, in order, and at least one of them.
+      i += 1
+      if i >= runes.len() { return None }
+      var clock_rank = 0
+      while i < runes.len() {
+        let Some((n, next)) = number_at(runes, i) else { return None }
+        if next >= runes.len() { return None }
+        if runes[next] == '.' {
+          // A fraction, which only seconds may carry.
+          let Some((f, after)) = number_at(runes, next + 1) else { return None }
+          if after >= runes.len() || runes[after] != 'S' || clock_rank >= 3 { return None }
+          let written = after - (next + 1)
+          if written > 9 { return None }
+          var ns = f
+          for _ in 0..<(9 - written) { ns = ns * 10 }
+          out = Duration { out |
+            seconds: sign * n,
+            milliseconds: sign * (ns / 1000000),
+            microseconds: sign * (ns / 1000 % 1000),
+            nanoseconds: sign * (ns % 1000),
+          }
+          clock_rank = 3
+          any = true
+          i = after + 1
+          continue
+        }
+        let unit = runes[next]
+        let r = clock_rank_of(unit)
+        if r <= clock_rank { return None }
+        clock_rank = r
+        if unit == 'H' { out = Duration { out | hours: sign * n } }
+        else if unit == 'M' { out = Duration { out | minutes: sign * n } }
+        else { out = Duration { out | seconds: sign * n } }
+        any = true
+        i = next + 1
+      }
+      if clock_rank == 0 { return None }
+    }
+    if any { Some(out) } else { None }
   }
-  if any { Some(out) } else { None }
-}
 
-impl Duration {
   /// The same duration pointing the other way: every field negated.
   ///
   /// Temporal's `negated()`, and what `subtract` is made of — subtracting a duration is
@@ -234,7 +234,7 @@ impl Duration {
   /// when it carries years, months or weeks, which have no fixed length to count.
   ///
   /// ```
-  /// let h = minutes(90).total(Hours)   // Some(1.5)
+  /// let h = Duration.minutes(90).total(Hours)   // Some(1.5)
   /// ```
   ///
   /// The whole units and the remainder are converted separately, so a total below 2⁵³ of
@@ -349,7 +349,7 @@ let balanced_to = pure (ns: i128, largest: i64) -> Duration => {
     fields[rank] = sign * i64(rest / size)
     rest = rest % size
   }
-  Duration { duration() |
+  Duration { Duration.zero() |
     days: fields[0], hours: fields[1], minutes: fields[2], seconds: fields[3],
     milliseconds: fields[4], microseconds: fields[5], nanoseconds: fields[6],
   }

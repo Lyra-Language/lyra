@@ -67,7 +67,7 @@ import bindings.freetype.{
   HintLight,
   HintFull,
 }
-import std.collections.{ HashMap, hashmap_new }
+import std.collections.{ HashMap }
 import ui.draw.{
   Point,
   Rect,
@@ -215,7 +215,7 @@ pub let offset_at_x = pure (block: TextBlock, x: f32, length: i64) -> i64 => {
 
 /// Fonts with none added.
 pub let fonts_new = pure () -> Fonts =>
-  Fonts { made: hashmap_new(), laid: hashmap_new(), older: hashmap_new() }
+  Fonts { made: HashMap.new(), laid: HashMap.new(), older: HashMap.new() }
 
 /// A face to load into a family ([Fonts.add]): its file, the face's index in a collection,
 /// its weight and whether it is italic — what `ui.app`'s `LoadFonts` adds while a program runs.
@@ -335,8 +335,8 @@ impl Fonts {
 
   /// The paragraphs laid out forgotten: a face added since may draw them otherwise.
   let forget_laid = (self: mut) -> void => {
-    self.laid = hashmap_new::<string, TextBlock>()
-    self.older = hashmap_new::<string, TextBlock>()
+    self.laid = HashMap.new::<string, TextBlock>()
+    self.older = HashMap.new::<string, TextBlock>()
   }
 
   /// Add the first of [SYSTEM_FONTS] there is as `"system"`; `false` if there is none.
@@ -377,7 +377,7 @@ impl Fonts {
   let keep = (self: mut, key: string, block: TextBlock) -> void => {
     if self.laid.len() >= LAID_LIMIT {
       self.older = self.laid
-      self.laid = hashmap_new::<string, TextBlock>()
+      self.laid = HashMap.new::<string, TextBlock>()
     }
     self.laid.insert(key, block)
   }
@@ -739,14 +739,14 @@ pub const ATLAS_PAGES: i64 = 4
 
 /// An empty atlas; a page's texture is uploaded the first time a glyph needs it.
 pub let glyph_atlas = pure () -> GlyphAtlas =>
-  GlyphAtlas { slots: hashmap_new(), pictures: hashmap_new() }
+  GlyphAtlas { slots: HashMap.new(), pictures: HashMap.new() }
 
 /// An empty atlas of pages `size` texels on a side, emptying one past `max_pages` — small
 /// ones, for a test to fill.
 pub let glyph_atlas_sized = pure (size: i64, max_pages: i64) -> GlyphAtlas =>
   GlyphAtlas {
-    slots: hashmap_new(),
-    pictures: hashmap_new(),
+    slots: HashMap.new(),
+    pictures: HashMap.new(),
     size: size,
     max_pages: max_pages.max(1)
   }

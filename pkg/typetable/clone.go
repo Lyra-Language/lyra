@@ -29,6 +29,7 @@ func (t *TypeTable) Clone() *TypeTable {
 	return &TypeTable{
 		entries:            cloneMap(t.entries),
 		callees:            cloneMap(t.callees),
+		associated:         cloneMap(t.associated),
 		variadicPromotions: cloneMap(t.variadicPromotions),
 		baseReadouts:       cloneMap(t.baseReadouts),
 		unresolvedCallees:  cloneMap(t.unresolvedCallees),
@@ -124,6 +125,16 @@ func (t *TypeTable) Absorb(other *TypeTable) {
 	for k, v := range other.entries {
 		if _, ok := t.entries[k]; !ok {
 			t.entries[k] = v
+		}
+	}
+	if other.associated != nil {
+		if t.associated == nil {
+			t.associated = make(map[*ast.MemberExpr]*ast.LambdaExpr, len(other.associated))
+		}
+		for k, v := range other.associated {
+			if _, ok := t.associated[k]; !ok {
+				t.associated[k] = v
+			}
 		}
 	}
 	if other.callees != nil {

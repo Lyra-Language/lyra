@@ -30,9 +30,7 @@ import std.env.{ lookup }
 import std.io.{ read_file }
 import std.path.{ join }
 import std.temporal.{
-  PlainDate, PlainTime, PlainDateTime, Duration, duration, plain_time,
-  now_plain_date_time, parse_plain_date, parse_plain_date_time, parse_duration,
-  days, weeks, months,
+  PlainDate, PlainTime, PlainDateTime, Duration,
 }
 import std.tui.{
   renderer,
@@ -80,7 +78,7 @@ let main = () -> u8 => {
     }
   }
   if let Some(when) = args.value("--print") {
-    let Some(date) = parse_plain_date(when) else {
+    let Some(date) = PlainDate.parse(when) else {
       println("calendar: --print wants a date like 2026-09-18, not ${when}")
       return 2
     }
@@ -158,13 +156,13 @@ let parse_event = pure (line: string) -> Result<Entry, string> => {
   let words = line.split_when((c) => c.is_ascii_space())
   let head = words[0]
   if head.contains("T") {
-    let Some(start) = parse_plain_date_time(head) else {
+    let Some(start) = PlainDateTime.parse(head) else {
       return Err("`${head}` is not a date-time like 2026-09-18T14:30")
     }
     let has_length = words.len() > 1 && (words[1].starts_with("P") || words[1].starts_with("-P"))
-    var length = duration()
+    var length = Duration.zero()
     if has_length {
-      let Some(d) = parse_duration(words[1]) else {
+      let Some(d) = Duration.parse(words[1]) else {
         return Err("`${words[1]}` is not an ISO duration like PT30M")
       }
       length = d
@@ -173,7 +171,7 @@ let parse_event = pure (line: string) -> Result<Entry, string> => {
     if title == "" { return Err("the event at ${head} has no title") }
     return Ok(Entry { date: start.date, when: At(start.time, length), title: title })
   }
-  let Some(date) = parse_plain_date(head) else {
+  let Some(date) = PlainDate.parse(head) else {
     return Err("`${head}` is not a date like 2026-09-18")
   }
   let title = words.slice(1, words.len()).join(" ")
@@ -184,7 +182,7 @@ let parse_event = pure (line: string) -> Result<Entry, string> => {
 /// The interactive calendar, from today, until `q`.
 ///
 /// **The clock is read once per frame, at this edge, and passed down** — the rule
-/// `today()`'s own doc gives. Everything below is `pure` and takes the moment it is told,
+/// `PlainDate.today()`'s own doc gives. Everything below is `pure` and takes the moment it is told,
 /// which is what lets `--print` and the tests render a month without a clock. Reading it
 /// per frame rather than once is what makes "in 12 minutes" count down and today's
 /// highlight move at midnight; `render` writes nothing for a frame that did not change, so
@@ -197,7 +195,7 @@ let interactive = (events: []Entry) -> void => {
   cursor_hide()
   var screen = renderer()
   var input = event_reader()
-  var selected = now_plain_date_time().date
+  var selected = PlainDateTime.now().date
   var running = true
   var last_cols = 0
   var last_rows = 0
@@ -215,7 +213,7 @@ let interactive = (events: []Entry) -> void => {
       clear()
       screen.invalidate()
     }
-    let now = now_plain_date_time()
+    let now = PlainDateTime.now()
     screen.render(frame(selected, now, events, cols, rows))
     // Poll rather than block, so the loop comes back round to notice a resize and to
     // move the clock on even when nobody is typing.
@@ -223,14 +221,14 @@ let interactive = (events: []Entry) -> void => {
     match input.next_event() {
       None => { running = false },
       Some(Keyboard(key)) => match key {
-        Left => { selected = selected.subtract(days(1)) },
-        Right => { selected = selected.add(days(1)) },
-        Up => { selected = selected.subtract(weeks(1)) },
-        Down => { selected = selected.add(weeks(1)) },
+        Left => { selected = selected.subtract(Duration.days(1)) },
+        Right => { selected = selected.add(Duration.days(1)) },
+        Up => { selected = selected.subtract(Duration.weeks(1)) },
+        Down => { selected = selected.add(Duration.weeks(1)) },
         // A month on from 31 January is 28 or 29 February — `add`'s constrain overflow,
         // which is what makes paging through months land on a day that exists.
-        PageUp => { selected = selected.subtract(months(1)) },
-        PageDown => { selected = selected.add(months(1)) },
+        PageUp => { selected = selected.subtract(Duration.months(1)) },
+        PageDown => { selected = selected.add(Duration.months(1)) },
         Home => { selected = now.date },
         Escape => { running = false },
         Char(c) => {
@@ -312,7 +310,7 @@ let grid = pure (
   while week * 7 - lead < length {
     // The Monday that starts this row, which may sit in the previous month; an ISO week
     // runs Monday to Sunday, so its week number is the row's.
-    let monday = start.add(days(week * 7 - lead))
+    let monday = start.add(Duration.days(week * 7 - lead))
     var row = " "
     for col in 0..<7 {
       let n = week * 7 + col - lead + 1
@@ -420,9 +418,9 @@ let soon = pure (
 let clock = pure (t: PlainTime) -> string =>
   "${"${t.hour()}".pad_start(2, "0")}:${"${t.minute()}".pad_start(2, "0")}"
 
-/// The start of a day, which `plain_time(0)` always is — the `unwrap_or` fallback is the
+/// The start of a day, which `PlainTime.new(0)` always is — the `unwrap_or` fallback is the
 /// same value and is never used.
-let midnight = pure () -> PlainTime => match plain_time(0) {
+let midnight = pure () -> PlainTime => match PlainTime.new(0) {
   Some(t) => t,
   None => PlainTime(0)
 }

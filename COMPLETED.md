@@ -9,6 +9,81 @@ Newest first.
 
 ## Dated log
 
+### 11/03/26 — `HashMap`, `Set`, `Rng` and `std.temporal` construct through their types
+
+`hashmap_new()` is `HashMap.new()`, `set_new()` is `Set.new()`, `rng_seeded(n)` is `Rng.seeded(n)`,
+`plain_date(…)` is `PlainDate.new(…)`, `days(1)` is `Duration.days(1)`, `load_time_zone(n)` is
+`TimeZone.load(n)`. The bare names are gone rather than
+kept beside the new ones: the language has no deprecation marker, and only Termina and Sheliak call
+any of them from outside this repository.
+
+- **The `Duration` builders gained the most.** `days`, `hours` and `seconds` in a file's bare scope
+  shadowed the locals those values are most often assigned to, the cost 09/22 measured when it refused
+  to gate method calls on the import list.
+- **`new` answers a `Maybe` on `PlainDate`, `PlainTime` and `Instant`.** Temporal's constructor throws
+  on a date that does not exist, and `new` keeps the correspondence the module's doc states.
+- **`lyrac doc` had to learn them first.** Its page read `pub let Table.new<k, v> = …`, the stored name
+  in a signature nobody can write, and listed the functions as free. They now go under
+  `## Functions on \`T\``, headed `T.name`, signed as written.
+
+### 11/03/26 — `Type.function()`, and or-patterns that test a payload
+
+Two forms the language had refused because nothing yet wanted them.
+
+**`Dice.seeded(42)` calls a member of `impl Dice` with no `self`.** `lyra-E035` used to say there was
+no such thing and that the free function was the whole answer, and E089 refused the member.
+
+- **The block stays erased.** A member with no `self` is the same top-level declaration under a name
+  no source can spell (`ast.AssociatedName`: `Dice.seeded`), so two types may each declare a `new`,
+  the bare name stays out of scope, and nothing past the collector learned a new kind of function. A
+  call is rewritten to the direct call it is, as a method call is, for the reason UFCS gives: the
+  purity pass indexes arguments positionally, and every pass after it should meet one shape.
+- **Resolution starts from the type, not from that name.** The name holds the head as the block spelt
+  it, which is the wrong key twice over: `alias D = Dice` makes `impl D` and `Dice.x` one type under
+  two names, and `a.Dice` and `b.Dice` are two types under one. So `LambdaExpr.AssociatedTo` keeps the
+  type and `typeIdentity` compares expanded heads and their declarations. An across-modules exec test
+  holds the second, since a by-name resolution there answers with the wrong module's function and
+  nothing says so.
+- **A trait function reaches through the type too** (`Vec2.zero()`), because "half-exists" was what
+  the todo said of `Trait::method`, and naming the type is the plainest way to say which impl. Not a
+  method with a receiver: `Shape.area(v)` would be a second spelling of `v.area()` with nothing to add.
+- **The rewrite took away lyra-W004's only sight of the type**, so `import lib.{ Dice }` warned that it
+  was "only ever called method-style". `noteTypeNameUse` tells it, as `AliasedTypeUses` already did for
+  a name stamping replaced.
+- **Left bare: std's constructors.** `rng_seeded` and `hashmap_new` are all over the three programs, and
+  respelling them is a decision about the library rather than the language (todo.md).
+
+**`Some(_) | None`, `Some(1 | 2)`, `(0, _) | (_, 0)`.** Alternatives may now be constructors with
+payloads, tuples, structs and arrays, at any depth and in `if let`. One that binds stays refused, now
+by name: the grammar cannot keep a name out of a payload without keeping the payload out, so
+`Some(x) | None` went from a syntax error to `lyra-E090`.
+
+- **The nested forms were refused by accident.** The grammar has always parsed `(1 | 2, _)`, and
+  `collectPatternElement` dropped the node, so the refusal read "tuple pattern has 1 element(s)". The
+  old LANGUAGE.md line recorded the symptom as a rule.
+- **The grammar was most of the work, and is finely balanced here.** Admitting `data_pattern` as an
+  alternative settled `(Foo(1) | Foo(2))` statically toward the pattern, since a `|` could now follow
+  one, and that bitwise or over a nominal type stopped parsing with no corpus test to say so. So the
+  alternative is its own rule (`_constructor_alternative`, aliased to `data_pattern`), in the conflict
+  set that keeps `(Foo(1)` open until what follows the `)` decides.
+- **A juxtaposed payload could not hold an alternation any longer.** With a tuple pattern as an
+  alternative, `Some(_) | None` had two parses, the second being `Some` holding `(_) | None`, and which
+  one won depended on the position: a match arm read it right and an `if let` read it wrong. So
+  `_juxtaposed_payload` is `pattern` less `or_pattern`, and `Some 1 | None` means what it looks like.
+- **Exhaustiveness needed one thing**: `expandHeadAlternations` at each column, since specializing is
+  what brings a nested alternation to the head. It also corrected `MatchGaps`, the LSP's "add missing
+  arms", which read an arm's alternation as covering nothing.
+- **`patternHasValueTest` is the backend's `patternHasTest` mirrored**, and missing the node there would
+  have let the reuse analysis claim `Cons(1 | 2, _)` for a tag switch the backend does not take. An ASan
+  case holds it.
+- **Array alternatives fail over block by block** rather than being an `or`, since an array's test spans
+  blocks; each alternative's failure edge is the next one's entry.
+- **It found a memory bug that predates it.** A payload's test runs whether or not the tag held, and the
+  comment said reading another variant's bits was harmless because the tag had already forced the answer
+  false. For an integer it was. A string's test hands those bits to `memcmp` as a pointer, so `Some("a")`
+  against a `None` read wherever the blob pointed: ASan's SEGV, an ordinary build's luck. The tests now
+  run on zeroes when the tag does not hold (`select`).
+
 ### 11/03/26 — A way out of a comprehension releases its box
 
 `[x in xs | f(x)?]` returned with the box half built and nothing holding it. The same went for a

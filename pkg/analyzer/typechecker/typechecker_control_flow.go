@@ -72,6 +72,8 @@ func patternIsIrrefutable(pat ast.Pattern) bool {
 		return true
 	case *ast.BindingPattern:
 		return patternIsIrrefutable(p.Pattern)
+	case *ast.OrPattern:
+		return slices.ContainsFunc(p.Alternatives, patternIsIrrefutable)
 	}
 	return false
 }
@@ -716,6 +718,10 @@ func (tc *TypeChecker) checkArrayMatchArm(pattern ast.Pattern, scrutineeType typ
 	case *ast.BindingPattern:
 		// The binding name is always valid; check the inner pattern.
 		tc.checkArrayMatchArm(p.Pattern, scrutineeType)
+	case *ast.OrPattern:
+		for _, alt := range p.Alternatives {
+			tc.checkArrayMatchArm(alt, scrutineeType)
+		}
 	case *ast.ArrayPattern:
 		for _, elem := range p.Elements {
 			tc.checkArrayPatternElement(elem, elemType)
@@ -738,6 +744,10 @@ func (tc *TypeChecker) checkArrayPatternElement(elem ast.Pattern, elemType types
 		// Always valid.
 	case *ast.BindingPattern:
 		tc.checkArrayPatternElement(p.Pattern, elemType)
+	case *ast.OrPattern:
+		for _, alt := range p.Alternatives {
+			tc.checkArrayPatternElement(alt, elemType)
+		}
 	case *ast.LiteralPattern:
 		kind := literalPatternKind(p.Value)
 		elemPrim, ok := elemType.(types.PrimitiveType)
@@ -968,8 +978,7 @@ func (tc *TypeChecker) checkDataMatchArm(pattern ast.Pattern, dt types.DataType)
 	case *ast.BindingPattern:
 		tc.checkDataMatchArm(p.Pattern, dt)
 	case *ast.OrPattern:
-		// `Pencil | Eraser` — the grammar admits nullary constructors as alternatives
-		// (09/29), which bind nothing; each is checked as the arm it stands for.
+		// `Pencil | Eraser`, `Some(_) | None`: each is checked as the arm it stands for.
 		for _, alt := range p.Alternatives {
 			tc.checkDataMatchArm(alt, dt)
 		}
@@ -1457,6 +1466,10 @@ func (tc *TypeChecker) checkTupleMatchArm(pattern ast.Pattern, tt types.TupleTyp
 		return
 	case *ast.BindingPattern:
 		tc.checkTupleMatchArm(p.Pattern, tt)
+	case *ast.OrPattern:
+		for _, alt := range p.Alternatives {
+			tc.checkTupleMatchArm(alt, tt)
+		}
 	case *ast.TuplePattern:
 		positions, fits := ast.MatchPositions(p.Elements, len(tt.Elements))
 		if !fits {
@@ -1480,6 +1493,10 @@ func (tc *TypeChecker) checkTuplePatternElement(pattern ast.Pattern, elemType ty
 		return
 	case *ast.BindingPattern:
 		tc.checkTuplePatternElement(p.Pattern, elemType)
+	case *ast.OrPattern:
+		for _, alt := range p.Alternatives {
+			tc.checkTuplePatternElement(alt, elemType)
+		}
 	case *ast.LiteralPattern:
 		if elemType == nil {
 			return
@@ -1523,6 +1540,10 @@ func (tc *TypeChecker) checkStructMatchArm(pattern ast.Pattern, st types.NamedSt
 		return
 	case *ast.BindingPattern:
 		tc.checkStructMatchArm(p.Pattern, st)
+	case *ast.OrPattern:
+		for _, alt := range p.Alternatives {
+			tc.checkStructMatchArm(alt, st)
+		}
 	case *ast.StructPattern:
 		// A named struct pattern (`Pt { … }`) must name the scrutinee's type; the
 		// brace-only form (`{ … }`, Name "") matches any struct structurally.

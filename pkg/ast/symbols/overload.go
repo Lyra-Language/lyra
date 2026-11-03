@@ -1,7 +1,9 @@
 package symbols
 
 import (
+	"slices"
 	"sort"
+	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 )
@@ -183,4 +185,29 @@ func (st *SymbolTable) registerOverloadSet(key string, set *ast.OverloadSet) {
 		st.OverloadSets = make(map[string]*ast.OverloadSet)
 	}
 	st.OverloadSets[key] = set
+}
+
+// AssociatedFunctionsNamed is every associated function declared under name, in any module and
+// on any type — `seeded` of `impl Rng` and of `impl Other` alike — in a fixed order. The name a
+// function is stored under holds its type's, which the question does not know: an alias or a
+// second module may spell it differently, so the caller compares the types. A scan, since it is
+// asked only of a call through a type name.
+func (st *SymbolTable) AssociatedFunctionsNamed(name string) []*ast.LambdaExpr {
+	if st == nil {
+		return nil
+	}
+	var keys []string
+	for key, fn := range st.Functions {
+		if fn.AssociatedTo != nil && strings.HasSuffix(key, "."+name) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	out := make([]*ast.LambdaExpr, 0, len(keys))
+	for _, key := range keys {
+		if fn := st.Functions[key]; !slices.Contains(out, fn) {
+			out = append(out, fn)
+		}
+	}
+	return out
 }

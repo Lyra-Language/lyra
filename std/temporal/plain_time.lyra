@@ -11,37 +11,37 @@ module std.temporal
 /// time is what a clock on the wall says, not an amount of elapsed time.
 pub type PlainTime = i64 where range(0..<86400000000000)
 
-/// The time `hour`:`minute`:`second`, or `None` when there is no such time.
-///
-/// Rejects rather than clamps, like `plain_date`: `24:00` and `12:60` are `None`. Seconds
-/// are 0 to 59 — ISO 8601 allows a leap second (`:60`), and Temporal accepts one and
-/// constrains it to `:59`; nothing here has asked for it, so it is refused.
-///
-/// ```
-/// let Some(noon) = plain_time(12) else { return }
-/// ```
-pub let plain_time = pure (
-  hour: i64,
-  minute: i64 = 0,
-  second: i64 = 0
-) -> Maybe<PlainTime> => {
-  if hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59 {
-    return None
-  }
-  Some(PlainTime((hour * 3600 + minute * 60 + second) * NS_PER_SECOND))
-}
-
-/// The time an ISO 8601 string names — `14:30`, `14:30:05` or `14:30:05.25` — or `None`.
-///
-/// Every field is exactly two digits and the fraction is one to nine digits after a `.`,
-/// which is what Temporal reads and what `show` writes, so the two round-trip. ISO's
-/// compact forms (`1430`) are not read: nothing here writes them.
-pub let parse_plain_time = pure (text: string) -> Maybe<PlainTime> => time_at(
-  text.to_runes(),
-  0
-)
-
 impl PlainTime {
+  /// The time `hour`:`minute`:`second`, or `None` when there is no such time.
+  ///
+  /// Rejects rather than clamps, like `PlainDate.new`: `24:00` and `12:60` are `None`. Seconds
+  /// are 0 to 59 — ISO 8601 allows a leap second (`:60`), and Temporal accepts one and
+  /// constrains it to `:59`; nothing here has asked for it, so it is refused.
+  ///
+  /// ```
+  /// let Some(noon) = PlainTime.new(12) else { return }
+  /// ```
+  pub let new = pure (
+    hour: i64,
+    minute: i64 = 0,
+    second: i64 = 0
+  ) -> Maybe<PlainTime> => {
+    if hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59 {
+      return None
+    }
+    Some(PlainTime((hour * 3600 + minute * 60 + second) * NS_PER_SECOND))
+  }
+
+  /// The time an ISO 8601 string names — `14:30`, `14:30:05` or `14:30:05.25` — or `None`.
+  ///
+  /// Every field is exactly two digits and the fraction is one to nine digits after a `.`,
+  /// which is what Temporal reads and what `show` writes, so the two round-trip. ISO's
+  /// compact forms (`1430`) are not read: nothing here writes them.
+  pub let parse = pure (text: string) -> Maybe<PlainTime> => time_at(
+    text.to_runes(),
+    0
+  )
+
   /// The hour, 0 to 23.
   pub let hour = pure (self) -> i64 => i64(self) / NS_PER_HOUR
 
@@ -58,7 +58,7 @@ impl PlainTime {
   /// Temporal ignores them. Add to a `PlainDateTime` when the day matters.
   ///
   /// ```
-  /// let ends = starts.add(minutes(45))
+  /// let ends = starts.add(Duration.minutes(45))
   /// ```
   pub let add = pure (self, amount: Duration) -> PlainTime =>
     PlainTime(i64((i128(i64(self)) + clock_nanoseconds(amount)) %% i128(NS_PER_DAY)))
@@ -109,7 +109,7 @@ const NS_PER_DAY = 86400000000000
 let two = pure (n: i64) -> string => "${n}".pad_start(2, "0")
 
 /// The time written at `runes[from..]` to the end, or `None`. Shared by
-/// `parse_plain_time` and `parse_plain_date_time`, which reads the time after a `T`, so
+/// `PlainTime.parse` and `PlainDateTime.parse`, which reads the time after a `T`, so
 /// the two cannot disagree about what a time looks like.
 let time_at = pure (runes: []rune, from: i64) -> Maybe<PlainTime> => {
   let n = runes.len() - from
@@ -135,6 +135,6 @@ let time_at = pure (runes: []rune, from: i64) -> Maybe<PlainTime> => {
     for _ in 0..<(9 - (n - 9)) { scaled = scaled * 10 }
     ns = scaled
   }
-  let Some(t) = plain_time(hh, mm, ss) else { return None }
+  let Some(t) = PlainTime.new(hh, mm, ss) else { return None }
   Some(PlainTime(i64(t) + ns))
 }

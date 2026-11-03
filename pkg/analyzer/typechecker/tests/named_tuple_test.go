@@ -256,7 +256,7 @@ let n = if Point { x: 7 }.x > 0 { 1 } else { 0 }`,
 }
 let n = if Point { 1 } else { 0 }`, false)
 	assertErrorsAre(t, res,
-		"Point is a type, not a value; Lyra has no associated functions, so there is no Point.something(...) — call the free function directly")
+		"Point is a type, not a value; write Point { … } or Point(…) to build one, or Point.function(…) to call one it declares in an `impl` block")
 }
 
 // A call may be the first thing inside parentheses. It could not be until 08/05:

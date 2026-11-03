@@ -213,7 +213,7 @@ let grid_plan<e> = (
     let reach = if minor.0 >= 0 { minor.0 + minor.1 } else { minor.1 }
     minor_count = minor_count.max(reach)
   }
-  var taken: HashMap<string, bool> = hashmap_new()
+  var taken: HashMap<string, bool> = HashMap.new()
   var placed: []Maybe<(i64, i64)> = [s in styles | None]
   // 1. Both lines given.
   for i in order {
@@ -224,7 +224,7 @@ let grid_plan<e> = (
   }
   // 2. A major line alone: the first free minor position in it (past the last placed there,
   // unless dense).
-  var row_cursor: HashMap<i64, i64> = hashmap_new()
+  var row_cursor: HashMap<i64, i64> = HashMap.new()
   for i in order {
     if placed[i].is_some() || major_of[i].0 < 0 { continue }
     let major = major_of[i].0

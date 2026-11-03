@@ -220,11 +220,11 @@ let empty_grid = pure (width: i64, height: i64) -> [][]bool =>
 /// A world seeded from `seed`, `DENSITY` cells per hundred alive.
 ///
 /// **Deterministic**, and marked so: it draws from a generator built out of the seed it
-/// was handed, and `rng_seeded` only mutates its own receiver. Asking the OS for entropy
+/// was handed, and `Rng.seeded` only mutates its own receiver. Asking the OS for entropy
 /// is the non-deterministic act, and it happens once, at the call site in `main` — so the
 /// same seed replays the same world exactly.
 let random_grid = det (width: i64, height: i64, seed: u64) -> [][]bool => {
-  var rng = rng_seeded(seed)
+  var rng = Rng.seeded(seed)
   var grid: [][]bool = []
   for _ in 0..<height {
     // **A fresh row per iteration, deliberately.** The short spelling for this is

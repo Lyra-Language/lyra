@@ -88,7 +88,7 @@ struct Shade {
 let main = () -> u8 => {
   if !screen.open("Wisps", WIDTH, HEIGHT) { return 1 }
   screen.set_backdrop(6, 10, 22)
-  var rng = rng_seeded(7)
+  var rng = Rng.seeded(7)
   paint_tiles()
   paint_sprites()
   lay_meadow(rng)

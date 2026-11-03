@@ -6,8 +6,7 @@ import (
 )
 
 // reportUnresolvedConstructor diagnoses a PascalCase name used in *value*
-// position that is not a data constructor — `Rng.seeded(42)`, `Point.make(1)`,
-// `Nonexistent.make(1)`, or a bare `let x = Rng`.
+// position that is not a data constructor — `Nonexistent.make(1)`, or a bare `let x = Rng`.
 //
 // The lexer splits the cases for us: a PascalCase name in expression position is
 // always a `user_defined_type_name`, which the collector turns into a
@@ -29,10 +28,9 @@ import (
 //
 // Three cases, because the fix differs:
 //
-//   - a declared type — Lyra has no type-namespaced associated functions, so
-//     `Rng.seeded(…)` is not a call at all and the free function is what to
-//     write. This is why the prelude's constructors are bare (`rng_seeded`)
-//     rather than namespaced;
+//   - a declared type — a type is no value, and a `Type.name` that names an associated
+//     function never reaches here (associated.go), nor one naming none: that has a
+//     message of its own. What is left is a mention, `let x = Rng`;
 //   - a declared trait — `Trait::method(…)` *is* a spelling the language has,
 //     and `.` is a plausible way to reach for it, so the message names it;
 //   - nothing at all — an undefined name, reported as one.
@@ -45,8 +43,8 @@ func (tc *TypeChecker) reportUnresolvedConstructor(e *ast.DataConstructorExpr) {
 
 	if _, ok := tc.symTable.LookupTypeFrom(name, loc); ok {
 		tc.addErrorCode(loc, SeverityError, diag.CodeTypeNameAsValue,
-			"%s is a type, not a value; Lyra has no associated functions, so there is no %s.something(...) — call the free function directly",
-			name, name)
+			"%s is a type, not a value; write %s { … } or %s(…) to build one, or %s.function(…) to call one it declares in an `impl` block",
+			name, name, name, name)
 		return
 	}
 	if _, ok := tc.symTable.LookupTraitFrom(name, loc); ok {

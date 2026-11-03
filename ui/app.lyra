@@ -122,7 +122,7 @@ import ui.layout.{
 import ui.interact.{ Ui, ui_new, FieldEdit, dock_away, dock_torn }
 import ui.access.{ access_tree }
 import std.io.{ read_file, write_file, readable }
-import std.collections.{ HashMap, hashmap_new }
+import std.collections.{ HashMap }
 import std.env.{ lookup, process_id }
 
 /// A program: its view of its state `s`; the next state, and the work to carry out, for each
@@ -534,7 +534,7 @@ let host_window<e> = pure (
     spec: spec,
     ui: ui,
     cache: layout_cache::<e>(),
-    painted_sizes: hashmap_new::<string, Size>(),
+    painted_sizes: HashMap.new::<string, Size>(),
   }
 }
 
@@ -946,7 +946,7 @@ impl Host<s, e> {
       )
       self.layouts += 1
       self.windows[k].laid_at = laid_at
-      var sizes = hashmap_new::<string, Size>()
+      var sizes = HashMap.new::<string, Size>()
       var events: []e = []
       sized_events(laid, self.windows[k].painted_sizes, sizes, events)
       self.windows[k].painted_sizes = sizes

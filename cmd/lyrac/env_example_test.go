@@ -64,10 +64,10 @@ func TestExample_TZDIRRedirectsTheZoneDatabase(t *testing.T) {
 	}
 	probe := filepath.Join(t.TempDir(), "probe.lyra")
 	if err := os.WriteFile(probe, []byte(`module main
-import std.temporal.{ load_time_zone, offset_at }
+import std.temporal.{ offset_at, TimeZone }
 
 let main = () -> u8 => {
-  match load_time_zone("America/New_York") {
+  match TimeZone.load("America/New_York") {
     Some(zone) => println("${zone.offset_at(1773000000)}"),
     None => println("no zone"),
   }

@@ -14,23 +14,23 @@ module std.temporal
 pub type Instant = i128
   where range(-8640000000000000000000..<=8640000000000000000000)
 
-/// The instant `epoch_second` seconds after the epoch, plus `nanosecond`, or `None` when
-/// that is outside the range Temporal admits (±10⁸ days).
-pub let instant = pure (epoch_second: i64, nanosecond: i64 = 0) -> Maybe<Instant> => {
-  let nanos = i128(epoch_second) * i128(NS_PER_SECOND) + i128(nanosecond)
-  if nanos < i128(0) - MAX_INSTANT || nanos > MAX_INSTANT { return None }
-  Some(Instant(nanos))
-}
-
-/// The instant the system clock is reading — Temporal's `Now.instant()`.
-///
-/// Not `pure` and not `det`, for the reason `today` is neither: it reads the clock. Unlike
-/// `now_plain_date_time` it cannot go backwards across a daylight-saving change, because
-/// an instant has no wall clock to be moved — which is what makes it the right thing to
-/// time with and to store.
-pub let now_instant = () -> Instant => Instant(i128(wall_clock_nanos()))
-
 impl Instant {
+  /// The instant `epoch_second` seconds after the epoch, plus `nanosecond`, or `None` when
+  /// that is outside the range Temporal admits (±10⁸ days).
+  pub let new = pure (epoch_second: i64, nanosecond: i64 = 0) -> Maybe<Instant> => {
+    let nanos = i128(epoch_second) * i128(NS_PER_SECOND) + i128(nanosecond)
+    if nanos < i128(0) - MAX_INSTANT || nanos > MAX_INSTANT { return None }
+    Some(Instant(nanos))
+  }
+
+  /// The instant the system clock is reading — Temporal's `Now.instant()`.
+  ///
+  /// Not `pure` and not `det`, for the reason `PlainDate.today` is neither: it reads the clock. Unlike
+  /// `PlainDateTime.now` it cannot go backwards across a daylight-saving change, because
+  /// an instant has no wall clock to be moved — which is what makes it the right thing to
+  /// time with and to store.
+  pub let now = () -> Instant => Instant(i128(wall_clock_nanos()))
+
   /// Whole seconds since the epoch, rounded **down** — so the second an instant falls in,
   /// for instants before 1970 as well as after.
   pub let epoch_second = pure (self) -> i64 =>

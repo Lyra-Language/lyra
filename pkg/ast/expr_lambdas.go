@@ -40,6 +40,12 @@ type LambdaExpr struct {
 	// function a console runs on that interrupt (checker.CheckInterruptHandlers; exported
 	// by the backend as `__lyra_interrupt_<kind>`, which the runtime's entry calls).
 	Interrupt string
+	// AssociatedTo is the type an `impl` block's member with no `self` belongs to, called as
+	// `Type.name(…)`. Nil for every other function. The binding's name holds the type's
+	// name too (`Rng.seeded`), which no source can spell and so no bare call can reach;
+	// this is what the type-name call resolves against, since an alias or a second module
+	// may name the one type differently (typechecker, associated.go).
+	AssociatedTo types.Type
 	// NoInline is `@noinline` on the declaration: the function is never inlined into its
 	// callers (the backend's noInline, on the declaration and each specialization).
 	NoInline    bool
@@ -129,4 +135,17 @@ func (r *ReturnStmt) GetName() string {
 		return "return"
 	}
 	return fmt.Sprintf("return %s", r.Value.GetName())
+}
+
+// AssociatedName is the top-level name of an associated function: `Rng.seeded` for `seeded`
+// in `impl Rng`. No source can spell it, so the function is reachable only as the type-name
+// call the typechecker rewrites to it, and two blocks may each declare a `new`. It reports
+// false for a type with no name to write before the dot.
+func AssociatedName(target types.Type, name string) (string, bool) {
+	switch target.(type) {
+	case types.UnresolvedType, types.ParameterizedType, types.PrimitiveType:
+		head, ok := types.HeadName(target)
+		return head + "." + name, ok
+	}
+	return "", false
 }

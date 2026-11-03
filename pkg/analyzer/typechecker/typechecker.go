@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -1099,9 +1100,9 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 		tc.checkScalarPattern(p, t)
 
 	case *ast.OrPattern:
-		// An alternation binds nothing (its alternatives are literals and ranges), so it
-		// is a test like the arm above — each alternative checked against the same type,
-		// so `1 | "s"` is reported on the string rather than on the alternation.
+		// An alternation binds nothing (lyra-E090), so it is a test like the arm above — each
+		// alternative checked against the same type, so `1 | "s"` is reported on the string
+		// rather than on the alternation.
 		for _, alt := range p.Alternatives {
 			tc.walkDestructuredPattern(alt, t, bind)
 		}
@@ -1213,6 +1214,12 @@ func (tc *TypeChecker) patternCoversType(pat ast.Pattern, t types.Type, loc ast.
 		return tc.patternCoversType(p.Pattern, t, loc)
 	case *ast.LiteralPattern, *ast.RangePattern, *ast.RegexPattern, *ast.ArrayPattern:
 		return false
+	case *ast.OrPattern:
+		// One alternative that alone cannot fail. `Some(_) | None` also covers its type, but
+		// a `let` that binds nothing has no use for the proof, so it stays `lyra-E077`.
+		return slices.ContainsFunc(p.Alternatives, func(alt ast.Pattern) bool {
+			return tc.patternCoversType(alt, t, loc)
+		})
 	case *ast.TuplePattern:
 		tt, ok := tc.resolveGenericAggregate(t, loc).(types.TupleType)
 		if !ok {
@@ -1905,7 +1912,7 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 	// The place's type is the value's context **while it is inferred**, as a binding's
 	// annotation and a struct field's declared type are: a generic call whose variables no
 	// argument reaches reports its own failure inside the inference, so a context applied
-	// afterwards is too late — `self.cache = hashmap_new()` was "cannot infer type
+	// afterwards is too late — `self.cache = HashMap.new()` was "cannot infer type
 	// variables k, v" though the field's type says both (10/27). A lambda is elaborated
 	// from it first, as an argument is.
 	tc.elaborateLambda(stmt.Value, targetType, nil)
@@ -3192,8 +3199,9 @@ func (tc *TypeChecker) declaredName(written, key string, loc ast.Location) strin
 }
 
 // AliasedTypeUses maps a file to the declared names of the types it wrote under an import
-// alias inside a declaration, which stamping replaced (stampNames) — uses lyra-W004 can no
-// longer see in the source it reads.
+// alias inside a declaration, which stamping replaced (stampNames), and of those it called a
+// function through, which the call's rewrite replaced (noteTypeNameUse) — uses lyra-W004 can
+// no longer see in the source it reads.
 func (tc *TypeChecker) AliasedTypeUses() map[string]map[string]bool { return tc.aliasedTypeUses }
 
 // resolveTypeIfKnown resolves an UnresolvedType only when the name is actually
@@ -5928,7 +5936,7 @@ func (tc *TypeChecker) inferStructGenericArgs(expr *ast.StructInstanceExpr, stru
 	// **A field whose type is already settled goes first, inferred in that type's
 	// context**, and the rest in the order written once nothing settled is left. A generic
 	// call whose variables no argument reaches needs the context while it is inferred:
-	// `Host { cache: hashmap_new(), tag: 1 }` against `cache: HashMap<string, e>` was
+	// `Host { cache: HashMap.new(), tag: 1 }` against `cache: HashMap<string, e>` was
 	// "cannot infer type variables k, v" — inferred bare, first, before `tag` had solved
 	// `e` (10/27). Settled is asked again after each field, since each solves more.
 	//
@@ -5936,7 +5944,7 @@ func (tc *TypeChecker) inferStructGenericArgs(expr *ast.StructInstanceExpr, stru
 	// narrowToAssignedPlaces infers its places: the field loop after this infers every
 	// value again, in the context the solve has settled by then, and reports there. Here
 	// it is asked only for what it pins down, and a value that needs the context to be
-	// typed at all — that `hashmap_new()`, when no other field had solved `e` first —
+	// typed at all — that `HashMap.new()`, when no other field had solved `e` first —
 	// would otherwise report a failure the second inference does not have.
 	pending := make([]int, 0, len(expr.Fields))
 	for idx := range expr.Fields {
@@ -5996,7 +6004,7 @@ func (tc *TypeChecker) inferStructGenericArgs(expr *ast.StructInstanceExpr, stru
 
 // seedStructArgsFromExpected binds the generic parameters the fields left unsolved from the
 // context the literal sits in, when that context is an instantiation of the same type —
-// `let a: Only<i64> = Only { cache: hashmap_new() }`, where no field solves `e` and the
+// `let a: Only<i64> = Only { cache: HashMap.new() }`, where no field solves `e` and the
 // annotation says it. The rule seedFromExpectedReturn gives a call: what the values solved
 // stands, and the context fills only what they did not (10/27).
 //
@@ -6193,6 +6201,9 @@ func (tc *TypeChecker) inferMemberExprType(m *ast.MemberExpr) types.Type {
 	// because inferring the object would report the namespace as an undefined
 	// identifier (see typechecker_modules.go).
 	if t, _, handled := tc.moduleMemberType(m); handled {
+		return t
+	}
+	if t, handled := tc.associatedFunctionValue(m); handled {
 		return t
 	}
 	// The object is not the field's value: the context stays out of it, as out of a call's

@@ -137,3 +137,28 @@ pub let mk = pure () -> f64 => 1.0
 		}
 	}
 }
+
+// An associated function is listed with its type, under the name it is called by and the
+// signature it was written with: `Box.of` is what a reader calls, and `pub let Box.of` no source.
+func TestRenderMarkdown_ListsAssociatedFunctionsWithTheirType(t *testing.T) {
+	page := renderOne(t, `
+pub struct Box<t> { value: t }
+impl Box<t> {
+  /// Holds a value.
+  pub let of = pure (value: t) -> Box<t> => Box { value: value }
+  /// Reads it.
+  pub let get = pure (self) -> t => self.value
+}
+`)
+	functions := strings.Index(page, "## Functions on `Box<t>`")
+	methods := strings.Index(page, "## Methods on `Box<t>`")
+	if functions < 0 || methods < functions {
+		t.Fatalf("want the functions, then the methods:\n%s", page)
+	}
+	if i := strings.Index(page, "### `Box.of`"); i < functions || i > methods {
+		t.Errorf("Box.of is not under its type's functions:\n%s", page)
+	}
+	if strings.Contains(page, "let Box.of") || !strings.Contains(page, "pub let of<t> = pure (value: t) -> Box<t>") {
+		t.Errorf("want the signature as written:\n%s", page)
+	}
+}

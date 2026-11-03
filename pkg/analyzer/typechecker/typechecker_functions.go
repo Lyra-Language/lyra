@@ -911,6 +911,13 @@ func (tc *TypeChecker) matchesAcceptingArguments(matches []resolvedTraitMethod, 
 // inferIdentifierCall resolves the identifier in scope and validates the call
 // against a LambdaExpr found as a VarDeclStmt value.
 func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.FunctionCallExpr) types.Type {
+	// `Type.name(…)` already rewritten, and checked again: a generic literal's fields are
+	// inferred twice. Its name is in no scope, so the declaration recorded the first time answers.
+	if ident.FromMethodCall {
+		if fn, ok := tc.typeTable.Callee(call); ok && fn.AssociatedTo != nil {
+			return tc.inferLambdaCall(ident.Name, fn, call)
+		}
+	}
 	// A parameter shadows any outer binding of the same name, and a local declared
 	// inside it shadows the parameter (paramAt, mirroring the IdentifierExpr
 	// resolution in inferExprType). A function-typed parameter is callable —
@@ -1413,6 +1420,9 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	//
 	// **And through one whose return settles its receiver** (10/27): `[…].flatten()` as a
 	// `[]Node<Ev>` takes `[][]Node<Ev>` to its receiver — see receiverContext.
+	if ret, handled := tc.callThroughTypeName(member, call); handled {
+		return ret
+	}
 	var objType types.Type
 	var recvWant types.Type
 	if want := tc.currentExpectedType(); want != nil {

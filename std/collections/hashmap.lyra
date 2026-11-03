@@ -3,9 +3,9 @@ module std.collections
 //! type needs to be one.
 //!
 //! ```
-//! import std.collections.{ HashMap, hashmap_new, insert, get, entries }
+//! import std.collections.{ HashMap, insert, get, entries }
 //!
-//! var ages: HashMap<string, i64> = hashmap_new()
+//! var ages: HashMap<string, i64> = HashMap.new()
 //! ages.insert("ada", 36)
 //! ages.insert("grace", 45)
 //! println(ages.get("ada").unwrap_or(0))    // 36
@@ -62,7 +62,7 @@ pub trait Hash {
 
 /// An unordered map from `k` to `v`.
 ///
-/// Build one with `hashmap_new` or `hashmap_with_capacity`, then `insert`, `get` and
+/// Build one with `HashMap.new` or `HashMap.with_capacity`, then `insert`, `get` and
 /// `remove`. Inserting and removing mutate the map, so it must be held in a `var` or
 /// behind a `mut` parameter. Iteration order is the table's, not insertion order, and it
 /// changes when the table grows — sort `keys()` if order matters.
@@ -70,7 +70,7 @@ pub trait Hash {
 /// # Examples
 ///
 /// ```
-/// var counts: HashMap<string, i64> = hashmap_new()
+/// var counts: HashMap<string, i64> = HashMap.new()
 /// for word in words {
 ///   counts.insert(word, counts.get(word).unwrap_or(0) + 1)
 /// }
@@ -94,30 +94,29 @@ pub struct Entry<k, v> {
   value: v,
 }
 
-/// An empty map.
-///
-/// Bare rather than `HashMap.new`, because the language has no type-namespaced
-/// associated functions (`lyra-E035`). The type parameters come from the context —
-/// `var m: HashMap<string, i64> = hashmap_new()` — or from a turbofish,
-/// `hashmap_new::<string, i64>()`.
-pub let hashmap_new<k, v> = pure () -> HashMap<k, v> => hashmap_with_capacity(0)
-
-/// An empty map with room for `capacity` entries before it first grows.
-///
-/// Sized so the load factor stays under 3/4 at that count. The capacity is only a hint;
-/// the map grows past it as needed.
-///
-/// # Panics
-///
-/// Traps when `capacity` is negative.
-pub let hashmap_with_capacity<k, v> = pure (capacity: i64) -> HashMap<k, v> => {
-  if capacity < 0 { panic("hashmap_with_capacity: capacity must not be negative") }
-  var slots = 8
-  while slots * 3 < capacity * 4 { slots *= 2 }
-  HashMap { slots: [None; slots], count: 0 }
-}
-
 impl HashMap<k, v> {
+  /// An empty map.
+  ///
+  /// The type parameters come from the context —
+  /// `var m: HashMap<string, i64> = HashMap.new()` — or from a turbofish,
+  /// `HashMap.new::<string, i64>()`.
+  pub let new = pure () -> HashMap<k, v> => HashMap.with_capacity(0)
+
+  /// An empty map with room for `capacity` entries before it first grows.
+  ///
+  /// Sized so the load factor stays under 3/4 at that count. The capacity is only a hint;
+  /// the map grows past it as needed.
+  ///
+  /// # Panics
+  ///
+  /// Traps when `capacity` is negative.
+  pub let with_capacity = pure (capacity: i64) -> HashMap<k, v> => {
+    if capacity < 0 { panic("HashMap.with_capacity: capacity must not be negative") }
+    var slots = 8
+    while slots * 3 < capacity * 4 { slots *= 2 }
+    HashMap { slots: [None; slots], count: 0 }
+  }
+
   /// Maps `key` to `value`, replacing any value it already had.
   ///
   /// Answers nothing, so the common insert discards nothing — `replace` is the same

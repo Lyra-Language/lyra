@@ -81,6 +81,7 @@ func (tc *TypeChecker) matrixIsExhaustive(rows [][]ast.Pattern, colTypes []types
 		// No columns left to distinguish values: any surviving row matches.
 		return len(rows) > 0
 	}
+	rows = expandHeadAlternations(rows)
 	ctors, finite := tc.constructorSet(colTypes[0], loc)
 	// **Specialize only when column 0 names every constructor**; otherwise the rows that
 	// bind it whole are all that can cover a constructor none of them names, which is
@@ -104,6 +105,37 @@ func (tc *TypeChecker) matrixIsExhaustive(rows [][]ast.Pattern, colTypes []types
 		}
 	}
 	return true
+}
+
+// expandHeadAlternations gives a row whose column 0 is an alternation one row per alternative,
+// which is what the alternation means to a matrix: `Some(1 | 2)` and `Some(_) | None` reach
+// here as their payload's or their column's head, at any depth. It is expandAlternations for
+// a row rather than an arm, and asked at each column because specializing is what brings a
+// nested one to the head.
+func expandHeadAlternations(rows [][]ast.Pattern) [][]ast.Pattern {
+	hasOr := func(row []ast.Pattern) bool {
+		_, isOr := ast.UnwrapBinding(row[0]).(*ast.OrPattern)
+		return isOr
+	}
+	if !slices.ContainsFunc(rows, hasOr) {
+		return rows // the common case allocates nothing
+	}
+	var out [][]ast.Pattern
+	for _, row := range rows {
+		or, isOr := ast.UnwrapBinding(row[0]).(*ast.OrPattern)
+		if !isOr {
+			out = append(out, row)
+			continue
+		}
+		for _, alt := range or.Alternatives {
+			next := make([]ast.Pattern, 0, len(row))
+			next = append(next, alt)
+			next = append(next, row[1:]...)
+			out = append(out, next)
+		}
+	}
+	// A parenthesized alternation inside an alternation brings another to the head.
+	return expandHeadAlternations(out)
 }
 
 // constructor is one alternative of a column's type: a data constructor, or one of bool's
@@ -332,6 +364,7 @@ func (tc *TypeChecker) dataMatchCoverage(arms []ast.MatchArm, dt types.DataType,
 			rows = append(rows, []ast.Pattern{arm.Pattern})
 		}
 	}
+	rows = expandHeadAlternations(rows)
 	ctors, _ := tc.constructorSet(dt, loc)
 	for _, c := range ctors {
 		sub, subTypes := specialize(rows, []types.Type{dt}, c)

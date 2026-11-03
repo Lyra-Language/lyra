@@ -32,7 +32,7 @@ let check = (name: string, xs: []i64) -> void => {
 }
 
 let main = () -> void => {
-  var rng = rng_seeded(11)
+  var rng = Rng.seeded(11)
   var random: []i64 = []
   for _ in 0..<5000 { random.push(rng.between(-1000, 1000)) }
   check("random", random)
@@ -129,7 +129,7 @@ struct Rec { key: i64, seq: i64 }
 impl Ord for Rec { compare = pure (self, o) => self.key <=> o.key }
 
 let main = () -> void => {
-  var rng = rng_seeded(3)
+  var rng = Rng.seeded(3)
   var recs: []Rec = []
   for i in 0..<3000 { recs.push(Rec { key: rng.below(20), seq: i }) }
   let out = recs.sorted()
@@ -175,7 +175,7 @@ let main = () -> void => {
   ws.sort_by((a, b) => a.len().compare(b.len()))
   println(ws[0] ++ " " ++ ws[3])
 
-  var rng = rng_seeded(5)
+  var rng = Rng.seeded(5)
   var recs: []Rec = []
   for i in 0..<2000 { recs.push(Rec { key: rng.below(10), seq: i }) }
   let out = recs.sorted_by((a, b) => a.key.compare(b.key))

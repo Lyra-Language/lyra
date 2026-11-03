@@ -15,57 +15,57 @@ module std.temporal
 /// the earliest instant, so that every instant has a date in some time zone).
 pub type PlainDate = i64 where range(-100000001..<=100000000)
 
-/// The date `year`-`month`-`day`, or `None` when there is no such date.
-///
-/// Temporal's `new Temporal.PlainDate(y, m, d)`, which *rejects* rather than clamps: 30
-/// February is `None`, not 28 or 29 February. That is the right default for a date spelled
-/// out in full, where an impossible one is a mistake or bad input. Clamping is what
-/// **arithmetic** does (`add`, `with_day`), where the day is a side effect of moving.
-///
-/// ```
-/// let Some(launch) = plain_date(2026, 9, 18) else { return }
-/// ```
-pub let plain_date = pure (year: i64, month: i64, day: i64) -> Maybe<PlainDate> => {
-  // Out-of-range years are refused before the arithmetic, which would otherwise overflow
-  // on a year near `i64`'s limits rather than answer.
-  if year < -271821 || year > 275760 { return None }
-  if month < 1 || month > 12 { return None }
-  if day < 1 || day > days_in(year, month) { return None }
-  let n = days_from_civil(year, month, day)
-  if n < -100000001 || n > 100000000 { return None }
-  Some(PlainDate(n))
-}
-
-/// The date an ISO 8601 string names, or `None` if it does not name one.
-///
-/// Two forms, which are Temporal's: `2026-09-18`, with a four-digit year, and
-/// `+275760-09-13` / `-000001-01-01`, with a sign and six digits for a year outside
-/// 0–9999. The date must exist (`2026-02-30` is `None`) and every field must be exactly as
-/// wide as written — `2026-9-18` is not ISO 8601, and accepting it would make `parse` and
-/// `show` disagree about what a date looks like. `-000000` is refused, as Temporal refuses
-/// it: year zero has one spelling.
-///
-/// ```
-/// match parse_plain_date(arg) { Some(d) => show_month(d), None => usage() }
-/// ```
-pub let parse_plain_date = pure (text: string) -> Maybe<PlainDate> => {
-  let runes = text.to_runes()
-  let signed = runes.len() > 0 && (runes[0] == '+' || runes[0] == '-')
-  let year_digits = if signed { 6 } else { 4 }
-  let start = if signed { 1 } else { 0 }
-  // sign? YYYY(YY) - MM - DD
-  if runes.len() != start + year_digits + 6 { return None }
-  let dash = start + year_digits
-  if runes[dash] != '-' || runes[dash + 3] != '-' { return None }
-  let Some(magnitude) = digits(runes, start, dash) else { return None }
-  let Some(mm) = digits(runes, dash + 1, dash + 3) else { return None }
-  let Some(dd) = digits(runes, dash + 4, dash + 6) else { return None }
-  if signed && runes[0] == '-' && magnitude == 0 { return None }
-  let yyyy = if signed && runes[0] == '-' { 0 - magnitude } else { magnitude }
-  plain_date(yyyy, mm, dd)
-}
-
 impl PlainDate {
+  /// The date `year`-`month`-`day`, or `None` when there is no such date.
+  ///
+  /// Temporal's `new Temporal.PlainDate(y, m, d)`, which *rejects* rather than clamps: 30
+  /// February is `None`, not 28 or 29 February. That is the right default for a date spelled
+  /// out in full, where an impossible one is a mistake or bad input. Clamping is what
+  /// **arithmetic** does (`add`, `with_day`), where the day is a side effect of moving.
+  ///
+  /// ```
+  /// let Some(launch) = PlainDate.new(2026, 9, 18) else { return }
+  /// ```
+  pub let new = pure (year: i64, month: i64, day: i64) -> Maybe<PlainDate> => {
+    // Out-of-range years are refused before the arithmetic, which would otherwise overflow
+    // on a year near `i64`'s limits rather than answer.
+    if year < -271821 || year > 275760 { return None }
+    if month < 1 || month > 12 { return None }
+    if day < 1 || day > days_in(year, month) { return None }
+    let n = days_from_civil(year, month, day)
+    if n < -100000001 || n > 100000000 { return None }
+    Some(PlainDate(n))
+  }
+
+  /// The date an ISO 8601 string names, or `None` if it does not name one.
+  ///
+  /// Two forms, which are Temporal's: `2026-09-18`, with a four-digit year, and
+  /// `+275760-09-13` / `-000001-01-01`, with a sign and six digits for a year outside
+  /// 0–9999. The date must exist (`2026-02-30` is `None`) and every field must be exactly as
+  /// wide as written — `2026-9-18` is not ISO 8601, and accepting it would make `parse` and
+  /// `show` disagree about what a date looks like. `-000000` is refused, as Temporal refuses
+  /// it: year zero has one spelling.
+  ///
+  /// ```
+  /// match PlainDate.parse(arg) { Some(d) => show_month(d), None => usage() }
+  /// ```
+  pub let parse = pure (text: string) -> Maybe<PlainDate> => {
+    let runes = text.to_runes()
+    let signed = runes.len() > 0 && (runes[0] == '+' || runes[0] == '-')
+    let year_digits = if signed { 6 } else { 4 }
+    let start = if signed { 1 } else { 0 }
+    // sign? YYYY(YY) - MM - DD
+    if runes.len() != start + year_digits + 6 { return None }
+    let dash = start + year_digits
+    if runes[dash] != '-' || runes[dash + 3] != '-' { return None }
+    let Some(magnitude) = digits(runes, start, dash) else { return None }
+    let Some(mm) = digits(runes, dash + 1, dash + 3) else { return None }
+    let Some(dd) = digits(runes, dash + 4, dash + 6) else { return None }
+    if signed && runes[0] == '-' && magnitude == 0 { return None }
+    let yyyy = if signed && runes[0] == '-' { 0 - magnitude } else { magnitude }
+    PlainDate.new(yyyy, mm, dd)
+  }
+
   /// The year, proleptic Gregorian: 1 BC is year 0 and 2 BC is year -1, as ISO 8601 counts.
   pub let year = pure (self) -> i64 => {
     let (y, _, _) = civil_from_days(i64(self))
@@ -136,12 +136,12 @@ impl PlainDate {
   /// that is not ambiguous. Positive when `other` is later.
   ///
   /// ```
-  /// let left = today().until(deadline).days
+  /// let left = PlainDate.today().until(deadline).days
   /// ```
   pub let until = pure (
     self,
     other: PlainDate
-  ) -> Duration => days(i64(other) - i64(self))
+  ) -> Duration => Duration.days(i64(other) - i64(self))
 
   /// The time from `other` to this date: `until` the other way round, so `a.since(b)` and
   /// `b.until(a)` are the same duration.
@@ -159,7 +159,7 @@ impl PlainDate {
   /// the remainder — so 36 hours is one day and 23 hours is none.
   ///
   /// ```
-  /// let due = invoice.add(days(30))
+  /// let due = invoice.add(Duration.days(30))
   /// ```
   pub let add = pure (self, amount: Duration) -> PlainDate => {
     let (y, m, d) = civil_from_days(i64(self))
@@ -202,7 +202,7 @@ impl Ord for PlainDate {
 }
 
 /// A date as ISO 8601: `2026-09-18`, or `+275760-09-13` / `-000001-01-01` for a year
-/// outside 0–9999 — exactly the forms `parse_plain_date` reads, so the two round-trip.
+/// outside 0–9999 — exactly the forms `PlainDate.parse` reads, so the two round-trip.
 impl Show for PlainDate {
   show = pure (self) => {
     let (y, m, d) = civil_from_days(i64(self))

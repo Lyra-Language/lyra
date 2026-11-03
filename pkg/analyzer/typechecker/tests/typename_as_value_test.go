@@ -9,10 +9,8 @@ import (
 // `llvm: unsupported method call "seeded"` — the backend refusing a form the front end
 // had never looked at, which is hazard 5 inverted.
 //
-// The message says the language has no associated functions, because that is the
-// actual state of affairs rather than an unimplemented call: `Rng.seeded(…)` has no
-// meaning to give it, and the free function is the whole answer. It is why the
-// prelude's constructors are spelled `rng_seeded`.
+// A type with no function of that name says so, and names where one would go. The tests of
+// what such a call does when there is one are in associated_function_test.go.
 func TestTypeNameAsValue_MemberCallOnAStructName(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		struct Rng {
@@ -23,7 +21,7 @@ func TestTypeNameAsValue_MemberCallOnAStructName(t *testing.T) {
 		}
 	`, false)
 	assertErrorsAre(t, res,
-		"Rng is a type, not a value; Lyra has no associated functions, so there is no Rng.something(...) — call the free function directly")
+		`Rng has no associated function "seeded"; declare one with no `+"`self`"+` in an `+"`impl`"+` block`)
 }
 
 // The receiver is what is wrong, so the diagnostic does not depend on the member
@@ -39,7 +37,7 @@ let go = () -> void => { let r = Rng }`,
 	} {
 		res := parseCollectAndCheck(t, source, false)
 		assertErrorsAre(t, res,
-			"Rng is a type, not a value; Lyra has no associated functions, so there is no Rng.something(...) — call the free function directly")
+			"Rng is a type, not a value; write Rng { … } or Rng(…) to build one, or Rng.function(…) to call one it declares in an `impl` block")
 	}
 }
 
@@ -53,7 +51,7 @@ func TestTypeNameAsValue_DataTypeName(t *testing.T) {
 		}
 	`, false)
 	assertErrorsAre(t, res,
-		"Shape is a type, not a value; Lyra has no associated functions, so there is no Shape.something(...) — call the free function directly")
+		`Shape has no associated function "make"; declare one with no `+"`self`"+` in an `+"`impl`"+` block`)
 }
 
 // A trait gets its own message, because `Trait::method(…)` *is* a spelling the

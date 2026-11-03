@@ -11,7 +11,6 @@
 
 import std.collections.{
   HashMap,
-  hashmap_new,
   parse_args,
 }
 import std.io.{ read_file, read_stdin }
@@ -35,7 +34,7 @@ let main = () -> u8 => {
       },
     },
   }
-  var word_counts: HashMap<string, i64> = hashmap_new()
+  var word_counts: HashMap<string, i64> = HashMap.new()
   for w in text.split_when((r) => !r.is_ascii_alpha()) {
     word_counts.update(w.to_ascii_lower(), 0, (n) => n + 1)
   }

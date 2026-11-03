@@ -75,10 +75,8 @@ func TestInherentImpl_RefusesWhatIsNotAMethod(t *testing.T) {
 		{"var", "var count = (self) => 1", "must be a plain `let`"},
 		{"let mut", "let mut count = (self) => 1", "must be a plain `let`"},
 		{"a value", "let limit = 5", "is not a function"},
-		{"a constant", "let LIMIT = 5", "`LIMIT` in `impl Person` is not a method"},
-		{"a destructuring", "let (a, b) = (1, 2)", "is not a method"},
-		{"no self", "let make = (name: string) => Person { name: name }", "takes no `self`"},
-		{"no parameters", "let make = () => 1", "takes no `self`"},
+		{"a constant", "let LIMIT = 5", "`LIMIT` in `impl Person` is not a function"},
+		{"a destructuring", "let (a, b) = (1, 2)", "is not a function"},
 		{"a typed self", "let f = (self: Person) => 1", "takes its type from the block"},
 	}
 	for _, tc := range cases {
@@ -91,6 +89,70 @@ func TestInherentImpl_RefusesWhatIsNotAMethod(t *testing.T) {
 			}
 			t.Errorf("expected lyra-E089 containing %q, got: %v", tc.want, errs)
 		})
+	}
+}
+
+// A member with no `self` is called through its type's name, so the type must have one to write.
+func TestInherentImpl_AnAssociatedFunctionNeedsATypeName(t *testing.T) {
+	cases := []struct{ name, src, want string }{
+		{"a type variable", "impl t where t: Ord { let top = () -> i64 => 1 }", "t has no name to call it through"},
+		{"an array", "impl []i64 { let zeros = () -> i64 => 1 }", "[]i64 has no name to call it through"},
+		{"a tuple", "impl (i64, i64) { let pair = () -> i64 => 1 }", "(i64, i64) has no name to call it through"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := parseAndCollectErrors(t, tc.src)
+			for _, e := range errs {
+				if d, ok := e.(diag.Diagnostic); ok && d.Code == diag.CodeInherentMember && strings.Contains(d.Message, tc.want) {
+					return
+				}
+			}
+			t.Errorf("expected lyra-E089 containing %q, got: %v", tc.want, errs)
+		})
+	}
+	for _, src := range []string{
+		"struct Pt { x: i64 }\nimpl Pt { let origin = () => Pt { x: 0 } }",
+		"struct Box<t> { v: t }\nimpl Box<t> { let of = (v: t) => Box { v: v } }",
+		"impl string { let dash = () => \"-\" }",
+	} {
+		if errs := parseAndCollectErrors(t, src); len(errs) != 0 {
+			t.Errorf("%s: %v", src, errs)
+		}
+	}
+}
+
+// An alternative of `|` only tests, and the grammar cannot keep a name out of a payload without
+// keeping the payload out, so this is where a binding is refused (lyra-E090).
+func TestOrPattern_AnAlternativeThatBindsIsRefused(t *testing.T) {
+	const decls = "data Tool = Pencil | Eraser(i64) | Brush(i64, string)\nstruct Pt { x: i64, y: i64 }\n"
+	cases := []struct{ name, src, want string }{
+		{"a payload", "let f = (m: Tool) -> i64 => match m { Eraser(x) | Pencil => 1, _ => 0 }", "binds `x`"},
+		{"a juxtaposed payload", "let f = (m: Tool) -> i64 => match m { Eraser x | Pencil => 1, _ => 0 }", "binds `x`"},
+		{"one field of several", "let f = (m: Tool) -> i64 => match m { Brush(_, s) | Pencil => 1, _ => 0 }", "binds `s`"},
+		{"a name inside a payload", "let f = (m: Tool) -> i64 => match m { Eraser(w @ 1) | Pencil => 1, _ => 0 }", "binds `w`"},
+		{"a struct's shorthand", "let f = (p: Pt) -> i64 => match p { { x } | { y: 0 } => 1, _ => 0 }", "binds `x`"},
+		{"a tuple element", "let f = (q: (i64, i64)) -> i64 => match q { (a, _) | (_, 0) => 1, _ => 0 }", "binds `a`"},
+		{"an array's rest", "let f = (s: []i64) -> i64 => match s { [...tail] | [] => 1 }", "binds `tail`"},
+		{"below the top", "let f = (m: Tool) -> i64 => match (m, 1) { (Eraser(x) | Pencil, _) => 1, _ => 0 }", "binds `x`"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := parseAndCollectErrors(t, decls+tc.src)
+			for _, e := range errs {
+				if d, ok := e.(diag.Diagnostic); ok && d.Code == diag.CodeOrPatternAlternative && strings.Contains(d.Message, tc.want) {
+					return
+				}
+			}
+			t.Errorf("expected lyra-E090 containing %q, got: %v", tc.want, errs)
+		})
+	}
+	for _, src := range []string{
+		decls + "let f = (m: Tool) -> i64 => match m { Eraser(_) | Brush(_, _) | Pencil => 1 }",
+		decls + "let f = (m: Tool) -> i64 => match m { w @ Eraser(_) | Pencil => 1, _ => 0 }",
+	} {
+		if errs := parseAndCollectErrors(t, src); len(errs) != 0 {
+			t.Errorf("%s: %v", src, errs)
+		}
 	}
 }
 

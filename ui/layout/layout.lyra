@@ -106,7 +106,7 @@ import ui.style.{
   MediaAnswer,
 }
 import ui.motion.{ with_layout, layout_key }
-import std.collections.{ HashMap, hashmap_new }
+import std.collections.{ HashMap }
 
 // ── The tree ─────────────────────────────────────────────────────────────────
 
@@ -1033,10 +1033,10 @@ pub struct Edit {
 /// No focus, nothing under the pointer, no element's state.
 pub let interaction_new = pure () -> Interaction =>
   Interaction {
-    widgets: hashmap_new(),
-    shown: hashmap_new(),
-    drafts: hashmap_new(),
-    hues: hashmap_new(),
+    widgets: HashMap.new(),
+    shown: HashMap.new(),
+    drafts: HashMap.new(),
+    hues: HashMap.new(),
   }
 
 // ── The laid-out tree ────────────────────────────────────────────────────────
@@ -1181,7 +1181,7 @@ pub let layout_cached<e> = (
   let laid = lay(root, c, cascade_root(light_theme()), fonts, seen, "#", cache)
   // The root given back is the whole of last frame given back: its entries stand as they were.
   if cache.laid_out > 0 { cache.last = cache.now }
-  cache.now = hashmap_new::<string, Cached<e>>()
+  cache.now = HashMap.new::<string, Cached<e>>()
   place_floats(laid, seen.viewport.size)
 }
 
@@ -1278,8 +1278,8 @@ struct Cached<e> {
 /// A cache with nothing in it.
 pub let layout_cache<e> = pure () -> LayoutCache<e> =>
   LayoutCache {
-    last: hashmap_new::<string, Cached<e>>(),
-    now: hashmap_new::<string, Cached<e>>()
+    last: HashMap.new::<string, Cached<e>>(),
+    now: HashMap.new::<string, Cached<e>>()
   }
 
 /// One node within `c`, styled at `cascade`, identified as `id`: last frame's layout of it when

@@ -45,7 +45,7 @@ func TestExample_DisambiguationMatchesPython(t *testing.T) {
 	if err := os.WriteFile(probe, []byte(`module main
 import std.io.{ read_stdin }
 import std.temporal.{
-  PlainDateTime, TimeZone, Disambiguation, load_time_zone, parse_plain_date_time,
+  PlainDateTime, TimeZone, Disambiguation,
   to_zoned_date_time, possible_instants, to_instant, epoch_second,
   Compatible, Earlier, Later,
 }
@@ -56,11 +56,11 @@ let main = () -> u8 => {
   for line in read_stdin().lines() {
     if line.trim().len() == 0 { continue }
     let parts = line.trim().split(" ")
-    let Some(zone) = load_time_zone(parts[0]) else {
+    let Some(zone) = TimeZone.load(parts[0]) else {
       println("no zone")
       continue
     }
-    let Some(local) = parse_plain_date_time(parts[1]) else {
+    let Some(local) = PlainDateTime.parse(parts[1]) else {
       println("no local")
       continue
     }
@@ -207,8 +207,10 @@ func TestExample_ZonedArithmeticMatchesPython(t *testing.T) {
 	if err := os.WriteFile(probe, []byte(`module main
 import std.io.{ read_stdin }
 import std.temporal.{
-  ZonedDateTime, Duration, load_time_zone, parse_plain_date_time, to_zoned_date_time,
-  add, to_instant, epoch_second, days, weeks, hours,
+  PlainDateTime,
+  TimeZone,
+  ZonedDateTime, Duration, to_zoned_date_time,
+  add, to_instant, epoch_second,
 }
 
 /// "<zone> <local>" in; the instants of +1 day, +1 week and +24 hours out.
@@ -216,10 +218,10 @@ let main = () -> u8 => {
   for line in read_stdin().lines() {
     if line.trim().len() == 0 { continue }
     let parts = line.trim().split(" ")
-    let Some(zone) = load_time_zone(parts[0]) else { continue }
-    let Some(local) = parse_plain_date_time(parts[1]) else { continue }
+    let Some(zone) = TimeZone.load(parts[0]) else { continue }
+    let Some(local) = PlainDateTime.parse(parts[1]) else { continue }
     let Some(start) = local.to_zoned_date_time(zone) else { continue }
-    println("${moved(start, days(1))} ${moved(start, weeks(1))} ${moved(start, hours(24))}")
+    println("${moved(start, Duration.days(1))} ${moved(start, Duration.weeks(1))} ${moved(start, Duration.hours(24))}")
   }
   0
 }

@@ -1,31 +1,35 @@
 module std.temporal
 
-/// Today's date where the program is running — Temporal's `Now.plainDateISO()`.
-///
-/// The system clock gives an instant; **the local time zone decides which date that
-/// instant falls on**, so this reads the zone's current UTC offset from the C library and
-/// applies it. At 23:30 in New York it is already tomorrow in UTC, and a calendar that
-/// highlighted the UTC date would be wrong for the last few hours of every evening.
-///
-/// Not `pure` and not `det`: it reads the clock, which is the point of it. Code that wants
-/// to be testable takes a `PlainDate` as a parameter and calls this once, at the edge.
-pub let today = () -> PlainDate => now_plain_date_time().date
+impl PlainDate {
+  /// Today's date where the program is running — Temporal's `Now.plainDateISO()`.
+  ///
+  /// The system clock gives an instant; **the local time zone decides which date that
+  /// instant falls on**, so this reads the zone's current UTC offset from the C library and
+  /// applies it. At 23:30 in New York it is already tomorrow in UTC, and a calendar that
+  /// highlighted the UTC date would be wrong for the last few hours of every evening.
+  ///
+  /// Not `pure` and not `det`: it reads the clock, which is the point of it. Code that wants
+  /// to be testable takes a `PlainDate` as a parameter and calls this once, at the edge.
+  pub let today = () -> PlainDate => PlainDateTime.now().date
+}
 
-/// The date and time of day where the program is running — Temporal's
-/// `Now.plainDateTimeISO()`: the system clock, moved by the local zone's current offset.
-///
-/// A wall-clock reading, not an instant: two calls either side of a daylight-saving change
-/// can go backwards, which is the right answer for "what does the clock on the wall say"
-/// and the wrong one for timing anything. `today`'s rule about calling it once at the edge
-/// applies here too.
-pub let now_plain_date_time = () -> PlainDateTime => {
-  let ns = wall_clock_nanos()
-  let epoch_seconds = floor_div(ns, 1000000000)
-  let local = ns + local_offset_seconds(epoch_seconds) * 1000000000
-  let time = local %% NS_PER_DAY
-  PlainDateTime {
-    date: PlainDate(floor_div(local - time, NS_PER_DAY)),
-    time: PlainTime(time)
+impl PlainDateTime {
+  /// The date and time of day where the program is running — Temporal's
+  /// `Now.plainDateTimeISO()`: the system clock, moved by the local zone's current offset.
+  ///
+  /// A wall-clock reading, not an instant: two calls either side of a daylight-saving change
+  /// can go backwards, which is the right answer for "what does the clock on the wall say"
+  /// and the wrong one for timing anything. `PlainDate.today`'s rule about calling it once at the edge
+  /// applies here too.
+  pub let now = () -> PlainDateTime => {
+    let ns = wall_clock_nanos()
+    let epoch_seconds = floor_div(ns, 1000000000)
+    let local = ns + local_offset_seconds(epoch_seconds) * 1000000000
+    let time = local %% NS_PER_DAY
+    PlainDateTime {
+      date: PlainDate(floor_div(local - time, NS_PER_DAY)),
+      time: PlainTime(time)
+    }
   }
 }
 
@@ -46,7 +50,7 @@ pub let now_plain_date_time = () -> PlainDateTime => {
 /// 5 — read as a native integer, with no byte assembly and no endianness question.
 ///
 /// It is the *current* offset at that instant, not a time zone: it answers "where is the
-/// wall clock now", which is what `today` asks, and not how the offset will change across a
+/// wall clock now", which is what `PlainDate.today` asks, and not how the offset will change across a
 /// daylight-saving transition, which is `ZonedDateTime`'s question and not yet built.
 let local_offset_seconds = (epoch_seconds: i64) -> i64 => {
   let time: []i64 = [epoch_seconds]

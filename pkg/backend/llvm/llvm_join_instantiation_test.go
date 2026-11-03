@@ -80,9 +80,9 @@ let main = () -> void => print("${get(true).unwrap_or(0)} ${get(false).unwrap_or
 func TestExec_BareNoneArgumentAdoptsTheSolvedInstantiation(t *testing.T) {
 	t.Parallel()
 	out := buildAndRunWithPrelude(t, `module main
-import std.collections.{ HashMap, hashmap_new, insert, get_or }
+import std.collections.{ HashMap, insert, get_or }
 let main = () -> void => {
-  var flags: HashMap<string, Maybe<string>> = hashmap_new()
+  var flags: HashMap<string, Maybe<string>> = HashMap.new()
   flags.insert("-v", None)
   flags.insert("-o", Some("out"))
   let missing: Maybe<string> = None

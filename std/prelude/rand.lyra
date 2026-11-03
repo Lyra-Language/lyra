@@ -13,7 +13,7 @@ module std.prelude
 // **That split is also what makes `det` usable with randomness, and it falls out
 // of effect inference rather than being declared.** `next_u64` and `below` only
 // mutate their own receiver, so they carry `EffectMut` — which `det` permits — and
-// a program holding a seeded `Rng` is fully reproducible. `rng_from_entropy` and
+// a program holding a seeded `Rng` is fully reproducible. `Rng.from_entropy` and
 // `random_below` reach `random_seed`, so inference gives *them* `EffectRand`, and
 // `det` refuses them. Nobody had to enumerate which randomness is deterministic:
 // drawing from a seed you were given is, and asking for a seed you were not is
@@ -21,23 +21,42 @@ module std.prelude
 
 /// A pseudo-random number generator.
 ///
-/// Build one with `rng_seeded` (reproducible) or `rng_from_entropy` (different each run),
+/// Build one with `Rng.seeded` (reproducible) or `Rng.from_entropy` (different each run),
 /// then draw with `next_u64`, `below` or `between`. Drawing mutates the generator, so it
 /// must be held in a `var` or behind a `mut` parameter.
 ///
 /// # Examples
 ///
 /// ```
-/// var rng = rng_seeded(42);
+/// var rng = Rng.seeded(42);
 /// println(rng.below(6) + 1)      // a die roll, the same one every run
 /// ```
 pub struct Rng {
   /// The generator's internal state. Never zero — xorshift maps 0 to 0, so a
-  /// zero-stated generator emits zero forever, which `rng_seeded` is what prevents.
+  /// zero-stated generator emits zero forever, which `Rng.seeded` is what prevents.
   state: u64
 }
 
 impl Rng {
+  /// A generator from an explicit seed — reproducible, so a simulation or a test gets the
+  /// same run every time.
+  ///
+  /// This is the `det`-legal constructor: it asks for no entropy, so code under a `det`
+  /// bound can use it and thread the generator through.
+  ///
+  /// Seed 0 is redirected to xorshift64's usual default seed rather than rejected. Zero is a
+  /// natural thing to write, it is the one value the algorithm cannot survive (the state is
+  /// a fixed point, so every draw would be 0), and trapping on it would punish the caller
+  /// who wanted the simplest possible seed.
+  pub let seeded = pure noalloc (seed: u64) -> Rng =>
+    if seed == 0 { Rng { state: 88172645463325252 } } else { Rng { state: seed } }
+
+  /// A generator seeded from the operating system — a different sequence each run.
+  ///
+  /// This is where a seed nobody supplied enters the program, so it carries `EffectRand` and
+  /// `pure`/`det` code refuses it. Use `Rng.seeded` there.
+  pub let from_entropy = () -> Rng => Rng.seeded(random_seed())
+
   /// The next raw 64-bit draw, advancing the generator.
   ///
   /// Every bit is usable. For a bounded draw use `below` or `between` rather than taking a
@@ -87,7 +106,7 @@ impl Rng {
   /// # Examples
   ///
   /// ```
-  /// var rng = rng_seeded(42);
+  /// var rng = Rng.seeded(42);
   /// let index = rng.below(xs.len())    // always a valid index into a non-empty xs
   /// ```
   pub let below = det noalloc (self: mut, bound: i64) -> i64 => {
@@ -114,32 +133,10 @@ impl Rng {
   }
 }
 
-/// A generator from an explicit seed — reproducible, so a simulation or a test gets the
-/// same run every time.
-///
-/// This is the `det`-legal constructor: it asks for no entropy, so code under a `det`
-/// bound can use it and thread the generator through.
-///
-/// Seed 0 is redirected to xorshift64's usual default seed rather than rejected. Zero is a
-/// natural thing to write, it is the one value the algorithm cannot survive (the state is
-/// a fixed point, so every draw would be 0), and trapping on it would punish the caller
-/// who wanted the simplest possible seed.
-///
-/// Bare rather than `Rng.seeded`, because the language has no type-namespaced associated
-/// functions — `Rng.seeded(42)` is `lyra-E035`.
-pub let rng_seeded = pure noalloc (seed: u64) -> Rng =>
-  if seed == 0 { Rng { state: 88172645463325252 } } else { Rng { state: seed } }
-
-/// A generator seeded from the operating system — a different sequence each run.
-///
-/// This is where a seed nobody supplied enters the program, so it carries `EffectRand` and
-/// `pure`/`det` code refuses it. Use `rng_seeded` there.
-pub let rng_from_entropy = () -> Rng => rng_seeded(random_seed())
-
 /// One uniform draw from `0..<bound`, seeded from the OS.
 ///
 /// The ambient convenience form. It carries `EffectRand`, so `pure` and `det` code refuse
-/// it — hold an `Rng` from `rng_seeded` there.
+/// it — hold an `Rng` from `Rng.seeded` there.
 ///
 /// Each call seeds a *fresh* generator, so there is no hidden global state anywhere in
 /// this module; the cost is one entropy call per draw. A loop drawing many values should
@@ -150,7 +147,7 @@ pub let rng_from_entropy = () -> Rng => rng_seeded(random_seed())
 ///
 /// Traps when `bound` is zero or negative, as `below` does.
 pub let random_below = (bound: i64) -> i64 => {
-  var rng = rng_from_entropy();
+  var rng = Rng.from_entropy();
   rng.below(bound)
 }
 
@@ -162,6 +159,6 @@ pub let random_below = (bound: i64) -> i64 => {
 ///
 /// Traps when `hi` is below `lo`.
 pub let random_between = (lo: i64, hi: i64) -> i64 => {
-  var rng = rng_from_entropy();
+  var rng = Rng.from_entropy();
   rng.between(lo, hi)
 }

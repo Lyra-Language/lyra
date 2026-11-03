@@ -1459,7 +1459,7 @@ import ui.access.{ access_node }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new, Fonts }
 import ui.layout.{ Node, FieldSpec, SliderSpec, column, row, text, text_input, checkbox, slider, button, radio_group, progress, table, TableColumn }
-import std.collections.{ HashMap, hashmap_new }
+import std.collections.{ HashMap }
 
 /// A renderer that draws nothing.
 struct Blank {
@@ -1491,7 +1491,7 @@ let main = () -> u8 => {
   let first = play([], fonts)
   print_tree(first.0, first.0.root, 0)
   // Each control by its label, as VoiceOver would find it.
-  var keys: HashMap<string, string> = hashmap_new()
+  var keys: HashMap<string, string> = HashMap.new()
   for node in first.0.nodes { keys.insert(node.label, node.key) }
   let name = keys.get("Name") ?? ""
   let box = keys.get("Tick me") ?? ""

@@ -42,7 +42,7 @@ pub let parse_args = (valued: []string) -> ProgramArgs => {
   var parsed = ProgramArgs {
     program: args[0],
     switches: [],
-    options: hashmap_new::<string, string>(),
+    options: HashMap.new::<string, string>(),
     positional: [],
   }
   var i = 1

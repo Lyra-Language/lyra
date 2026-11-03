@@ -22,9 +22,9 @@ import (
 func TestExec_HashMapInsertGrowRemove(t *testing.T) {
 	t.Parallel()
 	out := buildAndRunWithPrelude(t, `module main
-import std.collections.{ HashMap, hashmap_with_capacity, insert, get, remove, len }
+import std.collections.{ HashMap, insert, get, remove, len }
 let main = () -> void => {
-  var m: HashMap<i64, i64> = hashmap_with_capacity(4)
+  var m: HashMap<i64, i64> = HashMap.with_capacity(4)
   for i in 0..<1000 { m.insert(i * 7, i) }
   var all_found = true
   for i in 0..<1000 { if m.get(i * 7) != Some(i) { all_found = false } }
@@ -49,9 +49,9 @@ let main = () -> void => {
 func TestExec_HashMapStringChurnASan(t *testing.T) {
 	t.Parallel()
 	src := `module main
-import std.collections.{ HashMap, hashmap_new, insert, replace, get_or, remove, len }
+import std.collections.{ HashMap, insert, replace, get_or, remove, len }
 let main = () -> u8 => {
-  var names: HashMap<string, string> = hashmap_new()
+  var names: HashMap<string, string> = HashMap.new()
   for round in 0..<20 {
     for i in 0..<64 { names.insert("k" ++ "${i}", "v" ++ "${i}-${round}") }
     for i in 0..<64 { if i %% 2 == 0 { let _ = names.remove("k" ++ "${i}") } }
@@ -107,13 +107,13 @@ func exitCode(t *testing.T, err error) int {
 func TestExec_HashMapStructKey(t *testing.T) {
 	t.Parallel()
 	out := buildAndRunWithPrelude(t, `module main
-import std.collections.{ HashMap, Hash, hashmap_new, insert, get_or, hash_combine }
+import std.collections.{ HashMap, Hash, insert, get_or, hash_combine }
 struct Point { x: i64, y: i64 }
 impl Hash for Point {
   hash = pure noalloc (self) => hash_combine(hash_combine(0, self.x.hash()), self.y.hash())
 }
 let main = () -> void => {
-  var m: HashMap<Point, string> = hashmap_new()
+  var m: HashMap<Point, string> = HashMap.new()
   m.insert(Point { x: 1, y: 2 }, "a")
   m.insert(Point { x: 2, y: 1 }, "b")
   print(m.get_or(Point { x: 1, y: 2 }, "?") ++ m.get_or(Point { x: 2, y: 1 }, "?") ++ m.get_or(Point { x: 3, y: 3 }, "?"))
@@ -133,10 +133,10 @@ let main = () -> void => {
 func TestExec_HashMapUpdateTakeAndReadStdin(t *testing.T) {
 	t.Parallel()
 	out := buildAndRunWithPrelude(t, `module main
-import std.collections.{ HashMap, hashmap_new, update, get_or, len }
+import std.collections.{ HashMap, update, get_or, len }
 import std.io.{ read_stdin }
 let main = () -> void => {
-  var m: HashMap<string, i64> = hashmap_new()
+  var m: HashMap<string, i64> = HashMap.new()
   for i in 0..<1000 { m.update("k${i %% 7}", 100, (n) => n + 1) }
   let xs: []i64 = [1, 2, 3]
   let text = read_stdin()

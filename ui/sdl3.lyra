@@ -264,7 +264,7 @@ import ui.backend.{
 import bindings.accesskit
 import bindings.gpu.{ pin_contents, set_see_through, set_backdrop_blur }
 import bindings.accesskit.{ AccessRequestRaw }
-import std.collections.{ HashMap, hashmap_new }
+import std.collections.{ HashMap }
 import ui.draw.{
   Point,
   Size,
@@ -384,7 +384,7 @@ pub let platform_for = (window: Window) -> SdlPlatform => {
     window: window,
     look: system_look(),
     listening: accesskit.start(window),
-    access_keys: hashmap_new(),
+    access_keys: HashMap.new(),
   }
 }
 
@@ -677,7 +677,7 @@ impl Platform for SdlPlatform {
     // AccessKit's adapter is on the main window alone, for now (todo.md).
     if !self.listening || id != MAIN_WINDOW { return }
     let pixels = self.scale(MAIN_WINDOW)
-    self.access_keys = hashmap_new::<u64, string>()
+    self.access_keys = HashMap.new::<u64, string>()
     accesskit.begin(tree.root, tree.focus)
     for node in tree.nodes {
       self.access_keys.insert(node.id, node.key)

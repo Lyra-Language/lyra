@@ -24,19 +24,19 @@ impl PlainDate {
     PlainDateTime { date: self, time: time }
 }
 
-/// The date-time an ISO 8601 string names — `2026-09-18T14:30`, with seconds and a fraction
-/// allowed as `parse_plain_time` allows them — or `None`.
-///
-/// Exactly one `T` between the halves. Temporal also reads a space or a lowercase `t` there;
-/// nothing here writes either, so nothing reads them, and `show` and this agree.
-pub let parse_plain_date_time = pure (text: string) -> Maybe<PlainDateTime> => {
-  let Some(at) = text.index("T") else { return None }
-  let Some(date) = parse_plain_date(text.slice(0, at)) else { return None }
-  let Some(time) = time_at(text.to_runes(), at + 1) else { return None }
-  Some(PlainDateTime { date: date, time: time })
-}
-
 impl PlainDateTime {
+  /// The date-time an ISO 8601 string names — `2026-09-18T14:30`, with seconds and a fraction
+  /// allowed as `PlainTime.parse` allows them — or `None`.
+  ///
+  /// Exactly one `T` between the halves. Temporal also reads a space or a lowercase `t` there;
+  /// nothing here writes either, so nothing reads them, and `show` and this agree.
+  pub let parse = pure (text: string) -> Maybe<PlainDateTime> => {
+    let Some(at) = text.index("T") else { return None }
+    let Some(date) = PlainDate.parse(text.slice(0, at)) else { return None }
+    let Some(time) = time_at(text.to_runes(), at + 1) else { return None }
+    Some(PlainDateTime { date: date, time: time })
+  }
+
   /// This date-time moved by `amount` — Temporal's `add`, with **constrain** overflow.
   ///
   /// Temporal's order: the calendar units move the date first (a month after 31 January is
@@ -45,14 +45,18 @@ impl PlainDateTime {
   /// since a duration's clock fields are each `i64` and their total in nanoseconds need not
   /// fit.
   pub let add = pure (self, amount: Duration) -> PlainDateTime => {
-    let calendar = Duration { duration() | years: amount.years, months: amount.months,
-      weeks: amount.weeks, days: amount.days }
+    let calendar = Duration {
+      Duration.zero() | years: amount.years,
+      months: amount.months,
+      weeks: amount.weeks,
+      days: amount.days
+    }
     let clock_ns = i128(i64(self.time)) + clock_nanoseconds(amount)
     let day_ns = i128(NS_PER_DAY)
     let rem = clock_ns %% day_ns
     let carry = i64((clock_ns - rem) / day_ns)
     PlainDateTime {
-      date: self.date.add(calendar).add(days(carry)),
+      date: self.date.add(calendar).add(Duration.days(carry)),
       time: PlainTime(i64(rem)),
     }
   }

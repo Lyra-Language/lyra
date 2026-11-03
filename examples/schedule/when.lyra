@@ -18,19 +18,14 @@
 
 import std.collections.{ parse_args }
 import std.temporal.{
+  Duration,
+  ZonedDateTime,
   PlainDate,
   PlainTime,
   PlainDateTime,
   TimeZone,
   Disambiguation,
-  load_time_zone,
-  parse_plain_date,
-  parse_plain_time,
   possible_instants,
-  days,
-  weeks,
-  months,
-  now_in_zone,
 }
 
 let main = () -> u8 => {
@@ -41,7 +36,7 @@ let main = () -> u8 => {
     return 2
   }
   let zone_name = args.value("--zone").unwrap_or("UTC")
-  let Some(zone) = load_time_zone(zone_name) else {
+  let Some(zone) = TimeZone.load(zone_name) else {
     println("when: no zone called ${zone_name}")
     return 2
   }
@@ -54,14 +49,14 @@ let main = () -> u8 => {
     return 2
   }
   let from = match args.value("--from") {
-    Some(text) => match parse_plain_date(text) {
+    Some(text) => match PlainDate.parse(text) {
       Some(date) => date,
       None => {
         println("when: --from wants a date like 2026-03-08")
         return 2
       },
     },
-    None => now_in_zone(zone).to_plain_date(),
+    None => ZonedDateTime.now(zone).to_plain_date(),
   }
   let how_many = match args.value("--count") {
     Some(text) => text.parse_i64().unwrap_or(5),
@@ -128,12 +123,12 @@ let note = pure (local: PlainDateTime, zone: TimeZone) -> string => {
 let first_date = pure (recurrence: Recurrence, from: PlainDate) -> PlainDate => {
   if recurrence.kind == "weekly" {
     let ahead = (recurrence.ordinal - from.day_of_week() + 7) %% 7
-    return from.add(days(ahead))
+    return from.add(Duration.days(ahead))
   }
   if recurrence.kind == "monthly" {
     let this_month = from.with_day(recurrence.ordinal)
     return if this_month >= from { this_month } else { from
-        .add(months(1))
+        .add(Duration.months(1))
         .with_day(recurrence.ordinal) }
   }
   from
@@ -141,9 +136,9 @@ let first_date = pure (recurrence: Recurrence, from: PlainDate) -> PlainDate => 
 
 /// The `k`th occurrence's date, counted from the first.
 let step = pure (recurrence: Recurrence, base: PlainDate, k: i64) -> PlainDate => {
-  if recurrence.kind == "weekly" { return base.add(weeks(k)) }
-  if recurrence.kind == "monthly" { return base.add(months(k)) }
-  base.add(days(k))
+  if recurrence.kind == "weekly" { return base.add(Duration.weeks(k)) }
+  if recurrence.kind == "monthly" { return base.add(Duration.months(k)) }
+  base.add(Duration.days(k))
 }
 
 /// `daily 09:00`, `weekly Monday 09:00`, `monthly 31 12:00`.
@@ -151,7 +146,7 @@ let read_recurrence = pure (text: string) -> Maybe<Recurrence> => {
   let words = text.trim().split(" ")
   if words.len() < 2 { return None }
   let at_text = words[words.len() - 1]
-  let Some(at) = parse_plain_time(at_text) else { return None }
+  let Some(at) = PlainTime.parse(at_text) else { return None }
   if words[0] == "daily" && words.len() == 2 {
     return Some(Recurrence { kind: "daily", ordinal: 0, at: at })
   }

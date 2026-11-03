@@ -1386,7 +1386,7 @@ func (c *Collector) collectPatternElement(node *sitter.Node) ast.Pattern {
 	// an arity mismatch against a pattern the author never wrote.
 	case "identifier", "literal_pattern", "regex_pattern", "pattern",
 		"tuple_pattern", "array_pattern", "struct_pattern", "data_pattern",
-		"range_pattern", "wildcard_pattern", "binding_pattern":
+		"range_pattern", "or_pattern", "wildcard_pattern", "binding_pattern":
 		return c.CollectPattern(node)
 	}
 	return nil
@@ -1523,11 +1523,9 @@ func (c *Collector) collectRangePattern(node *sitter.Node) ast.Pattern {
 	return pattern
 }
 
-// collectOrPattern lowers `1 | 2 | 3` into an OrPattern.
-//
-// The grammar admits only literals and ranges as alternatives, so there is nothing here to
-// check about bindings — see ast.OrPattern for why that restriction is the language's
-// answer rather than this function's.
+// collectOrPattern lowers `1 | 2 | 3` into an OrPattern, refusing an alternative that binds
+// (lyra-E090). The grammar cannot refuse one without giving up the payload around it — see
+// ast.OrPattern for why that restriction is the language's answer.
 func (c *Collector) collectOrPattern(node *sitter.Node) ast.Pattern {
 	pattern := &ast.OrPattern{
 		PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
@@ -1542,6 +1540,14 @@ func (c *Collector) collectOrPattern(node *sitter.Node) ast.Pattern {
 		// produce here; dropping it rather than appending nil keeps rule 3's promise that
 		// no nil reaches the AST.
 		if alt := c.CollectPattern(child); alt != nil {
+			for _, name := range ast.PatternBoundNames(alt) {
+				if name != "_" {
+					c.ctx.AddErrorCoded(child, diag.SeverityError, diag.CodeOrPatternAlternative,
+						"alternative `%s` binds `%s`: an alternative of `|` only tests, so write `_` there, or give the alternative an arm of its own",
+						c.ctx.NodeText(child), name)
+					break
+				}
+			}
 			pattern.Alternatives = append(pattern.Alternatives, alt)
 		}
 	}

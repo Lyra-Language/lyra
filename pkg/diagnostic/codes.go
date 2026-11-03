@@ -315,11 +315,9 @@ const (
 	// backend refusing a form the front end never looked at rather than one it
 	// accepted on purpose (hazard 5).
 	//
-	// The type case is the one worth naming precisely: Lyra has **no
-	// type-namespaced associated functions**, so `Rng.seeded(42)` is not an
-	// unimplemented call but a form the language does not have, and the free
-	// function (`rng_seeded`) is the whole answer. That is also why the prelude's
-	// constructors are spelled bare.
+	// A `Type.name` that names an associated function resolves (typechecker, associated.go);
+	// this is a type with no function of that name, a type written as a value, and the same
+	// for a trait and for a name that is neither.
 	CodeTypeNameAsValue = "lyra-E035"
 
 	// CodeUnsatisfiedTraitBound: a generic is instantiated at a type that does not
@@ -1039,11 +1037,16 @@ const (
 	CodeUnsupportedCallArgument = "lyra-E088"
 
 	// CodeInherentMember: a member of an `impl Type { … }` block that is not a method of
-	// `Type` — a `var`, a non-function, a destructuring, no `self` first, a `self` that
-	// writes its own type, or the block itself not at the top level. The block is sugar
-	// for top-level `let name = (self: Type, …)` declarations (collector,
-	// inherent_impl.go), so whatever it cannot desugar into one is refused by name.
+	// `Type` — a `var`, a non-function, a destructuring, a function with no `self` in a block
+	// whose type has no name to call it through, a `self` that writes its own type, or the
+	// block itself not at the top level. The block is sugar for top-level declarations
+	// (collector, inherent_impl.go), so whatever it cannot desugar into one is refused by name.
 	CodeInherentMember = "lyra-E089"
+
+	// CodeOrPatternAlternative: an or-pattern alternative that binds a name (`Some(x) | None`).
+	// Alternatives only test (ast.OrPattern), and the grammar cannot keep a name out of a
+	// payload without keeping the payload out (collector, collectOrPattern).
+	CodeOrPatternAlternative = "lyra-E090"
 
 	// ── Warnings ──────────────────────────────────────────────────────────────
 

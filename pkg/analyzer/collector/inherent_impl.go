@@ -19,6 +19,9 @@ import (
 // filled into `self` by the declaration collector (declarations/inherent_member.go), which
 // also refuses what is not a method.
 //
+// A member with no `self` is an associated function, a top-level function under a name of
+// its own (ast.AssociatedName), called `Person.named("Ada")`.
+//
 // Each member is documented by its own `///`, as a top-level `let` is.
 func (c *Collector) collectInherentImpl(node *sitter.Node) []ast.Statement {
 	typeNode := cst.Field(node, "type")
@@ -46,7 +49,7 @@ func (c *Collector) collectInherentImpl(node *sitter.Node) []ast.Statement {
 		// constant and so never reaches the identifier arm). Neither is a method.
 		if pattern := cst.Field(member, "pattern"); pattern != nil {
 			c.ctx.AddErrorCoded(pattern, diag.SeverityError, diag.CodeInherentMember,
-				"`%s` in `impl %s` is not a method; declare it outside the block", c.ctx.NodeText(pattern), target.Text)
+				"`%s` in `impl %s` is not a function; declare it outside the block", c.ctx.NodeText(pattern), target.Text)
 			continue
 		}
 		c.ctx.InherentTarget = target
@@ -69,7 +72,7 @@ func (c *Collector) refuseNestedInherentImpl(node *sitter.Node) {
 		text = c.ctx.NodeText(t)
 	}
 	c.ctx.AddErrorCoded(node, diag.SeverityError, diag.CodeInherentMember,
-		"`impl %s { … }` must be at the top level: its members are top-level methods", text)
+		"`impl %s { … }` must be at the top level: its members are top-level functions", text)
 }
 
 // collectInherentBounds reads `impl t where t: Ord, u: Show { … }`: the bounds a block puts

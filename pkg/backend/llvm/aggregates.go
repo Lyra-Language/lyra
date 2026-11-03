@@ -310,6 +310,12 @@ func (l *lowerer) lowerMemberExpr(block *ir.Block, e *ast.MemberExpr) (value.Val
 		v, err := l.namedFunctionValue(block, key)
 		return v, block, err
 	}
+	// `Rng.seeded` in value position, the same way.
+	if lam, ok := l.res.TypeTable.AssociatedFunction(e); ok {
+		name, _ := ast.AssociatedName(lam.AssociatedTo, e.Property.Name)
+		v, err := l.namedFunctionValue(block, l.funcKey(name, lam.GetLocation()))
+		return v, block, err
+	}
 	objType, ok := l.recordedType(e.Object)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for member-access object")

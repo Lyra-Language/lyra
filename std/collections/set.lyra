@@ -14,9 +14,9 @@ module std.collections
 //! reach across modules, which is the bug this rename waited on (09/21).
 //!
 //! ```
-//! import std.collections.{ Set, set_new, insert, contains }
+//! import std.collections.{ Set, insert, contains }
 //!
-//! var seen = set_new::<string>()
+//! var seen = Set.new::<string>()
 //! seen.insert("intro.md")
 //! if seen.contains(link) { … }
 //! ```
@@ -28,10 +28,10 @@ pub struct Set<t> {
   items: HashMap<t, bool>,
 }
 
-/// An empty set.
-pub let set_new<t> = pure () -> Set<t> => Set { items: hashmap_new::<t, bool>() }
-
 impl Set<t> {
+  /// An empty set.
+  pub let new = pure () -> Set<t> => Set { items: HashMap.new::<t, bool>() }
+
   /// Adds `item`, and answers whether it was new — so a caller can tell the first sight of
   /// something from the rest without asking twice.
   pub let insert<t> where t: Hash = det (self: mut, item: t) -> bool => {
@@ -87,7 +87,7 @@ impl Set<t> {
 
   /// A new set of every item in either set. Neither set is changed.
   pub let union<t> where t: Hash = pure (self, other: Set<t>) -> Set<t> => {
-    var result = set_new::<t>()
+    var result = Set.new::<t>()
     for item in self.members() {
       result.insert(item)
     }
@@ -100,7 +100,7 @@ impl Set<t> {
   /// A new set of the items in this set that are not in `other`. Unlike a union, the order
   /// matters: `a.difference(b)` keeps what only `a` has, `b.difference(a)` what only `b` has.
   pub let difference<t> where t: Hash = pure (self, other: Set<t>) -> Set<t> => {
-    var result = set_new::<t>()
+    var result = Set.new::<t>()
     for item in self.members() {
       if !other.contains(item) {
         result.insert(item)
@@ -111,7 +111,7 @@ impl Set<t> {
 
   /// A new set of the items in both sets. Neither set is changed.
   pub let intersection<t> where t: Hash = pure (self, other: Set<t>) -> Set<t> => {
-    var result = set_new::<t>()
+    var result = Set.new::<t>()
     for item in self.members() {
       if other.contains(item) {
         result.insert(item)
@@ -126,7 +126,7 @@ impl Set<t> {
     self,
     other: Set<t>
   ) -> Set<t> => {
-    var result = set_new::<t>()
+    var result = Set.new::<t>()
     for item in self.members() {
       if !other.contains(item) {
         result.insert(item)
