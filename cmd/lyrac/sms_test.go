@@ -255,7 +255,7 @@ func TestSMS_ATableLargerThanABankIsRefused(t *testing.T) {
 	}
 	src := filepath.Join(dir, "large.lyra")
 	code := `
-@banked const HUGE: [17000]u8 = #[1; 17000]
+@banked const HUGE: [50000]u8 = #[1; 50000]
 let main = () -> void => { unsafe { port_write(0xBE, HUGE[5]) } }
 `
 	if err := os.WriteFile(src, []byte(code), 0o644); err != nil {
@@ -291,6 +291,52 @@ func TestSMS_CollisionAnswersAsTheGenesisDoes(t *testing.T) {
 	}
 	if hits < 10000 || mapHits < 2000 {
 		t.Errorf("too few hits to mean anything: %d shapes, %d maps", hits, mapHits)
+	}
+}
+
+// std.chips' players, compiled for the Z80, say what they say natively, and std.sms.sound gives it
+// to the PSG. One program prints each byte on the host; the same program writes each to the PSG's
+// port on the Z80, where smscheck logs them. Its frame count is the same, so the logs must match.
+func TestSMS_SoundPlaysTheBytesTheHostComputes(t *testing.T) {
+	t.Parallel()
+	z80ToolchainOrSkip(t)
+	root := repoRoot(t)
+	smscheck := smscheckOrSkip(t, root)
+	setenv(t, "LYRA_STD", root)
+	host := filepath.Join(t.TempDir(), "sound.lyra")
+	source := func(emit, setup string) string {
+		return strings.ReplaceAll(strings.ReplaceAll(soundBytes, "EMIT", emit), "SETUP", setup)
+	}
+	if err := os.WriteFile(host, []byte(source(`println("${byte}")`, "")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want, stderr, code := captureRun(t, "run", host)
+	if code != 0 {
+		t.Fatalf("host run exited %d: %s", code, stderr)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lyra.toml"), []byte("target = \"sms\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "sound.lyra")
+	z80 := source(`unsafe { port_write(0x7F, byte) }`, "") + "\n"
+	if err := os.WriteFile(src, []byte(z80), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "sound.sms")
+	if _, stderr, code := captureRun(t, "build", "-o", out, src); code != 0 {
+		t.Fatalf("build exited %d: %s", code, stderr)
+	}
+	log := filepath.Join(dir, "psg.txt")
+	if said, err := exec.Command(smscheck, out, "--frames", "20", "--ppm", out+".ppm", "--psg", log).CombinedOutput(); err != nil {
+		t.Fatalf("smscheck: %v\n%s", err, said)
+	}
+	got, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(got)) != strings.TrimSpace(want) || len(got) < 60 {
+		t.Errorf("the PSG was given\n%s\nthe host says\n%s", got, want)
 	}
 }
 
@@ -523,5 +569,40 @@ let main = () -> void => {
     }
   }
   println("${bad} ${hits} ${map_bad} ${map_hits}")
+}
+`
+
+// soundBytes plays effects and a song with std.chips' players, saying each byte through EMIT.
+const soundBytes = `
+import std.chips.effects.{ Effect, EffectStep, new_player }
+import std.chips.music.{ Tune, Cell, Envelope, EnvelopeStep, MusicData, Sample, new_music, held_by, EMPTY, NO_POINT }
+import std.chips.ym2612.{ FmPatch }
+
+const STEPS: [6]EffectStep = #[
+  EffectStep { period: 500, volume: 15 },
+  EffectStep { period: 400, volume: 12 },
+  EffectStep { period: 300, volume: 8 },
+  EffectStep { period: 3, volume: 15 },
+  EffectStep { period: 3, volume: 10 },
+  EffectStep { period: 3, volume: 4 },
+]
+const BEEP: Effect = Effect { first: 0, count: 3, noise: false, white: true }
+const HISS: Effect = Effect { first: 3, count: 3, noise: true, white: true }
+
+var player = new_player()
+var music = new_music()
+var bytes: [8]u8 = #[0; 8]
+var psg: [16]u8 = #[0; 16]
+var fm: [768]u8 = #[0; 768]
+
+let say = (byte: u8) -> void => EMIT
+
+let main = () -> void => {
+  player.start(BEEP)
+  player.start(HISS)
+  for _: u8 in 0..<8 {
+    let n = player.frame(STEPS, bytes)
+    for i in 0..<n { say(bytes[i]) }
+  }
 }
 `

@@ -421,9 +421,13 @@ out:
 
 ; A multiply checked for overflow: the answer, and through the pointer whether it was wrong. The
 ; product of two i32s fits an i64, and an i64's is checked by dividing back.
+;
+; **The flag is pointer-sized, an i16**, whatever C's `int` is: LLVM's call makes a slot that big.
+; An i32 written there overwrote the two bytes beside it, a saved IX for one, and a game crashed
+; a call later; a test checks the neighbour now.
 define i32 @__mulosi4(i32 %a, i32 %b, ptr %overflow) {
 entry:
-  store i32 0, ptr %overflow
+  store i16 0, ptr %overflow
   ; Both fitting 16 bits, as nearly all do, the product cannot overflow: sizes and signs apart.
   %at = trunc i32 %a to i16
   %bt = trunc i32 %b to i16
@@ -452,15 +456,15 @@ large:
   %lr = trunc i64 %wide to i32
   %back = sext i32 %lr to i64
   %wrong = icmp ne i64 %back, %wide
-  %flag = zext i1 %wrong to i32
-  store i32 %flag, ptr %overflow
+  %flag = zext i1 %wrong to i16
+  store i16 %flag, ptr %overflow
   ret i32 %lr
 }
 
 define i64 @__mulodi4(i64 %a, i64 %b, ptr %overflow) {
 entry:
   %r = call i64 @__muldi3(i64 %a, i64 %b)
-  store i32 0, ptr %overflow
+  store i16 0, ptr %overflow
   %zero = icmp eq i64 %a, 0
   br i1 %zero, label %out, label %check
 check:
@@ -474,7 +478,7 @@ divide:
   %same = icmp eq i64 %q, %b
   br i1 %same, label %out, label %over
 over:
-  store i32 1, ptr %overflow
+  store i16 1, ptr %overflow
   br label %out
 out:
   ret i64 %r

@@ -203,12 +203,26 @@ func LinkZ80(objects []Object) (*Z80Image, error) {
 		return at
 	}
 	total := 0
-	banked := false
+	inBanks := 0
 	for _, s := range sections {
 		if s.reached && s.kind == z80Banked {
-			banked = true
+			inBanks += s.size
 		} else if s.reached && s.kind != z80BSS {
 			total += s.size
+		}
+	}
+	// Everything fitting the 48 KB in view with no banks, a `@banked` table is an ordinary one:
+	// its bank number is the window's own, 2, so selecting it changes nothing. The window at 8000
+	// is otherwise the banks', which leaves what is not banked the first 32 KB.
+	banked := inBanks > 0
+	if banked && total+inBanks <= z80ROMEnd-z80CodeStart-z80HeaderEnd+z80HeaderAt {
+		banked = false
+		total += inBanks
+		for _, s := range sections {
+			if s.kind == z80Banked {
+				s.kind = z80ROM
+				s.bank = z80FirstBank
+			}
 		}
 	}
 	// With banks the window at 8000 is theirs, so what is not banked has the first 32 KB.
@@ -222,13 +236,20 @@ func LinkZ80(objects []Object) (*Z80Image, error) {
 		}
 		return fmt.Errorf("code and constants take %d bytes; a cartridge holds %d without banks: mark large tables `@banked`", total, z80ROMEnd-z80CodeStart-16)
 	}
+	// Largest first: the header in the middle of the first 32 KB would otherwise push a large
+	// section that met it past it, wasting what was left below.
+	fixed := []*z80Section{}
 	for _, s := range sections {
 		if s.reached && s.kind == z80ROM {
-			if s.address = place(s.size); s.address < 0 {
-				return nil, tooBig()
-			}
-			copy(rom[s.address:], s.data)
+			fixed = append(fixed, s)
 		}
+	}
+	sort.SliceStable(fixed, func(i, j int) bool { return fixed[i].size > fixed[j].size })
+	for _, s := range fixed {
+		if s.address = place(s.size); s.address < 0 {
+			return nil, tooBig()
+		}
+		copy(rom[s.address:], s.data)
 	}
 
 	ram := z80RAMStart

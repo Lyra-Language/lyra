@@ -1,0 +1,102 @@
+module std.sms.sound
+//! Sound on the Master System and Game Gear: effects and music on their PSG, the SN76489.
+//!
+//! ```
+//! import std.sms.sound
+//!
+//! sound.init()                 // the PSG silenced
+//! assets.JUMP.play()           // an effect, by the name Vega gave it
+//! // once a frame:
+//! assets.update_sounds()       // Vega's: sound.update(its steps) or update_music(…)
+//! ```
+//!
+//! **The playing is `std.chips.effects`' and `std.chips.music`'s**, what they say each frame
+//! written to the PSG's port, as `std.genesis.sound` and `std.game.sound` write the same to
+//! theirs, so a PSG sound is the same sound on each. A tone effect plays on tone channel 0, a
+//! noise effect on the noise channel, pitched by tone channel 2: one effect at a time on each, a
+//! new one taking the old one's place, and a song gives way on a channel an effect is playing on.
+//!
+//! **The PSG's port may be written at any time**, so unlike the VDP's this needs no vertical
+//! blank: once a frame is all it asks. There is no FM: Vega refuses a project's FM sounds and
+//! notes for these consoles, and what `std.chips.music` makes for FM is dropped.
+
+import std.chips.effects.{ Effect, EffectStep, Player, new_player, MAX_BYTES }
+import std.chips.music.{ Tune, MusicData, MusicPlayer, new_music, held_by }
+import std.chips.sn76489.{ attenuation_byte }
+import std.chips.ym2612.{ FmPatch }
+
+/// The PSG's port.
+const PSG_PORT: u8 = 0x7F
+
+var player: Player = new_player()
+var music: MusicPlayer = new_music()
+var effect_bytes: [8]u8 = #[0; 8]
+var music_psg: [16]u8 = #[0; 16]
+var music_fm: [768]u8 = #[0; 768]
+
+/// Every PSG channel silent, as it may power up sounding. A game calls this first.
+pub let init = () -> void => {
+  var channel: u8 = 0
+  while channel < 4 {
+    write(attenuation_byte(channel, 15))
+    channel += 1
+  }
+  player = new_player()
+  music = new_music()
+}
+
+impl Effect {
+  /// Start the effect from its first step, in place of any its channel was playing. It is
+  /// heard from the next [update].
+  pub let play = (self) -> void => player.start(self)
+}
+
+/// Whether an effect is still playing.
+pub let playing = () -> bool => player.playing()
+
+impl Tune {
+  /// Play the song from its start, in place of any song playing; heard from the next
+  /// [update_music], under the effects.
+  pub let play = (self) -> void => music.play_song(self)
+}
+
+/// Stop the song playing.
+pub let stop_music = () -> void => music.stop()
+
+/// The frame's step of each effect playing, written to the PSG: once a frame. `steps` is the
+/// game's table of them. `patches` is for calls that read as the Genesis's; there is no FM.
+pub let update<const N: i64, const P: i64> = (
+  steps: ref [N]EffectStep,
+  _patches: ref [P]FmPatch
+) -> void => {
+  effects_frame(steps)
+}
+
+/// [update], and the song playing's tick under the effects: once a frame. `tables` is the
+/// game's music; `patches` and `samples` are for calls that read as the Genesis's.
+pub let update_music<const N: i64, const P: i64, const S: i64, d> where d: MusicData = (
+  steps: ref [N]EffectStep,
+  _patches: ref [P]FmPatch,
+  tables: ref d,
+  _samples: ref [S]u8
+) -> void => {
+  let before = held_by(player)
+  effects_frame(steps)
+  let (bytes, _) = music.frame(tables, before | held_by(player), music_psg, music_fm)
+  var i: i16 = 0
+  while i64(i) < bytes {
+    write(music_psg[i])
+    i += 1
+  }
+}
+
+let effects_frame<const N: i64> = (steps: ref [N]EffectStep) -> void => {
+  let bytes = player.frame(steps, effect_bytes)
+  var i: i16 = 0
+  while i64(i) < bytes {
+    write(effect_bytes[i])
+    i += 1
+  }
+}
+
+let write = (value: u8) -> void => unsafe { port_write(PSG_PORT, value) }

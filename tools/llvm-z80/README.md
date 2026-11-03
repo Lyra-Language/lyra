@@ -36,6 +36,9 @@ a multiplier under 256) and 1,200 to divide. `test/run.py` carries a copy to lin
 
 ## Banks
 
+When everything fits the 48 KB in view, a `@banked` table stays with the rest and its bank is 2, the
+window's own, so a small game costs only the selecting call.
+
 Not the target's business but the backend's and linker's: `selectBanks` (`pkg/backend/llvm/banks.go`)
 makes each use of a `@banked` table go through `__z80_bank`, and `pkg/rom/z80.go` gives the tables their
 banks, from 2 up, largest first. The bank's number is the "address" of `__lyra_bank.<table>`. The

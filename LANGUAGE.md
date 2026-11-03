@@ -840,7 +840,7 @@ target = "genesis"
   `set_backdrop`, `set_cell`, `set_sprite`, `end_sprites`, `wait_vblank`, `send_sprites`,
   `interrupt_each_frame`), `std.sms.pad` (`read`, `held`), `std.sms.sprites` (`clear`, `add`, `show`) and `std.sms.camera`,
   `std.sms.entity` and `std.sms.collision`, named as `std.genesis`'s are so a game reads the same;
-  collision is the same answers in 16 bits, so a world is under 32 KB of pixels a side. One plane, no sprite flip, and no sound yet. `examples/sms/` has small games.
+  collision is the same answers in 16 bits, so a world is under 32 KB of pixels a side. `std.sms.sound` plays PSG effects, cheaply, and songs, which stall a game several frames a row for now. One plane, and no sprite flip. `examples/sms/` has small games.
 - **`host` means "a program with an operating system"**, and which one is the build's choice,
   not the code's: **`lyrac build --target <platform>`** — `ios`, `ios-simulator`,
   `linux-arm64`, `linux-x86_64`, `macos` (`macos`/`linux` are this machine's processor's) —

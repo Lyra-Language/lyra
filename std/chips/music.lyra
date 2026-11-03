@@ -180,6 +180,9 @@ pub trait MusicData {
   pure envelope_step: (Self, i32) -> EnvelopeStep,
   /// FM instrument `index`'s sample, `length` 0 for a patch's.
   pure sample: (Self, i32) -> Sample,
+  /// Whether the tables are for a chip with FM. False on a console with a PSG alone, whose songs
+  /// have no FM notes: a constant the optimizer takes the FM half of the player out on.
+  pure has_fm: (Self) -> bool,
 }
 
 /// The most bytes a frame sends the PSG — [MusicPlayer.frame]'s `psg` buffer, `[16]u8`.
@@ -347,7 +350,7 @@ impl MusicPlayer {
         ) { self.voices[k].silence(k, psg, fm, out) }
       }
       self.dac.playing = false
-      self.key_ch3(fm, out)
+      if tables.has_fm() { self.key_ch3(fm, out) }
       return (i64(out.psg), i64(out.fm))
     }
     // The song's ticks at its rate: none some frames, two some others.
@@ -381,6 +384,14 @@ impl MusicPlayer {
     // PSG 3 is the noise's pitch while the noise sounds.
     let noise_owns = self.voices[9].sounding && !is_held(held, 9)
     for k: i16 in 0..<self.channels() {
+      // No FM: its channels hold only what a song's control effects say.
+      if !tables.has_fm() && is_fm(k) {
+        if reading { self.song_control(tables.cell(tables.pattern(
+          at,
+          i32(k)
+        ) + self.row)) }
+        continue
+      }
       // Between rows a resting channel has nothing to do — unless an effect has it, or it is
       // PSG 3, whose period the noise may have just given back.
       let skipped = self.voices[k].resting() && !is_held(held, k) && k != FIRST_PSG + 2
@@ -400,7 +411,7 @@ impl MusicPlayer {
       }
       if is_held(held, k) {
         // An effect on FM 6 is heard only with the DAC off.
-        if self.voices[k].dac {
+        if tables.has_fm() && self.voices[k].dac {
           out.put_fm(fm, 0, 0x2B, 0)
           self.voices[k].dac = false
         }
@@ -418,8 +429,10 @@ impl MusicPlayer {
       let silent = (self.muted >> u16(k)) & 1 == 1
       self.voices[k].sound(tables, k, self.tick, silent, psg, fm, out)
     }
-    self.follow_dac(tables)
-    self.key_ch3(fm, out)
+    if tables.has_fm() {
+      self.follow_dac(tables)
+      self.key_ch3(fm, out)
+    }
     self.advance()
   }
 
@@ -631,7 +644,7 @@ impl MusicChannel {
     self.step = i16(e.release) + 1
     if self.operator > 0 {
       self.op_keyed = false
-    } else if is_fm(k) {
+    } else if tables.has_fm() && is_fm(k) {
       out.put_fm(fm, 0, 0x28, key_on_code(u8(k)))
     }
   }
@@ -644,7 +657,7 @@ impl MusicChannel {
     k: i16
   ) -> Envelope => {
     let ins = i32(self.instrument)
-    if is_fm(k) {
+    if tables.has_fm() && is_fm(k) {
       return if ins >= 0 && ins < tables.patches() { tables.fm_envelope(ins) } else { Envelope {
         first: 0,
         count: 0
@@ -712,7 +725,7 @@ impl MusicChannel {
     let ins = i32(self.instrument)
     self.heard_pitch = -1
     self.heard_volume = -1
-    if self.operator > 0 {
+    if tables.has_fm() && self.operator > 0 {
       // One of FM 3's operators: its own registers from its instrument's same operator,
       // and the channel's shared ones; keyed with the others ([MusicPlayer.key_ch3]).
       if ins < 0 || ins >= tables.patches() || tables.sample(ins).length > 0 {
@@ -737,7 +750,7 @@ impl MusicChannel {
       self.sounding = true
       return
     }
-    if k < FIRST_PSG {
+    if tables.has_fm() && k < FIRST_PSG {
       if ins < 0 || ins >= tables.patches() {
         self.sounding = false
         return
@@ -859,7 +872,7 @@ impl MusicChannel {
       // The DAC's: the player reads them ([MusicPlayer.follow_dac]).
       self.heard_pitch = pitch
       self.heard_volume = level
-    } else if is_fm(k) {
+    } else if tables.has_fm() && is_fm(k) {
       self.sound_fm(tables, k, pitch, level, fm, out)
     } else {
       self.sound_psg(k, pitch, level, psg, out)
