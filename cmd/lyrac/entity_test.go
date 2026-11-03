@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -278,3 +279,179 @@ let main = () -> u8 => {
 		t.Errorf("case %d failed; stderr: %s", code, stderr)
 	}
 }
+
+// A kind's colliders may change by frame: an entity takes its frame's shapes from the game's
+// table as it is drawn, so what it meets is what is shown, and a frame of no area meets
+// nothing. A map stops it by the shapes of the frame it starts on: feet that lift on a stride
+// do not let it sink to the floor, and a frame reaching into a wall does not wedge it (11/02,
+// the platformer). Both runtimes, one case for case.
+func TestRun_EntityShapesChangeByFrame(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	for _, rt := range []struct {
+		name string
+		repl *strings.Replacer
+	}{
+		{"genesis", strings.NewReplacer("@RT", "genesis", "@WORD", "u16", "@D", "", "@ONE", "256")},
+		{"game", strings.NewReplacer("@RT", "game", "@WORD", "u32", "@D", ".0", "@ONE", "1.0")},
+	} {
+		t.Run(rt.name, func(t *testing.T) {
+			src := filepath.Join(t.TempDir(), "main.lyra")
+			if err := os.WriteFile(src, []byte(rt.repl.Replace(entityFrameShapesSource)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, stderr, code := captureRun(t, "run", src); code != 0 {
+				t.Errorf("case %d failed; stderr: %s", code, stderr)
+			}
+		})
+	}
+}
+
+const entityFrameShapesSource = `import std.@RT.collision.{ Shape, Collider }
+import std.@RT.entity.{ Animation, EntityKind, NO_FRAME_SHAPES }
+
+const STILL: Animation = Animation { sprite: 0, first: 0, count: 1, total: 1, looping: false }
+const NONE: Collider = Collider { shape: Shape { x: 0@D, y: 0@D, width: 0@D, height: 0@D }, layers: 0, mask: 0 }
+const REACH: Collider = Collider { shape: Shape { x: 0@D, y: 0@D, width: 10@D, height: 8@D }, layers: 4, mask: 9 }
+const FEET: Collider = Collider { shape: Shape { x: 1@D, y: 7@D, width: 2@D, height: 1@D }, layers: 4, mask: 0 }
+// Frame 0 short, frame 1 long, frame 2 not there.
+const ROWS: [3]Shape = #[
+  Shape { x: 0@D, y: 0@D, width: 10@D, height: 8@D },
+  Shape { x: 0@D, y: 0@D, width: 30@D, height: 8@D },
+  Shape { x: 0@D, y: 0@D, width: 0@D, height: 0@D },
+]
+const PAIRS: [4]Shape = #[
+  Shape { x: 1@D, y: 7@D, width: 2@D, height: 1@D },
+  Shape { x: 0@D, y: 0@D, width: 10@D, height: 8@D },
+  Shape { x: 1@D, y: 7@D, width: 2@D, height: 1@D },
+  Shape { x: 0@D, y: 0@D, width: 30@D, height: 8@D },
+]
+const STRETCHY: EntityKind = EntityKind {
+  width: 16@D,
+  height: 8@D,
+  animation: STILL,
+  colliders: #[REACH, NONE, NONE, NONE],
+  collider_count: 1,
+  max_speed: @ONE,
+  acceleration: @ONE,
+  friction: 0@D,
+  gravity: 0@D,
+  frame_shapes: 0,
+  steady_shapes: 0
+}
+const TWO: EntityKind = EntityKind {
+  width: 16@D,
+  height: 8@D,
+  animation: STILL,
+  colliders: #[FEET, REACH, NONE, NONE],
+  collider_count: 2,
+  max_speed: @ONE,
+  acceleration: @ONE,
+  friction: 0@D,
+  gravity: 0@D,
+  frame_shapes: 0,
+  steady_shapes: 0
+}
+// Feet on the floor on frame 0 (bottom 8), lifted on frame 1 (bottom 4), starting on frame 0.
+const STRIDES: [2]Shape = #[
+  Shape { x: 0@D, y: 0@D, width: 8@D, height: 8@D },
+  Shape { x: 0@D, y: 0@D, width: 8@D, height: 4@D },
+]
+const FALLS: EntityKind = EntityKind {
+  width: 8@D,
+  height: 8@D,
+  animation: STILL,
+  colliders: #[REACH, NONE, NONE, NONE],
+  collider_count: 1,
+  max_speed: @ONE,
+  acceleration: @ONE,
+  friction: 0@D,
+  gravity: @ONE,
+  frame_shapes: 0,
+  steady_shapes: 0
+}
+const STAR: EntityKind = EntityKind {
+  width: 8@D,
+  height: 8@D,
+  animation: STILL,
+  colliders: #[Collider { shape: Shape { x: 0@D, y: 0@D, width: 8@D, height: 8@D }, layers: 8, mask: 0 }, NONE, NONE, NONE],
+  collider_count: 1,
+  max_speed: 0@D,
+  acceleration: 0@D,
+  friction: 0@D,
+  gravity: 0@D
+}
+
+let main = () -> u8 => {
+  if STAR.frame_shapes != NO_FRAME_SHAPES { return 1 }
+  // What it meets is what is shown.
+  var seen = STRETCHY.spawn(20@D, 100@D)
+  let star = STAR.spawn(45@D, 100@D)
+  seen.show_frame_shapes(ROWS, 0)
+  if seen.meets(star) { return 2 }
+  seen.show_frame_shapes(ROWS, 1)
+  if !seen.meets(star) { return 3 }
+  seen.show_frame_shapes(ROWS, 2)
+  if seen.meets(star) { return 4 }
+  // Rows are a frame's, a shape a collider.
+  var both = TWO.spawn(20@D, 100@D)
+  both.show_frame_shapes(PAIRS, 1)
+  if both.kind.colliders[0].shape.width != 2@D || both.kind.colliders[1].shape.width != 30@D { return 5 }
+
+  // A wall the map draws, x 40..48: frame 1 from x 20 reaches 50, into it.
+  let empty: [64]@WORD = #[0; 64]
+  let starts: [3]@WORD = #[0, 0, 1]
+  let tiles: [1]Collider = #[Collider { shape: Shape { x: 0@D, y: 0@D, width: 8@D, height: 8@D }, layers: 1, mask: 0 }]
+  let one_band: [2]@WORD = #[0, 1]
+  let wall: [1]Collider = #[Collider { shape: Shape { x: 40@D, y: 0@D, width: 8@D, height: 8@D }, layers: 1, mask: 0 }]
+  var e = STRETCHY.spawn(20@D, 0@D)
+  e.show_frame_shapes(ROWS, 1)
+  if e.kind.colliders[0].shape.width != 30@D { return 6 }
+  // It walks on, the wall stopping it by its steady shape, and still shows what it showed.
+  e.vx = @ONE
+  e.use_steady_shapes(ROWS)
+  e.move_in_with(empty, 32, 1, starts, tiles, one_band, wall)
+  if e.kind.colliders[0].shape.width != 10@D { return 7 }
+  e.use_shown_shapes(ROWS)
+  if e.x() != 21@D { return 8 }
+  if e.kind.colliders[0].shape.width != 30@D || e.shown_row != 1 { return 9 }
+  // Its steady shape meets the wall where it would, however far the frame shown reaches.
+  e.place(30@D, 0@D)
+  e.vx = @ONE
+  e.use_steady_shapes(ROWS)
+  e.move_in_with(empty, 32, 1, starts, tiles, one_band, wall)
+  e.use_shown_shapes(ROWS)
+  if e.x() != 30@D { return 10 }
+
+  // A floor the map draws, y 8..16: its feet lifted, it does not sink, and it still stands.
+  let floor: [1]Collider = #[Collider { shape: Shape { x: 0@D, y: 8@D, width: 64@D, height: 8@D }, layers: 1, mask: 0 }]
+  var f = FALLS.spawn(0@D, 0@D)
+  f.show_frame_shapes(STRIDES, 1)
+  for _i in 0..<8 {
+    f.use_steady_shapes(STRIDES)
+    f.move_in_with(empty, 32, 1, starts, tiles, one_band, floor)
+    f.use_shown_shapes(STRIDES)
+  }
+  if f.y() != 0@D || f.vy != 0@D { return 11 }
+  if f.kind.colliders[0].shape.height != 4@D { return 12 }
+
+  // An entity that has shown no frame keeps the shapes its kind has.
+  var unseen = STRETCHY.spawn(0@D, 0@D)
+  unseen.use_steady_shapes(ROWS)
+  unseen.use_shown_shapes(ROWS)
+  if unseen.kind.colliders[0].shape.width != 10@D { return 13 }
+
+  // The same with a tile for the wall: x 40..48 of a map with no colliders of its own.
+  var cells: [64]@WORD = #[0; 64]
+  cells[5] = 2
+  var t = STRETCHY.spawn(30@D, 0@D)
+  t.show_frame_shapes(ROWS, 1)
+  t.vx = @ONE
+  t.use_steady_shapes(ROWS)
+  t.move_in(cells, 32, 1, starts, tiles)
+  t.use_shown_shapes(ROWS)
+  if t.x() != 30@D { return 14 }
+  0
+}
+`

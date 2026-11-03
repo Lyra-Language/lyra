@@ -27,6 +27,12 @@ module std.genesis.entity
 //! **Fixed point, 8.8**: a place is an `i32` and a speed an `i16`, both in 256ths of a
 //! pixel, so an entity moves by fractions of a pixel without the 68000 dividing.
 //!
+//! **A kind's colliders may change by frame** (`EntityKind.frame_shapes`): the game's assets
+//! give an entity its frame's shapes as they draw it, for what it meets. A map stops it by
+//! the shapes of the frame it starts on, whatever it shows ([use_steady_shapes]): art that
+//! lifts its feet on a stride should not let it sink to the floor, nor one reaching out wedge
+//! it in a wall.
+//!
 //! **Meeting is one-sided**, as `std.genesis.collision` says: `a.meets(b)` asks whether a
 //! collider of `a` looks for a layer one of `b`'s is on, whatever `b` looks for.
 
@@ -57,6 +63,9 @@ pub const NO_COLLIDER: Collider = Collider {
   mask: 0
 }
 
+/// What a kind's `frame_shapes` is when its colliders keep their shapes.
+pub const NO_FRAME_SHAPES: u16 = 0xFFFF
+
 /// A kind of thing in the game: its sprite's size, what it shows when spawned, what it
 /// collides by, and how it moves — its top speed, the speed it gains a frame while pushed,
 /// loses a frame while not, and gains downwards a frame from gravity, all in 256ths of a
@@ -72,6 +81,12 @@ pub struct EntityKind {
   acceleration: i16,
   friction: i16,
   gravity: i16,
+  /// Where its rows start in the game's table of shapes by frame (`assets.FRAME_SHAPES`): a
+  /// row a frame of its sprite, a shape a collider. [NO_FRAME_SHAPES] when its colliders
+  /// keep their shapes.
+  frame_shapes: u16 = NO_FRAME_SHAPES,
+  /// The row of the frame it starts on: the shapes a map stops it by ([use_steady_shapes]).
+  steady_shapes: u16 = NO_FRAME_SHAPES,
 }
 
 /// An entity: one of a kind in the game, where it is and how fast it is going (256ths of a
@@ -97,6 +112,8 @@ pub struct Entity {
   /// Drawn this frame: the game's assets set it as they draw it (`play`, `draw`), and a
   /// scene's `draw` skips it and clears it, so an entity played is not drawn twice.
   drawn: bool = false,
+  /// The row of the game's shapes by frame it shows ([show_frame_shapes]).
+  shown_row: u16 = NO_FRAME_SHAPES,
 }
 
 /// The fastest an entity falls, in 256ths of a pixel a frame: 8 pixels, a tile, so a fall
@@ -252,6 +269,30 @@ impl Entity {
     self.mirrored = mirrored
   }
 
+  /// Its colliders' shapes those of `frame` of its sprite, from the game's table: what the
+  /// game's assets do as they draw an entity whose kind has `frame_shapes`, so what it meets
+  /// is what is shown.
+  pub let show_frame_shapes<const F: i64> = (self: mut, table: ref [F]Shape, frame: u16) -> void => {
+    let row = self.kind.frame_shapes + frame * self.kind.collider_count
+    if row != self.shown_row {
+      self.use_shapes(table, row)
+      self.shown_row = row
+    }
+  }
+
+  /// Before a move in a map: its colliders' shapes the steady ones, of the frame it starts on,
+  /// until [use_shown_shapes]. A map stops it by these, since a shape fitted to the art moves
+  /// as the art does: feet lifted on a stride let it sink to the floor, the next frame's lower
+  /// ones were then inside it, and it stayed sunk (11/02, the platformer's yellow_guy).
+  pub let use_steady_shapes<const F: i64> = (self: mut, table: ref [F]Shape) -> void => {
+    if self.shown_row != NO_FRAME_SHAPES { self.use_shapes(table, self.kind.steady_shapes) }
+  }
+
+  /// After a move in a map: its colliders' shapes those of the frame it shows again.
+  pub let use_shown_shapes<const F: i64> = (self: mut, table: ref [F]Shape) -> void => {
+    if self.shown_row != NO_FRAME_SHAPES { self.use_shapes(table, self.shown_row) }
+  }
+
   /// Whether it meets `other`: one of its colliders looks for a layer one of `other`'s is on,
   /// and their shapes overlap — each mirrored as its entity faces.
   pub let meets = pure (self: ref, other: ref Entity) -> bool => {
@@ -285,6 +326,13 @@ impl Entity {
   }
 
   // ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+  /// Its colliders' shapes `table`'s row `row`.
+  let use_shapes<const F: i64> = (self: mut, table: ref [F]Shape, row: u16) -> void => {
+    for i: u16 in 0..<self.kind.collider_count {
+      self.kind.colliders[i].shape = table[row + i]
+    }
+  }
 
   /// [move_in_with]'s move across, up to `right` (in 256ths of a pixel).
   let move_across<const N: i64, const M: i64, const K: i64, const B: i64, const P: i64> = (
