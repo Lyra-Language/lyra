@@ -272,7 +272,11 @@ impl Entity {
   /// Its colliders' shapes those of `frame` of its sprite, from the game's table: what the
   /// game's assets do as they draw an entity whose kind has `frame_shapes`, so what it meets
   /// is what is shown.
-  pub let show_frame_shapes<const F: i64> = (self: mut, table: ref [F]Shape, frame: u16) -> void => {
+  pub let show_frame_shapes<const F: i64> = (
+    self: mut,
+    table: ref [F]Shape,
+    frame: u16
+  ) -> void => {
     let row = self.kind.frame_shapes + frame * self.kind.collider_count
     if row != self.shown_row {
       self.use_shapes(table, row)
@@ -285,7 +289,9 @@ impl Entity {
   /// as the art does: feet lifted on a stride let it sink to the floor, the next frame's lower
   /// ones were then inside it, and it stayed sunk (11/02, the platformer's yellow_guy).
   pub let use_steady_shapes<const F: i64> = (self: mut, table: ref [F]Shape) -> void => {
-    if self.shown_row != NO_FRAME_SHAPES { self.use_shapes(table, self.kind.steady_shapes) }
+    if self.shown_row != NO_FRAME_SHAPES {
+      self.use_shapes(table, self.kind.steady_shapes)
+    }
   }
 
   /// After a move in a map: its colliders' shapes those of the frame it shows again.
