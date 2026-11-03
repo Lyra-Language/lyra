@@ -173,6 +173,13 @@ func NewForTarget(t abi.Target) *Backend { return &Backend{target: t} }
 func NewForGenesis() *Backend { return &Backend{target: abi.Unknown, arch: M68k} }
 
 // M68k is the 68000's arch, as the backend keys what it does differently there.
+// NewForZ80 returns the backend for the Z80, whose aggregates move through memory as the
+// 68000's do, and whose traps say nothing: there is no room in a cartridge for their text.
+func NewForZ80() *Backend { return &Backend{target: abi.Unknown, arch: Z80} }
+
+// Z80 is the Z80's arch.
+const Z80 = "z80"
+
 const M68k = "m68k"
 
 // Compile-time assertion that Backend satisfies the contract.

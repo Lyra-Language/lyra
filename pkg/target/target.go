@@ -59,7 +59,25 @@ var targets = map[string]Target{
 		CPU:      "68000",
 		Emulated: []string{"i64", "u64", "f32", "f64"},
 	},
+	// The Sega Master System and Game Gear: a 3.58 MHz Z80 with 8 KB of RAM. The Z80 adds
+	// 16-bit values, one at a time and through HL; it multiplies and divides nothing.
+	"sms": z80Console("sms", "the Master System"),
+	"gg":  z80Console("gg", "the Game Gear"),
 }
+
+func z80Console(name, display string) Target {
+	return Target{
+		Name:     name,
+		Display:  display,
+		Host:     false,
+		Heap:     false,
+		CPU:      "Z80",
+		Emulated: []string{"i32", "u32", "i64", "u64", "f32", "f64"},
+	}
+}
+
+// IsZ80 reports whether t is built by the Z80 backend.
+func (t Target) IsZ80() bool { return t.CPU == "Z80" }
 
 // Names lists the known targets, sorted, for a diagnostic.
 func Names() []string {

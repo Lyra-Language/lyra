@@ -315,6 +315,10 @@ func build(o buildOptions) int {
 			fmt.Fprintf(os.Stderr, "lyrac: --target chooses a platform for a program with an OS; this one is for %s (lyra.toml)\n", res.Target.Display)
 			return 2
 		}
+		if res.Target.IsZ80() {
+			_, code := buildZ80(o, res, entry)
+			return code
+		}
 		_, code := buildGenesis(o, res, entry)
 		return code
 	}
@@ -416,6 +420,10 @@ func prepareRun(o buildOptions, dir string) (*exec.Cmd, []string, int) {
 		if o.targetName != "" {
 			fmt.Fprintf(os.Stderr, "lyrac: --target chooses a platform for a program with an OS; this one is for %s (lyra.toml)\n", res.Target.Display)
 			return nil, files, 2
+		}
+		if res.Target.IsZ80() {
+			fmt.Fprintf(os.Stderr, "lyrac: Sheliak does not play %s's ROMs yet; `lyrac build` writes one for any emulator\n", res.Target.Display)
+			return nil, files, 1
 		}
 		cmd, code := genesisCommand(o, res, entry)
 		return cmd, files, code

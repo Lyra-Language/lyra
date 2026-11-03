@@ -264,6 +264,48 @@ func (l *lowerer) lowerPointerAt(block *ir.Block, e *ast.FunctionCallExpr) (valu
 	return block.NewIntToPtr(address, llT), block, nil
 }
 
+// portAddress is the Z80 port number as a pointer in address space 1, which is how the Z80
+// target knows a load or store for `in` or `out`.
+func (l *lowerer) portAddress(block *ir.Block, name string, port ast.Expression) (value.Value, *ir.Block, error) {
+	if l.arch != Z80 {
+		return nil, nil, fmt.Errorf("llvm: %s is for a Z80 console (`target = \"sms\"` in lyra.toml)", name)
+	}
+	number, block, err := l.lowerExpr(block, port)
+	if err != nil {
+		return nil, nil, err
+	}
+	wide := block.NewZExt(number, lltypes.I16)
+	pointer := lltypes.NewPointer(lltypes.I8)
+	pointer.AddrSpace = 1
+	return block.NewIntToPtr(wide, pointer), block, nil
+}
+
+// lowerPortRead lowers `port_read(port)` to a volatile load in the ports' address space.
+func (l *lowerer) lowerPortRead(block *ir.Block, e *ast.FunctionCallExpr) (value.Value, *ir.Block, error) {
+	address, block, err := l.portAddress(block, "port_read", e.Arguments[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	load := block.NewLoad(lltypes.I8, address)
+	load.Volatile = true
+	return load, block, nil
+}
+
+// lowerPortWrite lowers `port_write(port, value)` to a volatile store there.
+func (l *lowerer) lowerPortWrite(block *ir.Block, e *ast.FunctionCallExpr) (value.Value, *ir.Block, error) {
+	address, block, err := l.portAddress(block, "port_write", e.Arguments[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	v, block, err := l.lowerExpr(block, e.Arguments[1])
+	if err != nil {
+		return nil, nil, err
+	}
+	store := block.NewStore(v, address)
+	store.Volatile = true
+	return nil, block, nil
+}
+
 // lowerNullPtr lowers `nullptr` to a typed null constant.
 //
 // **The type has to come from the TypeTable, not from this node.** clang 15 — the

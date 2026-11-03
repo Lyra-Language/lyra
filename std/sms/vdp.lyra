@@ -1,0 +1,147 @@
+module std.sms.vdp
+//! The Master System's video chip (and the Game Gear's), in its mode 4: a 32×28 name table at
+//! 3800 of tiles from pattern memory, up to 64 sprites, two palettes of sixteen.
+//!
+//! ```
+//! import std.sms.vdp
+//!
+//! vdp.init()
+//! vdp.load_palette(16, SPRITE_COLORS)
+//! vdp.load_tiles(1, HERO)
+//! vdp.set_sprite(0, x, y, 1)
+//! vdp.end_sprites(1)
+//! vdp.show()
+//! ```
+//!
+//! **Sprites are shown from the list here**, in RAM: `set_sprite` changes it, and `send_sprites`
+//! copies it to the chip, which takes the vertical blank: call it just after `wait_vblank`.
+//! All the writes here are slower than the chip needs at any time (at least 26 T-states apart).
+
+/// The ports. Status is read from the control port; reading it also clears the frame flag.
+const DATA_PORT: u8 = 0xBE
+const CONTROL_PORT: u8 = 0xBF
+
+/// A control word's top bits: what the address after them is for.
+const WRITE_VRAM: u8 = 0x40
+const WRITE_REGISTER: u8 = 0x80
+const WRITE_CRAM: u8 = 0xC0
+
+/// Where the tables are, as `init` sets them.
+const NAME_TABLE: u16 = 0x3800
+const SPRITE_TABLE: u16 = 0x3F00
+
+/// A sprite's y that ends the list, for the chip.
+const END_OF_LIST: u8 = 0xD0
+
+/// Register 1's bits.
+const DISPLAY_OFF: u8 = 0x80
+const DISPLAY_ON: u8 = 0xC0
+const INTERRUPT_ON: u8 = 0x20
+
+/// The hardware's sprite count.
+pub const SPRITES: u8 = 64
+
+/// The list: every sprite's y, then its x and tile, as the chip's table has them.
+var sprite_ys: [64]u8 = #[END_OF_LIST; 64]
+var sprite_xs: [64]u8 = #[0; 64]
+var sprite_tiles: [64]u8 = #[0; 64]
+
+/// Mode 4, the display off, the tables where this module has them and every memory cleared.
+pub let init = () -> void => {
+  set_register(0, 0x04)
+  set_register(1, DISPLAY_OFF)
+  set_register(2, 0xFF)
+  set_register(3, 0xFF)
+  set_register(4, 0xFF)
+  set_register(5, 0xFF)
+  set_register(6, 0xFB)
+  set_register(7, 0)
+  set_register(8, 0)
+  set_register(9, 0)
+  set_register(10, 0xFF)
+  vram_address(0)
+  var left: u16 = 0x4000
+  while left > 0 {
+    data(0)
+    left -= 1
+  }
+  end_sprites(0)
+  send_sprites()
+}
+
+/// The display on, showing what has been loaded.
+pub let show = () -> void => { set_register(1, DISPLAY_ON) }
+
+/// Colours from slot `first` on (16 is the sprites' palette), one byte each: `--BBGGRR`.
+pub let load_palette<const N: i64> = (first: u8, colors: ref [N]u8) -> void => {
+  control(first)
+  control(WRITE_CRAM)
+  for color in colors { data(color) }
+}
+
+/// Tiles from pattern `first` on, 32 bytes each.
+pub let load_tiles<const N: i64> = (first: u16, tiles: ref [N]u8) -> void => {
+  vram_address(first * 32)
+  for byte in tiles { data(byte) }
+}
+
+/// The name table's cell at (`x`, `y`) shows tile `tile`.
+pub let set_cell = (x: u8, y: u8, tile: u8) -> void => {
+  vram_address(NAME_TABLE + u16(y) * 64 + u16(x) * 2)
+  data(tile)
+  data(0)
+}
+
+/// Sprite `index` at (`x`, `y`) on the screen, showing `tile`.
+pub let set_sprite = (index: u8, x: u8, y: u8, tile: u8) -> void => {
+  // The chip draws a sprite a line below its y.
+  sprite_ys[index] = y - 1
+  sprite_xs[index] = x
+  sprite_tiles[index] = tile
+}
+
+/// Sprites from `index` on are not shown.
+pub let end_sprites = (index: u8) -> void => {
+  if index < SPRITES { sprite_ys[index] = END_OF_LIST }
+}
+
+/// The chip interrupts at each vertical blank, and an `@interrupt(vblank)` function runs. The
+/// display goes on with it, as both are in one register.
+pub let interrupt_each_frame = () -> void => { set_register(1, DISPLAY_ON | INTERRUPT_ON) }
+
+/// Wait for the next vertical blank, by the status port's frame flag.
+pub let wait_vblank = () -> void => unsafe {
+  let _ = port_read(CONTROL_PORT)
+  while port_read(CONTROL_PORT) & 0x80 == 0 {}
+}
+
+/// The list to the chip's table. Call in the vertical blank.
+pub let send_sprites = () -> void => {
+  vram_address(SPRITE_TABLE)
+  // Counted in a u8: a `for` here keeps an i64 index, and a frame has no room for one.
+  var i: u8 = 0
+  while i < SPRITES {
+    data(sprite_ys[i])
+    i += 1
+  }
+  vram_address(SPRITE_TABLE + 128)
+  i = 0
+  while i < SPRITES {
+    data(sprite_xs[i])
+    data(sprite_tiles[i])
+    i += 1
+  }
+}
+
+let set_register = (register: u8, value: u8) -> void => {
+  control(value)
+  control(WRITE_REGISTER | register)
+}
+
+let vram_address = (address: u16) -> void => {
+  control(u8(address & 0xFF))
+  control(WRITE_VRAM | u8(address >> 8))
+}
+
+let control = (value: u8) -> void => unsafe { port_write(CONTROL_PORT, value) }
+let data = (value: u8) -> void => unsafe { port_write(DATA_PORT, value) }

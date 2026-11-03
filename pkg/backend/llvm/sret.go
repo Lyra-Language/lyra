@@ -61,7 +61,7 @@ func (l *lowerer) returnsInMemory(t lltypes.Type) bool {
 // function had two callers and was no longer inlined (10/14, `std.chips.music`'s FM writes).
 // An explicit slot is an ordinary argument, which both sides agree on.
 func (l *lowerer) inMemory(t lltypes.Type) bool {
-	if l.arch == M68k {
+	if l.arch == M68k || l.arch == Z80 {
 		switch t.(type) {
 		case *lltypes.ArrayType, *lltypes.StructType:
 			return true

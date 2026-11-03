@@ -32,6 +32,11 @@ void Z80InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
         .addReg(RI.getSubReg(SrcReg, Z80::sub_hi), getKillRegState(KillSrc));
     return;
   }
+  if (SrcReg == Z80::IX && Z80::GR16RegClass.contains(DestReg)) {
+    BuildMI(MBB, MI, DL, get(Z80::PUSHIX));
+    BuildMI(MBB, MI, DL, get(Z80::POP16), DestReg);
+    return;
+  }
   report_fatal_error("Z80: a copy between registers it cannot copy");
 }
 

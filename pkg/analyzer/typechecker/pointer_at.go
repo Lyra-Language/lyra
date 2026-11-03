@@ -68,3 +68,34 @@ func (tc *TypeChecker) isUntypedPointerCall(expr ast.Expression) bool {
 	t, recorded := tc.typeTable.Get(call)
 	return recorded && isUntypedNullPtr(t)
 }
+
+// inferPortCall types `port_read(port) -> u8` and `port_write(port, value)`, a Z80 console's
+// `in` and `out`: `unsafe`, as `pointer_at` is, and every operand a u8.
+func (tc *TypeChecker) inferPortCall(call *ast.FunctionCallExpr, name string) types.Type {
+	u8 := types.PrimitiveType{Name: types.UInt8}
+	want := 1
+	result := types.Type(u8)
+	if name == "port_write" {
+		want = 2
+		result = types.VoidType{}
+	}
+	if !tc.inUnsafe {
+		tc.addErrorCode(call.GetLocation(), SeverityError, diag.CodeUnsafeOutsideUnsafe,
+			"`%s` reaches the hardware, so it requires an `unsafe` block or function", name)
+	}
+	if len(call.Arguments) != want {
+		tc.addError(call.GetLocation(), SeverityError,
+			"%s: expected %d argument(s), got %d", name, want, len(call.Arguments))
+		return result
+	}
+	for _, arg := range call.Arguments {
+		t := tc.inferExprType(arg)
+		p, isPrimitive := t.(types.PrimitiveType)
+		if isPrimitive && (p.Name == types.UntypedInt || p.Name == types.UntypedSignedInt) {
+			tc.propagateExpected(arg, u8, false)
+		} else if t != nil && (!isPrimitive || p.Name != types.UInt8) {
+			tc.addError(arg.GetLocation(), SeverityError, "%s: expected a u8, got %s", name, t)
+		}
+	}
+	return result
+}

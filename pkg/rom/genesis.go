@@ -68,7 +68,10 @@ func putText(rom []byte, at, width int, text string) {
 // ExplainUndefined says what a program needing these symbols is asking for that the
 // Genesis does not have — the front end's lyra-E084/E085 should have caught each, so
 // reaching here means a form they do not see yet.
-func ExplainUndefined(names []string) string {
+func ExplainUndefined(names []string) string { return ExplainUndefinedOn(names, "the Genesis") }
+
+// ExplainUndefinedOn is ExplainUndefined for any console, named as a sentence names it.
+func ExplainUndefinedOn(names []string, console string) string {
 	var heap, host, other []string
 	for _, n := range names {
 		switch n {
@@ -84,10 +87,10 @@ func ExplainUndefined(names []string) string {
 	}
 	var parts []string
 	if len(heap) > 0 {
-		parts = append(parts, fmt.Sprintf("the program allocates on the heap (%s), and the Genesis has none", quoteList(heap)))
+		parts = append(parts, fmt.Sprintf("the program allocates on the heap (%s), and %s has none", quoteList(heap), console))
 	}
 	if len(host) > 0 {
-		parts = append(parts, fmt.Sprintf("it calls the host's C library (%s), which the Genesis does not have", quoteList(host)))
+		parts = append(parts, fmt.Sprintf("it calls the host's C library (%s), which %s does not have", quoteList(host), console))
 	}
 	if len(other) > 0 {
 		parts = append(parts, fmt.Sprintf("nothing defines %s", quoteList(other)))

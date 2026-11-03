@@ -955,6 +955,9 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		if isBuiltinPointerAtFn(ident.Name) {
 			return tc.inferPointerAtCall(call)
 		}
+		if ident.Name == "port_read" || ident.Name == "port_write" {
+			return tc.inferPortCall(call, ident.Name)
+		}
 		if isBuiltinRandomSeedFn(ident.Name) {
 			if len(call.Arguments) != 0 {
 				tc.addError(call.GetLocation(), SeverityError,

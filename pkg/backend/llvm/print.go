@@ -19,8 +19,14 @@ import (
 // links libc, so no runtime object is needed — the same self-contained story as
 // memcmp/memcpy/malloc.
 func (l *lowerer) writeFunc() *ir.Func {
-	fn, _ := l.declareLibc("write", lltypes.I64,
+	fn, fresh := l.declareLibc("write", lltypes.I64,
 		lltypes.I32, lltypes.NewPointer(lltypes.I8), lltypes.I64)
+	// Only traps write on a console. On the Z80 this does nothing, so the optimizer takes
+	// their messages and places out of the ROM.
+	if fresh && l.arch == Z80 {
+		fn.Linkage = enum.LinkageInternal
+		fn.NewBlock("entry").NewRet(i64c(0))
+	}
 	return fn
 }
 

@@ -353,7 +353,11 @@ SDValue Z80TargetLowering::LowerCall(CallLoweringInfo &CLI,
     if (VA.isRegLoc()) {
       RegArgs.push_back({VA.getLocReg(), Value});
     } else {
-      SDValue Address = DAG.getNode(ISD::ADD, DL, MVT::i16, IX,
+      // Past a displacement's reach IX is read into a register like any value.
+      SDValue Base = VA.getLocMemOffset() <= 126
+                         ? IX
+                         : DAG.getCopyFromReg(Chain, DL, Z80::IX, MVT::i16);
+      SDValue Address = DAG.getNode(ISD::ADD, DL, MVT::i16, Base,
                                     DAG.getConstant(VA.getLocMemOffset(), DL, MVT::i16));
       Stores.push_back(DAG.getStore(Chain, DL, Value, Address, MachinePointerInfo()));
     }

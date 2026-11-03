@@ -549,7 +549,7 @@ such changes on a user module.
 | `pkg/analyzer/captures` | Lambda free variables | [README](pkg/analyzer/captures/README.md) |
 | `pkg/analyzer/ownership` | Retain/release placement; Perceus | [README](pkg/analyzer/ownership/README.md) |
 | `pkg/modules` | Import resolution, namespacing, implicit prelude | [README](pkg/modules/README.md) |
-| `pkg/target` | What a program is compiled for: `lyra.toml` lookup, the target table (`host`, `genesis`), and the platforms a `host` program builds for (`--target`) | below |
+| `pkg/target` | What a program is compiled for: `lyra.toml` lookup, the target table (`host`, `genesis`, `sms`, `gg`), and the platforms a `host` program builds for (`--target`) | below |
 | `pkg/rom` | A small ELF linker for 68000 objects, and the Genesis cartridge layout and header | below |
 | `pkg/driver` | The reusable front-end pipeline | below |
 | `pkg/abi` | C calling conventions per target | below |
@@ -619,7 +619,7 @@ Linux takes that platform's. **No `runtime.GOOS` in `pkg/backend`**
 
 **`pkg/target`** — `target.ForFile(entry)`: the nearest `lyra.toml` above the entry file,
 strictly parsed (`target = "…"` and comments; anything else is `lyra-E086`), and the target
-table (`host`, `genesis`: host, heap, CPU, emulated types). The driver records it on
+table (`host`, `genesis`, `sms`, `gg`: host, heap, CPU, emulated types). The driver records it on
 `Result.Target`; `checker.CheckTarget` and `lyrac build` read it. **A `host` program is built
 for a `Platform`** (`platform.go`) — `macos-*`, `ios`, `ios-simulator`, `linux-*`: its triple,
 OS, processor, Apple SDK, linker (the machine's C compiler; Xcode's clang with the SDK; `zig
@@ -759,7 +759,7 @@ of Markdown.
   SHA-256-checked prebuilt macOS library merged with its shim; a do-nothing stub off macOS,
   offline or without SDL3. **And `build/lib/liblyra-gpu.a`** (`bindings/gpu/build.sh`): `ui.gpu`'s
   renderer over SDL_GPU on macOS, a stub elsewhere (whose `create` answers `None`).
-- **`tools/llvm-z80.sh`** (not run by `build.sh`) builds our own LLVM Z80 target, `tools/llvm-z80/Z80`, in `~/Dev/llvm-z80`, for Master System and Game Gear games; lyrac does not use it yet. `tools/llvm-z80/README.md` has its conventions and what is missing, and `tools/llvm-z80/test/run.py` and `fuzz.py` test it on Sheliak's Z80 core against the host compiler.
+- **`tools/llvm-z80.sh`** (not run by `build.sh`) builds our own LLVM Z80 target, `tools/llvm-z80/Z80`, in `~/Dev/llvm-z80`: what `lyrac build` uses for `target = "sms"` or `"gg"` (`cmd/lyrac/z80.go`, `llvm.NewForZ80`), linked by `pkg/rom/z80.go` with `runtime/sms/runtime.ll`, which goes through llc alone. `tools/llvm-z80/README.md` has its conventions and what is missing, `tools/llvm-z80/test/run.py` and `fuzz.py` test it on Sheliak's Z80 core against the host compiler, and `go test ./cmd/lyrac -run SMS` runs Lyra programs on `smscheck`. **Every runtime helper needs a test**: LLVM's libcall signatures are not C's (`memset` takes an `i8`).
 - **`tools/sdl3-ios.sh`** (not run by `build.sh`, as `llvm-m68k.sh` is not) builds SDL3 for
   `--target ios|ios-simulator` into `build/lib/<platform>/`.
 - **`build.sh` also builds `lyrafmt`** when a C compiler, `libtree-sitter` and the sibling

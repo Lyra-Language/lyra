@@ -422,7 +422,7 @@ func globalNames(program *ast.Program, symTable *symbols.SymbolTable) map[string
 	for _, name := range []string{
 		"print", "println", "panic", "read_line", "dir_names", "random_seed", "wall_clock_nanos",
 		"set_raw_mode", "read_key", "terminal_size", "wait_for_key_ms",
-		"program_arg_count", "program_arg", "pointer_at",
+		"program_arg_count", "program_arg", "pointer_at", "port_read", "port_write",
 	} {
 		out[name] = true
 	}

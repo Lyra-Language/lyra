@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compile IR with the Z80 target and run it on Sheliak's Z80 core.
 
-    tools/llvm-z80/test/run.py [FILE.ll ...]    # default: every test here but rt.ll
+    tools/llvm-z80/test/run.py [FILE.ll ...]    # default: every test here
 
 Each `; test NAME REG=VALUE` in a file is held to the host compiler's answer for the same IR,
 then run at -O2 and at -O0: a ROM that sets the stack, calls NAME and halts. Linking here is only for these tests: sections in a row from address
@@ -13,6 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 LLVM = os.environ.get("LYRA_Z80_LLVM", os.path.expanduser("~/Dev/llvm-z80"))
 LLC = os.path.join(LLVM, "build/bin/llc")
 RUN = os.environ.get("Z80RUN", os.path.join(HERE, "../../../../sheliak/build/z80run"))
+RUNTIME = os.path.join(HERE, "../../../runtime/sms/runtime.ll")
 ORIGIN = 0x100
 EM_Z80 = 220
 
@@ -67,7 +68,9 @@ def link(objects, start):
                     pending.append((placed[(index, s[7])] + off, info & 255, addend,
                                     name_at(symsec[6], nm), (index, shndx), val))
     for where, kind, addend, name, sec, val in pending:
-        value = (symbols[name] if name in symbols else placed[sec] + val) + addend
+        if name and name not in symbols:
+            raise SystemExit(f"nothing defines {name}")
+        value = (symbols[name] if name else placed[sec] + val) + addend
         if kind == 4:
             struct.pack_into("<H", image, where, value & 0xFFFF)
         elif kind == 1:
@@ -117,10 +120,12 @@ def host_values(path, tmp):
 
 def main():
     files = sys.argv[1:] or [os.path.join(HERE, f) for f in sorted(os.listdir(HERE))
-                             if f.endswith(".ll") and f != "rt.ll"]
+                             if f.endswith(".ll")]
     failures = total = 0
     with tempfile.TemporaryDirectory() as tmp:
         for path in files:
+            if open(path).readline().startswith("; no-host"):
+                continue
             host = host_values(path, tmp)
             for line in open(path):
                 if line.startswith("; test "):
@@ -131,7 +136,7 @@ def main():
         for level in ("-O2", "-O0"):
             rt = os.path.join(tmp, f"rt{level}.o")
             subprocess.check_call([LLC, "-mtriple=z80-unknown-elf", level, "-filetype=obj",
-                                   os.path.join(HERE, "rt.ll"), "-o", rt])
+                                   RUNTIME, "-o", rt])
             for path in files:
                 obj = os.path.join(tmp, f"t{level}.o")
                 subprocess.check_call([LLC, "-mtriple=z80-unknown-elf", level, "-filetype=obj",

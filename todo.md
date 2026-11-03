@@ -1329,7 +1329,6 @@ target, 10/11). In order:
 
 ## Target introspection
 
-- **[PARTIAL] A Z80 backend, for new Master System and Game Gear games**: our own LLVM target is in `tools/llvm-z80` (decided 11/03; its README lists what is missing) and compiles IR correctly by test and fuzz. Next: frames past (ix+127), then `target = "sms"` in lyrac: a linker, runtime and `std.sms` with port I/O. Bank switching and an SMS-sized art pipeline follow.
 - **[IDEA] `size_of::<t>()` / `align_of::<t>()`** (plus stride) — answerable from
   `SizeAndAlign`, needing only a value-argument-less turbofish call shape.
 - Target predicates (`is_x86`, `simd_width_of`) wait for real cross-compilation; `lyrac`
@@ -1338,6 +1337,7 @@ target, 10/11). In order:
 ## Constraints are ordinary Lyra
 
 **[IDEA]** A constraint becomes a `pure det` predicate with the value as `self`
+- **[PARTIAL] A Z80 backend, for new Master System and Game Gear games**: `target = "sms"` builds and runs on `smscheck` (`tools/llvm-z80/README.md`). Next, speed: a `for`'s `i64` index, `otir` for sprites (they overrun the vertical blank), cheaper overflow checks. Then bank switching past 48 KB, Vega's assets, and a third-party emulator check.
 (`type Lane = i64 where power_of(2)`), and the keywords are rewritten in the prelude:
 `range` → `at_least`/`at_most` (retiring E034), `values` → `one_of([...])`, `step` →
 `congruent(offset, n)`. `pattern` stays a builtin, declared with `@builtin(Pattern)`.

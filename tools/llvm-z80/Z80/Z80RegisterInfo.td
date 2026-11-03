@@ -42,6 +42,7 @@ def ACC8 : RegisterClass<"Z80", [i8], 8, (add A)>;
 
 def GR16 : RegisterClass<"Z80", [i16], 8, (add HL, DE, BC)>;
 def HL16 : RegisterClass<"Z80", [i16], 8, (add HL)>;
+def BC16 : RegisterClass<"Z80", [i16], 8, (add BC)>;
 def NOHL16 : RegisterClass<"Z80", [i16], 8, (add DE, BC)>;
 def IX16 : RegisterClass<"Z80", [i16], 8, (add IX)>;
 def SP16 : RegisterClass<"Z80", [i16], 8, (add SP)>;

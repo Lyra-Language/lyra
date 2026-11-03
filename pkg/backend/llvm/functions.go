@@ -657,6 +657,10 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 		case "pointer_at":
 			return l.lowerPointerAt(block, e)
 		case "wall_clock_nanos":
+		case "port_read":
+			return l.lowerPortRead(block, e)
+		case "port_write":
+			return l.lowerPortWrite(block, e)
 			return l.lowerWallClockNanosCall(block, e)
 		case "set_raw_mode":
 			return l.lowerSetRawModeCall(block, e)

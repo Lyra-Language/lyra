@@ -39,7 +39,7 @@ func TestForFile_DefaultsToTheHost(t *testing.T) {
 // What cannot be understood is said, with its line, rather than ignored.
 func TestParse_RefusesWhatItDoesNotUnderstand(t *testing.T) {
 	for _, tc := range []struct{ text, want string }{
-		{"target = \"gameboy\"\n", "unknown target \"gameboy\"; the targets are genesis, host"},
+		{"target = \"gameboy\"\n", "unknown target \"gameboy\"; the targets are genesis, gg, host, sms"},
 		{"\n\ntarget = genesis\n", "expected a quoted string"},
 		{"[package]\n", "expected `key = \"value\"`"},
 		{"optimize = \"size\"\n", "unknown setting \"optimize\""},

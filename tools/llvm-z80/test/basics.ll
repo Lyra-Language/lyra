@@ -403,3 +403,74 @@ define i16 @sret() {
   %r = add i16 %s, %wm
   ret i16 %r }
 declare void @llvm.memcpy.p0.p0.i16(ptr, ptr, i16, i1)
+
+; A local larger than a displacement reaches: slots past (ix+127), both ways, spilled values
+; around them, and a compare's flags surviving the access.
+; test farslots hl=1234
+define i16 @farslots() {
+  %big = alloca [100 x i16]
+  %last = alloca i16
+  %far = alloca [100 x i16]
+  %p0 = getelementptr [100 x i16], ptr %big, i16 0, i16 99
+  %p1 = getelementptr [100 x i16], ptr %far, i16 0, i16 99
+  store volatile i16 1000, ptr %p0
+  store volatile i16 234, ptr %p1
+  store volatile i16 7, ptr %last
+  %a = load volatile i16, ptr %p0
+  %b = load volatile i16, ptr %p1
+  %r = add i16 %a, %b
+  ret i16 %r }
+
+; The memory helpers, each through what the optimizer calls them from: large enough not to be
+; expanded in place, and each checked at both ends so a wrong length shows.
+@region = global [80 x i8] zeroinitializer
+declare void @llvm.memset.p0.i16(ptr, i8, i16, i1)
+declare void @llvm.memmove.p0.p0.i16(ptr, ptr, i16, i1)
+declare i32 @memcmp(ptr, ptr, i16)
+; test memsetends hl=12345
+define i16 @memsetends() {
+  %guard = getelementptr [80 x i8], ptr @region, i16 0, i16 60
+  store i8 77, ptr %guard
+  call void @llvm.memset.p0.i16(ptr @region, i8 9, i16 60, i1 false)
+  %first = load i8, ptr @region
+  %p = getelementptr [80 x i8], ptr @region, i16 0, i16 59
+  %last = load i8, ptr %p
+  %after = load i8, ptr %guard
+  %a = icmp eq i8 %first, 9
+  %b = icmp eq i8 %last, 9
+  %c = icmp eq i8 %after, 77
+  %ab = and i1 %a, %b
+  %abc = and i1 %ab, %c
+  %r = select i1 %abc, i16 12345, i16 1
+  ret i16 %r }
+; test memmoveup hl=23456
+define i16 @memmoveup() {
+  store i8 1, ptr @region
+  %s1 = getelementptr [80 x i8], ptr @region, i16 0, i16 1
+  store i8 2, ptr %s1
+  %s39 = getelementptr [80 x i8], ptr @region, i16 0, i16 39
+  store i8 3, ptr %s39
+  ; Overlapping: the destination above the source, so it must run from the top.
+  call void @llvm.memmove.p0.p0.i16(ptr %s1, ptr @region, i16 39, i1 false)
+  %x = load i8, ptr %s1
+  %s2 = getelementptr [80 x i8], ptr @region, i16 0, i16 2
+  %y = load i8, ptr %s2
+  %a = icmp eq i8 %x, 1
+  %b = icmp eq i8 %y, 2
+  %ab = and i1 %a, %b
+  %r = select i1 %ab, i16 23456, i16 1
+  ret i16 %r }
+; test memcmpsays hl=3
+define i16 @memcmpsays() {
+  store i8 5, ptr @region
+  %s10 = getelementptr [80 x i8], ptr @region, i16 0, i16 10
+  store i8 5, ptr %s10
+  %same = call i32 @memcmp(ptr @region, ptr %s10, i16 1)
+  store i8 6, ptr %s10
+  %less = call i32 @memcmp(ptr @region, ptr %s10, i16 1)
+  %a = icmp eq i32 %same, 0
+  %b = icmp slt i32 %less, 0
+  %ra = select i1 %a, i16 1, i16 0
+  %rb = select i1 %b, i16 2, i16 0
+  %r = or i16 %ra, %rb
+  ret i16 %r }

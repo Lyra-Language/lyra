@@ -194,6 +194,57 @@ def : Pat<(i16 (load (Z80wrapper tglobaladdr:$a))), (LD16ra tglobaladdr:$a)>;
 def : Pat<(store ACC8:$s, (Z80wrapper tglobaladdr:$a)), (ST8ar tglobaladdr:$a, ACC8:$s)>;
 def : Pat<(store HL16:$s, (Z80wrapper tglobaladdr:$a)), (ST16ar tglobaladdr:$a, HL16:$s)>;
 
+def : Pat<(i8 (load (i16 imm:$a))), (LD8ra imm:$a)>;
+def : Pat<(store ACC8:$s, (i16 imm:$a)), (ST8ar imm:$a, ACC8:$s)>;
+
+// Address space 1 is the Z80's ports. The port is the pointer's value: `in`/`out` with the
+// number in the instruction when it is known, through C when it is not.
+def port_load : PatFrag<(ops node:$p), (load node:$p),
+                        [{ return cast<LoadSDNode>(N)->getAddressSpace() == 1; }]>;
+def port_store : PatFrag<(ops node:$v, node:$p), (store node:$v, node:$p),
+                         [{ return cast<StoreSDNode>(N)->getAddressSpace() == 1; }]>;
+def port_imm : ImmLeaf<i16, [{ return Imm >= 0 && Imm < 256; }]>;
+def port8 : SDNodeXForm<imm, [{
+  return CurDAG->getTargetConstant(N->getZExtValue(), SDLoc(N), MVT::i8);
+}]>;
+
+let hasSideEffects = 1 in {
+  def INAn : Z80Inst<2, (outs ACC8:$d), (ins i8imm:$n), "in\ta, ($n)"> {
+    bits<8> n;
+    let Inst{15-8} = 0xDB;
+    let Inst{7-0} = n;
+  }
+  def OUTnA : Z80Inst<2, (outs), (ins i8imm:$n, ACC8:$s), "out\t($n), a"> {
+    bits<8> n;
+    let Inst{15-8} = 0xD3;
+    let Inst{7-0} = n;
+  }
+  let Defs = [F] in
+  def INrC : Z80Inst<2, (outs GR8:$d), (ins BC16:$p), "in\t$d, (c)"> {
+    bits<3> d;
+    let Inst{15-8} = 0xED;
+    let Inst{7-6} = 0b01;
+    let Inst{5-3} = d;
+    let Inst{2-0} = 0b000;
+  }
+  def OUTCr : Z80Inst<2, (outs), (ins BC16:$p, GR8:$s), "out\t(c), $s"> {
+    bits<3> s;
+    let Inst{15-8} = 0xED;
+    let Inst{7-6} = 0b01;
+    let Inst{5-3} = s;
+    let Inst{2-0} = 0b001;
+  }
+}
+
+let AddedComplexity = 100 in {
+  def : Pat<(i8 (port_load port_imm:$n)), (INAn (port8 port_imm:$n))>;
+  def : Pat<(port_store ACC8:$s, port_imm:$n), (OUTnA (port8 port_imm:$n), ACC8:$s)>;
+}
+let AddedComplexity = 90 in {
+  def : Pat<(i8 (port_load BC16:$p)), (INrC BC16:$p)>;
+  def : Pat<(port_store GR8:$s, BC16:$p), (OUTCr BC16:$p, GR8:$s)>;
+}
+
 // A stack object's address: selected from a frame index by Z80DAGToDAGISel.
 let Defs = [F], isReMaterializable = 1 in
 def LEA16 : Z80Pseudo<(outs HL16:$d), (ins memix:$m)>;
@@ -444,6 +495,36 @@ def ADDIXSP : Z80Inst<2, (outs), (ins), "add\tix, sp"> {
 let Defs = [SP], Uses = [IX] in
 def LDSPIX : Z80Inst<2, (outs), (ins), "ld\tsp, ix"> {
   let Inst{15-0} = 0xDDF9;
+}
+let Uses = [SP], Defs = [SP] in {
+  let mayStore = 1 in {
+    def PUSH16 : Z80Inst<1, (outs), (ins GR16:$r), "push\t$r"> {
+      bits<2> r;
+      let Inst{7-6} = 0b11;
+      let Inst{5-4} = r;
+      let Inst{3-0} = 0b0101;
+    }
+    let Uses = [SP, A, F] in
+    def PUSHAF : Z80Inst<1, (outs), (ins), "push\taf"> {
+      let Inst{7-0} = 0xF5;
+    }
+  }
+  let mayLoad = 1 in {
+    def POP16 : Z80Inst<1, (outs GR16:$r), (ins), "pop\t$r"> {
+      bits<2> r;
+      let Inst{7-6} = 0b11;
+      let Inst{5-4} = r;
+      let Inst{3-0} = 0b0001;
+    }
+    let Defs = [SP, A, F] in
+    def POPAF : Z80Inst<1, (outs), (ins), "pop\taf"> {
+      let Inst{7-0} = 0xF1;
+    }
+  }
+}
+let Defs = [IX, F], Uses = [IX, DE] in
+def ADDIXDE : Z80Inst<2, (outs), (ins), "add\tix, de"> {
+  let Inst{15-0} = 0xDD19;
 }
 let Defs = [F], Uses = [SP], Constraints = "$d = $a" in
 def ADDHLSP : Z80Inst<1, (outs HL16:$d), (ins HL16:$a), "add\thl, sp"> {

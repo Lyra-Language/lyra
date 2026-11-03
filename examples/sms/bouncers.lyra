@@ -1,0 +1,74 @@
+// Bouncing squares, each a little of what a game's entity does in a frame: 12.4 fixed-point
+// motion (a screen is wider than an i16's 8.8 reaches), gravity, a look at a tile map under its feet, and its sprite set. The count is what
+// to change to see what a frame holds:
+//
+//   lyrac build bouncers.lyra && smscheck bouncers.sms --frames 200 --ppm out.ppm --work on
+
+import std.sms.vdp
+
+const COUNT: u8 = 8
+const GRAVITY: i16 = 1
+const FLOOR_ROW: u8 = 20
+const COLUMNS: u8 = 32
+
+const COLORS: [2]u8 = #[0x00, 0x3F]
+const SQUARE: [32]u8 = #[
+  0xFF, 0, 0, 0, 0xFF, 0, 0, 0, 0xFF, 0, 0, 0, 0xFF, 0, 0, 0,
+  0xFF, 0, 0, 0, 0xFF, 0, 0, 0, 0xFF, 0, 0, 0, 0xFF, 0, 0, 0
+]
+
+struct Bouncer {
+  x: i16,
+  y: i16,
+  dx: i16,
+  dy: i16,
+}
+
+/// Two rows of ground: whether the cell at a column and row is solid.
+var ground: [64]u8 = #[1; 64]
+
+var bouncers: [8]Bouncer = #[Bouncer { x: 0, y: 0, dx: 0, dy: 0 }; 8]
+
+let main = () -> void => {
+  vdp.init()
+  vdp.load_palette(16, COLORS)
+  vdp.load_tiles(1, SQUARE)
+  var i: u8 = 0
+  while i < COUNT {
+    let n = i16(i)
+    bouncers[i] = Bouncer { x: (20 + n * 26) * 16, y: (10 + n * 9) * 16, dx: 8 + n, dy: 0 }
+    i += 1
+  }
+  vdp.end_sprites(COUNT)
+  vdp.show()
+  loop {
+    vdp.wait_vblank()
+    vdp.send_sprites()
+    i = 0
+    while i < COUNT {
+      update(i)
+      i += 1
+    }
+  }
+}
+
+let update = (index: u8) -> void => {
+  var b = bouncers[index]
+  b.dy += GRAVITY
+  b.x = (b.x + b.dx) & 0x0FFF
+  b.y += b.dy
+  let row = u8((b.y >> 4) + 8) >> 3
+  let column = u8(b.x >> 4) >> 3
+  if b.dy > 0 && on_ground(column, row) {
+    b.y -= b.dy
+    b.dy = 0 - b.dy
+  }
+  bouncers[index] = b
+  vdp.set_sprite(index, u8(b.x >> 4), u8(b.y >> 4), 1)
+}
+
+let on_ground = (column: u8, row: u8) -> bool => {
+  if row < FLOOR_ROW { return false }
+  let cell = (row - FLOOR_ROW) * COLUMNS + column
+  ground[cell % 64] != 0
+}

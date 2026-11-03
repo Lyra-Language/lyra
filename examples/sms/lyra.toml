@@ -1,0 +1,2 @@
+# Everything in this directory is built for the Master System: lyrac build walker.lyra
+target = "sms"

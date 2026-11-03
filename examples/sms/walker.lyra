@@ -1,0 +1,43 @@
+// A square that walks where the pad says: the first game on `std.sms`.
+//
+//   lyrac build walker.lyra          # -> walker.sms
+//
+// Each frame: wait for the vertical blank, show the sprite where it was put, read the pad and
+// move it, two pixels a frame, stopped at the screen's edges.
+
+import std.sms.vdp
+import std.sms.pad
+
+const SPEED: u8 = 2
+const RIGHT_EDGE: u8 = 248
+const BOTTOM_EDGE: u8 = 184
+
+/// Palette index 1 is white, for the tile's every pixel.
+const COLORS: [2]u8 = #[0x00, 0x3F]
+
+/// One tile, solid in colour 1: bit plane 0 set on all eight lines.
+const SQUARE: [32]u8 = #[
+  0xFF, 0, 0, 0, 0xFF, 0, 0, 0, 0xFF, 0, 0, 0, 0xFF, 0, 0, 0,
+  0xFF, 0, 0, 0, 0xFF, 0, 0, 0, 0xFF, 0, 0, 0, 0xFF, 0, 0, 0
+]
+
+let main = () -> void => {
+  vdp.init()
+  vdp.load_palette(16, COLORS)
+  vdp.load_tiles(1, SQUARE)
+  var x: u8 = 124
+  var y: u8 = 92
+  vdp.set_sprite(0, x, y, 1)
+  vdp.end_sprites(1)
+  vdp.show()
+  loop {
+    vdp.wait_vblank()
+    vdp.send_sprites()
+    let buttons = pad.read()
+    if pad.held(buttons, pad.LEFT) && x >= SPEED { x -= SPEED }
+    if pad.held(buttons, pad.RIGHT) && x < RIGHT_EDGE { x += SPEED }
+    if pad.held(buttons, pad.UP) && y >= SPEED { y -= SPEED }
+    if pad.held(buttons, pad.DOWN) && y < BOTTOM_EDGE { y += SPEED }
+    vdp.set_sprite(0, x, y, 1)
+  }
+}

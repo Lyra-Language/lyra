@@ -1,0 +1,19 @@
+module std.sms.pad
+//! The Master System's control pad 1 (a Game Gear's buttons too), read as the buttons held.
+
+/// The buttons, as bits of what [read] answers.
+pub const UP: u8 = 0x01
+pub const DOWN: u8 = 0x02
+pub const LEFT: u8 = 0x04
+pub const RIGHT: u8 = 0x08
+pub const BUTTON_1: u8 = 0x10
+pub const BUTTON_2: u8 = 0x20
+
+/// The port's lines read 0 while held.
+const PAD_PORT: u8 = 0xDC
+
+/// The buttons held, as a set of the bits above.
+pub let read = () -> u8 => unsafe { ~port_read(PAD_PORT) & 0x3F }
+
+/// Whether `button` is among `buttons`.
+pub let held = pure (buttons: u8, button: u8) -> bool => buttons & button != 0

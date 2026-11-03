@@ -6,10 +6,10 @@
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/Function.h"
-#include "llvm/Support/ErrorHandling.h"
 
 #define GET_REGINFO_TARGET_DESC
 #include "Z80GenRegisterInfo.inc"
@@ -37,6 +37,19 @@ BitVector Z80RegisterInfo::getReservedRegs(const MachineFunction &) const {
   return Reserved;
 }
 
+// IX moved by `By` with every other register and the flags as they were, for a slot out of a
+// displacement's reach. Slow, but such a slot is a large local's, not a spill's usual place.
+static void moveIX(MachineBasicBlock &MBB, MachineBasicBlock::iterator I, int64_t By) {
+  const TargetInstrInfo &TII = *MBB.getParent()->getSubtarget().getInstrInfo();
+  DebugLoc DL = I != MBB.end() ? I->getDebugLoc() : DebugLoc();
+  BuildMI(MBB, I, DL, TII.get(Z80::PUSHAF));
+  BuildMI(MBB, I, DL, TII.get(Z80::PUSH16)).addReg(Z80::DE);
+  BuildMI(MBB, I, DL, TII.get(Z80::LD16ri), Z80::DE).addImm(By & 0xFFFF);
+  BuildMI(MBB, I, DL, TII.get(Z80::ADDIXDE));
+  BuildMI(MBB, I, DL, TII.get(Z80::POP16), Z80::DE);
+  BuildMI(MBB, I, DL, TII.get(Z80::POPAF));
+}
+
 // IX is the stack pointer's value through a function's body, so a slot's displacement is from
 // the frame's bottom: its offset from the entry SP, the frame's size, and the saved IX.
 bool Z80RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int,
@@ -50,9 +63,11 @@ bool Z80RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int,
                  MI.getOperand(FIOperandNum + 1).getImm();
   // A 16-bit access reads the displacement and the one after it.
   bool Wide = MI.getOpcode() == Z80::LD16rf || MI.getOpcode() == Z80::ST16fr;
-  if (MI.getOpcode() != Z80::LEA16 && (Disp < -128 || Disp + Wide > 127))
-    report_fatal_error("Z80: a stack slot is out of IX's reach in " +
-                       MF.getName());
+  if (MI.getOpcode() != Z80::LEA16 && (Disp < -128 || Disp + Wide > 127)) {
+    moveIX(*MI.getParent(), II, Disp);
+    moveIX(*MI.getParent(), std::next(II), -Disp);
+    Disp = 0;
+  }
   MI.getOperand(FIOperandNum).ChangeToRegister(Z80::IX, false);
   MI.getOperand(FIOperandNum + 1).setImm(Disp);
   return false;

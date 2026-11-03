@@ -17,19 +17,23 @@ linked into LLVM's tree; `patches/` tell LLVM the triple, data layout, ELF machi
   `or a; sbc hl, rr; add hl, rr` compares and leaves HL as it was, Z and C intact.
 - **A and HL**: `Z80ConstrainedCopies` gives each operand that must be in one register its own
   short-lived virtual register. Without it a value pinned to A or HL makes allocation fail.
+- **Far slots**: past `(ix+127)` IX is moved for the access, keeping every register and the flags
+  (about 170 T-states each way). Large locals work, slowly.
+- **Ports**: address space 1. `load`/`store` there is `in`/`out`, the pointer's value the port.
 - **Flags**: nothing the allocator inserts changes them (`ld`, `inc rr`, `dec rr`).
 
 ## Testing
 
 `test/run.py` runs `test/*.ll` on Sheliak's Z80 core (`sheliak/build/z80run`), each answer also
 held to the host compiler's for the same IR. `test/fuzz.py [COUNT] [SEED]` does the same with
-random programs. Both at -O2 and -O0. `test/rt.ll` stands in for the runtime's helpers.
+random programs. Both at -O2 and -O0. The helpers come from `runtime/sms/runtime.ll`.
 
 ## Not yet
 
-- Slots beyond (ix+127) are a fatal error: large local arrays and structs will hit it.
-- No assembler or disassembler in `llvm-mc`/`llvm-objdump`, no `jr`, no `ldir`, no port I/O.
+- No assembler or disassembler in `llvm-mc`/`llvm-objdump`, no `jr`, no `ldir`.
 - Code quality is a first pass: no peepholes, and signed compares and overflow checks are slow.
-- `lyrac` does not target it: no `sms` target, no linker for these objects, no runtime.
-- Register allocation can still fail on a very large function (1 in 600 fuzz runs, seed 1199 -O0).
-- `opt -O2` asserts in `computeKnownBitsMul` on IR lyrac emitted for the Genesis (not reduced).
+- Register allocation can still fail on a very large function (1 in 600 fuzz runs, at -O0, which lyrac does not use).
+- `opt` asserts on a constant address above 64 KB (its alignment is more than a 16-bit pointer holds), as
+  Genesis IR has; IR emitted for the Z80 has none.
+- A `for` keeps an `i64` index, the largest single cost seen so far; sprites go out a byte at a time
+  where `otir` could, about 90 T-states a byte. Nothing yet banks past 48 KB.
