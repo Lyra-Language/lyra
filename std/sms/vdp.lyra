@@ -111,7 +111,10 @@ pub let end_sprites = (index: u8) -> void => {
 
 /// The chip interrupts at each vertical blank, and an `@interrupt(vblank)` function runs. The
 /// display goes on with it, as both are in one register.
-pub let interrupt_each_frame = () -> void => { set_register(1, DISPLAY_ON | INTERRUPT_ON) }
+pub let interrupt_each_frame = () -> void => { set_register(
+  1,
+  DISPLAY_ON | INTERRUPT_ON
+) }
 
 /// Wait for the next vertical blank, by the status port's frame flag.
 pub let wait_vblank = () -> void => unsafe {

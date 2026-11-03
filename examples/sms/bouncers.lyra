@@ -36,7 +36,12 @@ let main = () -> void => {
   var i: u8 = 0
   while i < COUNT {
     let n = i16(i)
-    bouncers[i] = Bouncer { x: (20 + n * 26) * 16, y: (10 + n * 9) * 16, dx: 8 + n, dy: 0 }
+    bouncers[i] = Bouncer {
+      x: (20 + n * 26) * 16,
+      y: (10 + n * 9) * 16,
+      dx: 8 + n,
+      dy: 0
+    }
     i += 1
   }
   vdp.end_sprites(COUNT)
