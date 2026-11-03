@@ -267,6 +267,33 @@ let main = () -> void => { unsafe { port_write(0xBE, HUGE[5]) } }
 	}
 }
 
+// std.sms.collision is std.genesis.collision's in 16 bits, and must answer as it does: random
+// shapes and maps through both, natively, each map in its console's own cell words. The counts of
+// hits say the trials were not all misses.
+func TestSMS_CollisionAnswersAsTheGenesisDoes(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	src := filepath.Join(t.TempDir(), "agree.lyra")
+	if err := os.WriteFile(src, []byte(collisionAgreement), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := captureRun(t, "run", src)
+	if code != 0 {
+		t.Fatalf("run exited %d: %s", code, stderr)
+	}
+	var missed, hits, mapMissed, mapHits int
+	if _, err := fmt.Sscanf(stdout, "%d %d %d %d", &missed, &hits, &mapMissed, &mapHits); err != nil {
+		t.Fatalf("it said %q: %v", stdout, err)
+	}
+	if missed != 0 || mapMissed != 0 {
+		t.Errorf("the modules disagree: %d of the shapes and %d of the maps\n%s", missed, mapMissed, stdout)
+	}
+	if hits < 10000 || mapHits < 2000 {
+		t.Errorf("too few hits to mean anything: %d shapes, %d maps", hits, mapHits)
+	}
+}
+
 // What a program does, as the screen says: green when every answer is right. A wrong answer
 // sets red itself, and a trap the runtime's red.
 const smsPrelude = `
@@ -413,3 +440,88 @@ let main = () -> void => {
 		t.Errorf("the screen is %s, want the runtime's red (%s)", got, smsRed)
 	}
 }
+
+const collisionAgreement = `// Random shapes and maps through std.genesis.collision and std.sms.collision, natively: any
+// disagreement is printed. Map words are each console's own spelling of the same cell.
+import std.genesis.collision as genesis
+import std.sms.collision as sms
+
+var seed: u32 = 12345
+let next = () -> u32 => {
+  seed = seed.wrapping_mul(1103515245).wrapping_add(12345)
+  (seed >> 16) & 0x7FFF
+}
+let span = (n: i64) -> i16 => i16(i64(next()) % n)
+
+const WIDTH: u16 = 8
+var g_cells: [64]u16 = #[0; 64]
+var s_cells: [64]u16 = #[0; 64]
+const STARTS: [3]u16 = #[0, 1, 2]
+
+let main = () -> void => {
+  var bad = 0
+  var hits = 0
+  var map_hits = 0
+  for trial in 0..<200000 {
+    let ae = next() % 2 == 0
+    let be = next() % 2 == 0
+    let (ax, ay, ox, oy, aw, ah) = (span(60) - 30, span(60) - 30, span(20), span(20), span(40), span(40))
+    let (bx, by, px, py, bw, bh) = (span(60) - 30, span(60) - 30, span(20), span(20), span(40), span(40))
+    let ga = genesis.Shape { ellipse: ae, x: ox, y: oy, width: aw, height: ah }
+    let gb = genesis.Shape { ellipse: be, x: px, y: py, width: bw, height: bh }
+    let sa = sms.Shape { ellipse: ae, x: ox, y: oy, width: aw, height: ah }
+    let sb = sms.Shape { ellipse: be, x: px, y: py, width: bw, height: bh }
+    if ga.overlaps(ax, ay, gb, bx, by) { hits += 1 }
+    if ga.overlaps(ax, ay, gb, bx, by) != sa.overlaps(ax, ay, sb, bx, by) {
+      bad += 1
+      if bad < 5 { println("overlaps trial ${trial}: ${ae} ${ax},${ay} +${ox},${oy} ${aw}x${ah} / ${be} ${bx},${by} +${px},${py} ${bw}x${bh}") }
+    }
+  }
+  
+  var map_bad = 0
+  for trial in 0..<40000 {
+    for i in 0..<64 {
+      let kind = next() % 4
+      let across = next() % 2 == 1
+      let down = next() % 2 == 1
+      let tile: u32 = if kind == 0 { 9 } else if kind == 1 { 10 } else { 0 }
+      let g_flags: u32 = if across { 0x800 } else { 0 }
+      let g_down: u32 = if down { 0x1000 } else { 0 }
+      let s_flags: u32 = if across { 0x200 } else { 0 }
+      let s_down: u32 = if down { 0x400 } else { 0 }
+      g_cells[i] = u16(tile | g_flags | g_down)
+      s_cells[i] = u16(tile | s_flags | s_down)
+    }
+    let ell = next() % 2 == 0
+    let (sx, sy, sw, sh) = (span(4), span(4), span(4) + 1, span(4) + 1)
+    let (tx, ty, tw, th) = (span(4), span(4), span(4) + 1, span(4) + 1)
+    let te = next() % 2 == 0
+    let one = next() % 2 == 0
+    let g_shapes: [2]genesis.Collider = #[
+      genesis.Collider { shape: genesis.Shape { ellipse: te, x: tx, y: ty, width: tw, height: th }, layers: 1, mask: 0, one_way: one },
+      genesis.Collider { shape: genesis.Shape { x: 0, y: 0, width: 8, height: 8 }, layers: 2, mask: 0 }
+    ]
+    let s_shapes: [2]sms.Collider = #[
+      sms.Collider { shape: sms.Shape { ellipse: te, x: tx, y: ty, width: tw, height: th }, layers: 1, mask: 0, one_way: one },
+      sms.Collider { shape: sms.Shape { x: 0, y: 0, width: 8, height: 8 }, layers: 2, mask: 0 }
+    ]
+    let (ow, oh) = (span(16) + 1, span(16) + 1)
+    let mask = u16(next() % 4)
+    let g_me = genesis.Collider { shape: genesis.Shape { ellipse: ell, x: sx, y: sy, width: ow, height: oh }, layers: 0, mask: mask }
+    let s_me = sms.Collider { shape: sms.Shape { ellipse: ell, x: sx, y: sy, width: ow, height: oh }, layers: 0, mask: mask }
+    let x = span(90) - 10
+    let y = span(90) - 10
+    let from_y = y - span(12) + 4
+    let g_hit = g_me.hits_map_moving(x, y, from_y, g_cells, WIDTH, 9, STARTS, g_shapes)
+    let s_hit = s_me.hits_map_moving(x, y, from_y, s_cells, WIDTH, 9, STARTS, s_shapes)
+    let g_any = g_me.hits_any_moving(x, y, from_y, g_shapes)
+    let s_any = s_me.hits_any_moving(x, y, from_y, s_shapes)
+    if g_hit { map_hits += 1 }
+    if g_hit != s_hit || g_any != s_any {
+      map_bad += 1
+      if map_bad < 6 { println("map trial ${trial}: at ${x},${y} from ${from_y} ell ${ell} +${sx},${sy} ${ow}x${oh} mask ${mask} tile ${te} +${tx},${ty} ${tw}x${th} one ${one}: g ${g_hit}/${g_any} s ${s_hit}/${s_any}") }
+    }
+  }
+  println("${bad} ${hits} ${map_bad} ${map_hits}")
+}
+`

@@ -107,7 +107,10 @@ pub let set_scroll = (_plane: u16, x: i16, y: i16) -> void => {
   set_register(0, MODE_4 | HIDE_LEFT_COLUMN)
   // The chip's horizontal scroll moves the picture right, and wraps at 256.
   set_register(8, u8((0 - x) & 0xFF))
-  set_register(9, u8(y % 224))
+  // Its 28 rows wrap, and a world is nearly always within two of them: no divide for that.
+  var row = u16(y)
+  while row >= 224 { row -= 224 }
+  set_register(9, u8(row))
 }
 
 /// For calls that read as the Genesis's. A game here that waits on [wait_vblank] needs neither;

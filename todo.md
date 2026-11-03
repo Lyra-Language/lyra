@@ -1354,7 +1354,7 @@ target, 10/11). In order:
   `clock_gettime`, `localtime_r`, std.io's `open`/`mkdir`/`readlink`).
 - **[OPEN] The web** — the backend's 64-bit pointers and `i64` `size_t` (`layout.go`'s
   `pointerSize`, the libc declarations, `coro.size.i64`) need a per-target width first.
-- **[PARTIAL] A Z80 backend, for new Master System and Game Gear games**: `target = "sms"` builds games up to 1 MB with `@banked` tables, and Vega generates them (`tools/llvm-z80/README.md`, `vega/todo.md`). Next: a 16-bit `std.sms.collision` (one entity on a map takes most of a frame), then PSG sound. Speed left: spills in tight loops, frames at about 100 T-states a call.
+- **[PARTIAL] A Z80 backend, for new Master System and Game Gear games**: `target = "sms"` builds games up to 1 MB with `@banked` tables, and Vega generates them (`tools/llvm-z80/README.md`, `vega/todo.md`). Next: PSG sound in `std.sms`. Speed left: an entity on a map is about 30,000 T-states of a 59,736 frame, mostly `hits_map_moving`'s spills; frames at about 100 T-states a call.
 
 ## Target introspection
 

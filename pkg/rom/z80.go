@@ -15,7 +15,7 @@ import (
 // helpers are most of a small game otherwise.
 
 const (
-	z80CodeStart  = 0x0180
+	z80CodeStart  = 0x01C0
 	z80HeaderAt   = 0x7FF0
 	z80HeaderEnd  = 0x8000
 	z80ROMEnd     = 0xC000
@@ -34,6 +34,11 @@ const (
 	z80Multiply   = "__z80_umul32"
 	z80MulLow     = "__mulhi3"
 	z80MultiplyAt = 0x0140
+	// HL ÷ DE, unsigned: __umodhi3 answers the remainder, __udivhi3 the quotient.
+	z80Remainder   = "__umodhi3"
+	z80RemainderAt = 0x0160
+	z80Quotient    = "__udivhi3"
+	z80QuotientAt  = 0x0160 + 31
 
 	// The mapper's register for the window at 8000, which reads as nothing, so what it was
 	// set to is kept here too for an interrupt to put back.
@@ -151,7 +156,7 @@ func LinkZ80(objects []Object) (*Z80Image, error) {
 			visit(t.section)
 			return
 		}
-		if t.name == z80CallBC || t.name == z80Otir || t.name == z80Bank || t.name == z80Multiply || t.name == z80MulLow {
+		if t.name == z80CallBC || t.name == z80Otir || t.name == z80Bank || t.name == z80Multiply || t.name == z80MulLow || t.name == z80Remainder || t.name == z80Quotient {
 			return
 		}
 		if strings.HasPrefix(t.name, z80BankSymbol) {
@@ -286,6 +291,12 @@ func LinkZ80(objects []Object) (*Z80Image, error) {
 		}
 		if t.name == z80Multiply || t.name == z80MulLow {
 			return z80MultiplyAt
+		}
+		if t.name == z80Remainder {
+			return z80RemainderAt
+		}
+		if t.name == z80Quotient {
+			return z80QuotientAt
 		}
 		if t.section != nil {
 			return t.section.address + t.value
@@ -502,6 +513,7 @@ func writeZ80Startup(rom []byte, dataLoad, dataSize, bssStart, bssSize int, addr
 	shadowLo, shadowHi := word(z80BankShadow)
 	registerLo, registerHi := word(z80BankRegister)
 	put(z80MultiplyAt, z80MultiplyCode...)
+	put(z80RemainderAt, z80DivideCode...)
 	// __z80_bank(bank in HL, table in DE) -> table in HL.
 	put(z80BankAt, 0x7D, 0x32, registerLo, registerHi, 0x32, shadowLo, shadowHi, 0xEB, 0xC9) // ld a, l; ld (reg), a; ld (shadow), a; ex de, hl; ret
 
@@ -572,12 +584,17 @@ func writeZ80Startup(rom []byte, dataLoad, dataSize, bssStart, bssSize int, addr
 	return nil
 }
 
-// z80MultiplyCode is shift and add, sixteen times, about 900 T-states: what the runtime's
+// z80MultiplyCode is shift and add, sixteen times, about 900 T-states, or half that by a
+// multiplier under 256: what the runtime's
 // multiplies come down to, and every other way of writing it in IR took three times as long.
 var z80MultiplyCode = []byte{
 	0x44, 0x4D, // ld b, h; ld c, l: the multiplicand
 	0x21, 0x00, 0x00, // ld hl, 0
 	0x3E, 0x10, // ld a, 16
+	0x14, 0x15, // inc d; dec d: is the multiplier's high byte zero?
+	0x20, 0x05, // jr nz, again
+	0x53, 0x1E, 0x00, // ld d, e; ld e, 0: eight rounds of nothing done at once
+	0x3E, 0x08, // ld a, 8
 	0x29,       // again: add hl, hl: DE:HL one left, DE's top bit the multiplier's next
 	0xCB, 0x13, // rl e
 	0xCB, 0x12, // rl d
@@ -588,6 +605,33 @@ var z80MultiplyCode = []byte{
 	0x3D,       // skip: dec a
 	0x20, 0xF2, // jr nz, again
 	0xC9, // ret
+}
+
+// z80DivideCode is restoring division, sixteen rounds, about 1,200 T-states against 7,000 for
+// the same loop compiled: the quotient grows in BC as the dividend leaves it, the remainder in
+// HL. A carry out of HL means the remainder passed 16 bits, so it is past any divisor.
+var z80DivideCode = []byte{
+	0x44, 0x4D, // __umodhi3: ld b, h; ld c, l
+	0x21, 0x00, 0x00, // ld hl, 0
+	0x3E, 0x10, // ld a, 16
+	0xCB, 0x21, // again: sla c
+	0xCB, 0x10, // rl b
+	0xED, 0x6A, // adc hl, hl
+	0x38, 0x08, // jr c, take
+	0xB7,       // or a
+	0xED, 0x52, // sbc hl, de
+	0x30, 0x06, // jr nc, bit
+	0x19,       // add hl, de
+	0x18, 0x04, // jr next
+	0xB7,       // take: or a
+	0xED, 0x52, // sbc hl, de
+	0x0C,       // bit: inc c
+	0x3D,       // next: dec a
+	0x20, 0xE9, // jr nz, again
+	0xC9,                                             // ret: the remainder in HL
+	0xCD, z80RemainderAt & 0xFF, z80RemainderAt >> 8, // __udivhi3: call __umodhi3
+	0x60, 0x69, // ld h, b; ld l, c
+	0xC9, // ret: the quotient in HL
 }
 
 // Z80Cartridge is the image as a cartridge, padded to the size its header says, with the

@@ -28,6 +28,12 @@ linked into LLVM's tree; `patches/` tell LLVM the triple, data layout, ELF machi
 - **Counters**: `Z80NarrowLoops` rewrites a counter ScalarEvolution can bound as an i16.
 - **Flags**: nothing the allocator inserts changes them (`ld`, `inc rr`, `dec rr`).
 
+## Hand-written helpers
+
+`pkg/rom/z80.go` holds `__mulhi3`/`__z80_umul32` and `__udivhi3`/`__umodhi3` as bytes, since `llc` cannot
+assemble and the compiled loops took several times as long: about 900 T-states to multiply (half for
+a multiplier under 256) and 1,200 to divide. `test/run.py` carries a copy to link with.
+
 ## Banks
 
 Not the target's business but the backend's and linker's: `selectBanks` (`pkg/backend/llvm/banks.go`)

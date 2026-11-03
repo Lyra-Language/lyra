@@ -20,47 +20,9 @@ define i8 @__mulqi3(i8 %a, i8 %b) {
   ret i8 %t
 }
 
-; Quotient by shift and subtract, remainder through the pointer.
-define i16 @__z80_udivmod(i16 %n, i16 %d, ptr %rem) {
-entry:
-  br label %loop
-loop:
-  %i = phi i8 [ 16, %entry ], [ %i2, %cont ]
-  %q = phi i16 [ %n, %entry ], [ %q3, %cont ]
-  %r = phi i16 [ 0, %entry ], [ %r3, %cont ]
-  %top = lshr i16 %q, 15
-  %r1 = shl i16 %r, 1
-  %r2 = or i16 %r1, %top
-  %q2 = shl i16 %q, 1
-  %fits = icmp uge i16 %r2, %d
-  br i1 %fits, label %take, label %cont
-take:
-  %rs = sub i16 %r2, %d
-  %qs = or i16 %q2, 1
-  br label %cont
-cont:
-  %r3 = phi i16 [ %r2, %loop ], [ %rs, %take ]
-  %q3 = phi i16 [ %q2, %loop ], [ %qs, %take ]
-  %i2 = sub i8 %i, 1
-  %more = icmp ne i8 %i2, 0
-  br i1 %more, label %loop, label %out
-out:
-  store i16 %r3, ptr %rem
-  ret i16 %q3
-}
-
-define i16 @__udivhi3(i16 %n, i16 %d) {
-  %rem = alloca i16
-  %q = call i16 @__z80_udivmod(i16 %n, i16 %d, ptr %rem)
-  ret i16 %q
-}
-
-define i16 @__umodhi3(i16 %n, i16 %d) {
-  %rem = alloca i16
-  %q = call i16 @__z80_udivmod(i16 %n, i16 %d, ptr %rem)
-  %r = load i16, ptr %rem
-  ret i16 %r
-}
+; `__udivhi3` and `__umodhi3` are the linker's too.
+declare i16 @__udivhi3(i16, i16)
+declare i16 @__umodhi3(i16, i16)
 
 define i16 @__divhi3(i16 %n, i16 %d) {
   %nneg = icmp slt i16 %n, 0

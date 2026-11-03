@@ -1084,3 +1084,31 @@ define i16 @mulneg() {
   %s = lshr i32 %v, 16
   %t = trunc i32 %s to i16
   ret i16 %t }
+
+; Division through the hand-written helper, at its corners: a divisor past 32767, a dividend
+; smaller than it, one, and the largest of everything.
+define i16 @udivs(i16 %n, i16 %d) { %r = udiv i16 %n, %d
+  ret i16 %r }
+define i16 @urems(i16 %n, i16 %d) { %r = urem i16 %n, %d
+  ret i16 %r }
+; test udiv_large hl=1
+define i16 @udiv_large() { %r = call i16 @udivs(i16 65535, i16 40000)
+  ret i16 %r }
+; test urem_large hl=25535
+define i16 @urem_large() { %r = call i16 @urems(i16 65535, i16 40000)
+  ret i16 %r }
+; test udiv_small hl=0
+define i16 @udiv_small() { %r = call i16 @udivs(i16 7, i16 40000)
+  ret i16 %r }
+; test urem_small hl=7
+define i16 @urem_small() { %r = call i16 @urems(i16 7, i16 40000)
+  ret i16 %r }
+; test udiv_one hl=65535
+define i16 @udiv_one() { %r = call i16 @udivs(i16 65535, i16 1)
+  ret i16 %r }
+; test udiv_same hl=1
+define i16 @udiv_same() { %r = call i16 @udivs(i16 65535, i16 65535)
+  ret i16 %r }
+; test urem_28 hl=5
+define i16 @urem_28() { %r = call i16 @urems(i16 985, i16 28)
+  ret i16 %r }
