@@ -416,10 +416,12 @@ func (l *lowerer) bindInlineParams(block *ir.Block, call *ast.FunctionCallExpr, 
 	}
 	callerEnv := l.captureEnv()
 	bound := make([]boundArg, 0, len(lambda.Parameters))
-	// These arguments aren't held beside one that leaves (lowerExpr): the body runs inside the
-	// call, and a `return` in the consumer would release one held and in the callee's frame
-	// both. An `own` argument leaks on that path instead.
-	l.heldOperands = nil
+	// An `own` argument is held beside one that leaves, as a call's is (lowerExpr), but only until
+	// it is bound: the body runs inside this call, and from there on the callee's frame has it. A
+	// frame of its own, then, popped before that one is pushed, whichever way the call got here.
+	l.heldOperands = l.ownership().OperandsToHold(call)
+	l.pushManagedFrame()
+	defer func() { l.heldOperands = nil }()
 	for i, param := range lambda.Parameters {
 		ident, isIdent := param.Pattern.(*ast.IdentifierPattern)
 		if !isIdent {
@@ -462,6 +464,7 @@ func (l *lowerer) bindInlineParams(block *ir.Block, call *ast.FunctionCallExpr, 
 		}
 		bound = append(bound, b)
 	}
+	l.popManagedFrame()
 
 	// The callee's environment. Its ownership table is the instantiation's for a generic
 	// callee and the program-wide one otherwise — never the *caller's* specialization

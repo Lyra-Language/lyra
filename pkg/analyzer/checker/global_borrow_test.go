@@ -185,3 +185,72 @@ let main = () -> void => {
 		t.Errorf("expected no error, got %v", got)
 	}
 }
+
+// A function returning a sequence runs between its consumer's iterations, so a box's storage
+// can't be lent to one, a local's included. What no box holds stays legal, as for lyra-E091.
+func TestSeqBorrow(t *testing.T) {
+	t.Parallel()
+	const lib = `struct P { n: i64, m: i64 }
+let each = gen (x: ref P, n: i64) -> Seq<i64> => { for i in 0..<n { yield x.n } }
+let bump = gen (x: mut P) -> Seq<i64> => { x.n += 1; yield x.n }
+let alias = (x: ref P) -> Seq<i64> => each(x, 2)
+let each_of<t> = gen (x: ref t) -> Seq<i64> => { yield 1 }
+let by_value = gen (x: P) -> Seq<i64> => { yield x.n }
+let plain = (x: ref P) -> i64 => x.n
+let walk = gen (xs: ref []P) -> Seq<i64> => { for x in xs { yield x.n } }
+let scalar = gen (x: ref i64) -> Seq<i64> => { yield x }
+`
+	cases := []struct {
+		name, body string
+		refused    bool
+	}{
+		{"an element", `var ys = [P { n: 1, m: 0 }]
+  for v in each(ys[0], 2) { print("${v}") }`, true},
+		{"a `mut` element", `var ys = [P { n: 1, m: 0 }]
+  for v in bump(ys[0]) { print("${v}") }`, true},
+		{"through a plain function naming it", `var ys = [P { n: 1, m: 0 }]
+  for v in alias(ys[0]) { print("${v}") }`, true},
+		{"a generic parameter", `var ys = [P { n: 1, m: 0 }]
+  for v in each_of(ys[0]) { print("${v}") }`, true},
+		{"a comprehension's source", `var ys = [P { n: 1, m: 0 }]
+  print("${[v in each(ys[0], 2) | v].len()}")`, true},
+		{"a parameter's element", `let f = (ys: ref []P) -> i64 => [v in each(ys[0], 2) | v].len()
+  print("${f([P { n: 1, m: 0 }])}")`, true},
+		{"a whole local", `var p = P { n: 1, m: 0 }
+  for v in each(p, 2) { print("${v}") }`, false},
+		{"a whole array", `var ys = [P { n: 1, m: 0 }]
+  for v in walk(ys) { print("${v}") }`, false},
+		{"an element of a fixed array", `var ps: [1]P = #[P { n: 1, m: 0 }]
+  for v in each(ps[0], 2) { print("${v}") }`, false},
+		{"a temporary", `for v in each(P { n: 1, m: 0 }, 2) { print("${v}") }`, false},
+		{"by value", `var ys = [P { n: 1, m: 0 }]
+  for v in by_value(ys[0]) { print("${v}") }`, false},
+		{"a scalar", `var ns = [1]
+  for v in scalar(ns[0]) { print("${v}") }`, false},
+		{"a function that isn't one", `var ys = [P { n: 1, m: 0 }]
+  print("${plain(ys[0])}")`, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			got := seqBorrowDiagnostics(t, lib+"let main = () -> void => {\n  "+c.body+"\n}\n")
+			if c.refused != (len(got) > 0) {
+				t.Errorf("refused = %v; diagnostics %v", c.refused, got)
+			}
+		})
+	}
+}
+
+func seqBorrowDiagnostics(t *testing.T, src string) []diag.Diagnostic {
+	t.Helper()
+	var out []diag.Diagnostic
+	for _, d := range checkGlobalBorrows(t, src) {
+		if d.Code == diag.CodeSeqBorrow {
+			if !strings.Contains(d.Message, "sequence") {
+				t.Errorf("message doesn't name the sequence: %s", d.Message)
+			}
+			out = append(out, d)
+		}
+	}
+	return out
+}

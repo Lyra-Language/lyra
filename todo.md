@@ -950,9 +950,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/03] A way out releases the operands already evaluated beside it**: an aggregate's
   or call's owned operands, and a dynamic array's box, for a `?`, `return`, `break` or
   `continue`. (COMPLETED.md, 11/03.)
-- **[OPEN] An inlined sequence function's `own` argument beside a way out**: `upto("a" ++ b,
-  f()?)` still leaks the first. The body runs inside the call, so holding it the same way would
-  release it twice; it has to end where `bindInlineParams` frames the parameters.
+- **[DONE 11/03] An inlined sequence function's `own` argument beside a way out** is held until
+  `bindInlineParams` frames the parameters. (COMPLETED.md, 11/03.)
 - **[DONE 11/03] An assignment's target is walked for what it evaluates**: every index on the
   path, so a temporary there is released and an `own` argument there retained. An operand can no
   longer move the binding being written. (COMPLETED.md, 11/03.)
@@ -967,8 +966,12 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] A by-reference argument still dangles through a second name for its array**: `via(ys[0],
   zs)` after `var zs = ys`, where `via` grows `zs`, and a local sharing a global's array when the
   callee grows the global. A use-after-free under ASan; exclusivity is by place, and this is by box.
-- **[OPEN] A `gen` function's `ref` argument finds its place as it comes up** (`bindInlineParams`
-  in `seq_lower.go`), so a later argument can free it. Unlike a call's, it wasn't deferred.
+- **[DONE 11/03] A box's storage can't be lent to a function returning a sequence** (`lyra-E092`),
+  which answers a later argument freeing it and the consumer freeing it both. A sequence held as a
+  value can't take a by-reference parameter, which crashed `lyrac`. (COMPLETED.md, 11/03.)
+- **[OPEN] `for x in ys { ys = [...] }` is a use-after-free**, with or without a `gen` between
+  (`walk(ys)` does the same). Reassigning frees the box the loop reads; growing is fine, as the loop
+  reads the buffer through the box. Found on 11/03; a retain across the loop looks like the answer.
 - **[OPEN] `lib.queue[0] = 1` and `lib.add(lib.queue[0])` say `undefined identifier "lib"`.** A
   namespaced global is readable and `lib.queue.push(1)` works, but not as a place. A message at least.
 - **[OPEN] A `Seq` beside another clause** (`[n in ns, i in upto(n) | i]`) is still refused,

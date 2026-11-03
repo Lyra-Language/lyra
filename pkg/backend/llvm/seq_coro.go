@@ -103,6 +103,9 @@ func (l *lowerer) seqCoroFunc(lambda *ast.LambdaExpr, subst map[string]types.Typ
 		if param.TypeModifier == types.Mut {
 			return nil, errSeqStage1("%q takes a `mut` parameter, which a sequence used as a value cannot: its frame outlives the call", name)
 		}
+		if paramIsByRef(param) {
+			return nil, errSeqStage1("%q takes a `ref` parameter, which a sequence used as a value cannot: its frame outlives the call. Take it without `ref`, or walk the sequence where it is made", name)
+		}
 		p, err := l.lowerParameter(param, i)
 		if err != nil {
 			return nil, err

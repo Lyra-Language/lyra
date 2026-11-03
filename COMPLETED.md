@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 11/03/26 — A sequence function's arguments, inlined
+
+Two items that looked like one family, plus what probing them turned up.
+
+- **An `own` argument beside a way out** leaked: `times("a" ++ b, f()?)`. Holding it the way a call
+  does would have released it twice, once held and once in the callee's frame, since the body runs
+  inside the call. So `bindInlineParams` holds in a frame of its own, popped before the callee's is
+  pushed. The two never overlap, and no way out can happen between them.
+- **The `ref` item was asked the wrong way.** It said a later argument could free the place, so the
+  plain answer was deferring the address, as a call now does, and that was built and passed. But the
+  body holds the pointer while the *consumer* runs: `for v in each(ys[0], 3) { ys = [] }` read freed
+  memory under ASan. Ordering can't reach that. The consumer is to a `gen` what any function is to a
+  callee lent a global's storage, so it gets lyra-E091's answer, and the deferral came back out, as
+  nothing it protected can still get there.
+- **By place, not by what the consumer writes.** A walk of the loop body for writes would permit more
+  and be wrong for a closure or a second name. No `gen` in the workspace takes `ref` or `mut` at all
+  (measured 11/03), so nothing pays. What no box holds stays legal, as its address can't go away.
+- **A sequence held as a value with a by-reference parameter crashed `lyrac`**, a Go panic on a
+  managed `ref` and a value handed to a pointer parameter on anything else. Nothing had compiled one,
+  so it's refused as `mut` already was: the frame outlives the call. A `ref` scalar is by value and
+  still works.
+- **Found and left open:** `for x in ys { ys = [...] }` is a use-after-free with no `gen` in sight, and
+  `walk(ys)` inherits it, which is why E092 doesn't try to cover a whole array. todo.md has it.
+
 ### 11/03/26 — A by-reference argument can't dangle by way of a global
 
 `add(g[0], shrink())` freed the element a `mut` argument pointed at, and so did `replace_g(g[0])`, where

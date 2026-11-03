@@ -1053,6 +1053,11 @@ const (
 	// the storage while the callee holds a pointer to it (checker, global_borrow.go).
 	CodeGlobalBorrow = "lyra-E091"
 
+	// CodeSeqBorrow: a by-reference argument into a box, for a function returning a sequence
+	// (`each(ys[0])`). Its body runs between the consumer's iterations, and the consumer can
+	// free that storage (checker, global_borrow.go).
+	CodeSeqBorrow = "lyra-E092"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

@@ -31,6 +31,12 @@ import (
 // The local twin isn't refused: a callee reaches a local only through its arguments, where
 // exclusivity by place (`checkExclusiveMutableBorrow`) already answers for the place itself.
 // Two names for one array, `f(ys[0], zs)` after `var zs = ys`, stays open (todo.md).
+//
+// **A function returning a sequence is refused any array or `shared` value's storage**
+// (`lyra-E092`), the global's or a local's: `for v in each(ys[0]) { ys = [] }`. Its body runs
+// between the consumer's iterations, so the consumer does what a global's other functions can.
+// By place and not by what the consumer writes, since a closure or a second name would get past
+// that. On 11/03 no `gen` in the workspace took `ref` or `mut` at all, so it cost nothing.
 func CheckGlobalBorrows(program *ast.Program, symTable *symbols.SymbolTable, tt *typetable.TypeTable, mt *typetable.MethodTable) []diag.Diagnostic {
 	c := &globalBorrows{
 		symTable: symTable,
@@ -107,16 +113,18 @@ func (c *globalBorrows) visit(e ast.Expression) bool {
 // call checks each argument the callee takes by reference.
 func (c *globalBorrows) call(e *ast.FunctionCallExpr) {
 	modes, receiver := c.parameterModes(e)
+	lam := c.callees.resolveCallee(e)
+	toSeq := lam != nil && (lam.IsGenerator || types.IsSeq(lam.ReturnType.Type))
 	offset := 0
 	if receiver != nil {
 		offset = 1
 		if len(modes) > 0 {
-			c.argument(e, receiver, modes[0], 1)
+			c.argument(receiver, modes[0], 1, toSeq)
 		}
 	}
 	for i, arg := range e.Arguments {
 		if i+offset < len(modes) {
-			c.argument(e, arg, modes[i+offset], i+offset+1)
+			c.argument(arg, modes[i+offset], i+offset+1, toSeq)
 		}
 	}
 }
@@ -158,20 +166,30 @@ func (c *globalBorrows) parameterModes(e *ast.FunctionCallExpr) ([]types.TypeMod
 	return nil, nil
 }
 
-func (c *globalBorrows) argument(call *ast.FunctionCallExpr, arg ast.Expression, mode types.TypeModifier, position int) {
-	if !c.byReference(arg, mode) ||
-		!ownership.RootedAtMutableGlobal(arg, c.symTable, c.bound) ||
-		!ownership.ReachedThroughBox(arg, c.tt, c.symTable) {
+func (c *globalBorrows) argument(arg ast.Expression, mode types.TypeModifier, position int, toSeq bool) {
+	if !c.byReference(arg, mode) || !ownership.ReachedThroughBox(arg, c.tt, c.symTable) {
 		return
 	}
-	c.out = append(c.out, diag.Diagnostic{
-		Location: arg.GetLocation(),
-		Severity: diag.SeverityError,
-		Code:     diag.CodeGlobalBorrow,
-		Message: fmt.Sprintf(
-			"argument %d is passed by `%s` into an array or `shared` value a mutable global holds, and any function can reassign that global or grow the array while the callee holds the borrow, which would free the storage under it. Copy it into a local, pass that, and assign it back",
-			position, mode),
-	})
+	switch {
+	case ownership.RootedAtMutableGlobal(arg, c.symTable, c.bound):
+		c.out = append(c.out, diag.Diagnostic{
+			Location: arg.GetLocation(),
+			Severity: diag.SeverityError,
+			Code:     diag.CodeGlobalBorrow,
+			Message: fmt.Sprintf(
+				"argument %d is passed by `%s` into an array or `shared` value a mutable global holds, and any function can reassign that global or grow the array while the callee holds the borrow, which would free the storage under it. Copy it into a local, pass that, and assign it back",
+				position, mode),
+		})
+	case toSeq:
+		c.out = append(c.out, diag.Diagnostic{
+			Location: arg.GetLocation(),
+			Severity: diag.SeverityError,
+			Code:     diag.CodeSeqBorrow,
+			Message: fmt.Sprintf(
+				"argument %d is passed by `%s` into an array or `shared` value, for a function returning a sequence. Its body runs between the consumer's iterations, and the consumer can reassign that array or grow it, which frees the storage under it. Copy it into a local and pass that, or take it by value",
+				position, mode),
+		})
+	}
 }
 
 // byReference reports whether this argument goes by pointer: `mut` always, `ref` unless what it

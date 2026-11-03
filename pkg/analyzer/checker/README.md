@@ -260,10 +260,11 @@ same-named user `data Result` is not canonical.
 - Not a memory-safety fix (ownership retains defensively); it enforces `own` and exposes the
   reuse perf cliff.
 
-## `global_borrow.go` (`lyra-E091`)
+## `global_borrow.go` (`lyra-E091`, `lyra-E092`)
 
 `CheckGlobalBorrows(program, symTable, tt, mt)`, post-typecheck: a by-reference argument into a box
-a mutable global holds. Asks `ownership.RootedAtMutableGlobal` and `ownership.ReachedThroughBox`;
+a mutable global holds (E091), or into any box for a function returning a sequence (E092), whose
+body runs between its consumer's iterations. Asks `ownership.RootedAtMutableGlobal` and `ownership.ReachedThroughBox`;
 callees come from use-after-move's `calleeParams`, and a bound call from the trait's signature.
 Builtins and C functions aren't asked about. A name an enclosing function binds isn't the global
 (`bound`), impl and default method bodies included.

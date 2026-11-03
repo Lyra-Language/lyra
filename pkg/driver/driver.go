@@ -327,7 +327,8 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// type; before the backend, which could not honour them through an indirect call.
 	res.Diagnostics = append(res.Diagnostics, checker.CheckByRefFunctionValues(program, tt)...)
 
-	// A by-reference argument into a box a mutable global holds (lyra-E091). After
+	// A by-reference argument into a box a mutable global holds (lyra-E091), or into any box for
+	// a function returning a sequence (lyra-E092). After
 	// typechecking because a callee's parameter modes come from its resolved declaration, and
 	// because whether a path crosses a box comes from the types along it.
 	res.Diagnostics = append(res.Diagnostics, checker.CheckGlobalBorrows(program, symTable, tt, res.MethodTable)...)
