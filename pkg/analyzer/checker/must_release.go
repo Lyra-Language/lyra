@@ -2,6 +2,7 @@ package checker
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/captures"
@@ -924,8 +925,9 @@ func (c *mustRelease) beginUnwrap(st heldState, scrutinee ast.Expression) (heldS
 	// at a viewer's model to `unload_animations(a)` — a diagnostic recommending a double
 	// free, which is the harm the `SoundAlias` decision exists to avoid. The pass does not
 	// track obligations inside aggregates, so this can hide nothing it used to catch.
-	// Found by examples/raylib/gltf_viewer.lyra (09/11).
-	if isStoredPlaceRead(scrutinee) {
+	// Found by examples/raylib/gltf_viewer.lyra (09/11). A value chosen from what is already
+	// held is the same view (yieldsHeldValue).
+	if yieldsHeldValue(scrutinee, nil) {
 		return c.expr(st, scrutinee), unwrapper{}
 	}
 	// Not a binding — and this is the shape the idiom actually takes, so it is not a
@@ -1154,18 +1156,98 @@ func article(typeName string) string {
 // A bare name is not a stored-place read here, since `let t = s` hands the obligation over —
 // the walk of `s` has already released `s` as escaped, so `t` is the one left holding it.
 // Both seeding sites — a `let` and a reassignment — go through here, since they are twins.
+//
+// So is a value chosen from what is held (yieldsHeldValue), `let t = if c { a } else { b }`,
+// even from bare names: only one of the two is handed over, and nothing here can say which.
 func (c *mustRelease) acquiredBy(value ast.Expression) (resource, bool) {
-	if isStoredPlaceRead(value) {
+	if _, isName := bareName(value); !isName && yieldsHeldValue(value, nil) {
 		return resource{}, false
 	}
 	return c.resourceOf(value)
 }
 
+// yieldsHeldValue reports whether some path through e ends in a value that already exists: a
+// binding from outside e or a stored place, reached through an `if`, a `match`, a `??`, a block
+// or an `unsafe`. Such a value is a view, and treating it as acquired tells the program to
+// release what something else answers for (`match if c { a } else { b } { Some(x) => … }`, 11/02).
+//
+// **Some path, not every**: on the path through `b`, a release of `if c { load(1) } else { b }`
+// would be a double free, and this pass errs towards silence.
+//
+// **A name inside e is judged by what bound it**, in bound. A block's own `let x = load(1); x`
+// is as fresh as its initializer, and a payload is as held as its scrutinee: `v` of `match
+// load(1) { Some(v) => v, … }` is a fresh value with a name.
+func yieldsHeldValue(e ast.Expression, bound map[string]bool) bool {
+	e = unsafeBlockValue(e)
+	if name, isName := bareName(e); isName {
+		return !bound[name]
+	}
+	if isStoredPlaceRead(e) {
+		return true
+	}
+	switch v := e.(type) {
+	case *ast.UnsafeBlockExpr:
+		return v.Body != nil && yieldsHeldValue(v.Body, bound)
+	case *ast.BlockExpr:
+		inner := maps.Clone(bound)
+		for _, s := range v.Statements {
+			switch decl := s.(type) {
+			case *ast.VarDeclStmt:
+				inner = withBound(inner, decl.Name)
+			case *ast.DestructuringDeclStmt:
+				inner = withBound(inner, patternBoundNames(decl.Pattern)...)
+			case *ast.ElseDestructuringStmt:
+				inner = withBound(inner, patternBoundNames(decl.DestructuringStatement.Pattern)...)
+			}
+		}
+		last, ok := lastExpression(v)
+		return ok && yieldsHeldValue(last, inner)
+	case *ast.IfExpr:
+		return yieldsHeldValue(v.Then, bound) || v.Else != nil && yieldsHeldValue(v.Else, bound)
+	case *ast.NullCoalescingExpr:
+		return yieldsHeldValue(v.Optional, bound) || yieldsHeldValue(v.Default, bound)
+	case *ast.MatchExpr:
+		held := yieldsHeldValue(v.Scrutinee, bound)
+		for i := range v.MatchArms {
+			arm := bound
+			if !held {
+				arm = withBound(maps.Clone(bound), patternBoundNames(v.MatchArms[i].Pattern)...)
+			}
+			if yieldsHeldValue(v.MatchArms[i].Body, arm) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func withBound(bound map[string]bool, names ...string) map[string]bool {
+	if bound == nil {
+		bound = map[string]bool{}
+	}
+	for _, name := range names {
+		bound[name] = true
+	}
+	return bound
+}
+
+// lastExpression is the expression a block's last statement is, if it is one.
+func lastExpression(b *ast.BlockExpr) (ast.Expression, bool) {
+	if len(b.Statements) == 0 {
+		return nil, false
+	}
+	s, ok := b.Statements[len(b.Statements)-1].(*ast.ExpressionStmt)
+	if !ok || s.Expression == nil {
+		return nil, false
+	}
+	return s.Expression, true
+}
+
 // isStoredPlaceRead reports whether e reads storage something else owns — a field or element
 // path rooted at a name, `o.anims` or `xs[i].s`, or any path through a deref, `slot^.texture`
-// — rather than being a bare name or a value some call produced. The one definition of "this
-// is a view", shared by the `match` scrutinee rule (beginUnwrap) and the binding-initializer
-// rule (acquiredBy).
+// — rather than being a bare name or a value some call produced. The one definition of a place
+// that is a view, shared by the `match` scrutinee rule (beginUnwrap) and the binding-initializer
+// rule (acquiredBy), both through yieldsHeldValue.
 //
 // **It looks through an `unsafe` block**, since a read through a pointer is written inside
 // one: `let old = unsafe { slot^.texture }` is the view `let old = h.texture` is, and taking

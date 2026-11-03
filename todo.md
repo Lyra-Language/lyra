@@ -662,9 +662,8 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] `@must_release` extensions:** a `newtype` cannot carry the attribute
   (`constrained_type` has no attribute slot); a multi-binding pattern is untracked; `defer`
   would be the natural companion.
-- **[OPEN] `W022` reads a computed `match` scrutinee as an acquisition.** `match if c { a }
-  else { b } { Some(x) => set_cursor(x) }` warns that `x` is unreleased, though both arms
-  are views of bindings released later. `editor.lyra` matches each binding directly.
+- **[DONE 11/02] `W022` reads a value chosen from what is held as a view**, as a scrutinee or a
+  `let`'s value, where it told the program to release it (COMPLETED.md, 11/02).
 - **[PARTIAL] SDL3 bindings, driven by examples, towards an NES-style game.** One example
   per rung, binding only what it uses (`bindings/README.md`). Art is PNG via **SDL3_image**
   (`bindings/sdl3_image.lyra`). The rungs live in `examples/SDL3/nes/`.

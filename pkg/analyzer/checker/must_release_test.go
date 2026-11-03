@@ -722,3 +722,95 @@ let f = () -> void => {
 }
 `, "s")
 }
+
+// **A value chosen from what is already held is a view, as a place read is**: an `if`, `match`,
+// `??` or block ending in a binding or a stored place. Taken for an acquisition, it told a
+// program to release a value something else answers for (`match if c { a } else { b }`,
+// COMPLETED.md 11/02): a diagnostic recommending a double free.
+func TestMustRelease_AValueChosenFromWhatIsHeldIsAView(t *testing.T) {
+	const decls = `
+struct Hold { a: Sound, b: Sound, m: Maybe<Sound> }
+let release = (m: Maybe<Sound>) -> void => match m { Some(s) => unload_sound(s), None => {} }
+`
+	cases := []struct{ name, body string }{
+		{"a match on an if between bindings", `
+  let a = try_load(1)
+  let b = try_load(2)
+  match if c { a } else { b } { Some(x) => play_sound(x), None => {} }
+  release(a)
+  release(b)`},
+		{"a match on an if between places", `
+  match if c { h.m } else { h.m } { Some(x) => play_sound(x), None => {} }`},
+		{"an if let on one", `
+  if let Some(x) = if c { h.m } else { h.m } { play_sound(x) }`},
+		{"a let else on one", `
+  let Some(x) = if c { h.m } else { h.m } else { return }
+  play_sound(x)`},
+		{"a match on a block", `
+  match { h.m } { Some(x) => play_sound(x), None => {} }`},
+		{"nested", `
+  match if c { if c { h.m } else { h.m } } else { h.m } { Some(x) => play_sound(x), None => {} }`},
+		{"one path diverging", `
+  match if c { h.m } else { panic("no") } { Some(x) => play_sound(x), None => {} }`},
+		{"a let of an if between places", `
+  let s = if c { h.a } else { h.b }
+  play_sound(s)`},
+		{"a let of a match between places", `
+  let s = match c { true => h.a, false => h.b }
+  play_sound(s)`},
+		{"a let of an if between bindings, released by name", `
+  let a = load_sound(1)
+  let b = load_sound(2)
+  let s = if c { a } else { b }
+  play_sound(s)
+  unload_sound(a)
+  unload_sound(b)`},
+		{"a let of a ??", `
+  let s = h.m ?? h.a
+  play_sound(s)`},
+		{"a payload of a held scrutinee, handed out", `
+  let s = match h.m { Some(v) => v, None => h.a }
+  play_sound(s)`},
+		// The pass's usual direction: on the path through `h.m` a release is a double free.
+		{"a fresh value on only one path", `
+  match if c { try_load(1) } else { h.m } { Some(x) => play_sound(x), None => {} }`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertClean(t, decls+"let f = (c: bool, h: Hold) -> void => {"+tc.body+"\n}\n")
+		})
+	}
+}
+
+// What really acquires is still an acquisition, however it is chosen or unwrapped.
+func TestMustRelease_AValueChosenFromFreshOnesIsStillHeld(t *testing.T) {
+	cases := []struct{ name, body string }{
+		{"a let of an if between two loads, through a payload", `
+  let s = if c { try_load(1) } else { try_load(2) }
+  match s { Some(x) => play_sound(x), None => {} }`},
+		{"a match on an if between two loads", `
+  match if c { try_load(1) } else { try_load(2) } { Some(s) => play_sound(s), None => {} }`},
+		{"a let of an if between two loads", `
+  let s = if c { load_sound(1) } else { load_sound(2) }
+  play_sound(s)`},
+		{"a let of a match between two loads", `
+  let s = match c { true => load_sound(1), false => load_sound(2) }
+  play_sound(s)`},
+		// `v` is a name, and the payload of a fresh value.
+		{"a let of a load's payload", `
+  let s = match try_load(1) { Some(v) => v, None => panic("no") }
+  play_sound(s)`},
+		// `x` is a name, and bound inside.
+		{"a let of a block's own local", `
+  let s = { let x = load_sound(1); x }
+  play_sound(s)`},
+		{"a let of a block's own destructured local", `
+  let s = { let Some(x) = try_load(1) else { return }; x }
+  play_sound(s)`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertLeaks(t, "let f = (c: bool) -> void => {"+tc.body+"\n}\n", "s")
+		})
+	}
+}

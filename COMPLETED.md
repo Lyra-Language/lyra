@@ -9,6 +9,25 @@ Newest first.
 
 ## Dated log
 
+### 11/02/26 — A value chosen from what is held is a view (`lyra-W022`)
+`match if c { a } else { b } { Some(x) => set_cursor(x) }` warned that `x` was unreleased, though
+both are views of bindings released later: a diagnostic recommending a double free, the harm the
+09/11 rule that a stored place is a view exists to stop. `beginUnwrap` had that rule for a name and a
+place, and took anything else for an acquisition. Probing found the same at every neighbour: `if
+let`, `let … else`, a block, a nested `if`, and `let t = if c { h.a } else { h.b }` through
+`acquiredBy`, the twin the 09/11 rule also went into. `yieldsHeldValue` is the rule, for both.
+- **Some path, not every.** `if c { load(1) } else { h.m }` is quiet: on the path through `h.m` a
+  release is a double free. This pass errs towards silence, and a warning here cannot be silenced.
+- **A name is not enough.** `let t = match load(1) { Some(v) => v, None => panic("") }` ends in a
+  name and holds a fresh value, and so does `{ let x = load(1); x }`. A name is judged by what bound
+  it: a block's local is fresh, and a payload is as held as its scrutinee. Stated the crude way, the
+  fix would have hidden those two real leaks; `TestMustRelease_AValueChosenFromFreshOnesIsStillHeld`
+  pins them.
+- **`let t = if c { a } else { b }` of bare names is quiet too**, where `let t = a` hands over: only
+  one is handed over, and nothing here can say which.
+
+No `lyra-W022` in any of the workspace's 403 files before or after, so no real warning moved.
+
 ### 11/02/26 — Two declarations of one C symbol are compared by what crosses
 `declareExtern` asked `TypesEqual` of the Lyra signatures, so `(surface: Surface)` over `alias
 Surface = ^u8` and another module's `(surface: ^u8)` were "declared twice with different
