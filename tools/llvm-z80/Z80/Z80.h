@@ -10,13 +10,18 @@ class Z80TargetMachine;
 
 FunctionPass *createZ80ISelDag(Z80TargetMachine &TM, CodeGenOptLevel OptLevel);
 FunctionPass *createZ80ConstrainedCopies();
+FunctionPass *createZ80NarrowLoops();
+void initializeZ80NarrowLoopsPass(PassRegistry &);
 void initializeZ80ConstrainedCopiesPass(PassRegistry &);
 void initializeZ80DAGToDAGISelLegacyPass(PassRegistry &);
 void initializeZ80AsmPrinterPass(PassRegistry &);
 
 namespace Z80CC {
 // The `cc` field of `jp cc, nn`. A code and its opposite differ in the lowest bit.
-enum CondCode { NZ = 0, Z = 1, NC = 2, C = 3, PO = 4, PE = 5, P = 6, M = 7 };
+enum CondCode { NZ = 0, Z = 1, NC = 2, C = 3, PO = 4, PE = 5, P = 6, M = 7,
+                // No such instruction: a signed compare's "less" is S and V differing, and
+                // the printer writes the two jumps it takes (Z80AsmPrinter).
+                LT = 8, GE = 9 };
 } // namespace Z80CC
 } // namespace llvm
 

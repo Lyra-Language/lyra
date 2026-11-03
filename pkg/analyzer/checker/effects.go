@@ -239,8 +239,9 @@ var builtinEffects = map[string]Effect{
 	// is done through it is charged where it is done (a deref write, `write_volatile`).
 	"pointer_at": EffectNone,
 	// A Z80 console's ports: the hardware, as `read_volatile` and `write_volatile` are.
-	"port_read":  EffectInput,
-	"port_write": EffectOutput,
+	"port_read":        EffectInput,
+	"port_write":       EffectOutput,
+	"port_write_bytes": EffectOutput,
 	// `wall_clock_nanos()` is the Time half of exactly the same arrangement, and it
 	// only became one on 08/06. It sat here as `wallClock` — this table's entry,
 	// tagged EffectTime, with no typechecker signature and no lowering anywhere: the

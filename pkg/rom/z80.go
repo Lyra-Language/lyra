@@ -25,6 +25,8 @@ const (
 	z80Hblank     = "__lyra_interrupt_hblank"
 	z80CallBC     = "__z80_callbc"
 	z80CallBCAt   = 0x0068
+	z80Otir       = "__z80_otir"
+	z80OtirAt     = 0x006A
 
 	emZ80 = elf.Machine(220)
 
@@ -118,7 +120,7 @@ func LinkZ80(objects []Object) (*Z80Image, error) {
 			visit(t.section)
 			return
 		}
-		if t.name == z80CallBC {
+		if t.name == z80CallBC || t.name == z80Otir {
 			return
 		}
 		if sym, ok := globals[t.name]; ok {
@@ -214,6 +216,9 @@ func LinkZ80(objects []Object) (*Z80Image, error) {
 		}
 		if t.name == z80CallBC {
 			return z80CallBCAt
+		}
+		if t.name == z80Otir {
+			return z80OtirAt
 		}
 		sym := globals[t.name]
 		return sym.section.address + sym.value
@@ -357,9 +362,10 @@ func writeZ80Startup(rom []byte, dataLoad, dataSize, bssStart, bssSize int, addr
 	lo, hi := word(startAt)
 	put(0, 0xF3, 0xED, 0x56, 0xC3, lo, hi) // di; im 1; jp start
 	lo, hi = word(irqAt)
-	put(0x38, 0xC3, lo, hi)      // jp irq
-	put(0x66, 0xED, 0x45)        // retn
-	put(z80CallBCAt, 0xC5, 0xC9) // push bc; ret
+	put(0x38, 0xC3, lo, hi)                      // jp irq
+	put(0x66, 0xED, 0x45)                        // retn
+	put(z80CallBCAt, 0xC5, 0xC9)                 // push bc; ret
+	put(z80OtirAt, 0x43, 0x4A, 0xED, 0xB3, 0xC9) // ld b, e; ld c, d; otir; ret
 
 	at := startAt
 	lo, hi = word(z80StackTop)

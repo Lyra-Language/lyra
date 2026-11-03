@@ -958,6 +958,9 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		if ident.Name == "port_read" || ident.Name == "port_write" {
 			return tc.inferPortCall(call, ident.Name)
 		}
+		if ident.Name == "port_write_bytes" {
+			return tc.inferPortWriteBytesCall(call)
+		}
 		if isBuiltinRandomSeedFn(ident.Name) {
 			if len(call.Arguments) != 0 {
 				tc.addError(call.GetLocation(), SeverityError,

@@ -13,13 +13,19 @@ linked into LLVM's tree; `patches/` tell LLVM the triple, data layout, ELF machi
   indirect call's target to `__z80_callbc` (`push bc; ret`). Everything but IX is caller-saved.
 - **Frames**: SP does not move in a function's body, and IX equals it, so every slot is
   `(ix+d)`. The prologue uses no general register, so arguments stay where they are.
-- **Compares**: the Z80 tests Z and C only, so signed compares flip both sign bits.
-  `or a; sbc hl, rr; add hl, rr` compares and leaves HL as it was, Z and C intact.
+- **Compares**:
+  `or a; sbc hl, rr; add hl, rr` compares and leaves HL as it was, its flags intact.
 - **A and HL**: `Z80ConstrainedCopies` gives each operand that must be in one register its own
   short-lived virtual register. Without it a value pinned to A or HL makes allocation fail.
 - **Far slots**: past `(ix+127)` IX is moved for the access, keeping every register and the flags
   (about 170 T-states each way). Large locals work, slowly.
 - **Ports**: address space 1. `load`/`store` there is `in`/`out`, the pointer's value the port.
+- **Compares**, signed: `LT` and `GE` are not instructions but conditions the printer writes as two
+  jumps, testing S and V. A compare with zero is `or` or `bit 7`, with no subtraction.
+- **Overflow checks** select to pseudos with the flag as a value, and `Z80ConstrainedCopies` makes the
+  operation and the jump directly when that is all the flag does, as nearly always: `or a; adc hl, rr;
+  jp pe`. `add hl, rr` sets no overflow flag, so a signed add is the `adc`.
+- **Counters**: `Z80NarrowLoops` rewrites a counter ScalarEvolution can bound as an i16.
 - **Flags**: nothing the allocator inserts changes them (`ld`, `inc rr`, `dec rr`).
 
 ## Testing
@@ -31,9 +37,9 @@ random programs. Both at -O2 and -O0. The helpers come from `runtime/sms/runtime
 ## Not yet
 
 - No assembler or disassembler in `llvm-mc`/`llvm-objdump`, no `jr`, no `ldir`.
-- Code quality is a first pass: no peepholes, and signed compares and overflow checks are slow.
 - Register allocation can still fail on a very large function (1 in 600 fuzz runs, at -O0, which lyrac does not use).
 - `opt` asserts on a constant address above 64 KB (its alignment is more than a 16-bit pointer holds), as
   Genesis IR has; IR emitted for the Z80 has none.
-- A `for` keeps an `i64` index, the largest single cost seen so far; sprites go out a byte at a time
-  where `otir` could, about 90 T-states a byte. Nothing yet banks past 48 KB.
+- Registers run out fast: a loop with four live 16-bit values spills, about 250 T-states a pass where
+  hand-written code would take perhaps a quarter of that. Frames cost about 100 T-states a call.
+- Nothing banks past 48 KB.

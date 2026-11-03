@@ -78,8 +78,10 @@ Z80TargetLowering::Z80TargetLowering(const TargetMachine &TM,
          {ISD::SDIVREM, ISD::UDIVREM, ISD::MULHS, ISD::MULHU, ISD::SMUL_LOHI,
           ISD::UMUL_LOHI, ISD::ROTL, ISD::ROTR, ISD::BSWAP, ISD::CTPOP,
           ISD::CTLZ, ISD::CTTZ, ISD::SHL_PARTS, ISD::SRL_PARTS, ISD::SRA_PARTS,
-          ISD::SADDO, ISD::UADDO, ISD::SSUBO, ISD::USUBO, ISD::SMULO, ISD::UMULO})
+          ISD::SMULO, ISD::UMULO})
       setOperationAction(Op, VT, Expand);
+    for (unsigned Op : {ISD::SADDO, ISD::UADDO, ISD::SSUBO, ISD::USUBO})
+      setOperationAction(Op, VT, Custom);
   }
   // The carry chain is for i16 alone: i32 and wider split into it.
   setOperationAction(ISD::ADDC, MVT::i16, Legal);
@@ -88,28 +90,27 @@ Z80TargetLowering::Z80TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::SUBE, MVT::i16, Legal);
 }
 
-// The flags for `LHS CC RHS`, and in `Cond` the condition that means it holds. The Z80 tests
-// only Z and C after a compare, so a signed compare is the unsigned one with both sign bits
-// flipped, and `>` and `<=` swap their operands.
+// The flags for `LHS CC RHS`, and in `Cond` the condition that means it holds. The Z80 has no
+// `>` or `<=` condition, so those swap their operands.
 SDValue Z80TargetLowering::compare(SDValue LHS, SDValue RHS, ISD::CondCode CC,
                                    const SDLoc &DL, SelectionDAG &DAG,
                                    unsigned &Cond) const {
-  EVT VT = LHS.getValueType();
-  if (ISD::isSignedIntSetCC(CC)) {
-    SDValue Sign = DAG.getConstant(
-        APInt::getSignMask(VT.getSizeInBits()), DL, VT);
-    LHS = DAG.getNode(ISD::XOR, DL, VT, LHS, Sign);
-    RHS = DAG.getNode(ISD::XOR, DL, VT, RHS, Sign);
-    CC = ISD::getSetCCSwappedOperands(ISD::getSetCCSwappedOperands(CC));
+  // With zero there is nothing to subtract: `or` for equality, the top bit for the sign.
+  if (isNullConstant(RHS)) {
     switch (CC) {
-    case ISD::SETLT: CC = ISD::SETULT; break;
-    case ISD::SETLE: CC = ISD::SETULE; break;
-    case ISD::SETGT: CC = ISD::SETUGT; break;
-    case ISD::SETGE: CC = ISD::SETUGE; break;
-    default: llvm_unreachable("not a signed condition");
+    case ISD::SETEQ: Cond = Z80CC::Z; return DAG.getNode(Z80ISD::TESTZ, DL, MVT::Glue, LHS);
+    case ISD::SETNE: Cond = Z80CC::NZ; return DAG.getNode(Z80ISD::TESTZ, DL, MVT::Glue, LHS);
+    case ISD::SETLT: Cond = Z80CC::NZ; return DAG.getNode(Z80ISD::TESTS, DL, MVT::Glue, LHS);
+    case ISD::SETGE: Cond = Z80CC::Z; return DAG.getNode(Z80ISD::TESTS, DL, MVT::Glue, LHS);
+    default: break;
     }
   }
   switch (CC) {
+  // S and V differing is "less": the printer writes the jumps for LT and GE.
+  case ISD::SETLT: Cond = Z80CC::LT; break;
+  case ISD::SETGE: Cond = Z80CC::GE; break;
+  case ISD::SETGT: std::swap(LHS, RHS); Cond = Z80CC::LT; break;
+  case ISD::SETLE: std::swap(LHS, RHS); Cond = Z80CC::GE; break;
   case ISD::SETEQ: Cond = Z80CC::Z; break;
   case ISD::SETNE: Cond = Z80CC::NZ; break;
   case ISD::SETULT: Cond = Z80CC::C; break;
@@ -145,6 +146,19 @@ SDValue Z80TargetLowering::lowerShift(SDValue Op, SelectionDAG &DAG) const {
                   : Op.getOpcode() == ISD::SRL ? Z80ISD::LSR
                                                : Z80ISD::ASR;
   uint64_t N = Amount->getZExtValue() & (VT.getSizeInBits() - 1);
+  // Eight or more of a 16-bit value start from a whole byte's move.
+  if (VT == MVT::i16 && N >= 8) {
+    N -= 8;
+    if (Op.getOpcode() == ISD::SHL) {
+      Value = DAG.getNode(Z80ISD::BYTEUP, DL, VT, Value);
+    } else {
+      SDValue High = DAG.getNode(Z80ISD::HIBYTE, DL, MVT::i8, Value);
+      for (uint64_t I = 0; I < N; ++I)
+        High = DAG.getNode(Node, DL, MVT::i8, High);
+      return DAG.getNode(Op.getOpcode() == ISD::SRA ? ISD::SIGN_EXTEND : ISD::ZERO_EXTEND, DL,
+                         VT, High);
+    }
+  }
   for (uint64_t I = 0; I < N; ++I)
     Value = DAG.getNode(Node, DL, VT, Value);
   return Value;
@@ -188,6 +202,17 @@ SDValue Z80TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::SRL:
   case ISD::SRA:
     return lowerShift(Op, DAG);
+  case ISD::SADDO:
+  case ISD::SSUBO:
+  case ISD::UADDO:
+  case ISD::USUBO: {
+    unsigned Node = Op.getOpcode() == ISD::SADDO   ? Z80ISD::SADDO
+                    : Op.getOpcode() == ISD::SSUBO ? Z80ISD::SSUBO
+                    : Op.getOpcode() == ISD::UADDO ? Z80ISD::UADDO
+                                                   : Z80ISD::USUBO;
+    SDVTList Types = DAG.getVTList(Op.getValueType(), MVT::i8);
+    return DAG.getNode(Node, DL, Types, Op.getOperand(0), Op.getOperand(1));
+  }
   }
 }
 

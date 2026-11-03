@@ -791,6 +791,15 @@ target = "genesis"
 - **Targets**: `host`, `sms` and `gg` (below), and `genesis` (a 68000 with 64 KB of RAM: no operating system, no heap,
   no floating point). `lyrac` and `lyra-lsp` read the same file, so the editor and the build
   agree; the target is the code's, never an editor setting.
+- **`sms` and `gg`** are the Master System and Game Gear: a Z80 with 8 KB of RAM, no operating
+  system, no heap, no floating point. `lyrac build` makes a cartridge (`.sms`, `.gg`) with our own
+  LLVM Z80 target (`tools/llvm-z80.sh`, `$LYRA_Z80_LLVM`), linking only what `main` and the
+  interrupt handlers reach, into at most 48 KB. `i32` and wider are emulated, and **a `for` keeps
+  an `i64` index** in the source; the Z80 target narrows a counter it can bound. A trap ends in a red screen, with no message: a cartridge has no room for the text.
+  `lyrac run` refuses, as Sheliak's window does not play them yet.
+- **`std.sms`** is their library: `std.sms.vdp` (`init`, `show`, `load_palette`, `load_tiles`,
+  `set_cell`, `set_sprite`, `end_sprites`, `wait_vblank`, `send_sprites`,
+  `interrupt_each_frame`) and `std.sms.pad` (`read`, `held`). `examples/sms/` has two small games.
 - **`host` means "a program with an operating system"**, and which one is the build's choice,
   not the code's: **`lyrac build --target <platform>`** — `ios`, `ios-simulator`,
   `linux-arm64`, `linux-x86_64`, `macos` (`macos`/`linux` are this machine's processor's) —
@@ -818,16 +827,6 @@ target = "genesis"
     68000), once per function and type. Untyped loop variables over literals are `i64`, so a
     game types them: `for i: i16 in 0..<8`.
 - **A callback's effect is reported inside the callback**, at the line that does it, not again
-- **`sms` and `gg`** are the Master System and Game Gear: a Z80 with 8 KB of RAM, no operating
-  system, no heap, no floating point. `lyrac build` makes a cartridge (`.sms`, `.gg`) with our own
-  LLVM Z80 target (`tools/llvm-z80.sh`, `$LYRA_Z80_LLVM`), linking only what `main` and the
-  interrupt handlers reach, into at most 48 KB. `i32` and wider are emulated, and **a `for` keeps
-  an `i64` index**, so a loop a frame depends on counts in a `u8` or `u16` until the compiler
-  narrows it. A trap ends in a red screen, with no message: a cartridge has no room for the text.
-  `lyrac run` refuses, as Sheliak's window does not play them yet.
-- **`std.sms`** is their library: `std.sms.vdp` (`init`, `show`, `load_palette`, `load_tiles`,
-  `set_cell`, `set_sprite`, `end_sprites`, `wait_vblank`, `send_sprites`,
-  `interrupt_each_frame`) and `std.sms.pad` (`read`, `held`). `examples/sms/` has two small games.
   at the higher-order call it is passed to.
 - The check reads the effect inference `pure`/`det`/`noalloc` use: reaching outside Lyra is one
   more effect (`EffectHost`), charged by every `extern` whatever its declared bound — a `pure`
@@ -1037,6 +1036,11 @@ compiler checks each type crosses (`pkg/backend/FFI.md` has the table and the ba
   memory (the Genesis's Z80 plays a sample from the cartridge at its address); `pointer_at`
   takes it back. It reaches nothing through the pointer, so it needs no `unsafe`.
 - **`nullptr`**: safe (no `unsafe`) along with `==`/`!=` on pointers. Untyped with **no default** — context must pin the pointee (annotation, parameter, return, other side of `==`), else **`lyra-E069`**. Fills `^T` and `^mut T`; a mismatched pair pins to immutable. No `<` on pointers. `let nullptr = 5` is **`lyra-E070`** (collector).
+- **`port_read(port) -> u8` and `port_write(port, value)`** are a Z80 console's `in` and `out`, as
+  the 68000 has none and reaches its hardware through `pointer_at`. Both are `unsafe`, every operand a
+  `u8`, and the program must be built for `sms` or `gg`. **`port_write_bytes(port, bytes, count)`** is
+  its `otir`: `count` bytes from a `^u8` (0 meaning 256) at 21 T-states each, too fast for the VDP
+  while the display is showing.
 - The ways to make a pointer are `&`, `nullptr` and **`pointer_at(address)`** — a pointer to a
   fixed address, for a console's hardware registers (`0xC00004` is the Genesis VDP's control
   port). It is typed as `nullptr` is: untyped, pinned by its context (`let control: ^mut u16 =
@@ -1064,9 +1068,6 @@ compiler checks each type crosses (`pkg/backend/FFI.md` has the table and the ba
 `union` is an **untagged C union** (e.g. `SDL_Event`), distinct from `data` (tagged).
 - All members at offset 0; size = largest member rounded to alignment (a `padding[128]` member counts).
 - Reading a member is `unsafe` (`lyra-E011`).
-- **`port_read(port) -> u8` and `port_write(port, value)`** are a Z80 console's `in` and `out`, as
-  the 68000 has none and reaches its hardware through `pointer_at`. Both are `unsafe`, every operand a
-  `u8`, and the program must be built for `sms` or `gg`.
 - A literal names exactly one member (`Ev { kind: 7 }`); the rest is **zeroed**.
 - Every member needs a C layout (`lyra-E071`; arrays and structs allowed — wider than `lyra-E063`). Hence a union owns nothing managed.
 - No equality; no `readonly` or default on members (`lyra-E072`). Self-reference is `lyra-E014`.

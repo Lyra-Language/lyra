@@ -23,6 +23,14 @@ public:
   StringRef getPassName() const override { return "Z80 Assembly Printer"; }
 
   void emitInstruction(const MachineInstr *MI) override {
+    if (MI->getOpcode() == Z80::JPcc && MI->getOperand(1).getImm() >= Z80CC::LT) {
+      emitSignedJump(MI);
+      return;
+    }
+    if (MI->getOpcode() == Z80::SETCC8) {
+      emitSetCC(MI);
+      return;
+    }
     MCInst Out;
     Out.setOpcode(MI->getOpcode());
     for (const MachineOperand &MO : MI->operands()) {
@@ -35,6 +43,53 @@ public:
   }
 
 private:
+  void jump(unsigned Cond, const MCOperand &Target) {
+    MCInst I;
+    I.setOpcode(Z80::JPcc);
+    I.addOperand(Target);
+    I.addOperand(MCOperand::createImm(Cond));
+    EmitToStreamer(*OutStreamer, I);
+  }
+
+  void plainJump(const MCOperand &Target) {
+    MCInst I;
+    I.setOpcode(Z80::JP);
+    I.addOperand(Target);
+    EmitToStreamer(*OutStreamer, I);
+  }
+
+  // Less is S and V differing: with overflow, positive means less. GE is the same jumps with
+  // their sense turned over.
+  void emitSignedJump(const MachineInstr *MI) {
+    bool Less = MI->getOperand(1).getImm() == Z80CC::LT;
+    MCOperand Target = symbol(MI->getOperand(0).getMBB()->getSymbol(), 0);
+    MCSymbol *Overflowed = OutContext.createTempSymbol();
+    MCSymbol *Past = OutContext.createTempSymbol();
+    jump(Z80CC::PE, symbol(Overflowed, 0));
+    jump(Less ? Z80CC::M : Z80CC::P, Target);
+    plainJump(symbol(Past, 0));
+    OutStreamer->emitLabel(Overflowed);
+    jump(Less ? Z80CC::P : Z80CC::M, Target);
+    OutStreamer->emitLabel(Past);
+  }
+
+  void emitSetCC(const MachineInstr *MI) {
+    MCRegister D = MI->getOperand(0).getReg();
+    MCSymbol *Past = OutContext.createTempSymbol();
+    MCInst Zero;
+    Zero.setOpcode(Z80::LD8ri);
+    Zero.addOperand(MCOperand::createReg(D));
+    Zero.addOperand(MCOperand::createImm(0));
+    EmitToStreamer(*OutStreamer, Zero);
+    jump(MI->getOperand(1).getImm() ^ 1, symbol(Past, 0));
+    MCInst One;
+    One.setOpcode(Z80::INC8);
+    One.addOperand(MCOperand::createReg(D));
+    One.addOperand(MCOperand::createReg(D));
+    EmitToStreamer(*OutStreamer, One);
+    OutStreamer->emitLabel(Past);
+  }
+
   MCOperand symbol(const MCSymbol *Sym, int64_t Offset) {
     MCContext &Ctx = OutContext;
     const MCExpr *Expr = MCSymbolRefExpr::create(Sym, Ctx);

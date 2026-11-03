@@ -306,6 +306,31 @@ func (l *lowerer) lowerPortWrite(block *ir.Block, e *ast.FunctionCallExpr) (valu
 	return nil, block, nil
 }
 
+// lowerPortWriteBytes lowers `port_write_bytes(port, bytes, count)` to a call of `__z80_otir`,
+// the linker's: the pointer in HL, and D the port and E the count, in one i16.
+func (l *lowerer) lowerPortWriteBytes(block *ir.Block, e *ast.FunctionCallExpr) (value.Value, *ir.Block, error) {
+	if l.arch != Z80 {
+		return nil, nil, fmt.Errorf("llvm: port_write_bytes is for a Z80 console (`target = \"sms\"` in lyra.toml)")
+	}
+	port, block, err := l.lowerExpr(block, e.Arguments[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	bytes, block, err := l.lowerExpr(block, e.Arguments[1])
+	if err != nil {
+		return nil, nil, err
+	}
+	count, block, err := l.lowerExpr(block, e.Arguments[2])
+	if err != nil {
+		return nil, nil, err
+	}
+	high := block.NewShl(block.NewZExt(port, lltypes.I16), constant.NewInt(lltypes.I16, 8))
+	both := block.NewOr(high, block.NewZExt(count, lltypes.I16))
+	fn, _ := l.declareLibc("__z80_otir", lltypes.Void, lltypes.NewPointer(lltypes.I8), lltypes.I16)
+	block.NewCall(fn, bytes, both)
+	return nil, block, nil
+}
+
 // lowerNullPtr lowers `nullptr` to a typed null constant.
 //
 // **The type has to come from the TypeTable, not from this node.** clang 15 — the

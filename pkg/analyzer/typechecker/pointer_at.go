@@ -99,3 +99,36 @@ func (tc *TypeChecker) inferPortCall(call *ast.FunctionCallExpr, name string) ty
 	}
 	return result
 }
+
+// inferPortWriteBytesCall types `port_write_bytes(port, bytes, count)`: the Z80's `otir`, `count`
+// bytes from a `^u8` to a port (0 meaning 256). `unsafe`: nothing checks what is there.
+func (tc *TypeChecker) inferPortWriteBytesCall(call *ast.FunctionCallExpr) types.Type {
+	const name = "port_write_bytes"
+	u8 := types.PrimitiveType{Name: types.UInt8}
+	if !tc.inUnsafe {
+		tc.addErrorCode(call.GetLocation(), SeverityError, diag.CodeUnsafeOutsideUnsafe,
+			"`%s` reaches the hardware, so it requires an `unsafe` block or function", name)
+	}
+	if len(call.Arguments) != 3 {
+		tc.addError(call.GetLocation(), SeverityError,
+			"%s: expected 3 arguments (port, bytes, count), got %d", name, len(call.Arguments))
+		return types.VoidType{}
+	}
+	for _, i := range []int{0, 2} {
+		arg := call.Arguments[i]
+		t := tc.inferExprType(arg)
+		p, isPrimitive := t.(types.PrimitiveType)
+		if isPrimitive && (p.Name == types.UntypedInt || p.Name == types.UntypedSignedInt) {
+			tc.propagateExpected(arg, u8, false)
+		} else if t != nil && (!isPrimitive || p.Name != types.UInt8) {
+			tc.addError(arg.GetLocation(), SeverityError, "%s: expected a u8, got %s", name, t)
+		}
+	}
+	bytes := call.Arguments[1]
+	if t := tc.inferExprType(bytes); t != nil {
+		if pointer, ok := t.(types.RawPointerType); !ok || pointer.Pointee != types.Type(u8) {
+			tc.addError(bytes.GetLocation(), SeverityError, "%s: expected a ^u8, got %s", name, t)
+		}
+	}
+	return types.VoidType{}
+}

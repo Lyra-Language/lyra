@@ -47,10 +47,83 @@ static const TargetRegisterClass *fullClass(const TargetRegisterClass *RC) {
   return nullptr;
 }
 
+// A checked operation whose flag only decides the next jump: the operation itself sets the flag
+// the jump can test, so nothing materializes it. Copies may sit between them, as `ld` keeps
+// the flags; anything that changes them ends the search.
+static bool jumpOnFlag(MachineInstr &MI, const TargetInstrInfo &TII, MachineRegisterInfo &MRI,
+                       const TargetRegisterInfo &TRI) {
+  unsigned Real, Cond;
+  switch (MI.getOpcode()) {
+  case Z80::SADDO8: Real = Z80::ADD8r; Cond = Z80CC::PE; break;
+  case Z80::SSUBO8: Real = Z80::SUB8r; Cond = Z80CC::PE; break;
+  case Z80::UADDO8: Real = Z80::ADD8r; Cond = Z80CC::C; break;
+  case Z80::USUBO8: Real = Z80::SUB8r; Cond = Z80CC::C; break;
+  case Z80::SADDO16: Real = Z80::SADD16; Cond = Z80CC::PE; break;
+  case Z80::SSUBO16: Real = Z80::SUB16; Cond = Z80CC::PE; break;
+  case Z80::UADDO16: Real = Z80::ADD16; Cond = Z80CC::C; break;
+  case Z80::USUBO16: Real = Z80::SUB16; Cond = Z80CC::C; break;
+  default:
+    return false;
+  }
+  // The flag through its copies to the one test of it.
+  Register Flag = MI.getOperand(1).getReg();
+  SmallVector<MachineInstr *, 4> Dead;
+  MachineInstr *Test = nullptr;
+  while (MRI.hasOneNonDBGUse(Flag)) {
+    MachineInstr &User = *MRI.use_instr_nodbg_begin(Flag);
+    if (User.isCopy() && User.getOperand(0).getReg().isVirtual() &&
+        !User.getOperand(1).getSubReg()) {
+      Dead.push_back(&User);
+      Flag = User.getOperand(0).getReg();
+      continue;
+    }
+    if (User.getOpcode() == Z80::TESTZ8 ||
+        (User.getOpcode() == Z80::CP8i && User.getOperand(1).getImm() == 1))
+      Test = &User;
+    break;
+  }
+  if (!Test || Test->getParent() != MI.getParent())
+    return false;
+  // The jump must come next, with nothing changing the flags before it.
+  MachineBasicBlock &MBB = *MI.getParent();
+  MachineInstr *Jump = nullptr;
+  bool PassedTest = false;
+  for (auto I = std::next(MI.getIterator()); I != MBB.end(); ++I) {
+    if (&*I == Test) {
+      PassedTest = true;
+      continue;
+    }
+    if (I->getOpcode() == Z80::JPcc) {
+      Jump = &*I;
+      break;
+    }
+    if (I->modifiesRegister(Z80::F, &TRI) || I->readsRegister(Z80::F, &TRI))
+      return false;
+  }
+  if (!Jump || !PassedTest || Jump->getOperand(1).getImm() > Z80CC::Z)
+    return false;
+  // `or a` is nonzero when it overflowed, and `cp 1` zero.
+  unsigned Overflowed = Test->getOpcode() == Z80::TESTZ8 ? Z80CC::NZ : Z80CC::Z;
+  Jump->getOperand(1).setImm(Jump->getOperand(1).getImm() == Overflowed ? Cond : Cond ^ 1);
+  Test->eraseFromParent();
+  for (MachineInstr *Copy : llvm::reverse(Dead))
+    Copy->eraseFromParent();
+  BuildMI(MBB, MI, MI.getDebugLoc(), TII.get(Real), MI.getOperand(0).getReg())
+      .addReg(MI.getOperand(2).getReg())
+      .addReg(MI.getOperand(3).getReg());
+  MI.eraseFromParent();
+  return true;
+}
+
 bool Z80ConstrainedCopies::runOnMachineFunction(MachineFunction &MF) {
   const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
   MachineRegisterInfo &MRI = MF.getRegInfo();
+  const TargetRegisterInfo &TRI = *MF.getSubtarget().getRegisterInfo();
   SmallVector<Register, 32> Freed;
+
+  for (MachineBasicBlock &MBB : MF)
+    for (MachineInstr &MI : llvm::make_early_inc_range(MBB))
+      jumpOnFlag(MI, TII, MRI, TRI);
 
   for (MachineBasicBlock &MBB : MF) {
     for (MachineInstr &MI : llvm::make_early_inc_range(MBB)) {

@@ -14,8 +14,9 @@ module std.sms.vdp
 //! ```
 //!
 //! **Sprites are shown from the list here**, in RAM: `set_sprite` changes it, and `send_sprites`
-//! copies it to the chip, which takes the vertical blank: call it just after `wait_vblank`.
-//! All the writes here are slower than the chip needs at any time (at least 26 T-states apart).
+//! copies it to the chip, which must be in the vertical blank: call it just after `wait_vblank`.
+//! It writes as fast as the Z80 can, too fast for the chip with the display showing. The other
+//! writes here are slow enough at any time (at least 26 T-states apart).
 
 /// The ports. Status is read from the control port; reading it also clears the frame flag.
 const DATA_PORT: u8 = 0xBE
@@ -41,10 +42,11 @@ const INTERRUPT_ON: u8 = 0x20
 /// The hardware's sprite count.
 pub const SPRITES: u8 = 64
 
-/// The list: every sprite's y, then its x and tile, as the chip's table has them.
-var sprite_ys: [64]u8 = #[END_OF_LIST; 64]
-var sprite_xs: [64]u8 = #[0; 64]
-var sprite_tiles: [64]u8 = #[0; 64]
+/// The list: every sprite's y, then its x and tile in pairs, as the chip's table has them, and
+/// how many are shown.
+var sprite_ys: [65]u8 = #[END_OF_LIST; 65]
+var sprite_pairs: [128]u8 = #[0; 128]
+var sprite_count: u8 = 0
 
 /// Mode 4, the display off, the tables where this module has them and every memory cleared.
 pub let init = () -> void => {
@@ -95,14 +97,16 @@ pub let set_cell = (x: u8, y: u8, tile: u8) -> void => {
 /// Sprite `index` at (`x`, `y`) on the screen, showing `tile`.
 pub let set_sprite = (index: u8, x: u8, y: u8, tile: u8) -> void => {
   // The chip draws a sprite a line below its y.
-  sprite_ys[index] = y - 1
-  sprite_xs[index] = x
-  sprite_tiles[index] = tile
+  sprite_ys[index] = y.wrapping_sub(1)
+  let at = index * 2
+  sprite_pairs[at] = x
+  sprite_pairs[at + 1] = tile
 }
 
 /// Sprites from `index` on are not shown.
 pub let end_sprites = (index: u8) -> void => {
-  if index < SPRITES { sprite_ys[index] = END_OF_LIST }
+  sprite_count = index
+  sprite_ys[index] = END_OF_LIST
 }
 
 /// The chip interrupts at each vertical blank, and an `@interrupt(vblank)` function runs. The
@@ -115,22 +119,16 @@ pub let wait_vblank = () -> void => unsafe {
   while port_read(CONTROL_PORT) & 0x80 == 0 {}
 }
 
-/// The list to the chip's table. Call in the vertical blank.
-pub let send_sprites = () -> void => {
+/// The list to the chip's table, as much of it as is shown. Call in the vertical blank.
+pub let send_sprites = () -> void => unsafe {
   vram_address(SPRITE_TABLE)
-  // Counted in a u8: a `for` here keeps an i64 index, and a frame has no room for one.
-  var i: u8 = 0
-  while i < SPRITES {
-    data(sprite_ys[i])
-    i += 1
-  }
-  vram_address(SPRITE_TABLE + 128)
-  i = 0
-  while i < SPRITES {
-    data(sprite_xs[i])
-    data(sprite_tiles[i])
-    i += 1
-  }
+  // With every sprite shown there is no end to write; the 65th y is past the table's 64.
+  let ys = if sprite_count == SPRITES { SPRITES } else { sprite_count + 1 }
+  port_write_bytes(DATA_PORT, &sprite_ys[0], ys)
+  if sprite_count > 0 {
+    vram_address(SPRITE_TABLE + 128)
+    port_write_bytes(DATA_PORT, &sprite_pairs[0], sprite_count * 2)
+  } else {}
 }
 
 let set_register = (register: u8, value: u8) -> void => {

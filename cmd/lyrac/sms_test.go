@@ -100,10 +100,10 @@ func TestSMS_TheWalkerRunsAndKeepsUpWithTheFrame(t *testing.T) {
 		t.Errorf("with nothing held the square is at %d, want where it starts, 124", got)
 	}
 	// Two pixels a frame, every frame: a frame's work overrunning shows as half the distance.
-	early := smsScreen(t, smscheck, out, "60", "right").whiteLeft()
-	late := smsScreen(t, smscheck, out, "90", "right").whiteLeft()
-	if late-early != 60 {
-		t.Errorf("30 frames held moved the square %d pixels, want 60", late-early)
+	early := smsScreen(t, smscheck, out, "40", "right").whiteLeft()
+	late := smsScreen(t, smscheck, out, "60", "right").whiteLeft()
+	if early < 0 || late-early != 40 {
+		t.Errorf("20 frames held moved the square from %d to %d, want 40 pixels", early, late)
 	}
 }
 
@@ -123,6 +123,37 @@ func TestSMS_TheBouncersRunWithoutATrap(t *testing.T) {
 	}
 	if got := smsScreen(t, smscheck, out, "300", "").dominant(); got != "000000" {
 		t.Errorf("after 300 frames the screen is %s, want black behind the squares", got)
+	}
+}
+
+// A frame's work, held under what it takes now by a margin: a compiler change that loses a
+// narrowed counter or a direct overflow jump shows here, and a game's frame is the budget.
+func TestSMS_AFrameStaysWithinItsBudget(t *testing.T) {
+	t.Parallel()
+	z80ToolchainOrSkip(t)
+	root := repoRoot(t)
+	smscheck := smscheckOrSkip(t, root)
+	setenv(t, "LYRA_STD", root)
+	for _, c := range []struct {
+		name string
+		most int
+	}{{"walker", 1500}, {"bouncers", 20000}} {
+		out := filepath.Join(t.TempDir(), c.name+".sms")
+		_, stderr, code := captureRun(t, "build", "-o", out, filepath.Join(root, "examples", "sms", c.name+".lyra"))
+		if code != 0 {
+			t.Fatalf("build exited %d: %s", code, stderr)
+		}
+		said, err := exec.Command(smscheck, out, "--frames", "100", "--ppm", out+".ppm", "--work", "on").CombinedOutput()
+		if err != nil {
+			t.Fatalf("smscheck: %v\n%s", err, said)
+		}
+		var work int
+		if _, err := fmt.Sscanf(string(said), "most work in a frame: %d", &work); err != nil {
+			t.Fatalf("smscheck said %q: %v", said, err)
+		}
+		if work <= 0 || work > c.most {
+			t.Errorf("%s: a frame took %d T-states, want at most %d", c.name, work, c.most)
+		}
 	}
 }
 

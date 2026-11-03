@@ -16,6 +16,7 @@ add_public_tablegen_target(Z80CommonTableGen)
 add_llvm_target(Z80CodeGen
   Z80AsmPrinter.cpp
   Z80ConstrainedCopies.cpp
+  Z80NarrowLoops.cpp
   Z80FrameLowering.cpp
   Z80InstrInfo.cpp
   Z80ISelDAGToDAG.cpp
@@ -39,6 +40,7 @@ add_llvm_target(Z80CodeGen
   Support
   Target
   TargetParser
+  TransformUtils
   Z80Desc
   Z80Info
 

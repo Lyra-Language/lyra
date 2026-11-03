@@ -14,6 +14,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeZ80Target() {
   PassRegistry &PR = *PassRegistry::getPassRegistry();
   initializeZ80AsmPrinterPass(PR);
   initializeZ80ConstrainedCopiesPass(PR);
+  initializeZ80NarrowLoopsPass(PR);
   initializeZ80DAGToDAGISelLegacyPass(PR);
 }
 
@@ -37,6 +38,12 @@ class Z80PassConfig : public TargetPassConfig {
 public:
   Z80PassConfig(Z80TargetMachine &TM, PassManagerBase &PM)
       : TargetPassConfig(TM, PM) {}
+
+  void addIRPasses() override {
+    if (getOptLevel() != CodeGenOptLevel::None)
+      addPass(createZ80NarrowLoops());
+    TargetPassConfig::addIRPasses();
+  }
 
   bool addInstSelector() override {
     addPass(createZ80ISelDag(getTM<Z80TargetMachine>(), getOptLevel()));

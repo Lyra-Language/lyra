@@ -474,3 +474,475 @@ define i16 @memcmpsays() {
   %rb = select i1 %b, i16 2, i16 0
   %r = or i16 %ra, %rb
   ret i16 %r }
+
+; Checked arithmetic, each kind at its edge and just inside it, both as the jump a check makes
+; and as a value. %w is the result returned when it did not overflow, 999 when it did.
+; test jump0 hl=999
+define i16 @jump0() {
+  %x = call i16 @w(i16 32767)
+  %y = call i16 @w(i16 1)
+  %o = call { i16, i1 } @llvm.sadd.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  br i1 %f, label %over, label %fine
+over:
+  ret i16 999
+fine:
+  %v = extractvalue { i16, i1 } %o, 0
+  %w = add i16 %v, 0
+  ret i16 %w
+}
+; test value0 hl=1
+define i16 @value0() {
+  %x = call i16 @w(i16 32767)
+  %y = call i16 @w(i16 1)
+  %o = call { i16, i1 } @llvm.sadd.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r
+}
+; test jump1 hl=32767
+define i16 @jump1() {
+  %x = call i16 @w(i16 32766)
+  %y = call i16 @w(i16 1)
+  %o = call { i16, i1 } @llvm.sadd.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  br i1 %f, label %over, label %fine
+over:
+  ret i16 999
+fine:
+  %v = extractvalue { i16, i1 } %o, 0
+  %w = add i16 %v, 0
+  ret i16 %w
+}
+; test value1 hl=0
+define i16 @value1() {
+  %x = call i16 @w(i16 32766)
+  %y = call i16 @w(i16 1)
+  %o = call { i16, i1 } @llvm.sadd.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r
+}
+; test jump2 hl=999
+define i16 @jump2() {
+  %x = call i16 @w(i16 -32768)
+  %y = call i16 @w(i16 -1)
+  %o = call { i16, i1 } @llvm.sadd.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  br i1 %f, label %over, label %fine
+over:
+  ret i16 999
+fine:
+  %v = extractvalue { i16, i1 } %o, 0
+  %w = add i16 %v, 0
+  ret i16 %w
+}
+; test value2 hl=1
+define i16 @value2() {
+  %x = call i16 @w(i16 -32768)
+  %y = call i16 @w(i16 -1)
+  %o = call { i16, i1 } @llvm.sadd.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r
+}
+; test jump3 hl=999
+define i16 @jump3() {
+  %x = call i16 @w(i16 -32768)
+  %y = call i16 @w(i16 1)
+  %o = call { i16, i1 } @llvm.ssub.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  br i1 %f, label %over, label %fine
+over:
+  ret i16 999
+fine:
+  %v = extractvalue { i16, i1 } %o, 0
+  %w = add i16 %v, 0
+  ret i16 %w
+}
+; test value3 hl=1
+define i16 @value3() {
+  %x = call i16 @w(i16 -32768)
+  %y = call i16 @w(i16 1)
+  %o = call { i16, i1 } @llvm.ssub.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r
+}
+; test jump4 hl=32768
+define i16 @jump4() {
+  %x = call i16 @w(i16 -32767)
+  %y = call i16 @w(i16 1)
+  %o = call { i16, i1 } @llvm.ssub.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  br i1 %f, label %over, label %fine
+over:
+  ret i16 999
+fine:
+  %v = extractvalue { i16, i1 } %o, 0
+  %w = add i16 %v, 0
+  ret i16 %w
+}
+; test value4 hl=0
+define i16 @value4() {
+  %x = call i16 @w(i16 -32767)
+  %y = call i16 @w(i16 1)
+  %o = call { i16, i1 } @llvm.ssub.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r
+}
+; test jump5 hl=999
+define i16 @jump5() {
+  %x = call i16 @w(i16 32767)
+  %y = call i16 @w(i16 -1)
+  %o = call { i16, i1 } @llvm.ssub.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  br i1 %f, label %over, label %fine
+over:
+  ret i16 999
+fine:
+  %v = extractvalue { i16, i1 } %o, 0
+  %w = add i16 %v, 0
+  ret i16 %w
+}
+; test value5 hl=1
+define i16 @value5() {
+  %x = call i16 @w(i16 32767)
+  %y = call i16 @w(i16 -1)
+  %o = call { i16, i1 } @llvm.ssub.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r
+}
+; test jump6 hl=999
+define i16 @jump6() {
+  %x = call i16 @w(i16 65535)
+  %y = call i16 @w(i16 1)
+  %o = call { i16, i1 } @llvm.uadd.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  br i1 %f, label %over, label %fine
+over:
+  ret i16 999
+fine:
+  %v = extractvalue { i16, i1 } %o, 0
+  %w = add i16 %v, 0
+  ret i16 %w
+}
+; test value6 hl=1
+define i16 @value6() {
+  %x = call i16 @w(i16 65535)
+  %y = call i16 @w(i16 1)
+  %o = call { i16, i1 } @llvm.uadd.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r
+}
+; test jump7 hl=65535
+define i16 @jump7() {
+  %x = call i16 @w(i16 65534)
+  %y = call i16 @w(i16 1)
+  %o = call { i16, i1 } @llvm.uadd.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  br i1 %f, label %over, label %fine
+over:
+  ret i16 999
+fine:
+  %v = extractvalue { i16, i1 } %o, 0
+  %w = add i16 %v, 0
+  ret i16 %w
+}
+; test value7 hl=0
+define i16 @value7() {
+  %x = call i16 @w(i16 65534)
+  %y = call i16 @w(i16 1)
+  %o = call { i16, i1 } @llvm.uadd.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r
+}
+; test jump8 hl=999
+define i16 @jump8() {
+  %x = call i16 @w(i16 0)
+  %y = call i16 @w(i16 1)
+  %o = call { i16, i1 } @llvm.usub.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  br i1 %f, label %over, label %fine
+over:
+  ret i16 999
+fine:
+  %v = extractvalue { i16, i1 } %o, 0
+  %w = add i16 %v, 0
+  ret i16 %w
+}
+; test value8 hl=1
+define i16 @value8() {
+  %x = call i16 @w(i16 0)
+  %y = call i16 @w(i16 1)
+  %o = call { i16, i1 } @llvm.usub.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r
+}
+; test jump9 hl=0
+define i16 @jump9() {
+  %x = call i16 @w(i16 1)
+  %y = call i16 @w(i16 1)
+  %o = call { i16, i1 } @llvm.usub.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  br i1 %f, label %over, label %fine
+over:
+  ret i16 999
+fine:
+  %v = extractvalue { i16, i1 } %o, 0
+  %w = add i16 %v, 0
+  ret i16 %w
+}
+; test value9 hl=0
+define i16 @value9() {
+  %x = call i16 @w(i16 1)
+  %y = call i16 @w(i16 1)
+  %o = call { i16, i1 } @llvm.usub.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r
+}
+; test jump10 hl=999
+define i16 @jump10() {
+  %x = call i8 @b(i8 127)
+  %y = call i8 @b(i8 1)
+  %o = call { i8, i1 } @llvm.sadd.with.overflow.i8(i8 %x, i8 %y)
+  %f = extractvalue { i8, i1 } %o, 1
+  br i1 %f, label %over, label %fine
+over:
+  ret i16 999
+fine:
+  %v = extractvalue { i8, i1 } %o, 0
+  %w = zext i8 %v to i16
+  ret i16 %w
+}
+; test value10 hl=1
+define i16 @value10() {
+  %x = call i8 @b(i8 127)
+  %y = call i8 @b(i8 1)
+  %o = call { i8, i1 } @llvm.sadd.with.overflow.i8(i8 %x, i8 %y)
+  %f = extractvalue { i8, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r
+}
+; test jump11 hl=127
+define i16 @jump11() {
+  %x = call i8 @b(i8 126)
+  %y = call i8 @b(i8 1)
+  %o = call { i8, i1 } @llvm.sadd.with.overflow.i8(i8 %x, i8 %y)
+  %f = extractvalue { i8, i1 } %o, 1
+  br i1 %f, label %over, label %fine
+over:
+  ret i16 999
+fine:
+  %v = extractvalue { i8, i1 } %o, 0
+  %w = zext i8 %v to i16
+  ret i16 %w
+}
+; test value11 hl=0
+define i16 @value11() {
+  %x = call i8 @b(i8 126)
+  %y = call i8 @b(i8 1)
+  %o = call { i8, i1 } @llvm.sadd.with.overflow.i8(i8 %x, i8 %y)
+  %f = extractvalue { i8, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r
+}
+; test jump12 hl=999
+define i16 @jump12() {
+  %x = call i8 @b(i8 -128)
+  %y = call i8 @b(i8 1)
+  %o = call { i8, i1 } @llvm.ssub.with.overflow.i8(i8 %x, i8 %y)
+  %f = extractvalue { i8, i1 } %o, 1
+  br i1 %f, label %over, label %fine
+over:
+  ret i16 999
+fine:
+  %v = extractvalue { i8, i1 } %o, 0
+  %w = zext i8 %v to i16
+  ret i16 %w
+}
+; test value12 hl=1
+define i16 @value12() {
+  %x = call i8 @b(i8 -128)
+  %y = call i8 @b(i8 1)
+  %o = call { i8, i1 } @llvm.ssub.with.overflow.i8(i8 %x, i8 %y)
+  %f = extractvalue { i8, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r
+}
+; test jump13 hl=999
+define i16 @jump13() {
+  %x = call i8 @b(i8 255)
+  %y = call i8 @b(i8 1)
+  %o = call { i8, i1 } @llvm.uadd.with.overflow.i8(i8 %x, i8 %y)
+  %f = extractvalue { i8, i1 } %o, 1
+  br i1 %f, label %over, label %fine
+over:
+  ret i16 999
+fine:
+  %v = extractvalue { i8, i1 } %o, 0
+  %w = zext i8 %v to i16
+  ret i16 %w
+}
+; test value13 hl=1
+define i16 @value13() {
+  %x = call i8 @b(i8 255)
+  %y = call i8 @b(i8 1)
+  %o = call { i8, i1 } @llvm.uadd.with.overflow.i8(i8 %x, i8 %y)
+  %f = extractvalue { i8, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r
+}
+; test jump14 hl=255
+define i16 @jump14() {
+  %x = call i8 @b(i8 254)
+  %y = call i8 @b(i8 1)
+  %o = call { i8, i1 } @llvm.uadd.with.overflow.i8(i8 %x, i8 %y)
+  %f = extractvalue { i8, i1 } %o, 1
+  br i1 %f, label %over, label %fine
+over:
+  ret i16 999
+fine:
+  %v = extractvalue { i8, i1 } %o, 0
+  %w = zext i8 %v to i16
+  ret i16 %w
+}
+; test value14 hl=0
+define i16 @value14() {
+  %x = call i8 @b(i8 254)
+  %y = call i8 @b(i8 1)
+  %o = call { i8, i1 } @llvm.uadd.with.overflow.i8(i8 %x, i8 %y)
+  %f = extractvalue { i8, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r
+}
+; test jump15 hl=999
+define i16 @jump15() {
+  %x = call i8 @b(i8 0)
+  %y = call i8 @b(i8 1)
+  %o = call { i8, i1 } @llvm.usub.with.overflow.i8(i8 %x, i8 %y)
+  %f = extractvalue { i8, i1 } %o, 1
+  br i1 %f, label %over, label %fine
+over:
+  ret i16 999
+fine:
+  %v = extractvalue { i8, i1 } %o, 0
+  %w = zext i8 %v to i16
+  ret i16 %w
+}
+; test value15 hl=1
+define i16 @value15() {
+  %x = call i8 @b(i8 0)
+  %y = call i8 @b(i8 1)
+  %o = call { i8, i1 } @llvm.usub.with.overflow.i8(i8 %x, i8 %y)
+  %f = extractvalue { i8, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r
+}
+; test jump16 hl=0
+define i16 @jump16() {
+  %x = call i8 @b(i8 5)
+  %y = call i8 @b(i8 5)
+  %o = call { i8, i1 } @llvm.usub.with.overflow.i8(i8 %x, i8 %y)
+  %f = extractvalue { i8, i1 } %o, 1
+  br i1 %f, label %over, label %fine
+over:
+  ret i16 999
+fine:
+  %v = extractvalue { i8, i1 } %o, 0
+  %w = zext i8 %v to i16
+  ret i16 %w
+}
+; test value16 hl=0
+define i16 @value16() {
+  %x = call i8 @b(i8 5)
+  %y = call i8 @b(i8 5)
+  %o = call { i8, i1 } @llvm.usub.with.overflow.i8(i8 %x, i8 %y)
+  %f = extractvalue { i8, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r
+}
+declare { i8, i1 } @llvm.sadd.with.overflow.i8(i8, i8)
+declare { i16, i1 } @llvm.ssub.with.overflow.i16(i16, i16)
+declare { i8, i1 } @llvm.ssub.with.overflow.i8(i8, i8)
+declare { i16, i1 } @llvm.uadd.with.overflow.i16(i16, i16)
+declare { i8, i1 } @llvm.uadd.with.overflow.i8(i8, i8)
+declare { i16, i1 } @llvm.usub.with.overflow.i16(i16, i16)
+declare { i8, i1 } @llvm.usub.with.overflow.i8(i8, i8)
+
+; Counters wider than they need be, as Lyra's `for` makes them: a table's index, the counter's
+; own value wanted wide, and a bound the compiler cannot narrow past 16 bits.
+@squares = global [10 x i16] [i16 0, i16 1, i16 4, i16 9, i16 16, i16 25, i16 36, i16 49, i16 64, i16 81]
+; test narrowindex hl=285
+define i16 @narrowindex() {
+  br label %head
+head:
+  %i = phi i64 [ 0, %0 ], [ %next, %head ]
+  %s = phi i16 [ 0, %0 ], [ %s2, %head ]
+  %t = trunc i64 %i to i16
+  %p = getelementptr [10 x i16], ptr @squares, i16 0, i16 %t
+  %v = load i16, ptr %p
+  %s2 = add i16 %s, %v
+  %next = add nuw nsw i64 %i, 1
+  %more = icmp ult i64 %i, 9
+  br i1 %more, label %head, label %out
+out:
+  ret i16 %s2 }
+; test narrowwide hl=55
+define i16 @narrowwide() {
+  br label %head
+head:
+  %i = phi i64 [ 1, %0 ], [ %next, %head ]
+  %s = phi i64 [ 0, %0 ], [ %s2, %head ]
+  %s2 = add i64 %s, %i
+  %next = add nuw nsw i64 %i, 1
+  %more = icmp ult i64 %next, 11
+  br i1 %more, label %head, label %out
+out:
+  %t = trunc i64 %s2 to i16
+  ret i16 %t }
+; A counter past what an i16 holds stays as it is.
+; test widecount hl=4464
+define i16 @widecount() {
+  br label %head
+head:
+  %i = phi i32 [ 69000, %0 ], [ %next, %head ]
+  %next = add nuw nsw i32 %i, 1000
+  %more = icmp ult i32 %next, 70000
+  br i1 %more, label %head, label %out
+out:
+  %t = trunc i32 %next to i16
+  ret i16 %t }
+; test signedzero hl=7
+define i16 @signedzero() {
+  %x = call i16 @w(i16 -5)
+  %y = call i16 @w(i16 5)
+  %z = call i16 @w(i16 0)
+  %a = icmp slt i16 %x, 0
+  %b = icmp sge i16 %y, 0
+  %c = icmp eq i16 %z, 0
+  %ra = select i1 %a, i16 1, i16 0
+  %rb = select i1 %b, i16 2, i16 0
+  %rc = select i1 %c, i16 4, i16 0
+  %ab = or i16 %ra, %rb
+  %r = or i16 %ab, %rc
+  ret i16 %r }
+; test bigshifts hl=4660
+define i16 @bigshifts() {
+  %x = call i16 @w(i16 4660)
+  %h = lshr i16 %x, 8
+  %hh = shl i16 %h, 8
+  %s = call i16 @w(i16 -32768)
+  %sa = ashr i16 %s, 12
+  %sb = lshr i16 %sa, 12
+  %m = and i16 %x, 255
+  %r0 = or i16 %hh, %m
+  %ok = icmp eq i16 %sb, 15
+  %r = select i1 %ok, i16 %r0, i16 0
+  ret i16 %r }

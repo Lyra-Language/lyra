@@ -260,8 +260,68 @@ bool Z80InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   }
   case Z80::LSL16: {
     Register D = MI.getOperand(0).getReg();
-    BuildTo(Z80::SLA8, Lo(D)).addReg(Lo(D));
-    BuildTo(Z80::RL8, Hi(D)).addReg(Hi(D));
+    if (D == Z80::HL) {
+      BuildTo(Z80::ADD16, Z80::HL).addReg(Z80::HL).addReg(Z80::HL);
+    } else {
+      BuildTo(Z80::SLA8, Lo(D)).addReg(Lo(D));
+      BuildTo(Z80::RL8, Hi(D)).addReg(Hi(D));
+    }
+    break;
+  }
+  case Z80::BYTEUP16: {
+    Register D = MI.getOperand(0).getReg();
+    Move(Hi(D), Lo(D));
+    BuildTo(Z80::LD8ri, Lo(D)).addImm(0);
+    break;
+  }
+  case Z80::TESTZ16: {
+    Register R = MI.getOperand(0).getReg();
+    Move(Z80::A, Hi(R));
+    BuildTo(Z80::OR8r, Z80::A).addReg(Z80::A).addReg(Lo(R));
+    break;
+  }
+  case Z80::TESTZ8:
+    Build(Z80::ORAA);
+    break;
+  case Z80::TESTS16:
+    Build(Z80::BIT7r).addReg(Hi(MI.getOperand(0).getReg()));
+    break;
+  case Z80::SADD16: {
+    Register R = MI.getOperand(2).getReg();
+    Build(Z80::ORAA);
+    BuildTo(Z80::ADC16, Z80::HL).addReg(Z80::HL).addReg(R);
+    break;
+  }
+  case Z80::SADDO8:
+  case Z80::SSUBO8:
+  case Z80::UADDO8:
+  case Z80::USUBO8:
+  case Z80::SADDO16:
+  case Z80::SSUBO16:
+  case Z80::UADDO16:
+  case Z80::USUBO16: {
+    // The overflow flag materialized; Z80ConstrainedCopies has turned nearly all of these
+    // into the operation and a jump.
+    unsigned Op = MI.getOpcode();
+    Register O = MI.getOperand(1).getReg();
+    Register R = MI.getOperand(3).getReg();
+    int64_t Cond;
+    if (Op == Z80::SADDO8 || Op == Z80::UADDO8) {
+      BuildTo(Z80::ADD8r, Z80::A).addReg(Z80::A).addReg(R);
+    } else if (Op == Z80::SSUBO8 || Op == Z80::USUBO8) {
+      BuildTo(Z80::SUB8r, Z80::A).addReg(Z80::A).addReg(R);
+    } else if (Op == Z80::SADDO16) {
+      Build(Z80::ORAA);
+      BuildTo(Z80::ADC16, Z80::HL).addReg(Z80::HL).addReg(R);
+    } else if (Op == Z80::UADDO16) {
+      BuildTo(Z80::ADD16, Z80::HL).addReg(Z80::HL).addReg(R);
+    } else {
+      Build(Z80::ORAA);
+      BuildTo(Z80::SBC16, Z80::HL).addReg(Z80::HL).addReg(R);
+    }
+    bool Signed = Op == Z80::SADDO8 || Op == Z80::SSUBO8 || Op == Z80::SADDO16 || Op == Z80::SSUBO16;
+    Cond = Signed ? Z80CC::PE : Z80CC::C;
+    BuildTo(Z80::SETCC8, O).addImm(Cond);
     break;
   }
   case Z80::LSR16:

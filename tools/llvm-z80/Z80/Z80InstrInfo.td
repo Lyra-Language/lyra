@@ -25,6 +25,18 @@ def Z80call : SDNode<"Z80ISD::CALL", SDTypeProfile<0, -1, [SDTCisPtrTy<0>]>,
                      [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue, SDNPVariadic]>;
 def Z80ret : SDNode<"Z80ISD::RET", SDTNone,
                     [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
+// A checked add or subtract: the value, and whether it overflowed (Z80ConstrainedCopies makes
+// the jump on that flag directly, and the flag materialized is the rare case).
+def SDTZ80Overflow : SDTypeProfile<2, 2, [SDTCisSameAs<0, 2>, SDTCisSameAs<0, 3>, SDTCisVT<1, i8>]>;
+def Z80saddo : SDNode<"Z80ISD::SADDO", SDTZ80Overflow>;
+def Z80ssubo : SDNode<"Z80ISD::SSUBO", SDTZ80Overflow>;
+def Z80uaddo : SDNode<"Z80ISD::UADDO", SDTZ80Overflow>;
+def Z80usubo : SDNode<"Z80ISD::USUBO", SDTZ80Overflow>;
+// Whether a value is zero, and its sign, without a second operand.
+def Z80testz : SDNode<"Z80ISD::TESTZ", SDTypeProfile<0, 1, []>, [SDNPOutGlue]>;
+def Z80tests : SDNode<"Z80ISD::TESTS", SDTypeProfile<0, 1, []>, [SDNPOutGlue]>;
+def Z80hibyte : SDNode<"Z80ISD::HIBYTE", SDTypeProfile<1, 1, [SDTCisVT<0, i8>, SDTCisVT<1, i16>]>>;
+def Z80byteup : SDNode<"Z80ISD::BYTEUP", SDTIntUnaryOp>;
 def Z80lsl : SDNode<"Z80ISD::LSL", SDTIntUnaryOp>;
 def Z80lsr : SDNode<"Z80ISD::LSR", SDTIntUnaryOp>;
 def Z80asr : SDNode<"Z80ISD::ASR", SDTIntUnaryOp>;
@@ -298,6 +310,20 @@ let Defs = [F] in {
   def CP16 : Z80Pseudo<(outs), (ins HL16:$a, NOHL16:$b), [(Z80cmp HL16:$a, NOHL16:$b)]>;
 }
 
+let Defs = [F] in {
+  def BIT7r : Z80Inst<2, (outs), (ins GR8:$r), "bit\t7, $r"> {
+    bits<3> r;
+    let Inst{15-3} = 0b1100101101111;
+    let Inst{2-0} = r;
+  }
+  // `ld a, hi; or lo`.
+  let Defs = [A, F] in
+  def TESTZ16 : Z80Pseudo<(outs), (ins GR16:$r), [(Z80testz GR16:$r)]>;
+  def TESTZ8 : Z80Pseudo<(outs), (ins ACC8:$r), [(Z80testz ACC8:$r)]>;
+  def TESTS16 : Z80Pseudo<(outs), (ins GR16:$r), [(Z80tests GR16:$r)]>;
+}
+def : Pat<(Z80tests GR8:$r), (BIT7r GR8:$r)>;
+
 // CB shifts by one, of any register; the wider ones are built from them.
 class Shift8<bits<5> op, string name, dag pat>
     : Z80Inst<2, (outs GR8:$d), (ins GR8:$s), !strconcat(name, "\t$d"), [pat]> {
@@ -324,6 +350,11 @@ let Defs = [F], Uses = [F], Constraints = "$d = $s" in {
     let Inst{2-0} = d;
   }
 }
+
+// A shift by eight or more starts from the high byte.
+def : Pat<(i8 (Z80hibyte GR16:$s)), (EXTRACT_SUBREG GR16:$s, sub_hi)>;
+let Constraints = "$d = $s" in
+def BYTEUP16 : Z80Pseudo<(outs GR16:$d), (ins GR16:$s), [(set GR16:$d, (Z80byteup GR16:$s))]>;
 
 // What pseudos expand to.
 let Defs = [A, F], Uses = [A] in
@@ -392,7 +423,8 @@ let Defs = [F], Constraints = "$d = $s" in {
   def ASR16 : Z80Pseudo<(outs GR16:$d), (ins GR16:$s), [(set GR16:$d, (Z80asr GR16:$s))]>;
 }
 
-// No flags change: spills and copies may sit between a compare and its jump.
+// No flags change: spills and copies may sit between a compare and its jump. And six T-states
+// against twenty-one for loading a small constant and adding it, of any pair.
 let Constraints = "$d = $s" in {
   def INC16 : Z80Inst<1, (outs GR16:$d), (ins GR16:$s), "inc\t$d"> {
     bits<2> d;
@@ -406,6 +438,53 @@ let Constraints = "$d = $s" in {
     let Inst{5-4} = d;
     let Inst{3-0} = 0b1011;
   }
+}
+
+def : Pat<(add GR16:$s, 1), (INC16 GR16:$s)>;
+def : Pat<(add GR16:$s, 2), (INC16 (INC16 GR16:$s))>;
+def : Pat<(add GR16:$s, 3), (INC16 (INC16 (INC16 GR16:$s)))>;
+def : Pat<(add GR16:$s, -1), (DEC16 GR16:$s)>;
+def : Pat<(add GR16:$s, -2), (DEC16 (DEC16 GR16:$s))>;
+def : Pat<(add GR16:$s, -3), (DEC16 (DEC16 (DEC16 GR16:$s)))>;
+
+//===----------------------------------------------------------------------===//
+// Checked arithmetic
+//===----------------------------------------------------------------------===//
+
+// `or a; adc hl, rr`: unlike `add hl, rr`, this sets the overflow flag.
+let Defs = [A, F], Constraints = "$d = $a" in
+def SADD16 : Z80Pseudo<(outs HL16:$d), (ins HL16:$a, GR16:$r)>;
+
+// A flag as a 0 or 1: the printer writes `ld r, 0; jp !cc, past; inc r; past:`.
+let Uses = [F], Defs = [F] in
+def SETCC8 : Z80Pseudo<(outs GR8:$d), (ins ccop:$cc)>;
+let Defs = [F] in
+def INC8 : Z80Inst<1, (outs GR8:$d), (ins GR8:$s), "inc\t$d"> {
+  bits<3> d;
+  let Constraints = "$d = $s";
+  let Inst{7-6} = 0b00;
+  let Inst{5-3} = d;
+  let Inst{2-0} = 0b100;
+}
+
+let Defs = [F], Constraints = "@earlyclobber $o, $d = $a" in {
+  def SADDO8 : Z80Pseudo<(outs ACC8:$d, GR8:$o), (ins ACC8:$a, GR8:$r),
+                         [(set ACC8:$d, GR8:$o, (Z80saddo ACC8:$a, GR8:$r))]>;
+  def SSUBO8 : Z80Pseudo<(outs ACC8:$d, GR8:$o), (ins ACC8:$a, GR8:$r),
+                         [(set ACC8:$d, GR8:$o, (Z80ssubo ACC8:$a, GR8:$r))]>;
+  def UADDO8 : Z80Pseudo<(outs ACC8:$d, GR8:$o), (ins ACC8:$a, GR8:$r),
+                         [(set ACC8:$d, GR8:$o, (Z80uaddo ACC8:$a, GR8:$r))]>;
+  def USUBO8 : Z80Pseudo<(outs ACC8:$d, GR8:$o), (ins ACC8:$a, GR8:$r),
+                         [(set ACC8:$d, GR8:$o, (Z80usubo ACC8:$a, GR8:$r))]>;
+  let Defs = [A, F] in
+  def SADDO16 : Z80Pseudo<(outs HL16:$d, GR8:$o), (ins HL16:$a, GR16:$r),
+                          [(set HL16:$d, GR8:$o, (Z80saddo HL16:$a, GR16:$r))]>;
+  def SSUBO16 : Z80Pseudo<(outs HL16:$d, GR8:$o), (ins HL16:$a, GR16:$r),
+                          [(set HL16:$d, GR8:$o, (Z80ssubo HL16:$a, GR16:$r))]>;
+  def UADDO16 : Z80Pseudo<(outs HL16:$d, GR8:$o), (ins HL16:$a, GR16:$r),
+                          [(set HL16:$d, GR8:$o, (Z80uaddo HL16:$a, GR16:$r))]>;
+  def USUBO16 : Z80Pseudo<(outs HL16:$d, GR8:$o), (ins HL16:$a, GR16:$r),
+                          [(set HL16:$d, GR8:$o, (Z80usubo HL16:$a, GR16:$r))]>;
 }
 
 //===----------------------------------------------------------------------===//
