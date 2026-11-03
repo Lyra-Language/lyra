@@ -42,6 +42,13 @@ A binding / `own` parameter holds one owning reference. The pass records:
   `self.cur`, `xs[0]`) whose root an arm could write (`holdScrutinee`, `writesRoot`): what the
   arms bind is borrowed from it, and the write would free it under them. Retained as it is read,
   it is a temporary the backend releases after the arms, as it does a call's result.
+- **Both, on a loop's source** — a `for` or comprehension source read from a place the walk could
+  see replaced (`holdLoopSource`): the body writes its root or yields, or the place is reached
+  through a box. The walk reads a box it loaded once. **`HeldLoopVars[source]`** adds the loop
+  variable, per iteration, where the body writes the root, which can release what it borrows
+  without the box going (`ys[0] = s`, a fixed-size array assigned; `holdLoopVar`). **Both, on what
+  a call returning a sequence borrows from a place** (`holdLentToSeq`): its consumer runs between
+  the callee's statements.
 - **Both, on a read of a mutable global** — a module-level `var` (or `let mut`), by its name, a
   field or element of it, or through its namespace (`mutableGlobal`, `holdGlobalPlace`), where
   it is borrowed. A global owns what it holds and the backend releases it when the global is

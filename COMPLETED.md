@@ -13,6 +13,10 @@ Newest first.
 
 A field through a pointer took `ld de, d; add hl, de; ld r, (hl)` and kept two pairs busy, so IY looked like the next win. It is a pass rather than an allocatable register: one register for every pointer would need spills with no register free to make them, while SSA makes "IY holds %p" a small dataflow problem and it cannot fail allocation. It gained less than predicted, 2–3% on a scene, 8% on `std.sms.music` and about 1 KB, since a game's code has about ten stack-slot accesses for each pointer one: the cost is spills, which the estimate had wrong.
 
+### 11/03/26 — `std.sms.music`: a song in 16 bits on the Z80
+
+`std.chips.music`'s PSG bytes exactly, held by `cmd/lyrac/sms_music_test.go` on the host and on the Z80. What cost was never the sums alone: `voices[c]` was a multiply per field until a voice's work moved onto one reference and the backend split constant multiplies into shifts; then a voice at rest, a kept envelope, a table of levels and patterns found once an order. `smscheck --work on` had been counting an overrun's two status reads as a second, empty frame, halving averages, so earlier figures for overrunning scenes were wrong; it now says how many of the screen's frames the game kept. Building it also found `lyrac` leaving allocas after code in the entry block, which inlining strands as dynamic allocations the Z80's frame cannot make (`allocasFirst`).
+
 ### 11/03/26 — const generics: `N` as a value, on a type, and `[N + 1]t`
 
 `std.sms` and `std.genesis` already took tables of any length, but `N` stopped at the signature.
@@ -47,9 +51,57 @@ Three items that share one question: what a size is.
   parameter that was only ever read in a body was a warning, with a backend error at each call, so
   it's now `lyra-E031` for a `const` one. `f::<64>` stays open: nothing needed it here.
 
-### 11/03/26 — `std.sms.music`: a song in 16 bits on the Z80
+### 11/03/26 — A loop holds what it walks
 
-`std.chips.music`'s PSG bytes exactly, held by `cmd/lyrac/sms_music_test.go` on the host and on the Z80. What cost was never the sums alone: `voices[c]` was a multiply per field until a voice's work moved onto one reference and the backend split constant multiplies into shifts; then a voice at rest, a kept envelope, a table of levels and patterns found once an order. `smscheck --work on` had been counting an overrun's two status reads as a second, empty frame, halving averages, so earlier figures for overrunning scenes were wrong; it now says how many of the screen's frames the game kept. Building it also found `lyrac` leaving allocas after code in the entry block, which inlining strands as dynamic allocations the Z80's frame cannot make (`allocasFirst`).
+`for x in ys { ys = mk() }` freed the box the next iteration read, and whatever `x` still
+borrowed. `lowerForInLoop` loads the box once and the storage owns it, so this was there from
+the first dynamic array. Found by ASan on Linux while making a `gen`'s arguments safe, where
+`for v in walk(ys) { ys = mk() }` does the same with no assignment in sight of the loop in `walk`.
+
+- **Not a new mechanism.** A `match` had this problem in `ui.sdl3`'s event loop on 10/29, and
+  `holdScrutinee` made such a scrutinee a temporary of its own: retained as it is read, released
+  after the statement. A loop's source takes the same two flags (`holdLoopSource`), and `break`,
+  `return`, `?` and a coroutine destroyed at a yield already release a temporary, so the frame
+  and exit-block retain first proposed for this has no code to write.
+- **Which loops pay, and why that's sound.** A source is held only where it can be replaced: the
+  body writes its root, the body yields, or the source is reached through a box. A closure can't
+  write a local (captures are by value and assigning one is refused), and `var zs = ys` is a
+  reference of its own, so replacing `zs` leaves `ys` holding the box. That leaves the name alone
+  sufficient for a local. It doesn't for `h.items` or `grid[0]`, which any name for the box can
+  replace, and those take one retain unasked. A global's read was held already. So
+  `for x in xs { c += x }`, the common loop, emits what it did (`TestOwnership_LoopSourceHeld`).
+- **A hold of the box doesn't answer `x`.** `ys[0] = s` releases what `x` borrows with the box
+  fine, and a fixed-size array has no box: `xs = #[…]` overwrites the elements in place. So a body
+  that can write the root also makes the variable an owning binding for the iteration
+  (`holdLoopVar`), in a frame above the loop's, which the ways out already release. Asked of
+  writesRoot alone and not of a yield, as this one is a retain per element: `for x in xs { yield x }`
+  mustn't pay it for every walk. A consumer that writes what it lent the `gen` is asked at the
+  consumer, and holds the same way. `writesRoot` answers true for a call that only reads, so
+  `for x in xs { f(xs, x) }` over strings pays per element; left, as sharpening it means reading
+  modes for every kind of callee, and only loops over managed elements that name their array pay.
+- **The `gen` needed a second hold.** A body indexing a bare parameter after its yield
+  (`yield xs[i]; i += 1`) has no loop to hold anything, and the consumer can free `xs` there. A
+  call returning a sequence now holds each place it borrows from (`holdLentToSeq`), which a plain
+  call doesn't need, because its caller isn't running. A `ref` argument is read for its address,
+  so the flags do nothing there and the callee reads what the place holds now.
+- **A consumer's `continue` freed its producer's state.** It took the depths `break` uses, which
+  go down past the producer, and jumped back into the producer: `let s = …; yield s; yield s` with
+  `continue` in the loop released `s` per element. Older than this work (the ways-out tests found it);
+  `loopCtx` now carries where the consumer began for `continue` to use.
+
+- **A walk ends where the array now does.** The length was read once, and `clear` releases the
+  elements and keeps the buffer, so the next iteration bound a released string with the box
+  alive. The body shows some of the ways to get there and not others (`zs.clear()` after `var zs =
+  ys`, a call emptying a global, a `gen`'s consumer), so it is asked at run time: under the length
+  the walk began with, which keeps a push from extending it, and under the length now. Unlike the
+  holds this is on every `[]T` walk, so it was measured. A loop with no store or call has it
+  hoisted, and its optimized IR is `HEAD`'s; a loop storing through a pointer reloads once per
+  iteration, since a store may alias the length, and a mix of the two over 4096 elements timed the
+  same within noise (1.02–1.08 s against 1.05–1.10 s user). The console libraries have four such
+  loops, all loading palettes and tiles; a 68000's cost, two longwords per iteration, is unmeasured.
+
+**Left open, in todo.md:** the loop variable when the write comes by a second name or a call, and
+`f(ys, ys)` with a bare parameter beside `mut`, which isn't a loop's problem.
 
 ### 11/03/26 — A sequence function's arguments, inlined
 

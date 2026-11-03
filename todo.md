@@ -969,9 +969,16 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/03] A box's storage can't be lent to a function returning a sequence** (`lyra-E092`),
   which answers a later argument freeing it and the consumer freeing it both. A sequence held as a
   value can't take a by-reference parameter, which crashed `lyrac`. (COMPLETED.md, 11/03.)
-- **[OPEN] `for x in ys { ys = [...] }` is a use-after-free**, with or without a `gen` between
-  (`walk(ys)` does the same). Reassigning frees the box the loop reads; growing is fine, as the loop
-  reads the buffer through the box. Found on 11/03; a retain across the loop looks like the answer.
+- **[DONE 11/03] `for x in ys { ys = [...] }` holds what it walks**, and so does a comprehension, a
+  string and a `gen` over the array, where the body can replace it; the loop variable too, where it
+  can write an element. A consumer's `continue` no longer frees what its producer holds. (COMPLETED.md, 11/03.)
+- **[DONE 11/03] A walk ends where the array now does**, so `ys.clear()` by any name, call or `gen`
+  consumer leaves nothing released to read: the length is asked afresh each iteration. (COMPLETED.md, 11/03.)
+- **[OPEN] A loop variable still dangles where the body's write isn't its root's**: `zs[0] = s` after
+  `var zs = ys`, or a call writing `g[0]` in `for y in g`. Holding it per element wherever the body
+  calls anything would answer the second, at a retain per element of every such loop over strings.
+- **[OPEN] `f(ys, ys)` with `(xs: []T, m: mut []T)` isn't refused**, and `m = [...]` frees what `xs`
+  reads, a use-after-free. Found through a loop but no loop's: exclusivity checks `mut` beside `ref`, not beside a bare parameter.
 - **[OPEN] `lib.queue[0] = 1` and `lib.add(lib.queue[0])` say `undefined identifier "lib"`.** A
   namespaced global is readable and `lib.queue.push(1)` works, but not as a place. A message at least.
 - **[OPEN] A `Seq` beside another clause** (`[n in ns, i in upto(n) | i]`) is still refused,

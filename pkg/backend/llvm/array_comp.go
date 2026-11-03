@@ -282,8 +282,17 @@ func (l *lowerer) emitCompLoops(block *ir.Block, e *ast.ArrayCompExpr, sources [
 	}
 	slot := block.Parent.Blocks[0].NewAlloca(src.elemLL)
 	l.locals[gen.Identifier] = slot
+	srcType, _ := l.recordedType(gen.Value)
 	return src.emit(block, slot, func(body *ir.Block) (*ir.Block, error) {
-		return l.emitCompLoops(body, e, sources, elemLL, depth+1, store)
+		endIteration, err := l.holdLoopVar(body, gen.Value, slot, src.elemLL, arrayElementType(srcType))
+		if err != nil {
+			return nil, err
+		}
+		end, err := l.emitCompLoops(body, e, sources, elemLL, depth+1, store)
+		if err != nil {
+			return nil, err
+		}
+		return end, endIteration(end)
 	})
 }
 
@@ -329,6 +338,14 @@ func (l *lowerer) emitCompBody(block *ir.Block, e *ast.ArrayCompExpr, elemLL llt
 // countedSource builds a source that runs exactly `count` times, binding `at(i)` each time.
 // Arrays and ranges are both this; only the binding differs.
 func countedSource(count value.Value, elemLL lltypes.Type, at func(b *ir.Block, i value.Value) value.Value) compSource {
+	return walkedSource(count, elemLL, at, func(b *ir.Block, i value.Value) value.Value {
+		return b.NewICmp(enum.IPredSLT, i, count)
+	})
+}
+
+// walkedSource is countedSource with its own test for going on, which may stop short of the
+// count and never past it, so the capacity still bounds the loop.
+func walkedSource(count value.Value, elemLL lltypes.Type, at, inBounds func(b *ir.Block, i value.Value) value.Value) compSource {
 	return compSource{
 		capacity: count,
 		elemLL:   elemLL,
@@ -344,7 +361,7 @@ func countedSource(count value.Value, elemLL lltypes.Type, at func(b *ir.Block, 
 			block.NewBr(cond)
 
 			i := cond.NewLoad(lltypes.I64, iSlot)
-			cond.NewCondBr(cond.NewICmp(enum.IPredSLT, i, count), bodyBlock, exit)
+			cond.NewCondBr(inBounds(cond, i), bodyBlock, exit)
 
 			ib := bodyBlock.NewLoad(lltypes.I64, iSlot)
 			bodyBlock.NewStore(at(bodyBlock, ib), slot)
@@ -429,8 +446,10 @@ func (l *lowerer) lowerCompSource(block *ir.Block, gen *ast.Generator) (compSour
 			return compSource{}, nil, err
 		}
 		length := block.NewLoad(lltypes.I64, dynArrayLenPtr(block, boxTy, box))
-		return countedSource(length, elem, func(b *ir.Block, i value.Value) value.Value {
+		return walkedSource(length, elem, func(b *ir.Block, i value.Value) value.Value {
 			return b.NewLoad(elem, dynArrayElemPtr(b, boxTy, box, i))
+		}, func(b *ir.Block, i value.Value) value.Value {
+			return dynArrayWalkInBounds(b, boxTy, box, i, length)
 		}), block, nil
 	}
 	// The grammar admits an identifier, a range, an array literal or a string literal as a

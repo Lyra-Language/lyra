@@ -555,7 +555,8 @@ func (l *lowerer) lowerYieldFromExpr(block *ir.Block, e *ast.YieldFromExpr) (val
 //
 // The consumer is lowered under *its* environment and a loopCtx of its own; the frame
 // depth and temp base are the consumer's, so a `break` releases what the producer had
-// live as well as the consumer's own. This producer's environment is put back after.
+// live as well as the consumer's own. A `continue` comes back here, so it releases the
+// consumer's alone. This producer's environment is put back after.
 func (l *lowerer) yieldValueTo(block *ir.Block, v value.Value) (*ir.Block, error) {
 	// Inside a coroutine body the consumer is whoever resumes it: suspend (stage 2).
 	if l.yield == nil {
@@ -579,8 +580,12 @@ func (l *lowerer) yieldValueTo(block *ir.Block, v value.Value) (*ir.Block, error
 // unterminated when its body fell through.
 func (l *lowerer) runConsumer(block *ir.Block, y *seqYield, v value.Value, next *ir.Block) (*ir.Block, error) {
 	saved := l.captureEnv()
+	iterFrameDepth, iterTempBase := len(l.managedFrames), len(l.pendingReleases)
 	l.installEnv(y.env)
-	l.loops = append(l.loops, loopCtx{breakTarget: y.exit, continueTarget: next, frameDepth: y.frameDepth, tempBase: y.tempBase})
+	l.loops = append(l.loops, loopCtx{
+		breakTarget: y.exit, continueTarget: next, frameDepth: y.frameDepth, tempBase: y.tempBase,
+		resumesProducer: true, iterFrameDepth: iterFrameDepth, iterTempBase: iterTempBase,
+	})
 	end, err := y.consume(block, v)
 	l.installEnv(saved)
 	if err != nil {
@@ -624,7 +629,15 @@ func (l *lowerer) lowerForInSeq(block *ir.Block, e *ast.ForInLoopExpr, elemLyra 
 			b.NewStore(n, idxSlot)
 			b.NewStore(b.NewAdd(n, i64c(1)), counter)
 		}
-		return l.lowerForEffect(b, e.Body)
+		endIteration, err := l.holdLoopVar(b, e.Iterable, xSlot, elemLL, elemLyra)
+		if err != nil {
+			return nil, err
+		}
+		end, err := l.lowerForEffect(b, e.Body)
+		if err != nil {
+			return nil, err
+		}
+		return end, endIteration(end)
 	})
 	if err != nil {
 		return nil, nil, err
@@ -663,9 +676,17 @@ func (l *lowerer) lowerSeqComp(block *ir.Block, e *ast.ArrayCompExpr, gen *ast.G
 
 	exit, err := l.lowerSeqConsume(block, gen.Value, func(b *ir.Block, elem value.Value) (*ir.Block, error) {
 		b.NewStore(elem, slot)
-		return l.emitCompBody(b, e, elemLL, func(cur *ir.Block, result value.Value) *ir.Block {
+		endIteration, err := l.holdLoopVar(b, gen.Value, slot, srcElemLL, srcElem.(types.ParameterizedType).TypeArguments[0])
+		if err != nil {
+			return nil, err
+		}
+		end, err := l.emitCompBody(b, e, elemLL, func(cur *ir.Block, result value.Value) *ir.Block {
 			return l.emitDynArrayPush(cur, boxTy, box, result, stride)
 		})
+		if err != nil {
+			return nil, err
+		}
+		return end, endIteration(end)
 	})
 	if err != nil {
 		return nil, nil, err

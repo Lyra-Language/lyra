@@ -337,3 +337,34 @@ func TestOwnership_OwningReadInsideLoopBodyDups(t *testing.T) {
 			c.retains, c.transfers)
 	}
 }
+
+// A loop's source is held where the walk can see it replaced, and only there: an ordinary loop
+// pays nothing for the loop that writes its array.
+func TestOwnership_LoopSourceHeld(t *testing.T) {
+	const lib = `struct H { items: []string }
+let reset = (xs: mut []string) -> void => { xs = [] }
+`
+	cases := []struct {
+		name, src string
+		held      bool
+	}{
+		{"a body that reads", `let run = (xs: []string) -> i64 => { var c = 0; for x in xs { c += x.len() }; c }`, false},
+		{"a local nothing writes", `let run = () -> i64 => { let ys: []i64 = [1]; var c = 0; for y in ys { c += y }; c + ys.len() }`, false},
+		{"a `var` the body doesn't write", `let run = () -> i64 => { var ys: []i64 = [1]; var c = 0; for y in ys { c += y }; ys = []; c }`, false},
+		{"a stack struct's field", `let run = (h: H) -> i64 => { var c = 0; for x in h.items { c += x.len() }; c }`, false},
+		{"a temporary", `let run = () -> i64 => { var c = 0; for y in [1, 2] { c += y }; c }`, false},
+		{"reassigned", `let run = () -> void => { var ys: []i64 = [1]; for y in ys { ys = [] } }`, true},
+		{"handed to a call", `let run = () -> void => { var ys: []string = []; for y in ys { reset(ys) } }`, true},
+		{"a body that yields", `let run = gen (xs: ref []string) -> Seq<string> => { for x in xs { yield x } }`, true},
+		{"reached through a box", `let run = (g: [][]i64) -> i64 => { var c = 0; for x in g[0] { c += x }; c }`, true},
+		{"a string reassigned", `let run = () -> void => { var s = "a" ++ "b"; for r in s { s = "c" } }`, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := analyze(t, lib+c.src)
+			if held := got.retains > 0 && got.temps > 0; held != c.held {
+				t.Errorf("held = %v, want %v (%+v)", held, c.held, got)
+			}
+		})
+	}
+}

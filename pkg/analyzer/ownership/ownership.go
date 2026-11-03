@@ -123,6 +123,10 @@ type Table struct {
 	// evaluated until c is built, and for that long nothing else knows of it, so the backend
 	// holds it where a way out will release it (lowerExpr).
 	HeldOperands map[ast.Expression][]ast.Expression
+	// HeldLoopVars[source]: the loop or comprehension clause over source has a body that can
+	// write the place source was read from, so what the loop variable borrows can be released
+	// under it. The backend makes the variable an owning binding for each iteration.
+	HeldLoopVars map[ast.Expression]bool
 }
 
 // ShouldRetain reports whether e's value must be retained when produced.
@@ -170,6 +174,11 @@ func (t *Table) OperandsToHold(e ast.Expression) []ast.Expression {
 		return nil
 	}
 	return t.HeldOperands[e]
+}
+
+// HoldsLoopVar reports whether the walk over source holds its loop variable per iteration.
+func (t *Table) HoldsLoopVar(source ast.Expression) bool {
+	return t != nil && t.HeldLoopVars[source]
 }
 
 // IsReuseTarget reports whether e is a construction that consumes its enclosing
@@ -673,6 +682,7 @@ func newAnalyzer(symTable *symbols.SymbolTable, tt *typetable.TypeTable, subst m
 			ReuseMatch:      map[*ast.MatchExpr]string{},
 			ReuseTarget:     map[ast.Expression]bool{},
 			HeldOperands:    map[ast.Expression][]ast.Expression{},
+			HeldLoopVars:    map[ast.Expression]bool{},
 		},
 		writing: map[string]int{},
 	}
@@ -1441,6 +1451,85 @@ func (a *analyzer) holdScrutinee(scrutinee ast.Expression, arms ...ast.Expressio
 	}
 }
 
+// holdLoopSource keeps a `for` or comprehension source alive for as long as the walk reads it.
+//
+// **The walk reads a box it loaded once**, and the storage it was read from owns that box.
+// `for x in ys { ys = [] }` releases it under the next iteration, and under `x`. So, as for a
+// scrutinee, such a source is made a temporary of its own: retained as it is read and released
+// after the statement, which `break`, `return` and `?` already do for a temporary. Only where
+// the source can be replaced while the walk runs, so an ordinary loop costs nothing:
+//
+//   - the body can write its root (writesRoot). A local has no other name a write could come
+//     by: a closure captures by value and may not assign what it captured, and a `var zs = ys`
+//     holds a reference of its own, which replacing `zs` drops and `ys`'s keeps.
+//   - the body yields. The consumer's body runs there, and it can write what a parameter was
+//     read from, which no walk of this function shows: `for v in walk(ys) { ys = [] }`.
+//   - the source is reached through a box (`h.items`, `grid[0]`). Such storage can be written
+//     by any name for the box, so no walk shows it either, and one retain is not worth telling
+//     a body that writes nothing from one that does.
+//
+// A global's read is held already (holdGlobalPlace), and a temporary is its own hold. Writing
+// through a raw pointer made earlier is `unsafe`'s to answer for, as it is for a scrutinee.
+//
+// **A write can also release what the loop variable borrows**, without the box going: `ys[0] =
+// s`, or a fixed-size array reassigned, whose elements are its own storage. Where the body can
+// write the root, then, the variable is held too, per iteration (HeldLoopVars). That one is
+// per element, so it is asked of writesRoot alone: a walk over strings mustn't pay for having
+// yielded them. The consumer of a sequence is asked about the places lent to the call.
+func (a *analyzer) holdLoopSource(source ast.Expression, runs ...ast.Expression) {
+	t, ok := a.typeOf(source)
+	if !ok {
+		return
+	}
+	writes := func(root string) bool {
+		return root != "" && slices.ContainsFunc(runs, func(r ast.Expression) bool { return writesRoot(r, root) })
+	}
+	if types.IsSeq(t) {
+		call, isCall := source.(*ast.FunctionCallExpr)
+		if !isCall {
+			return
+		}
+		a.table.HeldLoopVars[source] = slices.ContainsFunc(lentToCall(call), func(arg ast.Expression) bool {
+			return writes(ast.RootIdentifierName(arg))
+		})
+		return
+	}
+	root := ast.RootIdentifierName(source)
+	if root == "" {
+		return
+	}
+	written := writes(root)
+	a.table.HeldLoopVars[source] = written
+	if a.ownsManaged(source) && (written || yields(runs) || ReachedThroughBox(source, a.tt, a.symTable)) {
+		a.table.Retain[source] = true
+		a.table.ReleaseTemp[source] = true
+	}
+}
+
+// lentToCall is what a call's places are: its arguments, and a method's receiver.
+func lentToCall(call *ast.FunctionCallExpr) []ast.Expression {
+	args := slices.Clone(call.Arguments)
+	if m, ok := call.Function.(*ast.MemberExpr); ok {
+		args = append(args, m.Object)
+	}
+	return args
+}
+
+// yields reports whether any of these hands a value to a consumer.
+func yields(runs []ast.Expression) bool {
+	found := false
+	for _, r := range runs {
+		ast.WalkExpr(r, nil, func(x ast.Expression) bool {
+			switch x.(type) {
+			case *ast.YieldExpr, *ast.YieldFromExpr:
+				found = true
+			}
+			return !found
+		})
+	}
+	return found
+}
+
 // writesRoot reports whether e could write the binding `root` or anything inside it:
 // reassigning it, assigning a field, element or tuple position of it (`+=` too), taking its
 // address, writing through any pointer, or handing it — or a place in it — to a call, which
@@ -1818,6 +1907,15 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		if len(e.Generators) > 0 {
 			a.expr(e.Generators[0].Value, false)
 		}
+		for i := range e.Generators {
+			// What runs while a clause walks its source: every later clause's source, the
+			// guards and the result.
+			runs := append([]ast.Expression{e.Result}, e.Guards...)
+			for _, later := range e.Generators[i+1:] {
+				runs = append(runs, later.Value)
+			}
+			a.holdLoopSource(e.Generators[i].Value, runs...)
+		}
 		savedCond := a.conditional
 		a.conditional = true
 		for i := 1; i < len(e.Generators); i++ {
@@ -1995,6 +2093,7 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		// `conditional` so an owning read of an outer binding or of the borrowed loop
 		// variable records a retain, not a transfer.
 		a.expr(e.Iterable, false)
+		a.holdLoopSource(e.Iterable, e.Body)
 		savedCond := a.conditional
 		a.conditional = true
 		a.block(e.Body, false)
@@ -2141,6 +2240,7 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 	if len(taken) > 0 {
 		a.holdOperands(e, taken)
 	}
+	a.holdLentToSeq(e)
 
 	if !a.ownsManaged(e) {
 		return
@@ -2175,6 +2275,29 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 		}
 	} else if needOwned {
 		a.table.Retain[e] = true
+	}
+}
+
+// holdLentToSeq holds what a call returning a sequence borrows from a place. **Its consumer runs
+// between the callee's statements**, and it can replace what the callee was lent, which no plain
+// call's caller can do: `for v in walk(ys) { ys = [] }`, with `walk` reading `xs[i]` after its
+// yield. Retained as it is read, it is the call's statement's temporary, which outlives the walk.
+// A `ref` argument is read for its address instead, so this holds nothing there: the callee
+// sees what the place holds now, and holdLoopSource holds what a walk of it loaded.
+func (a *analyzer) holdLentToSeq(e *ast.FunctionCallExpr) {
+	t, ok := a.typeOf(e)
+	if !ok || !types.IsSeq(t) {
+		return
+	}
+	for _, arg := range lentToCall(e) {
+		argType, ok := a.typeOf(arg)
+		if !ok || types.IsSeq(argType) || a.table.LastUseTransfer[arg] || !rootedAtBinding(arg) || !a.ownsManaged(arg) {
+			continue
+		}
+		if !a.table.Retain[arg] {
+			a.table.Retain[arg] = true
+			a.table.ReleaseTemp[arg] = true
+		}
 	}
 }
 

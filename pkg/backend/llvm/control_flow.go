@@ -28,6 +28,12 @@ type loopCtx struct {
 	// *below* it belongs to a statement enclosing the whole loop, which still flushes
 	// after the loop exits, so releasing it at the jump too would be a double free.
 	tempBase int
+	// resumesProducer says this is a sequence's consumer, whose `continue` goes back into the
+	// producer it runs inside. That still has everything below these, the depths where the
+	// consumer began; only a `break` leaves it, and owes frameDepth and tempBase.
+	resumesProducer bool
+	iterFrameDepth  int
+	iterTempBase    int
 }
 
 // loopTarget returns the loop a break/continue refers to: the innermost loop for
@@ -256,8 +262,12 @@ func (l *lowerer) lowerContinue(block *ir.Block, s *ast.ContinueStmt) error {
 	if err := l.flushTemps(); err != nil {
 		return err
 	}
-	l.recordExitReleases(block, ctx.tempBase)
-	if err := l.releaseManagedFramesFrom(block, ctx.frameDepth); err != nil {
+	frameDepth, tempBase := ctx.frameDepth, ctx.tempBase
+	if ctx.resumesProducer {
+		frameDepth, tempBase = ctx.iterFrameDepth, ctx.iterTempBase
+	}
+	l.recordExitReleases(block, tempBase)
+	if err := l.releaseManagedFramesFrom(block, frameDepth); err != nil {
 		return err
 	}
 	block.NewBr(ctx.continueTarget)
@@ -352,7 +362,9 @@ func (l *lowerer) lowerLoop(block *ir.Block, e *ast.LoopExpr) (value.Value, *ir.
 // it is bound into l.locals but *not* framed for release (reading an element consumes
 // no reference; for a managed element type the array frees it when the array itself
 // dies). Managed values *declared inside* the body are framed/released per iteration
-// by the ordinary block machinery, exactly as in a `while` loop.
+// by the ordinary block machinery, exactly as in a `while` loop. A body that can write
+// the array is the exception, on both counts: the ownership pass holds the source for
+// the loop and the variable for the iteration (holdLoopSource, holdLoopVar).
 //
 // The two-variable form `for i, x in xs` binds the loop counter as the index `i`
 // (i64) in addition to the element `x`; the collector puts the first name in Key
@@ -392,10 +404,13 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 
 	// Materialize the element source and length *once*, before the loop; arrGep(i)
 	// returns a `T*` to the i-th element for a runtime index i (valid in the body
-	// because `block` dominates it).
+	// because `block` dominates it). A push adds no iterations, but what `clear` released
+	// must not be read, so a dynamic array's length is also asked afresh (inBounds).
 	var length value.Value
 	var elemLL lltypes.Type
 	var arrGep func(b *ir.Block, i value.Value) value.Value
+	inBounds := func(b *ir.Block, i value.Value) value.Value { return b.NewICmp(enum.IPredSLT, i, length) }
+	elemLyra := arrayElementType(iterType)
 
 	switch it := iterType.(type) {
 	case types.StaticArrayType:
@@ -431,6 +446,9 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 		arrGep = func(b *ir.Block, i value.Value) value.Value {
 			return dynArrayElemPtr(b, boxTy, box, i)
 		}
+		inBounds = func(b *ir.Block, i value.Value) value.Value {
+			return dynArrayWalkInBounds(b, boxTy, box, i, length)
+		}
 	default:
 		return nil, nil, fmt.Errorf("llvm: for-in over %s not implemented yet (arrays only)", iterType)
 	}
@@ -454,7 +472,7 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 	block.NewBr(condBlock)
 
 	i := condBlock.NewLoad(lltypes.I64, iSlot)
-	condBlock.NewCondBr(condBlock.NewICmp(enum.IPredSLT, i, length), bodyBlock, exitBlock)
+	condBlock.NewCondBr(inBounds(condBlock, i), bodyBlock, exitBlock)
 
 	// Bind the element (and, for the two-variable form, the index) to this
 	// iteration's values, then lower the body for effect.
@@ -464,9 +482,16 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 		bodyBlock.NewStore(ib, idxSlot)
 	}
 	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: incBlock, label: e.Label, frameDepth: len(l.managedFrames), tempBase: len(l.pendingReleases)})
+	endIteration, err := l.holdLoopVar(bodyBlock, e.Iterable, xSlot, elemLL, elemLyra)
+	if err != nil {
+		return nil, nil, err
+	}
 	bodyEnd, err := l.lowerForEffect(bodyBlock, e.Body)
 	l.loops = l.loops[:len(l.loops)-1]
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := endIteration(bodyEnd); err != nil {
 		return nil, nil, err
 	}
 	if bodyEnd.Term == nil {
@@ -478,6 +503,49 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 	incBlock.NewBr(condBlock)
 
 	return nil, exitBlock, nil
+}
+
+// dynArrayWalkInBounds says whether a walk that began with `length` elements may read index i:
+// it is under that, and under the length now. **A body can shrink the array, and no walk of it
+// shows every way**: `ys.clear()`, a second name's, a call's, a `gen`'s consumer's. What's past
+// the length has been released, so it asks at run time, one load; a body that stores and calls
+// nothing has it hoisted out of the loop.
+func dynArrayWalkInBounds(b *ir.Block, boxTy *lltypes.StructType, box, i, length value.Value) value.Value {
+	now := b.NewLoad(lltypes.I64, dynArrayLenPtr(b, boxTy, box))
+	return b.NewAnd(b.NewICmp(enum.IPredSLT, i, length), b.NewICmp(enum.IPredSLT, i, now))
+}
+
+// arrayElementType is an array's element type, nil for any other source.
+func arrayElementType(t types.Type) types.Type {
+	switch it := t.(type) {
+	case types.StaticArrayType:
+		return it.ElementType
+	case types.DynamicArrayType:
+		return it.ElementType
+	}
+	return nil
+}
+
+// holdLoopVar makes a loop variable an owning binding for this iteration, if its body can write
+// where the element came from (ownership.holdLoopSource): `ys[0] = s` releases what `x` borrows.
+// It goes in a frame of its own above the loop's, which `break`, `continue`, `return` and `?`
+// already release, and the function it answers is the iteration's end falling through.
+func (l *lowerer) holdLoopVar(block *ir.Block, source ast.Expression, slot value.Value, elemLL lltypes.Type, elem types.Type) (func(*ir.Block) error, error) {
+	if !l.ownership().HoldsLoopVar(source) || !l.needsDrop(elem) {
+		return func(*ir.Block) error { return nil }, nil
+	}
+	if err := l.deepRetain(block, block.NewLoad(elemLL, slot), elem); err != nil {
+		return nil, err
+	}
+	l.pushManagedFrame()
+	l.addManagedBinding(slot, elem)
+	return func(end *ir.Block) error {
+		defer l.popManagedFrame()
+		if end.Term != nil {
+			return nil
+		}
+		return l.releaseTopManagedFrame(end)
+	}, nil
 }
 
 // lowerForInRange lowers `for i in START..<END` (and `..<=`, with an optional
