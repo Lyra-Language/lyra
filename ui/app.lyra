@@ -1079,7 +1079,11 @@ impl Host<s, e> {
   }
 
   /// The main window moved, resized or changed state: where it is now, to [Subscription.OnPlaced].
-  let main_placed<p> where p: Platform = (self: mut, now: i64, platform: mut p) -> void => {
+  let main_placed<p> where p: Platform = (
+    self: mut,
+    now: i64,
+    platform: mut p
+  ) -> void => {
     let place = WindowPlacement {
       place: platform.window_position(MAIN_WINDOW),
       size: platform.window_size(MAIN_WINDOW)
