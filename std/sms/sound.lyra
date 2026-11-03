@@ -10,29 +10,28 @@ module std.sms.sound
 //! assets.update_sounds()       // Vega's: sound.update(its steps) or update_music(…)
 //! ```
 //!
-//! **The playing is `std.chips.effects`' and `std.chips.music`'s**, what they say each frame
-//! written to the PSG's port, as `std.genesis.sound` and `std.game.sound` write the same to
-//! theirs, so a PSG sound is the same sound on each. A tone effect plays on tone channel 0, a
+//! **The playing is `std.chips.effects`' and `std.sms.music`'s** (`std.chips.music`'s bytes, in
+//! 16 bits), what they say each frame written to the PSG's port, as `std.genesis.sound` and
+//! `std.game.sound` write the same to theirs, so a PSG sound is the same sound on each. A tone effect plays on tone channel 0, a
 //! noise effect on the noise channel, pitched by tone channel 2: one effect at a time on each, a
 //! new one taking the old one's place, and a song gives way on a channel an effect is playing on.
 //!
 //! **The PSG's port may be written at any time**, so unlike the VDP's this needs no vertical
 //! blank: once a frame is all it asks. There is no FM: Vega refuses a project's FM sounds and
-//! notes for these consoles, and what `std.chips.music` makes for FM is dropped.
+//! notes for these consoles.
 
-import std.chips.effects.{ Effect, EffectStep, Player, new_player, MAX_BYTES }
-import std.chips.music.{ Tune, MusicData, MusicPlayer, new_music, held_by }
+import std.chips.effects.{ Effect, EffectStep, Player, new_player }
+import std.chips.music.{ Tune, MusicData, held_by }
 import std.chips.sn76489.{ attenuation_byte }
 import std.chips.ym2612.{ FmPatch }
+import std.sms.music.{ PsgMusic, new_music }
 
 /// The PSG's port.
 const PSG_PORT: u8 = 0x7F
 
 var player: Player = new_player()
-var music: MusicPlayer = new_music()
+var music: PsgMusic = new_music()
 var effect_bytes: [8]u8 = #[0; 8]
-var music_psg: [16]u8 = #[0; 16]
-var music_fm: [768]u8 = #[0; 768]
 
 /// Every PSG channel silent, as it may power up sounding. A game calls this first.
 pub let init = () -> void => {
@@ -82,10 +81,12 @@ pub let update_music<const N: i64, const P: i64, const S: i64, d> where d: Music
 ) -> void => {
   let before = held_by(player)
   effects_frame(steps)
-  let (bytes, _) = music.frame(tables, before | held_by(player), music_psg, music_fm)
+  // The PSG's channels are the song's channels 6 to 9.
+  let held = u8((before | held_by(player)) >> 6) & 15
+  let bytes = music.frame(tables, held)
   var i: i16 = 0
-  while i64(i) < bytes {
-    write(music_psg[i])
+  while i < bytes {
+    write(music.byte(i))
     i += 1
   }
 }

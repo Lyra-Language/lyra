@@ -1112,3 +1112,31 @@ define i16 @udiv_same() { %r = call i16 @udivs(i16 65535, i16 65535)
 ; test urem_28 hl=5
 define i16 @urem_28() { %r = call i16 @urems(i16 985, i16 28)
   ret i16 %r }
+; test mulc48 hl=59232
+define i16 @mulc48() { %x = call i16 @w(i16 1234)
+  %r = mul i16 %x, 48
+  ret i16 %r }
+; test mulc7 hl=7000
+define i16 @mulc7() { %x = call i16 @w(i16 1000)
+  %r = mul i16 %x, 7
+  ret i16 %r }
+; test mulc224 hl=44800
+define i16 @mulc224() { %x = call i16 @w(i16 200)
+  %r = mul i16 %x, 224
+  ret i16 %r }
+; test mulc17 hl=5117
+define i16 @mulc17() { %x = call i16 @w(i16 301)
+  %r = mul i16 %x, 17
+  ret i16 %r }
+; test mulc_neg3 hl=65236
+define i16 @mulc_neg3() { %x = call i16 @w(i16 100)
+  %r = mul i16 %x, -3
+  ret i16 %r }
+; test mulc6 hl=42000
+define i16 @mulc6() { %x = call i16 @w(i16 7000)
+  %r = mul i16 %x, 6
+  ret i16 %r }
+; test mulc65_wraps hl=49
+define i16 @mulc65_wraps() { %x = call i16 @w(i16 1009)
+  %r = mul i16 %x, 65
+  ret i16 %r }

@@ -310,7 +310,6 @@ const NO_STEPS: [1]EnvelopeStep = #[EnvelopeStep { volume: 15, pitch: 0 }]
 data Tables = Tables
 
 impl MusicData for Tables {
-  has_fm = pure (self) => true
   cell = pure (self, index) => CELLS[index]
   pattern = pure (self, order, channel) => if channel == 0 { 0 } else if channel == 6 { 8 } else if channel == 5 { 24 } else { 16 }
   patch = pure (self, index) => PATCHES[index]
@@ -512,7 +511,6 @@ const NO_STEPS: [1]EnvelopeStep = #[EnvelopeStep { volume: 15, pitch: 0 }]
 data Tables = Tables
 
 impl MusicData for Tables {
-  has_fm = pure (self) => true
   cell = pure (self, index) => CELLS[index]
   pattern = pure (self, order, channel) => if channel == 2 { 0 } else if channel == 10 { 8 } else { 16 }
   patch = pure (self, index) => PATCHES[index]

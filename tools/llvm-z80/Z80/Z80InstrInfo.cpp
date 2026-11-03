@@ -37,7 +37,8 @@ void Z80InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     BuildMI(MBB, MI, DL, get(Z80::POP16), DestReg);
     return;
   }
-  report_fatal_error("Z80: a copy between registers it cannot copy");
+  report_fatal_error(Twine("Z80: a copy between registers it cannot copy: ") +
+                     RI.getName(SrcReg) + " to " + RI.getName(DestReg));
 }
 
 static MachineMemOperand *slotMemOperand(MachineFunction &MF, int FI,

@@ -1,0 +1,686 @@
+module std.sms.music
+//! A song on the Z80: `std.chips.music`'s player for the PSG alone, byte for byte, in 16 bits.
+//!
+//! `std.chips.music` plays thirteen channels on two chips with 32-bit pitches, which on the
+//! 68000 is a small part of a frame and on the Z80 five whole frames a row, and 26 KB of code.
+//! This reads the same tables through the same [MusicData] and says the same bytes to the PSG, as
+//! `cmd/lyrac/sms_music_test.go` holds it to, knowing only that a song here has no FM: FM channels'
+//! cells matter only for a jump, a break or a speed, which any channel's row may say.
+//!
+//! **Pitch fits 16 bits**: 64ths of a semitone from MIDI 0 reach 127 × 64. Only a period's working
+//! seems to want more, and [period] works it in 16 bits exactly.
+//!
+//! **What it costs** is what it is shaped by: 13,000 to 20,000 T-states of a frame's 59,736 for a
+//! tick with notes sounding and 40,000 to 70,000 for a row's, against about 1,700 with no song. So
+//! a voice at rest does nothing, a voice's envelope is kept in it, levels are looked up, and each
+//! channel's pattern is found once an order. Each of those came from measuring.
+
+import std.chips.music.{ Tune, Cell, Envelope, MusicData, EMPTY, NOTE_OFF, NO_POINT }
+import std.chips.sn76489.{ attenuation_byte, noise_byte }
+
+/// A song's channels: the FM ones, whose rows say only song control, then the PSG's.
+const FM_CHANNELS: i16 = 6
+const PSG_CHANNELS: i16 = 4
+const OPERATOR_CHANNELS: i16 = 3
+
+/// Tone 3, whose period pitches the noise, and the noise, among the PSG's.
+const NOISE_PITCH: i16 = 2
+const NOISE: i16 = 3
+
+const HIGHEST_PITCH: i16 = 127 * 64
+
+/// One PSG channel's state.
+struct Voice {
+  pitch: i16 = 0,
+  target: i16 = 0,
+  sounding: bool = false,
+  instrument: i16 = -1,
+  volume: i16 = 240,
+  heard_volume: i16 = -1,
+  heard_pitch: i16 = -1,
+  step: u16 = 0,
+  released: bool = false,
+  fine: i16 = 0,
+  vibrato_kept: i16 = 0,
+  arpeggio: u8 = 0,
+  slide: i16 = 0,
+  portamento: i16 = 0,
+  vibrato_speed: i16 = 0,
+  vibrato_depth: i16 = 0,
+  vibrato_at: i16 = 0,
+  volume_slide: i16 = 0,
+  cut_at: i16 = -1,
+  delay_at: i16 = -1,
+  delayed: Cell = Cell {},
+  white: bool = true,
+  noise_set: bool = false,
+  white_wanted: bool = true,
+  steady: bool = false,
+  /// No effect is moving anything: most ticks of most notes, and a field read is slow.
+  plain: bool = true,
+  /// The instrument's envelope, kept from when the cell named it: a voice wants it every tick.
+  envelope: Envelope = Envelope { first: 0, count: 0 },
+  /// To 64 bytes, a shift to index by rather than a multiply.
+  _padding: [6]u8 = #[0; 6],
+}
+
+/// The song playing.
+pub struct PsgMusic {
+  song: Tune,
+  playing: bool = false,
+  order: i16 = 0,
+  row: i16 = 0,
+  tick: i16 = 0,
+  speed: i16 = 6,
+  speed1: i16 = 6,
+  speed2: i16 = 6,
+  owed: i16 = 0,
+  jump: i16 = -1,
+  break_to: i16 = -1,
+  voices: [4]Voice,
+  /// Each channel's pattern in the order they are for: a look through two tables and a 32-bit
+  /// multiply that a row would otherwise make thirteen times.
+  starts: [13]i32,
+  starts_of: i32 = -1,
+  /// This frame's bytes for the PSG.
+  out: Out = Out {},
+}
+
+/// A frame's bytes for the PSG: at most 16, as the shared player says.
+struct Out {
+  bytes: [16]u8 = #[0; 16],
+  count: i16 = 0,
+}
+
+/// A player with nothing playing.
+pub let new_music = pure () -> PsgMusic =>
+  PsgMusic {
+    song: Tune { first_order: 0, orders: 0, rows: 0 },
+    voices: #[Voice {}; 4],
+    starts: #[0; 13]
+  }
+
+impl PsgMusic {
+  /// Play `song` from its start, in place of any song playing.
+  pub let play_song = (self: mut, song: Tune) -> void => {
+    self.song = song
+    self.playing = song.orders > 0 && song.rows > 0
+    self.order = 0
+    self.row = 0
+    self.tick = 0
+    self.speed1 = i16(song.speed).max(1)
+    self.speed2 = if song.speed2 > 0 { i16(song.speed2) } else { self.speed1 }
+    self.speed = self.speed1
+    self.owed = (60 - i16(song.rate.max(1))).max(0)
+    self.jump = -1
+    self.break_to = -1
+    self.starts_of = -1
+    var c: i16 = 0
+    while c < PSG_CHANNELS {
+      self.voices[c].restart()
+      c += 1
+    }
+  }
+
+  /// Stop the song: every channel it sounds let go on the next [frame].
+  pub let stop = (self: mut) -> void => { self.playing = false }
+
+  /// This frame's bytes for the PSG, and how many; they are [byte]'s until the next frame. `held`
+  /// is the PSG channels an effect is playing on, a bit each: the song leaves them alone.
+  pub let frame<d> where d: MusicData = (self: mut, tables: ref d, held: u8) -> i16 => {
+    self.out.count = 0
+    if !self.playing {
+      var c: i16 = 0
+      while c < PSG_CHANNELS {
+        if !is_held(held, c) { self.voices[c].stopped(c, self.out) }
+        c += 1
+      }
+      return self.out.count
+    }
+    self.owed += i16(self.song.rate.max(1))
+    var ticks: i16 = 0
+    while self.owed >= 60 && ticks < 2 {
+      self.owed -= 60
+      self.tick_once(tables, held)
+      ticks += 1
+    }
+    if self.owed >= 60 { self.owed = 0 }
+    self.out.count
+  }
+
+  /// The `i`th of this frame's bytes.
+  pub let byte = pure (self: ref, i: i16) -> u8 => self.out.bytes[i]
+
+  // ── Beneath ────────────────────────────────────────────────────────────────
+
+  let tick_once<d> where d: MusicData = (self: mut, tables: ref d, held: u8) -> void => {
+    let reading = self.tick == 0
+    let row = i32(self.row)
+    if reading {
+      self.find_patterns(tables)
+      var k: i16 = 0
+      while k < FM_CHANNELS {
+        self.song_control(tables.cell(self.starts[k] + row))
+        k += 1
+      }
+    }
+    let noise_owns = self.voices[NOISE].sounding && !is_held(held, NOISE)
+    var c: i16 = 0
+    while c < PSG_CHANNELS {
+      let lent = is_held(held, c)
+      if reading {
+        let cell = tables.cell(self.starts[FM_CHANNELS + c] + row)
+        self.song_control(cell)
+        self.voices[c].read(tables, c, cell, lent, self.speed, self.out)
+      }
+      self.voices[c].tick_along(tables, c, reading, lent, noise_owns, self.tick, self.out)
+      c += 1
+    }
+    if reading && self.song.extended {
+      var k: i16 = FM_CHANNELS + PSG_CHANNELS
+      while k < FM_CHANNELS + PSG_CHANNELS + OPERATOR_CHANNELS {
+        self.song_control(tables.cell(self.starts[k] + row))
+        k += 1
+      }
+    }
+    self.advance()
+  }
+
+  let find_patterns<d> where d: MusicData = (self: mut, tables: ref d) -> void => {
+    let at = i32(self.song.first_order) + i32(self.order)
+    if at == self.starts_of { return }
+    self.starts_of = at
+    let channels = FM_CHANNELS + PSG_CHANNELS + if self.song.extended { OPERATOR_CHANNELS } else { 0 }
+    var k: i16 = 0
+    while k < channels {
+      self.starts[k] = tables.pattern(at, i32(k))
+      k += 1
+    }
+  }
+
+  let song_control = (self: mut, cell: Cell) -> void => {
+    if cell.effect != EMPTY { self.control(cell.effect, cell.param) }
+    if cell.effect2 != EMPTY { self.control(cell.effect2, cell.param2) }
+  }
+
+  let control = (self: mut, code: u8, param: u8) -> void => {
+    if code == 0x0B { self.jump = i16(param) }
+    if code == 0x0D { self.break_to = i16(param) }
+    if code == 0x0F && param > 0 {
+      self.speed1 = i16(param)
+      self.speed2 = i16(param)
+      self.speed = i16(param)
+    }
+  }
+
+  let advance = (self: mut) -> void => {
+    self.tick += 1
+    if self.tick < self.speed { return }
+    self.tick = 0
+    let orders = i16(self.song.orders)
+    let rows = i16(self.song.rows)
+    if self.jump >= 0 {
+      self.order = self.jump
+      self.row = if self.break_to >= 0 { self.break_to } else { 0 }
+    } else if self.break_to >= 0 {
+      self.order += 1
+      self.row = self.break_to
+    } else {
+      self.row += 1
+      if self.row >= rows {
+        self.row = 0
+        self.order += 1
+      }
+    }
+    self.jump = -1
+    self.break_to = -1
+    if self.order >= orders || self.order < 0 { self.order = i16(self.song.loop_to)
+        .min(orders - 1)
+        .max(0) }
+    if self.row >= rows { self.row = 0 }
+    self.speed = if (self.row & 1) == 0 { self.speed1 } else { self.speed2 }
+  }
+}
+
+impl Out {
+  let put = (self: mut, value: u8) -> void => {
+    if self.count >= 16 { return }
+    self.bytes[self.count] = value
+    self.count += 1
+  }
+
+  let put_period = (self: mut, channel: u8, value: u16) -> void => {
+    self.put(0x80 | (channel << 5) | u8(value & 0x0F))
+    self.put(u8((value >> 4) & 0x3F))
+  }
+}
+
+// A voice's work is all here, on a reference found once: an index into `voices` is a multiply.
+impl Voice {
+  /// A song started: what the chip holds kept, the rest new.
+  let restart = (self: mut) -> void => {
+    let sounding = self.sounding
+    self = Voice {}
+    self.sounding = sounding
+  }
+
+  /// The song has stopped: silence, once.
+  let stopped = (self: mut, c: i16, out: mut Out) -> void => {
+    if self.sounding { self.silence(c, out) }
+  }
+
+  /// A row's cell for this channel: heard, or kept for its delay, or if an effect has the channel
+  /// only remembered.
+  let read<d> where d: MusicData = (
+    self: mut,
+    tables: ref d,
+    c: i16,
+    cell: Cell,
+    lent: bool,
+    speed: i16,
+    out: mut Out
+  ) -> void => {
+    if lent {
+      self.remember(tables, cell)
+      return
+    }
+    // Nothing moving and nothing said: nothing changes.
+    if self.steady && self.plain && self.delay_at < 0 && self.cut_at < 0 && is_empty(cell) { return }
+    self.cut_at = -1
+    self.delay_at = -1
+    let delay = if cell.effect == 0xED { i16(cell.param) } else if cell.effect2 == 0xED { i16(cell.param2) } else { 0 }
+    if delay > 0 && delay < speed {
+      self.delay_at = delay
+      self.delayed = cell
+      return
+    }
+    self.take(tables, c, cell, out)
+  }
+
+  /// The tick after any row's cell was read.
+  let tick_along<d> where d: MusicData = (
+    self: mut,
+    tables: ref d,
+    c: i16,
+    reading: bool,
+    lent: bool,
+    noise_owns: bool,
+    tick: i16,
+    out: mut Out
+  ) -> void => {
+    if lent {
+      self.lent()
+      return
+    }
+    if !reading {
+      // Between rows a resting channel has nothing to do, unless it is tone 3, whose period the
+      // noise may have just given back.
+      if c != NOISE_PITCH && self.steady && self.delay_at < 0 && self.cut_at < 0 { return }
+      if self.delay_at == tick {
+        self.delay_at = -1
+        let cell = self.delayed
+        self.take(tables, c, cell, out)
+      }
+    }
+    if self.cut_at == tick { self.silence(c, out) }
+    if !self.plain { self.tick_effects(tick) }
+    if c == NOISE_PITCH && noise_owns {
+      self.heard_pitch = -1
+      self.heard_volume = -1
+      self.steady = false
+      return
+    }
+    self.sound(tables, c, tick, out)
+  }
+
+  let take<d> where d: MusicData = (
+    self: mut,
+    tables: ref d,
+    c: i16,
+    cell: Cell,
+    out: mut Out
+  ) -> void => {
+    self.remember(tables, cell)
+    if cell.note == NOTE_OFF {
+      self.let_go(c, out)
+      return
+    }
+    if cell.note == EMPTY { return }
+    let pitch = i16(cell.note) << 6
+    let gliding = cell.effect == 0x03 || cell.effect2 == 0x03
+    if gliding && self.sounding {
+      self.target = pitch
+      self.plain = false
+      return
+    }
+    self.pitch = pitch
+    self.target = pitch
+    self.step = 0
+    self.released = false
+    self.vibrato_at = 0
+    if cell.effect != EMPTY { self.note_slide(cell.effect, cell.param) }
+    if cell.effect2 != EMPTY { self.note_slide(cell.effect2, cell.param2) }
+    self.plain = self.plain && self.target == self.pitch
+    // The note started: heard when it is sounded, this tick.
+    self.heard_pitch = -1
+    self.heard_volume = -1
+    if c == NOISE { self.white_wanted = self.envelope.count == 0 || self.envelope.white }
+    self.sounding = true
+  }
+
+  let let_go = (self: mut, c: i16, out: mut Out) -> void => {
+    if !self.sounding || self.envelope.count == 0 || self.envelope.release == NO_POINT {
+      self.silence(c, out)
+      return
+    }
+    self.released = true
+    self.steady = false
+    self.step = self.envelope.release + 1
+  }
+
+  let silence = (self: mut, c: i16, out: mut Out) -> void => {
+    self.sounding = false
+    self.steady = false
+    self.heard_volume = -1
+    self.heard_pitch = -1
+    out.put(attenuation_byte(u8(c), 15))
+  }
+
+  let sound<d> where d: MusicData = (
+    self: mut,
+    tables: ref d,
+    c: i16,
+    tick: i16,
+    out: mut Out
+  ) -> void => {
+    if !self.sounding || self.steady { return }
+    var pitch = self.pitch + self.fine
+    var level = self.volume >> 4
+    var settled = true
+    if self.envelope.count > 0 {
+      let at = self.envelope_at()
+      let s = tables.envelope_step(i32(self.envelope.first) + i32(at))
+      pitch += s.pitch
+      level = scaled(s.volume, self.volume)
+      self.step = at + 1
+      settled = !self.runs_on(at + 1) && self.envelope_at() == at
+    }
+    if !self.plain {
+      if self.arpeggio != 0 {
+        let phase = third(tick)
+        if phase == 1 { pitch += i16(self.arpeggio >> 4) << 6 }
+        if phase == 2 { pitch += i16(self.arpeggio & 15) << 6 }
+      }
+      if self.vibrato_depth > 0 { pitch += sine(self.vibrato_at).wrapping_mul(self.vibrato_depth) / 32 }
+    }
+    pitch = pitch.clamp(0, HIGHEST_PITCH)
+    level = level.clamp(0, 15)
+    self.sound_psg(c, pitch, level, out)
+    // At rest until a cell says otherwise: the same numbers would say the same bytes, which is none.
+    self.steady = settled && (self.plain || self.has_no_effect())
+  }
+
+  let sound_psg = (self: mut, c: i16, pitch: i16, level: i16, out: mut Out) -> void => {
+    if c == NOISE {
+      if !self.noise_set || self.white_wanted != self.white {
+        out.put(noise_byte(self.white_wanted))
+        out.put(attenuation_byte(2, 15))
+        self.white = self.white_wanted
+        self.noise_set = true
+      }
+      if pitch != self.heard_pitch {
+        out.put_period(2, ((period(pitch) + 8) >> 4).clamp(1, 1023))
+        self.heard_pitch = pitch
+      }
+      if level != self.heard_volume {
+        out.put(attenuation_byte(3, u8(15 - level)))
+        self.heard_volume = level
+      }
+      return
+    }
+    if pitch != self.heard_pitch {
+      out.put_period(u8(c), period(pitch).clamp(1, 1023))
+      self.heard_pitch = pitch
+    }
+    if level != self.heard_volume {
+      out.put(attenuation_byte(u8(c), u8(15 - level)))
+      self.heard_volume = level
+    }
+  }
+
+  /// An effect has the channel: the music sounds there again from its next note.
+  let lent = (self: mut) -> void => {
+    self.sounding = false
+    self.steady = false
+    self.heard_pitch = -1
+    self.heard_volume = -1
+    self.noise_set = false
+  }
+
+  let note_slide = (self: mut, code: u8, param: u8) -> void => {
+    if code != 0xE1 && code != 0xE2 { return }
+    let by = i16(param & 15) << 6
+    self.target = if code == 0xE1 { (self.pitch + by).min(HIGHEST_PITCH) } else { (self.pitch - by).max(0) }
+    self.portamento = (i16(param >> 4) * 4).max(1)
+  }
+
+  let remember<d> where d: MusicData = (self: mut, tables: ref d, cell: Cell) -> void => {
+    self.steady = false
+    if cell.instrument != EMPTY && i16(cell.instrument) != self.instrument {
+      self.instrument = i16(cell.instrument)
+      let ins = i32(cell.instrument)
+      self.envelope = if ins < tables.envelopes() { tables.envelope(ins) } else { Envelope {
+        first: 0,
+        count: 0
+      } }
+    }
+    if cell.volume != EMPTY { self.volume = i16(cell.volume.min(15)) << 4 }
+    self.arpeggio = 0
+    self.slide = 0
+    self.volume_slide = 0
+    self.vibrato_depth = 0
+    if cell.effect != EMPTY { self.effect(cell.effect, cell.param) }
+    if cell.effect2 != EMPTY { self.effect(cell.effect2, cell.param2) }
+    self.plain = self.has_no_effect()
+  }
+
+  let has_no_effect = pure (self: ref) -> bool =>
+    self.arpeggio == 0 &&
+    self.vibrato_depth == 0 &&
+    self.slide == 0 &&
+    self.volume_slide == 0 &&
+    self.target == self.pitch
+
+  let effect = (self: mut, code: u8, param: u8) -> void => {
+    let p = i16(param)
+    match code {
+      0x00 => { self.arpeggio = param },
+      0x01 => { self.slide = p },
+      0x02 => { self.slide = -p },
+      0x03 => { if p > 0 { self.portamento = p } },
+      0x04 => {
+        if (p >> 4) > 0 { self.vibrato_speed = p >> 4 }
+        self.vibrato_depth = p & 15
+        self.vibrato_kept = p & 15
+      },
+      0x05 => { self.volume_slide = if (p >> 4) > 0 { p >> 4 } else { -(p & 15) } },
+      0x06 => {
+        self.volume_slide = if (p >> 4) > 0 { p >> 4 } else { -(p & 15) }
+        self.vibrato_depth = self.vibrato_kept
+      },
+      0xE1 | 0xE2 => self.note_slide(code, param),
+      0xE5 => { self.fine = (p - 128) / 2 },
+      0x20 => { self.white_wanted = (param & 15) != 0 },
+      0x0A => { self.volume_slide = if (p >> 4) > 0 { p >> 4 } else { -(p & 15) } },
+      0xEC => { self.cut_at = p },
+      _ => {},
+    }
+  }
+
+  let tick_effects = (self: mut, tick: i16) -> void => {
+    if tick > 0 {
+      if self.slide != 0 {
+        self.pitch = (self.pitch + self.slide).clamp(0, HIGHEST_PITCH)
+        self.target = self.pitch
+      }
+      if self.target != self.pitch && self.portamento > 0 {
+        let by = self.portamento
+        self.pitch = if self.target > self.pitch { (self.pitch + by).min(self.target) } else { (self.pitch - by).max(self.target) }
+      }
+      if self.volume_slide != 0 { self.volume = (self.volume + self.volume_slide).clamp(
+        0,
+        240
+      ) }
+    }
+    if self.vibrato_depth > 0 { self.vibrato_at = (self.vibrato_at + self.vibrato_speed) & 63 }
+  }
+
+  /// Whether the envelope's step `at` is simply the next: before its end, and any release not
+  /// yet held back from.
+  let runs_on = pure (self: ref, at: u16) -> bool =>
+    at < self.envelope.count && (self.released || self.envelope.release == NO_POINT || at <= self.envelope.release)
+
+  /// The envelope's step for this frame: the next, or past its release while the note is held
+  /// back to its loop (or held at the release), and past its end its loop or its last held.
+  let envelope_at = pure (self: ref) -> u16 => {
+    if self.runs_on(self.step) { return self.step }
+    let has_loop = self.envelope.loop != NO_POINT
+    let has_release = self.envelope.release != NO_POINT
+    let lp = self.envelope.loop
+    let release = self.envelope.release
+    let count = self.envelope.count
+    var at = self.step
+    if !self.released && has_release && at > release {
+      at = if has_loop && lp <= release { lp } else { release }
+    }
+    if at >= count {
+      let loops = has_loop &&
+        lp < count &&
+        (!has_release ||
+            (self.released && lp > release) ||
+            (!self.released && lp <= release))
+      at = if loops { lp } else { count - 1 }
+    }
+    at.min(count - 1)
+  }
+}
+
+let is_empty = pure (cell: Cell) -> bool =>
+  cell.note == EMPTY &&
+  cell.instrument == EMPTY &&
+  cell.volume == EMPTY &&
+  cell.effect == EMPTY &&
+  cell.effect2 == EMPTY
+
+let is_held = pure (held: u8, c: i16) -> bool => (held >> u8(c)) & 1 == 1
+
+/// `(step × volume + 120) / 240`. A cell's volume is a whole sixteenth, so usually this is one
+/// look in [LEVELS]; a volume sliding between them is worked out.
+let scaled = pure (step: u8, volume: i16) -> i16 => {
+  if (volume & 15) == 0 && step < 16 { return i16(LEVELS[(i16(step) << 4) | (volume >> 4)]) }
+  var total: u16 = 120
+  var left = step
+  while left > 0 {
+    total += u16(volume)
+    left -= 1
+  }
+  i16(total / 240)
+}
+
+/// [scaled] of every step and sixteenth of a volume.
+const LEVELS: [256]u8 = #[
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+  0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2,
+  0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3,
+  0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4,
+  0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5,
+  0, 0, 1, 1, 2, 2, 2, 3, 3, 4, 4, 4, 5, 5, 6, 6,
+  0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7,
+  0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8,
+  0, 1, 1, 2, 2, 3, 4, 4, 5, 5, 6, 7, 7, 8, 8, 9,
+  0, 1, 1, 2, 3, 3, 4, 5, 5, 6, 7, 7, 8, 9, 9, 10,
+  0, 1, 1, 2, 3, 4, 4, 5, 6, 7, 7, 8, 9, 10, 10, 11,
+  0, 1, 2, 2, 3, 4, 5, 6, 6, 7, 8, 9, 10, 10, 11, 12,
+  0, 1, 2, 3, 3, 4, 5, 6, 7, 8, 9, 10, 10, 11, 12, 13,
+  0, 1, 2, 3, 4, 5, 6, 7, 7, 8, 9, 10, 11, 12, 13, 14,
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+]
+
+/// `tick % 3`, for ticks, which are few.
+let third = pure (tick: i16) -> i16 => {
+  if tick < 3 { return tick }
+  tick % 3
+}
+
+/// The PSG's period that plays `pitch`, before it is held to the chip's 1–1023: exactly
+/// `std.chips.music.psg_period`'s `((a × 64 - m) + 2^(s-1)) >> s`, where `s` is the octave plus
+/// six. Taking the ×64 out of both sides leaves numbers that fit: `(A + 2^(o-1)) >> o`.
+let period = pure (pitch: i16) -> u16 => {
+  var semitone = pitch >> 6
+  var octave: u8 = 0
+  while semitone >= 12 {
+    semitone -= 12
+    octave += 1
+  }
+  let a = PSG_PERIODS[semitone]
+  let b = PSG_PERIODS[semitone + 1]
+  let m = (a - b).wrapping_mul(u16(pitch & 63))
+  let whole = m >> 6
+  let part = m & 63
+  var above = a - whole
+  if part > 0 { above -= 1 }
+  // What the 64ths left over add: past an octave they round nothing further.
+  if octave == 0 {
+    let left = if part > 0 { 64 - part } else { 0 }
+    return if left >= 32 { above + 1 } else { above }
+  }
+  above += u16(1) << u16(octave - 1)
+  while octave > 0 {
+    above = above >> 1
+    octave -= 1
+  }
+  above
+}
+
+const PSG_PERIODS: [13]u16 = #[
+  13682,
+  12914,
+  12189,
+  11505,
+  10859,
+  10250,
+  9675,
+  9132,
+  8619,
+  8135,
+  7679,
+  7248,
+  6841
+]
+
+let sine = pure (at: i16) -> i16 => {
+  let quarter = at & 15
+  let v = SINE_QUARTER[if (at & 16) != 0 { 16 - quarter } else { quarter }]
+  if (at & 32) != 0 { -v } else { v }
+}
+
+const SINE_QUARTER: [17]i16 = #[
+  0,
+  12,
+  25,
+  37,
+  49,
+  60,
+  71,
+  81,
+  90,
+  98,
+  106,
+  112,
+  117,
+  122,
+  125,
+  126,
+  127
+]

@@ -164,6 +164,23 @@ SDValue Z80TargetLowering::lowerShift(SDValue Op, SelectionDAG &DAG) const {
   return Value;
 }
 
+// A multiply is a call and a loop of several hundred T-states, and indexing an array of structs
+// is one. A size that is a power of two times 2^n+1 or 2^n-1 is a shift or two and an add or
+// subtract; the shifts are `add hl, hl`.
+bool Z80TargetLowering::decomposeMulByConstant(LLVMContext &, EVT VT,
+                                               SDValue C) const {
+  if (VT != MVT::i16)
+    return false;
+  auto *N = dyn_cast<ConstantSDNode>(C);
+  if (!N)
+    return false;
+  APInt Value = N->getAPIntValue().abs();
+  if (Value.isZero())
+    return false;
+  APInt Odd = Value.lshr(Value.countr_zero());
+  return (Odd - 1).isPowerOf2() || (Odd + 1).isPowerOf2();
+}
+
 SDValue Z80TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   SDLoc DL(Op);
   switch (Op.getOpcode()) {

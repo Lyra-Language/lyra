@@ -43,6 +43,10 @@ Three items that share one question: what a size is.
   parameter that was only ever read in a body was a warning, with a backend error at each call, so
   it's now `lyra-E031` for a `const` one. `f::<64>` stays open: nothing needed it here.
 
+### 11/03/26 — `std.sms.music`: a song in 16 bits on the Z80
+
+`std.chips.music`'s PSG bytes exactly, held by `cmd/lyrac/sms_music_test.go` on the host and on the Z80. What cost was never the sums alone: `voices[c]` was a multiply per field until a voice's work moved onto one reference and the backend split constant multiplies into shifts; then a voice at rest, a kept envelope, a table of levels and patterns found once an order. `smscheck --work on` had been counting an overrun's two status reads as a second, empty frame, halving averages, so earlier figures for overrunning scenes were wrong; it now says how many of the screen's frames the game kept. Building it also found `lyrac` leaving allocas after code in the entry block, which inlining strands as dynamic allocations the Z80's frame cannot make (`allocasFirst`).
+
 ### 11/03/26 — A sequence function's arguments, inlined
 
 Two items that looked like one family, plus what probing them turned up.

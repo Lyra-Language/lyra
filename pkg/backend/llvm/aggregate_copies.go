@@ -41,8 +41,28 @@ func copyLargeAggregates(m *ir.Module) {
 		copyWithMemcpy(m, f)
 		snapshotStoredLoads(m, f)
 		dropDeadValues(f)
+		allocasFirst(f)
 		unnumber(f)
 	}
+}
+
+// allocasFirst moves the entry block's fixed-size allocas ahead of its code. The lowering adds
+// a slot to the end of the entry block when it meets the need, behind whatever code is there;
+// a call in that code inlined with a branch in it splits the block, and the slot is left in a
+// block that is not the first, where LLVM takes it for a dynamic allocation. Most targets
+// manage one, moving the stack pointer at the point; the Z80's frame, which holds outgoing
+// arguments at the bottom of a fixed frame, does not.
+func allocasFirst(f *ir.Func) {
+	entry := f.Blocks[0]
+	var first, rest []ir.Instruction
+	for _, inst := range entry.Insts {
+		if a, ok := inst.(*ir.InstAlloca); ok && a.NElems == nil {
+			first = append(first, inst)
+		} else {
+			rest = append(rest, inst)
+		}
+	}
+	entry.Insts = append(first, rest...)
 }
 
 // unnumber clears the numbers of f's unnamed values, so they are numbered afresh when the

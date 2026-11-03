@@ -1360,7 +1360,9 @@ target, 10/11). In order:
   `clock_gettime`, `localtime_r`, std.io's `open`/`mkdir`/`readlink`).
 - **[OPEN] The web** — the backend's 64-bit pointers and `i64` `size_t` (`layout.go`'s
   `pointerSize`, the libc declarations, `coro.size.i64`) need a per-target width first.
-- **[PARTIAL] A Z80 backend, for new Master System and Game Gear games**: `target = "sms"` builds games up to 1 MB with `@banked` tables, and Vega generates them, with PSG effects (`tools/llvm-z80/README.md`, `vega/todo.md`). Next: a 16-bit PSG music player, as `std.chips.music` takes five frames a row here. Speed left: an entity on a map is about 30,000 T-states of a 59,736 frame; frames at about 100 T-states a call.
+- **[OPEN] Z80 code speed**: a field through a pointer is about 80 T-states and every checked add a jump, which is most of `std.sms.music`'s cost and much of a game's. IY as a pointer register with `(iy+d)` addressing is the next win; measure with `smscheck --work on`, which now counts game frames.
+- **[OPEN] A const passed to a generic `ref` parameter**: `p.go(X)` with `go<d> where d: R = (self: mut, t: ref d)` and `const X: T` fails `lyrac` with `assignment to unbound identifier "X"`. Passing the value literally works.
+- **[PARTIAL] A Z80 backend, for new Master System and Game Gear games**: `target = "sms"` builds games up to 1 MB with `@banked` tables, and Vega generates them, with PSG effects and songs (`tools/llvm-z80/README.md`, `vega/todo.md`). Songs play on `std.sms.music`. Speed left: an entity on a map is about 35,000 T-states of a 59,736 frame standing and 68,000 walking right, which drops frames.
 
 ## Target introspection
 
