@@ -17,16 +17,19 @@ import (
 )
 
 type TypeChecker struct {
-	symTable     *symbols.SymbolTable
-	scopeTable   *symbols.ScopeTable
-	typeTable    *typetable.TypeTable
-	methodTable  *typetable.MethodTable
-	scope        *symbols.Scope
-	errors       []TypeError
-	paramTypes   map[string]types.Type         // non-nil only while checking a function body
-	paramMods    map[string]types.TypeModifier // ref/mut/own modifier per parameter, alongside paramTypes
-	patternBound map[string]bool               // names in paramTypes that came from a *pattern* (match arm, if-let), not a parameter
-	paramHome    map[string]*symbols.Scope     // per paramTypes name, the scope it was introduced in; a local binding between a use and it shadows the entry (name_resolution.go)
+	symTable    *symbols.SymbolTable
+	scopeTable  *symbols.ScopeTable
+	typeTable   *typetable.TypeTable
+	methodTable *typetable.MethodTable
+	scope       *symbols.Scope
+	errors      []TypeError
+	paramTypes  map[string]types.Type         // non-nil only while checking a function body
+	paramMods   map[string]types.TypeModifier // ref/mut/own modifier per parameter, alongside paramTypes
+	constParams map[string]bool               // names in paramTypes that are `const` generic parameters
+	// implConstParams are the `const` parameters the trait impl being checked introduces.
+	implConstParams []ast.GenericParam
+	patternBound    map[string]bool           // names in paramTypes that came from a *pattern* (match arm, if-let), not a parameter
+	paramHome       map[string]*symbols.Scope // per paramTypes name, the scope it was introduced in; a local binding between a use and it shadows the entry (name_resolution.go)
 	// destructured holds the typed binding checkDestructuringDecl made for each name a
 	// destructuring bound, for a use reaching its placeholder through a later binding's
 	// Shadows chain (name_resolution.go).
@@ -1654,6 +1657,11 @@ func (tc *TypeChecker) resolveAssignTarget(name string, loc ast.Location) (assig
 		case types.Own, types.Mut:
 			return assignTarget{paramType, true}, true
 		}
+		if tc.constParams[name] {
+			tc.addErrorCode(loc, SeverityError, diag.CodeBorrowedParamReassignment,
+				"%s: cannot reassign a `const` parameter — it is a number fixed by each specialization", name)
+			return assignTarget{paramType, false}, true
+		}
 		if tc.patternBound[name] {
 			// Same rule, different thing: a match-arm / if-let binding borrows out of
 			// the value being matched, which the scrutinee still owns. Saying
@@ -2906,6 +2914,9 @@ func (tc *TypeChecker) checkGenericTypeBounds(pt types.ParameterizedType, loc as
 		return
 	}
 	for i, gp := range decl.GenericParams {
+		if i < len(pt.TypeArguments) {
+			tc.checkGenericArgumentKind(pt, decl, gp, pt.TypeArguments[i], loc)
+		}
 		if len(gp.Constraints) == 0 || i >= len(pt.TypeArguments) {
 			continue
 		}
@@ -2943,6 +2954,36 @@ func (tc *TypeChecker) checkGenericTypeBounds(pt types.ParameterizedType, loc as
 				pt.Name, gp.Name, arg, traitName, because, decl.Name, gp.Name, traitName)
 		}
 	}
+}
+
+// checkGenericArgumentKind refuses a size for a type's type parameter (`Box<3>`) and a type for
+// its `const` one (`Ring<i64, i64>`), which otherwise surface as a mismatch naming the type as
+// written, with no word about why it can't be right.
+func (tc *TypeChecker) checkGenericArgumentKind(pt types.ParameterizedType, decl *ast.TypeDeclStmt, gp ast.GenericParam, arg types.Type, loc ast.Location) {
+	if arg == nil {
+		return
+	}
+	if _, hole := arg.(types.HoleType); hole {
+		return
+	}
+	_, isSize := arg.(types.ArraySize)
+	if gp.IsConst == isSize {
+		return
+	}
+	key := genericBoundReport{name: pt.Name, inst: arg.String(), trait: gp.Name}
+	if tc.boundReported[key] {
+		return
+	}
+	if tc.boundReported == nil {
+		tc.boundReported = map[genericBoundReport]bool{}
+	}
+	tc.boundReported[key] = true
+	if gp.IsConst {
+		tc.addError(loc, SeverityError,
+			"%s: %s is a `const` parameter and takes a size, not the type %s", decl.Name, gp.Name, arg)
+		return
+	}
+	tc.addError(loc, SeverityError, "%s: %s is a type parameter and takes a type, not the size %s", decl.Name, gp.Name, arg)
 }
 
 // resolveNameReporting is resolveType's leaf: resolve the name, and say so when it
@@ -3435,6 +3476,9 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		// it is in effect here, which shadows it (name_resolution.go).
 		if t, ok := tc.paramTypes[e.Name]; ok && tc.paramAt(e.Name, e.GetLocation()) {
 			tc.typeTable.Set(e, t)
+			if tc.constParams[e.Name] {
+				tc.typeTable.MarkConstParam(e)
+			}
 			return t
 		}
 		sym, ok := tc.lookupAt(e.Name, e.GetLocation())
@@ -4069,6 +4113,8 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 			// recovers a fixed repeat's count by folding `ar.Count` with the same helper.
 			if !ar.Fixed {
 				tc.typeTable.Set(expr, types.DynamicArrayType{ElementType: resolved})
+			} else if size, ok := tc.repeatCountInConstParams(ar.Count); ok {
+				tc.typeTable.Set(expr, types.StaticArrayType{ElementType: resolved, SizeVar: size})
 			} else if n, ok := tc.arrayRepeatCount(ar); ok {
 				tc.typeTable.Set(expr, types.StaticArrayType{ElementType: resolved, Size: n})
 			}
@@ -5446,6 +5492,13 @@ func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, na
 			// (matching how an anonymous tuple's elements are recorded).
 			tc.typeTable.Set(elemExpr, promoteToDefault(actual))
 			continue
+		}
+		// A size in a `const` parameter is solved like a type variable, and not by this
+		// element's being the name of one.
+		sizes := map[string]bool{}
+		types.CollectSizeVars(declaredElem, sizes)
+		if len(sizes) > 0 {
+			declaredElem = substituteGenerics(declaredElem, typeSubst)
 		}
 		expected := tc.resolveType(declaredElem, elemExpr.GetLocation())
 		// The declared element type completes the value's instantiation before it is

@@ -44,11 +44,23 @@ func CollectTypeVars(t Type, vars map[string]bool) {
 		if tt, ok := t.(GenericType); ok {
 			vars[tt.Name] = true
 		}
-		// A `const` parameter is mentioned where it sizes an array (`[N]t`).
-		if tt, ok := t.(StaticArrayType); ok && tt.SizeVar != "" {
-			vars[tt.SizeVar] = true
+		// A `const` parameter is mentioned where it sizes an array (`[N]t`) or is a type's
+		// argument (`Ring<t, N>`).
+		for _, name := range sizeVarsAt(t) {
+			vars[name] = true
 		}
 	})
+}
+
+// sizeVarsAt answers the `const` parameters t itself is written in terms of, not looking inside.
+func sizeVarsAt(t Type) []string {
+	switch tt := t.(type) {
+	case StaticArrayType:
+		return SizeVarNames(tt.SizeVar)
+	case ArraySize:
+		return SizeVarNames(tt.Var)
+	}
+	return nil
 }
 
 // AppendTypeVars appends to out each type variable t mentions that out does not hold yet,
@@ -64,12 +76,13 @@ func AppendTypeVars(t Type, out []string) []string {
 	return out
 }
 
-// CollectSizeVars adds to vars every `const` parameter t writes an array size as — the N
-// of `[N]t` — a subset of what CollectTypeVars finds, for the check that each is declared.
+// CollectSizeVars adds to vars every `const` parameter t writes a size as — the N of `[N]t`,
+// `[N + 1]t` or `Ring<t, N>` — a subset of what CollectTypeVars finds, for the check that each
+// is declared.
 func CollectSizeVars(t Type, vars map[string]bool) {
 	walkSignature(t, func(t Type) {
-		if tt, ok := t.(StaticArrayType); ok && tt.SizeVar != "" {
-			vars[tt.SizeVar] = true
+		for _, name := range sizeVarsAt(t) {
+			vars[name] = true
 		}
 	})
 }

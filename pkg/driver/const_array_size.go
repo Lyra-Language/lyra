@@ -1,7 +1,9 @@
 package driver
 
 import (
+	"maps"
 	"reflect"
+	"slices"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
@@ -139,6 +141,9 @@ type visitKey struct {
 var (
 	staticArrayType   = reflect.TypeOf(types.StaticArrayType{})
 	parameterizedType = reflect.TypeOf(types.ParameterizedType{})
+	arraySizeType     = reflect.TypeOf(types.ArraySize{})
+	typeDeclType      = reflect.TypeOf(ast.TypeDeclStmt{})
+	traitImplStmtType = reflect.TypeOf(ast.TraitImplStmt{})
 	varDeclType       = reflect.TypeOf(ast.VarDeclStmt{})
 	lambdaExprType    = reflect.TypeOf(ast.LambdaExpr{})
 )
@@ -219,6 +224,9 @@ func (f *sizeFolder) walkStruct(v reflect.Value, shadowed map[string]bool) bool 
 				changed = true
 			}
 		}
+		if f.sizeArguments(p) {
+			changed = true
+		}
 		if f.walk(v.FieldByName("TypeArguments"), shadowed) {
 			changed = true
 		}
@@ -229,34 +237,40 @@ func (f *sizeFolder) walkStruct(v reflect.Value, shadowed map[string]bool) bool 
 			return false
 		}
 		arr := v.Addr().Interface().(*types.StaticArrayType)
-		if arr.SizeVar != "" && !shadowed[arr.SizeVar] {
-			if size, ok := constSize(f.st, arr.SizeVar, f.loc); ok {
-				arr.Size, arr.SizeVar = size, ""
-				changed = true
-			}
+		if size, sizeVar, ok := f.foldSize(arr.SizeVar, shadowed); ok {
+			arr.Size, arr.SizeVar = size, sizeVar
+			changed = true
 		}
 		if f.walk(v.FieldByName("ElementType"), shadowed) {
 			changed = true
 		}
 		return changed
+	case arraySizeType:
+		if !v.CanAddr() {
+			return false
+		}
+		arg := v.Addr().Interface().(*types.ArraySize)
+		size, sizeVar, ok := f.foldSize(arg.Var, shadowed)
+		if ok {
+			arg.Size, arg.Var = size, sizeVar
+		}
+		return ok
+	case typeDeclType:
+		// A type's `<const N: i64>` is N throughout it, as a binding's is below.
+		shadowed = withConstParams(shadowed, v.FieldByName("GenericParams").Interface().([]ast.GenericParam))
 	case varDeclType, lambdaExprType:
 		// A binding's `<const N: i64>` is N throughout it, whatever the module declares.
-		params := v.FieldByName("GenericParams").Interface().([]ast.GenericParam)
-		for _, p := range params {
-			if !p.IsConst {
-				continue
-			}
-			inner := make(map[string]bool, len(shadowed)+len(params))
-			for name := range shadowed {
-				inner[name] = true
-			}
-			for _, q := range params {
-				if q.IsConst {
-					inner[q.Name] = true
-				}
-			}
-			shadowed = inner
-			break
+		shadowed = withConstParams(shadowed, v.FieldByName("GenericParams").Interface().([]ast.GenericParam))
+		if t == lambdaExprType && v.CanAddr() {
+			lam := v.Addr().Interface().(*ast.LambdaExpr)
+			lam.ImplConstParams = f.implConstParams(lam.ImplTarget)
+			shadowed = withConstParams(shadowed, lam.ImplConstParams)
+		}
+	case traitImplStmtType:
+		if v.CanAddr() {
+			impl := v.Addr().Interface().(*ast.TraitImplStmt)
+			impl.ConstParams = f.implConstParams(impl.Type)
+			shadowed = withConstParams(shadowed, impl.ConstParams)
 		}
 	}
 	changed := false
@@ -269,4 +283,116 @@ func (f *sizeFolder) walkStruct(v reflect.Value, shadowed map[string]bool) bool 
 		}
 	}
 	return changed
+}
+
+// withConstParams answers shadowed with params' `const` parameters added.
+func withConstParams(shadowed map[string]bool, params []ast.GenericParam) map[string]bool {
+	if !slices.ContainsFunc(params, func(p ast.GenericParam) bool { return p.IsConst }) {
+		return shadowed
+	}
+	inner := make(map[string]bool, len(shadowed)+len(params))
+	maps.Copy(inner, shadowed)
+	for _, p := range params {
+		if p.IsConst {
+			inner[p.Name] = true
+		}
+	}
+	return inner
+}
+
+// foldSize replaces the module `const`s a size mentions. It answers false when it mentions none
+// it can, or would come out negative, which leaves it as written for lyra-E031 to report.
+func (f *sizeFolder) foldSize(size string, shadowed map[string]bool) (int, string, bool) {
+	bindings := map[string]types.Type{}
+	for _, name := range types.SizeVarNames(size) {
+		if shadowed[name] {
+			continue
+		}
+		if n, ok := constSize(f.st, name, f.loc); ok {
+			bindings[name] = types.ArraySize{Size: n}
+		}
+	}
+	if len(bindings) == 0 {
+		return 0, "", false
+	}
+	n, sizeVar := types.SubstituteSize(size, bindings)
+	if sizeVar == "" && n < 0 {
+		return 0, "", false
+	}
+	return n, sizeVar, true
+}
+
+// sizeArguments settles a type's arguments in the positions its `const` parameters hold: a bare
+// `Ring<t, N>` parsed `N` as a type's name, since the lexer can't tell them apart (the grammar's
+// size_argument), and here the declaration says what it is. The folding of a `const` follows
+// from the walk over the arguments. A generic type resolved from here is the declaration every
+// module's reference to it means; one that isn't found has nothing to say about its arguments.
+func (f *sizeFolder) sizeArguments(p *types.ParameterizedType) bool {
+	decl, found := f.st.LookupTypeRef(p.Name, p.Key, f.loc)
+	if !found || decl == nil {
+		return false
+	}
+	changed := false
+	for i, param := range decl.GenericParams {
+		if !param.IsConst || i >= len(p.TypeArguments) {
+			continue
+		}
+		if name, ok := p.TypeArguments[i].(types.UnresolvedType); ok {
+			if _, isSize := types.ParseSize(name.Name); isSize {
+				p.TypeArguments[i] = types.ArraySize{Var: name.Name}
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
+// implConstParams answers the `const` parameters an impl's target introduces: `N` in `impl
+// Ring<t, N>`, as a lowercase `t` there is a variable by being written. **Unless the module
+// itself declares or imports a `const` of that name**, which it means: `impl Ring<t, MAX>` is
+// for that one size. The prelude's names don't count, since a name a reader can't see in the
+// file must not turn a block for every size into a block for one.
+func (f *sizeFolder) implConstParams(target types.Type) []ast.GenericParam {
+	p, ok := target.(types.ParameterizedType)
+	if !ok {
+		return nil
+	}
+	decl, found := f.st.LookupTypeRef(p.Name, p.Key, f.loc)
+	if !found || decl == nil {
+		return nil
+	}
+	var params []ast.GenericParam
+	for i, param := range decl.GenericParams {
+		if !param.IsConst || i >= len(p.TypeArguments) {
+			continue
+		}
+		var size string
+		switch arg := p.TypeArguments[i].(type) {
+		case types.UnresolvedType:
+			size = arg.Name
+		case types.ArraySize:
+			size = arg.Var
+		}
+		for _, name := range types.SizeVarNames(size) {
+			if f.ownConst(name) || slices.ContainsFunc(params, func(g ast.GenericParam) bool { return g.Name == name }) {
+				continue
+			}
+			params = append(params, ast.GenericParam{Name: name, IsConst: true, ValueType: param.ValueType, Location: f.loc})
+		}
+	}
+	return params
+}
+
+// ownConst reports whether the module at f.loc declares or imports a name, as a `const` or not.
+func (f *sizeFolder) ownConst(name string) bool {
+	module := f.st.ModuleOfFile[f.loc.File]
+	for _, scope := range []*symbols.Scope{f.st.ModuleScopes[module], f.st.ImportScopes[module]} {
+		if scope == nil {
+			continue
+		}
+		if _, found := scope.LookupLocal(name); found {
+			return true
+		}
+	}
+	return false
 }

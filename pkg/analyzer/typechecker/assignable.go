@@ -205,6 +205,10 @@ func (tc *TypeChecker) literalTakesShape(expr ast.Expression, from, to types.Typ
 		size := -1
 		if st, isStatic := from.(types.StaticArrayType); isStatic {
 			size = st.Size
+			// In `const` parameters there is no number to compare: `#[0; N]` isn't a `[N + 1]t`.
+			if toArr, isArr := to.(types.StaticArrayType); isArr && !types.SameArraySize(st, toArr) {
+				return false
+			}
 		}
 		want, ok := sameFlavorElement(e.Fixed, size, from, to)
 		if !ok {

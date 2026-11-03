@@ -8,6 +8,9 @@ import (
 )
 
 func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
+	oldImplConsts := tc.implConstParams
+	tc.implConstParams = impl.ConstParams
+	defer func() { tc.implConstParams = oldImplConsts }()
 	trait, ok := tc.symTable.LookupTraitFrom(impl.TraitName, impl.GetLocation())
 	if !ok {
 		if tc.reportPrivateType(impl.TraitName, impl.GetLocation()) {
@@ -205,6 +208,10 @@ func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
 func (tc *TypeChecker) checkTraitImplMethodBody(methodName string, implMethod ast.TraitMethodImpl, traitSig *types.LambdaType) {
 	oldTypes, oldMods, oldHome := tc.paramTypes, tc.paramMods, tc.paramHome
 	tc.paramTypes = make(map[string]types.Type)
+	oldConsts := tc.constParams
+	tc.constParams = map[string]bool{}
+	defer func() { tc.constParams = oldConsts }()
+	tc.bindConstParams(tc.implConstParams)
 	tc.paramMods = make(map[string]types.TypeModifier)
 	tc.paramHome = nil // no home: a shadowing walk runs to the module scope (localBindingAt)
 	defer func() { tc.paramTypes, tc.paramMods, tc.paramHome = oldTypes, oldMods, oldHome }()

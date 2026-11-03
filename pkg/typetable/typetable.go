@@ -44,6 +44,8 @@ type TypeTable struct {
 	// default named the caller's local of the same name. The typechecker infers one in
 	// its module's scope, and the backend lowers it with the caller's locals hidden.
 	defaults map[ast.Expression]bool
+	// constParams marks the reads of a `const` generic parameter as a value (MarkConstParam).
+	constParams map[ast.Expression]bool
 	// journaling counts the journals open (Journal), and added is every expression first
 	// given a type while one is: what EndJournal forgets.
 	journaling int
@@ -64,6 +66,23 @@ func (t *TypeTable) MarkDefault(expr ast.Expression) {
 		t.defaults = make(map[ast.Expression]bool)
 	}
 	t.defaults[expr] = true
+}
+
+// MarkConstParam records that expr reads a `const` generic parameter as a value. It is a number
+// in each specialization, and which name is one was settled here, where shadowing is known.
+func (t *TypeTable) MarkConstParam(expr ast.Expression) {
+	if t == nil {
+		return
+	}
+	if t.constParams == nil {
+		t.constParams = make(map[ast.Expression]bool)
+	}
+	t.constParams[expr] = true
+}
+
+// IsConstParam reports whether expr reads a `const` generic parameter as a value.
+func (t *TypeTable) IsConstParam(expr ast.Expression) bool {
+	return t != nil && t.constParams[expr]
 }
 
 // IsDefault reports whether expr is a default filled into a call or a struct literal.

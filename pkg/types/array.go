@@ -6,10 +6,10 @@ type StaticArrayType struct {
 	ElementType Type
 	Size        int
 	Allocation  AllocationModifier
-	// SizeVar is a `const` generic parameter the size is written as — the `N` of
-	// `[N]t` in `let first<t, const N: i64> = (xs: ref [N]t) -> t` — and Size means
-	// nothing while it is set. A binding of N (an ArraySize) replaces it
-	// (Substitute), so a specialization's arrays all have sizes.
+	// SizeVar is the size in terms of `const` generic parameters, as canonical text
+	// (size.go) — the `N` of `[N]t` in `let first<t, const N: i64> = (xs: ref [N]t) -> t`, or
+	// the `N+1` of `[N + 1]t` — and Size means nothing while it is set. A binding of N (an
+	// ArraySize) replaces it (Substitute), so a specialization's arrays all have sizes.
 	SizeVar string
 }
 
@@ -27,7 +27,7 @@ func (a StaticArrayType) GetName() string {
 }
 
 // SameArraySize reports whether two fixed arrays have the same size: the same number,
-// or the same `const` parameter.
+// or the same size in `const` parameters, whose text is canonical.
 func SameArraySize(a, b StaticArrayType) bool {
 	return a.Size == b.Size && a.SizeVar == b.SizeVar
 }
@@ -38,9 +38,9 @@ func SameArraySize(a, b StaticArrayType) bool {
 // with no second map; it is never the type of a value.
 type ArraySize struct {
 	Size int
-	// Var is set when the size is another function's `const` parameter — a generic
-	// calling a generic with its own `[M]t` binds N to M, which the caller's
-	// specialization then replaces with a number (Substitute).
+	// Var is set when the size is in terms of another function's `const` parameters — a
+	// generic calling a generic with its own `[M]t` binds N to M, which the caller's
+	// specialization then replaces with a number (Substitute). Canonical text, as SizeVar.
 	Var string
 }
 

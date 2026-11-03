@@ -46,6 +46,12 @@ type LambdaExpr struct {
 	// this is what the type-name call resolves against, since an alias or a second module
 	// may name the one type differently (typechecker, associated.go).
 	AssociatedTo types.Type
+	// ImplTarget is the type an `impl` block's member is written for, and ImplConstParams the
+	// `const` parameters that target introduces (`N` in `impl Ring<t, N>`), which the member's
+	// body reads as its own. The driver settles them (foldConstArraySizes), once a position's
+	// being a `const` one can be known from the type's declaration.
+	ImplTarget      types.Type     `print:"-"`
+	ImplConstParams []GenericParam `print:"-"`
 	// NoInline is `@noinline` on the declaration: the function is never inlined into its
 	// callers (the backend's noInline, on the declaration and each specialization).
 	NoInline    bool

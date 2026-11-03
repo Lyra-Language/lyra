@@ -1063,6 +1063,29 @@ func (l *lowerer) recordTempsPastExit(exit, from *ir.Block, skip value.Value) {
 	}
 }
 
+// lowerConstParam is a `const` generic parameter read as a value: the number it is in this
+// specialization. The typechecker said which reads are one, a local or a module `const` of the
+// same name having shadowed or been shadowed there.
+func (l *lowerer) lowerConstParam(e *ast.IdentifierExpr) (value.Value, error) {
+	size, ok := l.typeSubst[e.Name].(types.ArraySize)
+	if !ok || size.Var != "" {
+		return nil, fmt.Errorf("llvm: `const` parameter %s has no size here", e.Name)
+	}
+	t, ok := l.recordedType(e)
+	if !ok {
+		return nil, fmt.Errorf("llvm: no type recorded for `const` parameter %s", e.Name)
+	}
+	ll, err := l.lowerType(t)
+	if err != nil {
+		return nil, err
+	}
+	it, ok := ll.(*lltypes.IntType)
+	if !ok {
+		return nil, fmt.Errorf("llvm: `const` parameter %s is not an integer (%s)", e.Name, t)
+	}
+	return constant.NewInt(it, int64(size.Size)), nil
+}
+
 func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value.Value, *ir.Block, error) {
 	switch e := expr.(type) {
 	case *ast.IntegerLiteralExpr:
@@ -1110,6 +1133,10 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		v, err := l.lowerNullPtr(e)
 		return v, block, err
 	case *ast.IdentifierExpr:
+		if l.res.TypeTable.IsConstParam(e) {
+			v, err := l.lowerConstParam(e)
+			return v, block, err
+		}
 		if slot, ok := l.slotFor(e.Name, e.GetLocation()); ok {
 			elem, err := slotElemType(slot)
 			if err != nil {

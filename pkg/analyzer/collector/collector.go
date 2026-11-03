@@ -875,6 +875,25 @@ func (c *Collector) PopScope() {
 }
 
 // allocation is only used for array types
+// parseSize reads a size as written: a number, or arithmetic on names, kept as canonical text.
+// Whether a name is a `const` or a `const` parameter is the generic-params check's question
+// (lyra-E031's), asked with the declaration in hand.
+func (c *Collector) parseSize(node *sitter.Node, text string) (types.ArraySize, bool) {
+	if n, err := strconv.ParseInt(text, 10, 64); err == nil {
+		return types.ArraySize{Size: int(n)}, true
+	}
+	canonical, ok := types.ParseSize(text)
+	if !ok {
+		c.addError(node, CollectorErrorSeverityError,
+			"array size %q must be a sum of integers and integer multiples of `const` names: one name can't multiply another", text)
+		return types.ArraySize{}, false
+	}
+	if n, err := strconv.Atoi(canonical); err == nil {
+		return types.ArraySize{Size: n}, true
+	}
+	return types.ArraySize{Var: canonical}, true
+}
+
 func (c *Collector) parseType(node *sitter.Node) types.Type {
 	if node == nil {
 		return nil
@@ -922,6 +941,12 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 		return types.VoidType{}
 	case "fixed_point_type":
 		return c.parseFixedPointType(node)
+	case "size_argument":
+		size, ok := c.parseSize(node, c.ctx.NodeText(node))
+		if !ok {
+			return nil
+		}
+		return size
 	case "hole_type":
 		// `_` marks the position a trait's `Self<…>` argument fills in an impl target
 		// (`impl Functor for Result<_, e>`). Anywhere else there is no `Self` for it to
@@ -1126,17 +1151,11 @@ func (c *Collector) parseArrayType(node *sitter.Node, allocation types.Allocatio
 	sizeNode := cst.Field(node, "size")
 	if sizeNode != nil {
 		sizeString := c.ctx.NodeText(sizeNode)
-		// `[N]t`: a `const` generic parameter as the size. Whether N is one is the
-		// generic-params check's question (lyra-E031's), asked with the declaration in hand.
-		if sizeNode.NamedChildCount() == 1 && sizeNode.NamedChild(0).Kind() == "const_identifier" {
-			return types.StaticArrayType{ElementType: elementType, SizeVar: sizeString, Allocation: allocation}
-		}
-		sizeInt, err := strconv.ParseInt(sizeString, 10, 64)
-		if err != nil {
-			c.addError(node, CollectorErrorSeverityError, "parseArrayType: invalid size: %s", sizeString)
+		size, ok := c.parseSize(node, sizeString)
+		if !ok {
 			return nil
 		}
-		return types.StaticArrayType{ElementType: elementType, Size: int(sizeInt), Allocation: allocation}
+		return types.StaticArrayType{ElementType: elementType, Size: size.Size, SizeVar: size.Var, Allocation: allocation}
 	}
 
 	return types.DynamicArrayType{ElementType: elementType, Allocation: allocation}

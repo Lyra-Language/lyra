@@ -160,6 +160,13 @@ func (a *analyzer) onExpr(expr ast.Expression) bool {
 // parameter is deliberately excluded — it is not in scope here, and admitting it would
 // make an unrelated name of the same spelling look capturable.
 func directBinders(fn *ast.LambdaExpr, bound map[string]bool) {
+	for _, list := range [][]ast.GenericParam{fn.GenericParams, fn.ImplConstParams} {
+		for _, gp := range list {
+			if gp.IsConst {
+				bound[gp.Name] = true
+			}
+		}
+	}
 	for _, p := range fn.Parameters {
 		addPatternNames(bound, p.Pattern)
 	}
@@ -204,6 +211,13 @@ func directGenericBinders(fn *ast.LambdaExpr, into map[string]*ast.LambdaExpr) {
 // bound inside it, minus globals.
 func (a *analyzer) capturesOf(fn *ast.LambdaExpr) []Capture {
 	bound := map[string]bool{}
+	for _, list := range [][]ast.GenericParam{fn.GenericParams, fn.ImplConstParams} {
+		for _, gp := range list {
+			if gp.IsConst {
+				bound[gp.Name] = true
+			}
+		}
+	}
 	for _, p := range fn.Parameters {
 		addPatternNames(bound, p.Pattern)
 	}
@@ -230,6 +244,11 @@ func (a *analyzer) capturesOf(fn *ast.LambdaExpr) []Capture {
 		// `{ i8*, i8* }` into a `%Color*` (09/10). It needed a sibling *file* of the
 		// same module to declare the name, which is why it resisted reduction.
 		if a.globals[name] && !a.outer[name] {
+			continue
+		}
+		// A `const` generic parameter read as a value is a number in each specialization, so
+		// a closure has nothing to capture.
+		if a.tt != nil && a.tt.IsConstParam(read) {
 			continue
 		}
 		// **A namespace import is not a binding**, by the same rule: the `project` in

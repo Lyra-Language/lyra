@@ -52,8 +52,17 @@ func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
 	maps.Copy(tc.paramTypes, oldTypes)
 	maps.Copy(tc.paramMods, oldMods)
 	maps.Copy(tc.patternBound, oldBound)
+	oldConsts := tc.constParams
+	tc.constParams = make(map[string]bool, len(oldConsts))
+	maps.Copy(tc.constParams, oldConsts)
+	defer func() { tc.constParams = oldConsts }()
+	// A `const` generic parameter reads as a value of its declared type, in this body and the
+	// lambdas inside it, shadowing a module `const` of its name as a parameter would.
+	constNames := tc.bindConstParams(lambda.GenericParams)
+	constNames = append(constNames, tc.bindConstParams(lambda.ImplConstParams)...)
 	for _, p := range lambda.Parameters {
 		if ip, ok := p.Pattern.(*ast.IdentifierPattern); ok {
+			delete(tc.constParams, ip.Name)
 			// Record the modifier even when the parameter has no type annotation,
 			// so the interior-mutation check can attribute mutability to the param.
 			tc.paramMods[ip.Name] = p.TypeModifier
@@ -84,7 +93,7 @@ func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
 	if !ok {
 		home = tc.scope
 	}
-	var names []string
+	names := constNames
 	for _, p := range lambda.Parameters {
 		names = append(names, ast.PatternBoundNames(p.Pattern)...)
 	}
@@ -92,6 +101,21 @@ func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
 	tc.enterScope(lambda, fn)
 	restoreHome()
 	tc.paramTypes, tc.paramMods, tc.patternBound = oldTypes, oldMods, oldBound
+}
+
+// bindConstParams makes params' `const` parameters readable as values in the scope being set up,
+// and answers their names.
+func (tc *TypeChecker) bindConstParams(params []ast.GenericParam) []string {
+	var names []string
+	for _, gp := range params {
+		if gp.IsConst {
+			tc.paramTypes[gp.Name] = tc.resolveType(gp.ValueType, gp.Location)
+			tc.constParams[gp.Name] = true
+			delete(tc.patternBound, gp.Name)
+			names = append(names, gp.Name)
+		}
+	}
+	return names
 }
 
 // checkLambdaBody verifies that the lambda's body is consistent with the

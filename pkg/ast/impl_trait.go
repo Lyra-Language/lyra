@@ -12,8 +12,11 @@ type TraitImplStmt struct {
 	// site (the method's `-> e` return becomes the impl's `t`, then the
 	// receiver's concrete type). Distinct from GenericParams, which the grammar
 	// does not populate for impls.
-	TraitArgs   []types.Type
-	Type        types.Type
+	TraitArgs []types.Type
+	Type      types.Type
+	// ConstParams are the `const` parameters Type introduces (`N` in `impl Show for Ring<t, N>`),
+	// which every method's body reads as its own (driver, foldConstArraySizes).
+	ConstParams []GenericParam `print:"-"`
 	Constraints []TraitImplConstraint
 	Methods     []TraitMethodImpl
 	// Doc is the `///` comment block above the `impl`, nil if undocumented — for

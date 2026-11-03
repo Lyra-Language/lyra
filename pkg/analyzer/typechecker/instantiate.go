@@ -419,6 +419,19 @@ func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(
 			return nil, false
 		}
 	}
+	// A size with two unknowns says nothing until another argument settles one (types.SolveSize),
+	// and that argument may come after it: `(a: ref [N + M]t, b: ref [N]t)`.
+	for i := 0; i < paramCount && i < len(call.Arguments); i++ {
+		declared, isArray := declaredParam(i).(types.StaticArrayType)
+		if !isArray || len(types.SizeVarNames(declared.SizeVar)) < 2 {
+			continue
+		}
+		if argType, ok := tc.typeTable.Get(call.Arguments[i]); ok {
+			if actual, ok := types.StripNewtype(argType).(types.StaticArrayType); ok {
+				types.SolveSize(declared.SizeVar, types.ArraySize{Size: actual.Size, Var: actual.SizeVar}, vars, subst)
+			}
+		}
+	}
 	// Every variable in the signature must be solved: an unsolved one would reach
 	// the backend as a type with no representation. A variable that appears only in
 	// the *return* type cannot be solved from arguments at all, which is why that is
@@ -665,6 +678,9 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 				turbofishHint(lambda, call))
 			return nil
 		}
+	}
+	if !tc.checkSolvedSizes(calleeName, lambda, call, subst) {
+		return nil
 	}
 	params, ret := tc.instantiateSignature(lambda, subst)
 	for i, arg := range call.Arguments {
@@ -1149,6 +1165,59 @@ func (tc *TypeChecker) seedFromExpectedReturn(lambda *ast.LambdaExpr, vars map[s
 	return seed
 }
 
+// checkSolvedSizes refuses what a call's sizes come to and no signature can say on its own: a
+// `const` parameter nothing in the call solves, one that doesn't fit its declared type, and a
+// size that comes out negative (`[N - 1]t` at N = 0). Answers false when it reported.
+func (tc *TypeChecker) checkSolvedSizes(calleeName string, lambda *ast.LambdaExpr, call *ast.FunctionCallExpr, subst map[string]types.Type) bool {
+	for _, gp := range lambda.GenericParams {
+		if !gp.IsConst {
+			continue
+		}
+		size, solved := subst[gp.Name].(types.ArraySize)
+		if !solved {
+			tc.addError(call.GetLocation(), SeverityError,
+				"%s: nothing in this call solves `const` parameter %s — write it in an argument's type, as `[%s]t`", calleeName, gp.Name, gp.Name)
+			return false
+		}
+		if size.Var != "" {
+			continue
+		}
+		if p, ok := tc.resolveType(gp.ValueType, gp.Location).(types.PrimitiveType); ok && !sizeFitsInteger(size.Size, p) {
+			tc.addError(call.GetLocation(), SeverityError,
+				"%s: `const` parameter %s is %d here, which doesn't fit its type %s", calleeName, gp.Name, size.Size, p)
+			return false
+		}
+	}
+	params, ret := tc.instantiateSignature(lambda, subst)
+	for _, t := range append(params, ret) {
+		if types.HasNegativeSize(t) {
+			tc.addError(call.GetLocation(), SeverityError,
+				"%s: an array's size comes to a negative number at these sizes (%s)", calleeName, types.Source(t))
+			return false
+		}
+	}
+	return true
+}
+
+// sizeFitsInteger reports whether a size fits an integer type, by its range.
+func sizeFitsInteger(size int, p types.PrimitiveType) bool {
+	switch p.Name {
+	case types.Int8:
+		return size <= 1<<7-1
+	case types.UInt8:
+		return size <= 1<<8-1
+	case types.Int16:
+		return size <= 1<<15-1
+	case types.UInt16:
+		return size <= 1<<16-1
+	case types.Int32:
+		return size <= 1<<31-1
+	case types.UInt32:
+		return size <= 1<<32-1
+	}
+	return true
+}
+
 // reportSizeMismatch explains a failed solve that is two arrays sized by one `const`
 // parameter disagreeing — `dot(#[1, 2, 3], #[1, 2])` for `(a: ref [N]i64, b: ref [N]i64)` —
 // in terms of the sizes, rather than as a variable that "cannot be inferred". It reports
@@ -1166,6 +1235,15 @@ func (tc *TypeChecker) reportSizeMismatch(calleeName string, lambda *ast.LambdaE
 		}
 		actual, ok := types.StripNewtype(argType).(types.StaticArrayType)
 		if !ok || actual.SizeVar != "" {
+			continue
+		}
+		// `[N + 1]t` isn't "sized by N". What it can't be is a size no N gives.
+		if names := types.SizeVarNames(declared.SizeVar); len(names) != 1 || names[0] != declared.SizeVar {
+			if len(names) == 1 && !types.SolveSize(declared.SizeVar, types.ArraySize{Size: actual.Size}, map[string]bool{names[0]: true}, map[string]types.Type{}) {
+				tc.addError(arg.GetLocation(), SeverityError,
+					"%s: argument %d is an array of %d, and no %s makes %s that", calleeName, i+1, actual.Size, names[0], declared.SizeVar)
+				return true
+			}
 			continue
 		}
 		if size, seen := first[declared.SizeVar]; seen && size != actual.Size {

@@ -1,6 +1,8 @@
 package typechecker
 
 import (
+	"strconv"
+
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -61,11 +63,62 @@ func (tc *TypeChecker) inferArrayRepeatType(expr *ast.ArrayRepeatExpr) types.Typ
 		}
 		return types.DynamicArrayType{ElementType: elem}
 	}
+	if size, ok := tc.repeatCountInConstParams(expr.Count); ok {
+		return types.StaticArrayType{ElementType: elem, SizeVar: size}
+	}
 	count, ok := tc.arrayRepeatCount(expr)
 	if !ok {
 		return nil
 	}
 	return types.StaticArrayType{ElementType: elem, Size: count}
+}
+
+// repeatCountInConstParams reads a fixed repeat's count written in `const` generic parameters —
+// `#[0; N]`, `#[0; 2 * N + 1]` — as the size text its type holds. It answers false for a count
+// that mentions none, which arrayRepeatCount folds or refuses as ever, and for one that isn't
+// linear, which lands there too and is refused as not a constant. The count is typed here since
+// a pass after this one asks of its names what they read (captures).
+func (tc *TypeChecker) repeatCountInConstParams(count ast.Expression) (string, bool) {
+	text, mentions := tc.sizeTextOf(count)
+	if !mentions {
+		return "", false
+	}
+	size, ok := types.ParseSize(text)
+	if !ok {
+		return "", false
+	}
+	tc.inferExprType(count)
+	return size, true
+}
+
+// sizeTextOf writes count as size text, and says whether it mentions a `const` parameter.
+func (tc *TypeChecker) sizeTextOf(count ast.Expression) (string, bool) {
+	switch e := count.(type) {
+	case *ast.IdentifierExpr:
+		if tc.constParams[e.Name] && tc.paramAt(e.Name, e.GetLocation()) {
+			return e.Name, true
+		}
+	case *ast.MathBinaryOpExpr:
+		left, leftMentions := tc.sizeTextOf(e.Left)
+		right, rightMentions := tc.sizeTextOf(e.Right)
+		var op string
+		switch e.Operator {
+		case ast.MathBinaryOpAdd:
+			op = "+"
+		case ast.MathBinaryOpSub:
+			op = "-"
+		case ast.MathBinaryOpMul:
+			op = "*"
+		default:
+			return "?", leftMentions || rightMentions
+		}
+		return "(" + left + op + right + ")", leftMentions || rightMentions
+	}
+	n, ok := ast.ArrayRepeatCount(count, tc.constInitializer)
+	if !ok {
+		return "?", false
+	}
+	return strconv.FormatInt(n, 10), false
 }
 
 // checkRuntimeRepeatCount verifies that a non-constant count is at least an integer.

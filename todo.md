@@ -1131,17 +1131,20 @@ parameters over `[N]T` in function signatures, N solved from the argument by the
 unifier as type variables (an `types.ArraySize` in the bindings map), one specialization
 per size, a generic passing its own size on. LANGUAGE.md § Generic parameter lists.
 
-- **[OPEN] `N` as a value** in the body (`for i in 0..<N`) — `xs.len()` covers it today.
-- **[OPEN] A `const` parameter on a type or trait** (`struct Ring<t, const N: i64>`), and
-  `fixed<I, F>` / `simd<T, N>` over it.
-- **[OPEN] Arithmetic in a type position** (`[N + 1]t`) — a solver; and constraints on a
-  value parameter, which wait on CTFE.
+- **[DONE 11/03] `N` as a value** in the body, `#[v; N]` included. (COMPLETED.md, 11/03.)
+- **[DONE 11/03] A `const` parameter on a type** (`struct Ring<t, const N: i64>`), with `impl
+  Ring<t, N>`. (COMPLETED.md, 11/03.)
+- **[OPEN] A `const` parameter on a trait**, and `fixed<I, F>` / `simd<T, N>` over the type form.
+- **[DONE 11/03] Arithmetic in a size** (`[N + 1]t`): linear, solved from arguments.
+  (COMPLETED.md, 11/03.)
+- **[OPEN] A size no sum can write** (`[N * M]t`), and constraints on a value parameter (`where N
+  > 0`), which wait on CTFE.
 - **[OPEN] A turbofish value** (`f::<64>(…)`): the turbofish takes types today.
 - **[DONE 10/29] A named `const` as an array type's size** (`[MAX_BYTES]u8`), folded by the
   driver. (COMPLETED.md, 10/29.)
-- **[OPEN] A `const` computed from others as an array size** (`[MAX_FM_WRITES * 3]u8`) — only
-  a literal folds, as `resolveConstantInt` folds a repeat count; `std.chips.effects`' FM
-  buffer is still `[128]u8` for want of it.
+- **[OPEN] A `const` whose initializer is computed, as a size** (`const SIZE = MAX * 3`) — the sum
+  written in the type folds (`[MAX_FM_WRITES * 3]u8`, 11/03), which `std.chips.effects`' FM buffer
+  could now use, but an initializer still has to be a literal.
 - **[IDEA]** a named turbofish form `sum::<i64, N = 3>`, purely additive.
 
 ## Bounded stack buffers

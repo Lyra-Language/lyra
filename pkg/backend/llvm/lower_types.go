@@ -487,6 +487,14 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 		if err != nil {
 			return nil, err
 		}
+		// A generic passing its own size on can come to this only once it is specialized,
+		// past what a call can check (checkSolvedSizes).
+		if t.SizeVar != "" {
+			return nil, fmt.Errorf("llvm: array size %s has no value here", t.SizeVar)
+		}
+		if t.Size < 0 {
+			return nil, fmt.Errorf("llvm: an array's size comes to %d at this specialization", t.Size)
+		}
 		return lltypes.NewArray(uint64(t.Size), elem), nil
 	case *types.LambdaType:
 		// **At a C boundary a function type is a bare function pointer.** C has one word

@@ -328,6 +328,18 @@ func checkBindingGenericParams(decl *ast.VarDeclStmt, inScope map[string]bool) [
 		if used[p.Name] {
 			continue
 		}
+		// A `const` parameter can be read in the body, which would be a number no call supplies.
+		if p.IsConst {
+			diags = append(diags, diag.Diagnostic{
+				Location: genericParamLocation(decl, p),
+				Severity: diag.SeverityError,
+				Code:     diag.CodeUndeclaredTypeVariable,
+				Message: fmt.Sprintf(
+					"`const` parameter %q of %s is never mentioned in its signature, so no call can solve it: write it in a parameter's type (`[%s]t`) or the return type",
+					p.Name, quoteName(decl.Name), p.Name),
+			})
+			continue
+		}
 		msg := fmt.Sprintf("generic parameter %q of %s is never mentioned in its signature; remove it", p.Name, quoteName(decl.Name))
 		if len(p.Constraints) > 0 {
 			// The case the error half exists to prevent: a bound on a variable
@@ -360,6 +372,11 @@ func checkSizeVars(decl *ast.VarDeclStmt, inScope map[string]bool, namedConst fu
 	consts := map[string]bool{}
 	for _, p := range decl.GenericParams {
 		if p.IsConst {
+			consts[p.Name] = true
+		}
+	}
+	if lambda, ok := decl.Value.(*ast.LambdaExpr); ok {
+		for _, p := range lambda.ImplConstParams {
 			consts[p.Name] = true
 		}
 	}

@@ -664,20 +664,38 @@ A lowercase type name is a type variable wherever it appears. What a written `<�
 - **A `const` parameter** (`let total<const N: i64> = (xs: ref [N]i64) -> i64`) is a
   compile-time integer an array's size is written as. A call solves it from the argument's
   size, as it solves a type variable from the argument's type, and each size gets its own
-  specialization; inside the body the size is `xs.len()`. Two arrays sized by one `N` must
-  agree (`the arrays sized by N must be the same size, and these are 3 and 2`); a generic
-  may pass its own `[M]t` on to another, which settles when the caller is specialized; a
-  `[N]t` may be a local's type and a return type. The type must be an integer, and a size
-  written as a name that no `const` declares is `lyra-E031` — a size never makes a function
-  generic by being written, as a lowercase type does.
+  specialization. Two arrays sized by one `N` must agree (`the arrays sized by N must be the
+  same size, and these are 3 and 2`); a generic may pass its own `[M]t` on to another, which
+  settles when the caller is specialized; a `[N]t` may be a local's type and a return type.
+  The type must be an integer, the size has to fit it (`<const B: u8>` won't take an array of
+  300), and a size written as a name that no `const` declares is `lyra-E031` — a size never
+  makes a function generic by being written, as a lowercase type does. A parameter no signature
+  mentions is `lyra-E031` too, since no call could solve it.
+- **`N` is a value in the body** (11/03), of its declared type: `for i in 0..<N`, `xs[N - 1]`,
+  `[7; N]`, in a closure too. It is a number in each specialization and can't be assigned. It
+  shadows a module `const N`, and a local `const N` shadows it. `#[v; N]` and `#[v; N + 1]` are
+  sized by it, so they have the types `[N]t` and `[N + 1]t`.
+- **A size may be arithmetic** (11/03): `[N + 1]t`, `[2 * N - 1]t`, `[N + M]t`, `[(N + 1) * 2]t`.
+  It is a sum of integers and integer multiples of names, and two that come to the same sum are
+  the same size, so `[N + 1]t` is `[1 + N]t`. One name can't multiply another (`[N * M]t`). A call
+  solves a parameter out of it (`[N + 1]t` from an array of 5 gives `N = 4`; `[2 * N]t` refuses an
+  array of 3), and two unknowns wait for another argument to settle one (`(a: ref [N + M]t, b:
+  ref [N]t)`). A size that comes out negative at a call is refused.
+- **A type may take a `const` parameter** (11/03): `struct Ring<t, const N: i64> { items: [N]t }`,
+  and `tuple`, `data` and `type` the same. Its argument is a size: `Ring<i64, 8>`, `Ring<i64, MAX>`,
+  `Ring<t, N>`, `Ring<t, N + 1>`, and a type in that position is refused, as a size is in a type
+  parameter's. `Ring { items: #[1, 2, 3] }` solves it from the field. Two sizes of one type are two
+  types. **`impl Ring<t, N>` introduces `N`**, as it does a lowercase `t`, and every member's body
+  reads it, a trait impl's too; if the module itself declares or imports a `const N`, the block
+  means that one size instead. A trait takes no `const` parameter yet.
 - **A module `const` sizes an array anywhere a type is written** — `[MAX_BYTES]u8` beside
   `const MAX_BYTES: i64 = 8` is `[8]u8`, in a parameter, a return type, a local, a struct
   field or a payload. The `const` is one the module reaches (its own, an import, the
   prelude's) whose value is a non-negative integer literal, or another such `const`; one
   computed (`3 * 4`) or negative is `lyra-E031`, saying so. A binding's own `const N`
-  shadows a module `const N` inside it. Pass a large array as `ref [N]t`, which
-  borrows rather than copies. Not yet: `N` as a value in the body, arithmetic on it in a type
-  (`[N + 1]t`), a `const` in a type's or trait's list, and a turbofish value (`f::<64>`).
+  shadows a module `const N` inside it, and a written sum folds (`[MAX * 2 + 1]u8`). Pass a large
+  array as `ref [N]t`, which borrows rather than copies. Not yet: a `const` in a trait's list,
+  a turbofish value (`f::<64>`), and a `const` whose initializer is computed.
 
 ### Local generics
 

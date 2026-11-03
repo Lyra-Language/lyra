@@ -483,6 +483,8 @@ program's exported fields (and `SymbolTable.Functions`, for an extern's `Func`),
 leaves is `lyra-E031`'s, which asks the same `reachableConst` to say "a `const`, but not a
 size".
 
+**A size in `const` parameters is canonical text** (`pkg/types/size.go`) in `StaticArrayType.SizeVar` and `ArraySize.Var`: `N`, `N+1`, `2*N+M`. Read it with `SizeVarNames`, `SubstituteSize` and `SolveSize`, never as one name. The same driver pass settles `Ring<t, N>`'s bare `N` into an `ArraySize` and an impl's introduced parameters (`LambdaExpr.ImplConstParams`, `TraitImplStmt.ConstParams`). A read of `N` as a value is marked in the type table (`IsConstParam`); the backend lowers it from `typeSubst`.
+
 **Builds in parts, cached** (`cmd/lyrac/objects.go`, `pkg/backend/llvm/parts.go`) — `lyrac
 build`/`run` split the program (`EmitParts`), compile each part on its own core and keep its
 object under the hash of its text; optimized builds link by ThinLTO. **A part's text must

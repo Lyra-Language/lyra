@@ -9,6 +9,40 @@ Newest first.
 
 ## Dated log
 
+### 11/03/26 — const generics: `N` as a value, on a type, and `[N + 1]t`
+
+`std.sms` and `std.genesis` already took tables of any length, but `N` stopped at the signature.
+Three items that share one question: what a size is.
+
+- **A size in parameters stays text, now canonical**: `[N + 1]t` and `[1 + N]t` hold `N+1` in
+  `StaticArrayType.SizeVar`, and `[N]t` holds `N` as it always did. So `SameArraySize`,
+  `TypesEqual`, instantiation keys and error messages went on being right with no change. A pointer
+  to an expression would have made a type not comparable and touched every one of them.
+- **Linear because that's what a canonical form exists for.** Two equal sums are equal strings with
+  no proof, and one unknown is solved with a division. `[N * M]t` has neither, so it's refused where
+  it's written instead of half working. That is the solver the old todo item was afraid of: it's
+  under 40 lines, since nothing is ever solved but one unknown in a sum.
+- **Two unknowns answer "not yet"** rather than a mismatch, and assignability checks what's left once
+  the call is solved. A second size pass over the arguments lets a later one settle an earlier one.
+- **A callee's `N` and a caller's `N` can share a name**, so `SolveSize` keeps what's known in the
+  caller's terms and the unknowns apart, instead of substituting into one sum.
+- **`N` is a parameter to the typechecker** (`paramTypes`), which gives it shadowing for free: it
+  shadows a module `const` and a local one shadows it. The table marks each read, since by the
+  backend and captures a name alone can't say which it is; a closure then has nothing to capture.
+  A repeat's count was the part a value needed most, since nothing else can build a `[N + 1]t`.
+- **`Ring<t, N>` parses `N` as a type's name**, and no grammar can do better: the lexer can't tell
+  `N` from `ID`, and only the type's declaration says which position is which. So the driver's folder
+  settles it, the pass that already rewrites sizes before every other. Numbers and arithmetic parse
+  as `size_argument`, which a type's name can't start being.
+- **`impl Ring<t, N>` introduces `N`, as it does `t`**, unless the module itself declares or imports
+  that name. The prelude doesn't count: a name the reader can't see in the file must not turn a block
+  for every size into a block for one. It reaches bodies through `ImplConstParams`, not the member's
+  list, which is authoritative and turbofish-bound.
+- **Found while testing:** a repeat literal's size was never compared, only its element, so `-> [N +
+  1]i64 => #[0; N]` passed, and `[N]i64` couldn't be solved from a literal's untyped `[2]`. And a
+  parameter that was only ever read in a body was a warning, with a backend error at each call, so
+  it's now `lyra-E031` for a `const` one. `f::<64>` stays open: nothing needed it here.
+
 ### 11/03/26 — A sequence function's arguments, inlined
 
 Two items that looked like one family, plus what probing them turned up.

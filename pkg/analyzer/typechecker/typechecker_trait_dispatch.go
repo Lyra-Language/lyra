@@ -319,21 +319,32 @@ func unifyGenericTarget(implType, receiverType types.Type, generics map[string]b
 		// `[N]t` against `[64]u32` binds the `const` parameter N to 64, as `t` binds to
 		// u32 — the same bindings map, so a second argument of another size is a
 		// mismatch exactly as a second argument of another type is.
-		if it.SizeVar != "" && generics[it.SizeVar] {
-			// A generic calling a generic passes an array sized by its own parameter:
-			// N binds to that parameter, settled when the caller is specialized.
-			size := types.ArraySize{Size: rt.Size, Var: rt.SizeVar}
-			if prior, bound := bindings[it.SizeVar]; bound {
-				if !types.TypesEqual(prior, size) {
-					return false
-				}
-			} else {
-				bindings[it.SizeVar] = size
+		//
+		// A generic calling a generic passes an array sized by its own parameter: N binds
+		// to that, settled when the caller is specialized. `[N + 1]t` solves for N.
+		if it.SizeVar != "" {
+			if !types.SolveSize(it.SizeVar, types.ArraySize{Size: rt.Size, Var: rt.SizeVar}, generics, bindings) {
+				return false
 			}
 		} else if it.Size != rt.Size || it.SizeVar != rt.SizeVar {
 			return false
 		}
+		// An element with nothing to solve has nothing to say here, and `[N]i64` against a
+		// literal's `[2]integer literal` isn't a mismatch: assignability settles that.
+		if it.SizeVar != "" && !mentionsGenericParam(it.ElementType, generics) {
+			return true
+		}
 		return unifyGenericTarget(it.ElementType, rt.ElementType, generics, bindings)
+	case types.ArraySize:
+		// A type's `const` argument, as `Ring<t, N>` against `Ring<i64, 8>`.
+		rt, ok := receiverType.(types.ArraySize)
+		if !ok {
+			return false
+		}
+		if it.Var != "" {
+			return types.SolveSize(it.Var, rt, generics, bindings)
+		}
+		return it == rt
 	case types.RawPointerType:
 		// A raw pointer binds through its pointee, so `(p: ^t)` is solvable at all.
 		// Missing until 08/19, which made every generic function over a pointer

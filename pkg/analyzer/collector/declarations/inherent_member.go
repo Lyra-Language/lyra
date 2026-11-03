@@ -48,6 +48,7 @@ func applyInherentReceiver(
 			"`%s` in `impl %s` is not a function; declare it outside the block", name, target.Text)
 		return generics
 	}
+	lambda.ImplTarget = target.Type
 	if len(lambda.Parameters) == 0 || lambda.Parameters[0].GetName() != "self" {
 		// `Type.name(…)` needs a type the call can write. A variable, an array and a tuple
 		// have no name to put before the dot.

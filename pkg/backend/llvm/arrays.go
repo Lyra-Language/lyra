@@ -371,14 +371,15 @@ func (l *lowerer) lowerArrayRepeatExpr(block *ir.Block, e *ast.ArrayRepeatExpr) 
 		}
 		return l.lowerDynArrayRepeatRuntime(block, e, dynType)
 	}
-	if !folded {
-		// A fixed array with a non-constant count is lyra-E056 and never reaches the
-		// backend; rule 5 says say so rather than guess a size.
-		return nil, nil, fmt.Errorf("llvm: a fixed-size array's repeat count is not a compile-time integer")
-	}
 	arrType, ok := recorded.(types.StaticArrayType)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: array repeat lowering not implemented for %s (only fixed-size arrays)", recorded)
+	}
+	// A count in `const` parameters (`#[0; N + 1]`) doesn't fold, and the specialization's type
+	// has its size. A fixed array with any other non-constant count is lyra-E056 and never
+	// reaches the backend; rule 5 says say so rather than guess a size.
+	if arrType.SizeVar != "" {
+		return nil, nil, fmt.Errorf("llvm: a fixed-size array's repeat count is not a compile-time integer")
 	}
 	stackArrType := types.WithAllocation(arrType, types.Stack).(types.StaticArrayType)
 	llType, err := l.lowerType(stackArrType)
