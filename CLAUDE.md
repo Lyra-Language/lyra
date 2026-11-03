@@ -759,6 +759,7 @@ of Markdown.
   SHA-256-checked prebuilt macOS library merged with its shim; a do-nothing stub off macOS,
   offline or without SDL3. **And `build/lib/liblyra-gpu.a`** (`bindings/gpu/build.sh`): `ui.gpu`'s
   renderer over SDL_GPU on macOS, a stub elsewhere (whose `create` answers `None`).
+- **`tools/llvm-z80.sh`** (not run by `build.sh`) builds our own LLVM Z80 target, `tools/llvm-z80/Z80`, in `~/Dev/llvm-z80`, for Master System and Game Gear games; lyrac does not use it yet. `tools/llvm-z80/README.md` has its conventions and what is missing, and `tools/llvm-z80/test/run.py` and `fuzz.py` test it on Sheliak's Z80 core against the host compiler.
 - **`tools/sdl3-ios.sh`** (not run by `build.sh`, as `llvm-m68k.sh` is not) builds SDL3 for
   `--target ios|ios-simulator` into `build/lib/<platform>/`.
 - **`build.sh` also builds `lyrafmt`** when a C compiler, `libtree-sitter` and the sibling

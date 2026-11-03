@@ -1,0 +1,166 @@
+diff --git a/llvm/include/llvm/BinaryFormat/ELF.h b/llvm/include/llvm/BinaryFormat/ELF.h
+index 3f1889f23..c48ab2286 100644
+--- a/llvm/include/llvm/BinaryFormat/ELF.h
++++ b/llvm/include/llvm/BinaryFormat/ELF.h
+@@ -318,6 +318,7 @@ enum {
+   EM_COOL = 217,          // iCelero CoolEngine
+   EM_NORC = 218,          // Nanoradio Optimized RISC
+   EM_CSR_KALIMBA = 219,   // CSR Kalimba architecture family
++  EM_Z80 = 220,           // Zilog Z80
+   EM_AMDGPU = 224,        // AMD GPU architecture
+   EM_RISCV = 243,         // RISC-V
+   EM_LANAI = 244,         // Lanai 32-bit processor
+diff --git a/llvm/include/llvm/IR/RuntimeLibcalls.td b/llvm/include/llvm/IR/RuntimeLibcalls.td
+index 74c51391a..3cbde4434 100644
+--- a/llvm/include/llvm/IR/RuntimeLibcalls.td
++++ b/llvm/include/llvm/IR/RuntimeLibcalls.td
+@@ -101,6 +101,7 @@ def IsVE : LibcallPredicate<[{TT.isVE()}]>;
+ def IsBPF : LibcallPredicate<[{TT.isBPF()}]>;
+ def IsArchCSKY : LibcallPredicate<[{TT.getArch() == Triple::csky}]>;
+ def IsArchArc : LibcallPredicate<[{TT.getArch() == Triple::arc}]>;
++def IsArchZ80 : LibcallPredicate<[{TT.getArch() == Triple::z80}]>;
+ def IsArchM68k : LibcallPredicate<[{TT.getArch() == Triple::m68k}]>;
+ def IsArchXtensa : LibcallPredicate<[{TT.getArch() == Triple::xtensa}]>;
+ 
+@@ -3521,7 +3522,7 @@ def WasmSystemLibrary
+ 
+ // TODO: Should make every target explicit.
+ def isDefaultLibcallArch : RuntimeLibcallAvailability<
+-  (any_of IsMIPS, IsLoongArch, IsVE, IsBPF, IsArchCSKY, IsArchArc, IsArchM68k,
++  (any_of IsMIPS, IsLoongArch, IsVE, IsBPF, IsArchCSKY, IsArchArc, IsArchM68k, IsArchZ80,
+           IsArchXtensa, (all_of IsSystemZ, (not IsOSzOS)))>;
+ 
+ 
+diff --git a/llvm/include/llvm/Object/ELFObjectFile.h b/llvm/include/llvm/Object/ELFObjectFile.h
+index 6d72741c3..756eaaebc 100644
+--- a/llvm/include/llvm/Object/ELFObjectFile.h
++++ b/llvm/include/llvm/Object/ELFObjectFile.h
+@@ -1300,6 +1300,8 @@ StringRef ELFObjectFile<ELFT>::getFileFormatName() const {
+       return (IsLittleEndian ? "elf32-littlearm" : "elf32-bigarm");
+     case ELF::EM_AVR:
+       return "elf32-avr";
++    case ELF::EM_Z80:
++      return "elf32-z80";
+     case ELF::EM_HEXAGON:
+       return "elf32-hexagon";
+     case ELF::EM_LANAI:
+@@ -1377,6 +1379,8 @@ template <class ELFT> Triple::ArchType ELFObjectFile<ELFT>::getArch() const {
+     return Triple::arm;
+   case ELF::EM_AVR:
+     return Triple::avr;
++  case ELF::EM_Z80:
++    return Triple::z80;
+   case ELF::EM_HEXAGON:
+     return Triple::hexagon;
+   case ELF::EM_LANAI:
+diff --git a/llvm/include/llvm/TargetParser/Triple.h b/llvm/include/llvm/TargetParser/Triple.h
+index 18634a8bb..7c58c4d4f 100644
+--- a/llvm/include/llvm/TargetParser/Triple.h
++++ b/llvm/include/llvm/TargetParser/Triple.h
+@@ -96,6 +96,7 @@ public:
+     x86_64,         // X86-64: amd64, x86_64
+     xcore,          // XCore: xcore
+     xtensa,         // Tensilica: Xtensa
++    z80,            // Zilog Z80
+     nvptx,          // NVPTX: 32-bit
+     nvptx64,        // NVPTX: 64-bit
+     amdil,          // AMDIL
+diff --git a/llvm/lib/TargetParser/TargetDataLayout.cpp b/llvm/lib/TargetParser/TargetDataLayout.cpp
+index 8b6f46642..f858d62b6 100644
+--- a/llvm/lib/TargetParser/TargetDataLayout.cpp
++++ b/llvm/lib/TargetParser/TargetDataLayout.cpp
+@@ -580,6 +580,8 @@ std::string Triple::computeDataLayout(StringRef ABIName) const {
+            "f32:32:32-i64:32-f64:32-a:0:32-n32";
+   case Triple::avr:
+     return "e-P1-p:16:8-i8:8-i16:8-i32:8-i64:8-f32:8-f64:8-n8:16-a:8";
++  case Triple::z80:
++    return "e-m:e-p:16:8-i16:8-i32:8-i64:8-f32:8-f64:8-a:8-n8:16-S8";
+   case Triple::bpfel:
+   case Triple::bpfeb:
+     return computeBPFDataLayout(*this);
+diff --git a/llvm/lib/TargetParser/Triple.cpp b/llvm/lib/TargetParser/Triple.cpp
+index 1e421c428..41b5e8af1 100644
+--- a/llvm/lib/TargetParser/Triple.cpp
++++ b/llvm/lib/TargetParser/Triple.cpp
+@@ -60,6 +60,8 @@ StringRef Triple::getArchTypeName(ArchType Kind) {
+     return "armeb";
+   case avr:
+     return "avr";
++  case z80:
++    return "z80";
+   case bpfeb:
+     return "bpfeb";
+   case bpfel:
+@@ -275,6 +277,8 @@ StringRef Triple::getArchTypePrefix(ArchType Kind) {
+ 
+   case avr:
+     return "avr";
++  case z80:
++    return "z80";
+ 
+   case ppc64:
+   case ppc64le:
+@@ -465,6 +469,7 @@ Triple::ArchType Triple::getArchTypeForLLVMName(StringRef Name) {
+       .Case("arm", arm)
+       .Case("armeb", armeb)
+       .Case("avr", avr)
++      .Case("z80", z80)
+       .StartsWith("bpf", BPFArch)
+       .Case("m68k", m68k)
+       .Case("mips", mips)
+@@ -619,6 +624,7 @@ Triple::ArchType Triple::parseArch(StringRef ArchName) {
+           .Case("thumb", Triple::thumb)
+           .Case("thumbeb", Triple::thumbeb)
+           .Case("avr", Triple::avr)
++          .Case("z80", Triple::z80)
+           .Case("m68k", Triple::m68k)
+           .Case("msp430", Triple::msp430)
+           .Cases({"mips", "mipseb", "mipsallegrex", "mipsisa32r6", "mipsr6"},
+@@ -964,6 +970,7 @@ static Triple::ObjectFormatType getDefaultFormat(const Triple &T) {
+   case Triple::arc:
+   case Triple::armeb:
+   case Triple::avr:
++  case Triple::z80:
+   case Triple::bpfeb:
+   case Triple::bpfel:
+   case Triple::csky:
+@@ -1731,6 +1738,7 @@ unsigned Triple::getArchPointerBitWidth(llvm::Triple::ArchType Arch) {
+     return 0;
+ 
+   case llvm::Triple::avr:
++  case llvm::Triple::z80:
+   case llvm::Triple::msp430:
+     return 16;
+ 
+@@ -1837,6 +1845,7 @@ Triple Triple::get32BitArchVariant() const {
+   case Triple::UnknownArch:
+   case Triple::amdgpu:
+   case Triple::avr:
++  case Triple::z80:
+   case Triple::bpfeb:
+   case Triple::bpfel:
+   case Triple::msp430:
+@@ -1951,6 +1960,7 @@ Triple Triple::get64BitArchVariant() const {
+   case Triple::UnknownArch:
+   case Triple::arc:
+   case Triple::avr:
++  case Triple::z80:
+   case Triple::csky:
+   case Triple::dxil:
+   case Triple::hexagon:
+@@ -2076,6 +2086,7 @@ Triple Triple::getBigEndianArchVariant() const {
+   case Triple::amdil64:
+   case Triple::amdil:
+   case Triple::avr:
++  case Triple::z80:
+   case Triple::dxil:
+   case Triple::hexagon:
+   case Triple::hsail64:
+@@ -2212,6 +2223,7 @@ bool Triple::isLittleEndian() const {
+   case Triple::amdil:
+   case Triple::arm:
+   case Triple::avr:
++  case Triple::z80:
+   case Triple::bpfel:
+   case Triple::csky:
+   case Triple::dxil:

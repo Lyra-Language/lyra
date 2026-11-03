@@ -1329,6 +1329,7 @@ target, 10/11). In order:
 
 ## Target introspection
 
+- **[PARTIAL] A Z80 backend, for new Master System and Game Gear games**: our own LLVM target is in `tools/llvm-z80` (decided 11/03; its README lists what is missing) and compiles IR correctly by test and fuzz. Next: frames past (ix+127), then `target = "sms"` in lyrac: a linker, runtime and `std.sms` with port I/O. Bank switching and an SMS-sized art pipeline follow.
 - **[IDEA] `size_of::<t>()` / `align_of::<t>()`** (plus stride) — answerable from
   `SizeAndAlign`, needing only a value-argument-less turbofish call shape.
 - Target predicates (`is_x86`, `simd_width_of`) wait for real cross-compilation; `lyrac`
