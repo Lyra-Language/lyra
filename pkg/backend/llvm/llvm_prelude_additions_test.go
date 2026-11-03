@@ -50,8 +50,7 @@ let main = () -> void => {
 	}
 }
 
-// `flatten` on `[][]t` (10/23, asked for by lui's <for> of several elements, which a
-// comprehension cannot write: a clause may not draw from an earlier one's binding): the arrays
+// `flatten` on `[][]t` (10/23, asked for by lui's <for> of several elements): the arrays
 // in order, an empty one adding nothing; managed elements kept; and called as a function, so an
 // expected element type reaches the comprehension inside.
 func TestExec_ArrayFlatten(t *testing.T) {

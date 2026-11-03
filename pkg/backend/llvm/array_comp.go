@@ -52,6 +52,19 @@ import (
 // range's is computed up front and the loop then runs exactly that many times (see
 // rangeSource), so a degenerate step yields an empty array rather than a fill loop racing
 // past the allocation.
+//
+// **A source that names an earlier clause has no capacity to multiply in**, because it is a
+// different array on each iteration of that clause: `[row in grid, cell in row | cell]`. It
+// is lowered inside the loop it depends on, and the comprehension grows instead of filling
+// (emitDynArrayPush, as over a sequence): the same three options as above, and running twice
+// is still wrong, so growing is what is left. Only such a comprehension pays for it. A source
+// that names no earlier clause is still evaluated once, before the loops, beside one that does.
+//
+// **A `?`, `return`, `break` or `continue` can leave with the box half built** (holdCompBox).
+// It is nobody's yet: no binding holds it and the wrapper around lowerExpr hasn't seen it, so
+// for as long as the loops run it sits in a managed frame of its own, which every way out
+// already releases. Only a comprehension that can leave does this, and a fill then keeps the
+// box's length current per element, for the drop glue; the rest pay nothing.
 
 // compSource is a generator's source reduced to what the fill loop needs.
 type compSource struct {
@@ -87,8 +100,7 @@ func (l *lowerer) lowerArrayComp(block *ir.Block, e *ast.ArrayCompExpr) (value.V
 	stride := bufferStride(elemSize, elemAlign)
 
 	// A sequence source has no length to size the box from, so it takes the growing
-	// path (seq_lower.go) — alone: a sequence beside another generator would need the
-	// product of a count and something that has none.
+	// path (seq_lower.go) — alone: it is consumed by inlining, not by a compSource.
 	for i := range e.Generators {
 		if srcType, ok := l.recordedType(e.Generators[i].Value); ok && isSeqType(srcType) {
 			if len(e.Generators) != 1 {
@@ -102,20 +114,39 @@ func (l *lowerer) lowerArrayComp(block *ir.Block, e *ast.ArrayCompExpr) (value.V
 	// belongs to its loop: scope them so they cannot leak into what follows.
 	defer l.pushLocalScope()()
 
-	if err := dependentGenerator(e.Generators); err != nil {
-		return nil, nil, err
-	}
-	// Every source is materialized **once, before the loops**, which is what makes the
-	// capacity computable up front. It is also exactly why a source may not depend on an
-	// earlier generator's binding — see dependentGenerator.
-	sources := make([]compSource, 0, len(e.Generators))
+	// A source naming no earlier clause is materialized **once, before the loops**, which
+	// is what makes the capacity computable up front. One that names an earlier clause
+	// stays nil here: emitCompLoops lowers it inside the loop it depends on.
+	dependent := dependentClauses(e.Generators)
+	grows := false
+	sources := make([]*compSource, len(e.Generators))
 	for i := range e.Generators {
+		if dependent[i] {
+			grows = true
+			continue
+		}
 		var src compSource
 		src, block, err = l.lowerCompSource(block, &e.Generators[i])
 		if err != nil {
 			return nil, nil, err
 		}
-		sources = append(sources, src)
+		sources[i] = &src
+	}
+
+	boxTy := DynArrayBoxType(elemLL)
+	if grows {
+		box := l.dynArrayAlloc(block, boxTy, elemLL, i64c(0), i64c(0), int64(stride))
+		defer l.holdCompBox(block, e, box, dynType)()
+		after, err := l.emitCompLoops(block, e, sources, elemLL, 0, func(b *ir.Block, result value.Value) *ir.Block {
+			return l.emitDynArrayPush(b, boxTy, box, result, int64(stride))
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		// Doubling leaves a tail, and a fill's reason to hand one back holds here too.
+		count := after.NewLoad(lltypes.I64, dynArrayLenPtr(after, boxTy, box))
+		capacity := after.NewLoad(lltypes.I64, dynArrayCapPtr(after, boxTy, box))
+		return box, l.shrinkCompBuffer(after, boxTy, elemLL, box, capacity, count, int64(stride)), nil
 	}
 
 	capacity := sources[0].capacity
@@ -123,26 +154,26 @@ func (l *lowerer) lowerArrayComp(block *ir.Block, e *ast.ArrayCompExpr) (value.V
 		capacity = block.NewMul(capacity, src.capacity)
 	}
 
-	boxTy := DynArrayBoxType(elemLL)
 	// Length 0 for now: the count is only known once the guards have run, and is stored
 	// at the end. The buffer is sized at the capacity, which is the over-allocation this
 	// file's header comment explains.
 	box := l.dynArrayAlloc(block, boxTy, elemLL, i64c(0), capacity, int64(stride))
+	defer l.holdCompBox(block, e, box, dynType)()
+	canLeave := compCanLeave(e)
 
-	fn := block.Parent
-	entry := fn.Blocks[0]
-	countSlot := entry.NewAlloca(lltypes.I64)
+	countSlot := block.Parent.Blocks[0].NewAlloca(lltypes.I64)
 	block.NewStore(i64c(0), countSlot)
 
-	// Bind each generator into a slot its loop writes per iteration, so the guards and
-	// result read them as ordinary locals.
-	slots := make([]value.Value, len(sources))
-	for i, src := range sources {
-		slots[i] = entry.NewAlloca(src.elemLL)
-		l.locals[e.Generators[i].Identifier] = slots[i]
-	}
-
-	after, err := l.emitCompLoops(block, e, sources, slots, boxTy, box, countSlot, elemLL, 0)
+	after, err := l.emitCompLoops(block, e, sources, elemLL, 0, func(b *ir.Block, result value.Value) *ir.Block {
+		n := b.NewLoad(lltypes.I64, countSlot)
+		b.NewStore(result, dynArrayElemPtr(b, boxTy, box, n))
+		next := b.NewAdd(n, i64c(1))
+		b.NewStore(next, countSlot)
+		if canLeave {
+			b.NewStore(next, dynArrayLenPtr(b, boxTy, box))
+		}
+		return b
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -155,11 +186,48 @@ func (l *lowerer) lowerArrayComp(block *ir.Block, e *ast.ArrayCompExpr) (value.V
 	return box, after, nil
 }
 
+// holdCompBox keeps box in a managed frame of its own while the loops run, if anything in the
+// comprehension can leave them, and answers what ends that. The frame is popped and not
+// released: the path that finishes the loops hands the box on as the comprehension's value.
+func (l *lowerer) holdCompBox(block *ir.Block, e *ast.ArrayCompExpr, box value.Value, dynType types.DynamicArrayType) func() {
+	if !compCanLeave(e) {
+		return func() {}
+	}
+	slot := block.Parent.Blocks[0].NewAlloca(box.Type())
+	block.NewStore(box, slot)
+	l.pushManagedFrame()
+	l.addManagedBinding(slot, dynType)
+	return l.popManagedFrame
+}
+
+// compCanLeave reports whether anything in the comprehension can leave it: a lambda's own
+// `?` or `return` leaves the lambda instead. A `break` that only ends a loop inside counts
+// too, which costs a slot and a store and nothing else.
+func compCanLeave(e *ast.ArrayCompExpr) bool {
+	leaves := false
+	ast.WalkExpr(e, func(s ast.Statement) bool {
+		switch s.(type) {
+		case *ast.ReturnStmt, *ast.BreakStmt, *ast.ContinueStmt:
+			leaves = true
+		}
+		return true
+	}, func(x ast.Expression) bool {
+		switch x.(type) {
+		case *ast.TryExpr:
+			leaves = true
+		case *ast.LambdaExpr:
+			return false
+		}
+		return true
+	})
+	return leaves
+}
+
 // overAllocates reports whether this comprehension's count can come in under its capacity,
 // which is the only case the shrink is worth emitting for. A guard rejects elements; a
 // string source's byte-length bound exceeds its rune count for anything non-ASCII. With
 // neither, every iteration stores and the buffer is already exactly the right size.
-func overAllocates(e *ast.ArrayCompExpr, sources []compSource) bool {
+func overAllocates(e *ast.ArrayCompExpr, sources []*compSource) bool {
 	if len(e.Guards) > 0 {
 		return true
 	}
@@ -213,21 +281,40 @@ func (l *lowerer) shrinkCompBuffer(block *ir.Block, boxTy *lltypes.StructType, e
 //
 // Recursion rather than iteration because each loop's body *is* the next loop: the blocks
 // have to nest, and the innermost body is the only one that stores.
-func (l *lowerer) emitCompLoops(block *ir.Block, e *ast.ArrayCompExpr, sources []compSource, slots []value.Value,
-	boxTy *lltypes.StructType, box value.Value, countSlot value.Value, elemLL lltypes.Type, depth int,
+//
+// **The clause's name is bound here, on the way in**, so a source lowered at this depth sees
+// exactly the clauses before it: a later clause's name still means whatever it meant outside.
+// The slot is what the loop writes per iteration, so the guards and result read it as an
+// ordinary local. A managed temporary a dependent source makes is released where the region
+// its block dominates ends (flushStmtTemps), which is the enclosing loop's back-edge — after
+// this loop, once per iteration.
+func (l *lowerer) emitCompLoops(block *ir.Block, e *ast.ArrayCompExpr, sources []*compSource, elemLL lltypes.Type,
+	depth int, store func(*ir.Block, value.Value) *ir.Block,
 ) (*ir.Block, error) {
 	if depth == len(sources) {
-		return l.emitCompBody(block, e, boxTy, box, countSlot, elemLL)
+		return l.emitCompBody(block, e, elemLL, store)
 	}
-	return sources[depth].emit(block, slots[depth], func(body *ir.Block) (*ir.Block, error) {
-		return l.emitCompLoops(body, e, sources, slots, boxTy, box, countSlot, elemLL, depth+1)
+	gen := &e.Generators[depth]
+	src := sources[depth]
+	if src == nil {
+		lowered, next, err := l.lowerCompSource(block, gen)
+		if err != nil {
+			return nil, err
+		}
+		src, block = &lowered, next
+	}
+	slot := block.Parent.Blocks[0].NewAlloca(src.elemLL)
+	l.locals[gen.Identifier] = slot
+	return src.emit(block, slot, func(body *ir.Block) (*ir.Block, error) {
+		return l.emitCompLoops(body, e, sources, elemLL, depth+1, store)
 	})
 }
 
-// emitCompBody is the innermost level: test the guards, and on success store the result at
-// the running count.
-func (l *lowerer) emitCompBody(block *ir.Block, e *ast.ArrayCompExpr, boxTy *lltypes.StructType,
-	box value.Value, countSlot value.Value, elemLL lltypes.Type,
+// emitCompBody is the innermost level: test the guards, and on success hand the result to
+// store, which answers the block it left off in. Every comprehension ends here: the fill
+// loop's store writes at its count and the growing paths' push.
+func (l *lowerer) emitCompBody(block *ir.Block, e *ast.ArrayCompExpr, elemLL lltypes.Type,
+	store func(*ir.Block, value.Value) *ir.Block,
 ) (*ir.Block, error) {
 	fn := block.Parent
 	skip := fn.NewBlock("")
@@ -258,10 +345,7 @@ func (l *lowerer) emitCompBody(block *ir.Block, e *ast.ArrayCompExpr, boxTy *llt
 	if err != nil {
 		return nil, err
 	}
-	n := cur.NewLoad(lltypes.I64, countSlot)
-	cur.NewStore(result, dynArrayElemPtr(cur, boxTy, box, n))
-	cur.NewStore(cur.NewAdd(n, i64c(1)), countSlot)
-	cur.NewBr(skip)
+	store(cur, result).NewBr(skip)
 	return skip, nil
 }
 
@@ -302,39 +386,28 @@ func countedSource(count value.Value, elemLL lltypes.Type, at func(b *ir.Block, 
 	}
 }
 
-// dependentGenerator reports a generator whose source mentions an earlier generator's
-// binding — `[ xs in grid, x in xs | x ]`.
+// dependentClauses says, per clause, whether its source mentions an earlier clause's name —
+// `[ xs in grid, x in xs | x ]`.
 //
-// It type-checks, and it is the one shape the lowering above cannot serve: sources are
-// materialized once before the loops, so a dependent one would be evaluated against a
-// binding that has no value yet, and its length would be wrong for every iteration but the
-// first. Supporting it means moving each source's materialization inside the enclosing
-// loop, which in turn means the capacity is no longer known before the loops run — a
-// different allocation strategy, not a small change.
-//
-// Refused loudly rather than mis-lowered (hazard 5). The message names the fix that exists
-// today, since a nested comprehension expresses the same thing.
-func dependentGenerator(generators []ast.Generator) error {
+// By name, so a source whose own lambda or nested comprehension merely reuses the name counts
+// too. That is the safe side: it costs that source an evaluation per iteration and the
+// comprehension its up-front capacity, where the other mistake reads a binding with no value.
+func dependentClauses(generators []ast.Generator) []bool {
+	dependent := make([]bool, len(generators))
 	bound := map[string]bool{}
 	for i := range generators {
 		gen := &generators[i]
 		if gen.Value != nil {
-			var offender string
 			ast.WalkExpr(gen.Value, func(ast.Statement) bool { return true }, func(x ast.Expression) bool {
 				if id, ok := x.(*ast.IdentifierExpr); ok && bound[id.Name] {
-					offender = id.Name
+					dependent[i] = true
 				}
 				return true
 			})
-			if offender != "" {
-				return fmt.Errorf(
-					"llvm: a comprehension clause whose source depends on an earlier clause (%q in %q's source) is not implemented yet — write it as a comprehension over a comprehension instead",
-					offender, gen.Identifier)
-			}
 		}
 		bound[gen.Identifier] = true
 	}
-	return nil
+	return dependent
 }
 
 // lowerCompSource reduces a generator's source to a capacity and a loop emitter.

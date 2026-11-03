@@ -9,6 +9,54 @@ Newest first.
 
 ## Dated log
 
+### 11/03/26 — A way out of a comprehension releases its box
+
+`[x in xs | f(x)?]` returned with the box half built and nothing holding it. The same went for a
+`return`, `break` or `continue` in a result, guard or source, and over a sequence. The answer was
+right, so only LeakSanitizer saw it, and only on Linux.
+
+- **The box sits in a managed frame while the loops run** (`holdCompBox`), popped unreleased when
+  they finish. Every exit already releases frames, so no exit needed teaching. A pending temporary
+  was the other candidate and is wrong: the statement's flush would free the box on the path that
+  keeps it.
+- **A fill now has to keep the box's length current**, since the drop glue reads it and the count
+  was only stored after the loops. That is a store per element which a register count doesn't pay,
+  so it is done only by a comprehension that can leave (`compCanLeave`). The rest emit what they
+  emitted. A `break` that only ends a loop inside counts as leaving; that costs a store.
+- **A `?` also leaked temporaries from other blocks**: `releaseTempsOnExit` takes only those made
+  in the block the test ran in, so `[x in many() | f(x)?]` lost the array `many()` made.
+  `recordTempsPastExit` hands the rest to `resolveExitReleases`, the dominance check `break` and
+  `return` already use. That covers any `?`, not only in comprehensions.
+- **Found and left open:** `["a" ++ b, f()?]` leaks its first element, as do a tuple and a call's
+  arguments. An operand already evaluated isn't pending anywhere until its aggregate is built, so
+  it needs its own answer; todo.md has it.
+
+### 11/03/26 — A comprehension clause's source may use an earlier clause
+
+`[row in grid, cell in row | cell]` was refused because sources were materialized before the
+loops to compute the capacity. Such a source is now lowered inside the loop it depends on.
+
+- **The box grows when a source depends.** Its length differs per iteration, so no product
+  exists, and running the loops twice to count stays wrong for the reason it always was: a
+  guard may call a function. Comprehensions with no dependent source fill exactly as before
+  and pay nothing. The tail doubling leaves is shrunk off, as a fill's is.
+- **A source naming no earlier clause still runs once, before the loops**, even beside one that
+  does. Moving every source inside (Python's rule) would have changed how many times existing
+  programs call their sources. Dependence is by name, not by resolved binding: captures' walk
+  is flat, so asking it would call `[a in as, b in f(a, xs.map((a) => a))]` independent and read
+  a binding with no value. The name test can only cost an extra evaluation.
+- **A clause's name is bound on the way into its loop**, not all up front, so an earlier source
+  still reads an outer binding that a later clause goes on to shadow.
+- **Temporaries needed nothing.** A source's owned result is released where the region its block
+  dominates ends (`flushStmtTemps`), which is the enclosing loop's back-edge.
+- **Found on the way, both use-after-frees older than this:** a guard ran per iteration but was
+  analyzed as if once, so `[x in xs | keep(label, x) | x]` moved its local on the first
+  iteration; and Perceus reuse's `loopUsed` knew `for` and `while` but not comprehensions, so a
+  `match` on an `own` binding in a result or guard reclaimed its box and matched it again.
+  Later sources take the same two rules: `conditional`, and out of reuse.
+- `emitCompBody` now serves the fill, the growth and `lowerSeqComp`, which had its own copy.
+  `flatten` became the one-line comprehension its doc comment had said could not be written.
+
 ### 11/03/26 — `data` is a name wherever no type follows it
 
 `let x = data()` compiled, and `data(1)` on a line of its own did not; nor did `data.f()`,

@@ -153,25 +153,6 @@ let main = () -> u8 => {
 	}
 }
 
-// Deferred loudly rather than mis-lowered: a source that depends on an earlier
-// comprehension clause would be materialized before that binding has a value, since
-// sources are hoisted to make the capacity computable.
-func TestEmit_ArrayCompDependentClauseIsRefused(t *testing.T) {
-	t.Parallel()
-	_, err := emitSource(t, `
-let main = () -> u8 => {
-  let grid: [][]i64 = [[1, 2], [3, 4]]
-  let flat = [row in grid, cell in row | cell]
-  u8(flat.len())
-}`)
-	if err == nil {
-		t.Fatal("expected a dependent comprehension clause to be refused")
-	}
-	if !strings.Contains(err.Error(), "depends on an earlier clause") {
-		t.Errorf("expected the message to name the dependency, got %v", err)
-	}
-}
-
 // A **range** source. The count is derived up front and the loop runs exactly that many
 // times, so the capacity bounds the fill by construction rather than by the loop and the
 // formula happening to agree.

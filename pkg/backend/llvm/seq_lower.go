@@ -650,38 +650,15 @@ func (l *lowerer) lowerSeqComp(block *ir.Block, e *ast.ArrayCompExpr, gen *ast.G
 	defer l.pushLocalScope()()
 	boxTy := DynArrayBoxType(elemLL)
 	box := l.dynArrayAlloc(block, boxTy, elemLL, i64c(0), i64c(0), stride)
-	fn := block.Parent
-	entry := fn.Blocks[0]
-	slot := entry.NewAlloca(srcElemLL)
+	defer l.holdCompBox(block, e, box, dynType)()
+	slot := block.Parent.Blocks[0].NewAlloca(srcElemLL)
 	l.locals[gen.Identifier] = slot
 
 	exit, err := l.lowerSeqConsume(block, gen.Value, func(b *ir.Block, elem value.Value) (*ir.Block, error) {
 		b.NewStore(elem, slot)
-		skip := fn.NewBlock("")
-		cur := b
-		for _, guard := range e.Guards {
-			v, next, err := l.lowerExpr(cur, guard)
-			if err != nil {
-				return nil, err
-			}
-			pass := fn.NewBlock("")
-			next.NewCondBr(v, pass, skip)
-			cur = pass
-		}
-		result, cur, err := l.lowerExpr(cur, e.Result)
-		if err != nil {
-			return nil, err
-		}
-		if diverged(result, cur) {
-			return skip, nil
-		}
-		result, err = l.coerceAggregateElem(cur, result, elemLL, e.Result)
-		if err != nil {
-			return nil, err
-		}
-		cur = l.emitDynArrayPush(cur, boxTy, box, result, stride)
-		cur.NewBr(skip)
-		return skip, nil
+		return l.emitCompBody(b, e, elemLL, func(cur *ir.Block, result value.Value) *ir.Block {
+			return l.emitDynArrayPush(cur, boxTy, box, result, stride)
+		})
 	})
 	if err != nil {
 		return nil, nil, err

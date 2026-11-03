@@ -355,9 +355,14 @@ Prelude, `where t: Ord`, `self` receiver (`a.min(b)` = `min(a, b)`). `min` keeps
 - A source is an array, a range, a string (by rune), or one `Seq`, **written** as a name
   (a constant's too, `PAIRS`, since 10/19), a call, a field or an element (`g.sprites`,
   `grid[0]`, since 09/29), a tuple's element (`g.1`, since 10/27), or a literal; anything
-  else is parenthesized. Capacity is the product
-  of the sources' lengths, computed up front, which is why a clause whose source depends on
-  an **earlier clause's binding** (`[row in grid, cell in row | cell]`) is refused today.
+  else is parenthesized.
+- **A source may name an earlier clause** (`[row in grid, cell in row | cell]`, since 11/03),
+  and then runs once per iteration of the clauses before it. A source naming none runs once,
+  before any loop, even beside one that does. Mentioning the name is what counts, so a lambda
+  in the source that merely reuses it makes the source run per iteration too. A `Seq` is still
+  a comprehension's only clause.
+- The box is allocated once at the product of the sources' lengths, computed up front. With a
+  source naming an earlier clause there is no such product: the box starts empty and grows.
 - The result is any expression, and the brackets make a `[]T` — there is no `collect`.
 
 **Sorting** (all ordinary Lyra in `std/prelude/array.lyra`):

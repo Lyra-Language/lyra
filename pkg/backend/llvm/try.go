@@ -266,6 +266,7 @@ func (l *lowerer) lowerTryPropagate(block, preBranch *ir.Block, transferred, scr
 	if err := l.releaseTempsOnExit(block, preBranch, transferred); err != nil {
 		return err
 	}
+	l.recordTempsPastExit(block, preBranch, transferred)
 	savedBase := l.pendingBase
 	l.pendingBase = len(l.pendingReleases)
 	defer func() { l.pendingBase = savedBase }()

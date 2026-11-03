@@ -857,6 +857,15 @@ func (a *analyzer) computeOwnedLastRef(lam *ast.LambdaExpr) map[string]ast.Expre
 			collectNames(le.Body, loopUsed)
 		case *ast.ForInLoopExpr:
 			collectNames(le.Body, loopUsed)
+		case *ast.ArrayCompExpr:
+			// A comprehension is a loop too: all of it but the first clause's source.
+			for i := 1; i < len(le.Generators); i++ {
+				collectNames(le.Generators[i].Value, loopUsed)
+			}
+			for _, g := range le.Guards {
+				collectNames(g, loopUsed)
+			}
+			collectNames(le.Result, loopUsed)
 		case *ast.AddressOfExpr:
 			noteAddressTaken(le, addrTaken)
 		case *ast.FunctionCallExpr:
@@ -1087,8 +1096,8 @@ func (a *analyzer) notePointerHandedOut(call *ast.FunctionCallExpr, into map[str
 }
 
 // collectNames records every identifier name referenced within a block.
-func collectNames(block *ast.BlockExpr, into map[string]bool) {
-	ast.WalkExpr(block, nil, func(e ast.Expression) bool {
+func collectNames(expr ast.Expression, into map[string]bool) {
+	ast.WalkExpr(expr, nil, func(e ast.Expression) bool {
 		if id, ok := e.(*ast.IdentifierExpr); ok {
 			into[id.Name] = true
 		}
@@ -1712,14 +1721,22 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		// `[i in 0..<2 | t]`, so the backend would free `t` inside the loop while the
 		// array kept both pointers — turning a latent double-free at scope exit into an
 		// immediate one.
-		for i := range e.Generators {
+		//
+		// A guard runs per iteration as well, and so does a later clause's source when it
+		// names an earlier clause: `conditional` for those too, so that a call taking
+		// something `own` there dups it rather than moving it on the first iteration. A
+		// later source that does run once only pays for a retain.
+		if len(e.Generators) > 0 {
+			a.expr(e.Generators[0].Value, false)
+		}
+		savedCond := a.conditional
+		a.conditional = true
+		for i := 1; i < len(e.Generators); i++ {
 			a.expr(e.Generators[i].Value, false)
 		}
 		for _, g := range e.Guards {
 			a.expr(g, false)
 		}
-		savedCond := a.conditional
-		a.conditional = true
 		a.expr(e.Result, true)
 		a.conditional = savedCond
 		// A comprehension is an owned producer — one fresh box — so in a borrowing

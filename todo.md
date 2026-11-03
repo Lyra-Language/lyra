@@ -934,12 +934,17 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 
 ## Array comprehensions
 
-- **[OPEN] A comprehension clause whose source depends on an earlier one** (`[row in grid,
-  cell in row | cell]`). Sources are materialized before the loops to compute capacity;
-  this needs materialization inside the enclosing loop. Refused loudly, with the
-  comprehension-over-a-comprehension workaround in the message (confirmed 09/22). Called a
-  *clause* here because a bare "generator" names a `gen` function — the 09/17 convention
-  CLAUDE.md states and the backend's own message already follows.
+- **[DONE 11/03] A comprehension clause whose source uses an earlier one** (`[row in grid,
+  cell in row | cell]`): lowered inside the loop it depends on, the box growing. Guards and
+  later sources stopped taking a local's only reference on the first iteration. (COMPLETED.md,
+  11/03.)
+- **[DONE 11/03] A way out of a comprehension releases its box** and what it holds so far: a
+  `?`, `return`, `break` or `continue` in a result, guard or source. (COMPLETED.md, 11/03.)
+- **[OPEN] A `?` leaks the operands already evaluated beside it**: `["a" ++ b, f()?]`,
+  `("a" ++ b, f()?)` and `g("a" ++ b, f()?)` leak the first on the early exit, as they aren't
+  pending temporaries. Found on Linux by LeakSanitizer; the answer is right.
+- **[OPEN] A `Seq` beside another clause** (`[n in ns, i in upto(n) | i]`) is still refused,
+  though the comprehension can now grow. It would need a `compSource` over `lowerSeqConsume`.
 - **[DONE 09/29] A field, an element or a parenthesized expression is a comprehension
   source.** (COMPLETED.md, 09/29.)
 - **[DONE 10/19] A constant is a comprehension source** — `[p in PAIRS | p.1]` was a

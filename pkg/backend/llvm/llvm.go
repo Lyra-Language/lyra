@@ -993,8 +993,7 @@ func (l *lowerer) resolveExitReleases(fn *ir.Func) error {
 // exit's predecessor. A temporary produced inside a conditional sub-expression (an
 // `&&` right operand, a match-arm body) is not dominated, and releasing it here
 // would touch a value undefined on the path that branch did not take; those are
-// skipped and leak, which is the conservative direction (never a double free).
-// Closing that residue needs real dominance information, not a wider block test.
+// left to recordTempsPastExit, which can ask the question once the function is complete.
 //
 // skip is a value whose reference *transfers* out on this path (the `?` operand,
 // whose reference moves into the rebuilt error) and so must not be released.
@@ -1009,6 +1008,21 @@ func (l *lowerer) releaseTempsOnExit(exit, from *ir.Block, skip value.Value) err
 		}
 	}
 	return nil
+}
+
+// recordTempsPastExit is the rest of releaseTempsOnExit's list: the temporaries of this
+// statement produced in some other block than `from`, as a comprehension's source is before
+// the `?` in its loop. Whether each is live at exit is for resolveExitReleases to say.
+func (l *lowerer) recordTempsPastExit(exit, from *ir.Block, skip value.Value) {
+	var temps []pendingTemp
+	for _, p := range l.pendingReleases[l.pendingBase:] {
+		if p.block != from && (skip == nil || p.val != skip) {
+			temps = append(temps, p)
+		}
+	}
+	if len(temps) > 0 {
+		l.exitReleases = append(l.exitReleases, exitRelease{block: exit, temps: temps})
+	}
 }
 
 func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value.Value, *ir.Block, error) {

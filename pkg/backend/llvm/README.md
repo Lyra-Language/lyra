@@ -383,7 +383,8 @@ lengths; spreading a `shared` array is a loud error.
 
 ### Comprehensions (`array_comp.go`)
 
-`[ x in xs | guard | result ]` allocates once and fills at a running count.
+`[ x in xs | guard | result ]` allocates once and fills at a running count, unless a source
+names an earlier clause (below).
 
 - **Capacity = product of source lengths**, allocated up front. Running the clauses twice
   would evaluate guards (which may call functions) twice; growing would realloc on the
@@ -392,6 +393,9 @@ lengths; spreading a `shared` array is a loud error.
   string's is its **byte** length (≥ rune count); a range's count is `ceil(span/step)`
   computed once, clamped at zero, divisor made safe before `sdiv`, and **the loop is
   driven by that count**, so a degenerate range is empty.
+- **A comprehension that can leave** (`compCanLeave`: a `?`, `return`, `break` or `continue`)
+  holds its box in a managed frame during the loops (`holdCompBox`), so exits release it, and
+  a fill stores its length per element for the drop glue. The rest pay nothing.
 - Each source is a `compSource` that emits its own loop (arrays/ranges share
   `countedSource`; strings use a byte cursor).
 - **`shrinkCompBuffer`** returns unused capacity when a guard or string source could
@@ -399,7 +403,10 @@ lengths; spreading a `shared` array is a loud error.
   (`realloc(p, 0)` may free and return null; the buffer pointer is non-null by
   construction), a failed shrink keeps the old buffer via `select`, and `cap` is rewritten
   with the buffer.
-- Loud error: a comprehension clause whose source depends on an earlier clause.
+- **A source naming an earlier clause** (`dependentClauses`, by name) is lowered inside the
+  loop it depends on, so there is no capacity to multiply: the box starts empty and pushes
+  (`emitDynArrayPush`, as `lowerSeqComp`), then shrinks. Other sources still run once, before
+  the loops. `emitCompBody` is every path's guards and result; only its `store` differs.
 
 ### `match` on `[]T` (`match_array.go`)
 
