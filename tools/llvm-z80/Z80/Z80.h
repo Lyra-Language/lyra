@@ -10,9 +10,11 @@ class Z80TargetMachine;
 
 FunctionPass *createZ80ISelDag(Z80TargetMachine &TM, CodeGenOptLevel OptLevel);
 FunctionPass *createZ80ConstrainedCopies();
+FunctionPass *createZ80PointerBase();
 FunctionPass *createZ80NarrowLoops();
 void initializeZ80NarrowLoopsPass(PassRegistry &);
 void initializeZ80ConstrainedCopiesPass(PassRegistry &);
+void initializeZ80PointerBasePass(PassRegistry &);
 void initializeZ80DAGToDAGISelLegacyPass(PassRegistry &);
 void initializeZ80AsmPrinterPass(PassRegistry &);
 

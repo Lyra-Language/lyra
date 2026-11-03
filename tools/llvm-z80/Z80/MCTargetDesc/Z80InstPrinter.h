@@ -19,6 +19,7 @@ private:
   void printOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O);
   void printCC(const MCInst *MI, unsigned OpNo, raw_ostream &O);
   void printMemIX(const MCInst *MI, unsigned OpNo, raw_ostream &O);
+  void printMemIY(const MCInst *MI, unsigned OpNo, raw_ostream &O);
 };
 } // namespace llvm
 

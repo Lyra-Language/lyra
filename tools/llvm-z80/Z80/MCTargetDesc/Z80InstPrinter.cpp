@@ -34,3 +34,8 @@ void Z80InstPrinter::printMemIX(const MCInst *MI, unsigned OpNo, raw_ostream &O)
   int64_t Disp = MI->getOperand(OpNo + 1).getImm();
   O << "(ix" << (Disp < 0 ? "" : "+") << Disp << ")";
 }
+
+void Z80InstPrinter::printMemIY(const MCInst *MI, unsigned OpNo, raw_ostream &O) {
+  int64_t Disp = MI->getOperand(OpNo + 1).getImm();
+  O << "(iy" << (Disp < 0 ? "" : "+") << Disp << ")";
+}

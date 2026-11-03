@@ -229,6 +229,24 @@ bool Z80InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     Build(Z80::ST8fr).addReg(Z80::IX).addImm(Disp + 1).addReg(Hi(S));
     break;
   }
+  case Z80::LD16ry: {
+    Register D = MI.getOperand(0).getReg();
+    int64_t Disp = MI.getOperand(2).getImm();
+    BuildTo(Z80::LD8ry, Lo(D)).addReg(Z80::IY).addImm(Disp);
+    BuildTo(Z80::LD8ry, Hi(D)).addReg(Z80::IY).addImm(Disp + 1);
+    break;
+  }
+  case Z80::ST16yr: {
+    int64_t Disp = MI.getOperand(1).getImm();
+    Register S = MI.getOperand(2).getReg();
+    Build(Z80::ST8yr).addReg(Z80::IY).addImm(Disp).addReg(Lo(S));
+    Build(Z80::ST8yr).addReg(Z80::IY).addImm(Disp + 1).addReg(Hi(S));
+    break;
+  }
+  case Z80::SETIY:
+    Build(Z80::PUSH16).addReg(MI.getOperand(0).getReg());
+    Build(Z80::POPIY);
+    break;
   case Z80::LEA16:
     // SP and IX are the same through the body, and SP takes no 8-bit limit on the offset.
     BuildTo(Z80::LD16ri, Z80::HL).addImm(MI.getOperand(2).getImm() & 0xFFFF);

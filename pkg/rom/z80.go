@@ -571,9 +571,9 @@ func writeZ80Startup(rom []byte, dataLoad, dataSize, bssStart, bssSize int, addr
 
 	// The interrupt saves what a compiled handler may use. Reading the status acknowledges
 	// it, and bit 7 says a frame's rather than a line's.
-	at = put(irqAt, 0xF5, 0xC5, 0xD5, 0xE5, 0xDD, 0xE5) // push af, bc, de, hl, ix
-	at = put(at, 0x3A, shadowLo, shadowHi, 0xF5)        // ld a, (shadow); push af
-	at = put(at, 0xDB, 0xBF, 0xB7)                      // in a, (0xBF); or a
+	at = put(irqAt, 0xF5, 0xC5, 0xD5, 0xE5, 0xDD, 0xE5, 0xFD, 0xE5) // push af, bc, de, hl, ix, iy
+	at = put(at, 0x3A, shadowLo, shadowHi, 0xF5)                    // ld a, (shadow); push af
+	at = put(at, 0xDB, 0xBF, 0xB7)                                  // in a, (0xBF); or a
 	vblank, hasVblank := address(z80Vblank)
 	hblank, hasHblank := address(z80Hblank)
 	if hasVblank || hasHblank {
@@ -597,8 +597,8 @@ func writeZ80Startup(rom []byte, dataLoad, dataSize, bssStart, bssSize int, addr
 		}
 	}
 	// The bank the interrupted code had, in case the handler used another.
-	at = put(at, 0xF1, 0x32, shadowLo, shadowHi, 0x32, registerLo, registerHi) // pop af; ld (shadow), a; ld (reg), a
-	at = put(at, 0xDD, 0xE1, 0xE1, 0xD1, 0xC1, 0xF1, 0xFB, 0xED, 0x4D)         // pop ix, hl, de, bc, af; ei; reti
+	at = put(at, 0xF1, 0x32, shadowLo, shadowHi, 0x32, registerLo, registerHi)     // pop af; ld (shadow), a; ld (reg), a
+	at = put(at, 0xFD, 0xE1, 0xDD, 0xE1, 0xE1, 0xD1, 0xC1, 0xF1, 0xFB, 0xED, 0x4D) // pop iy, ix, hl, de, bc, af; ei; reti
 	if at > z80BankAt {
 		return fmt.Errorf("the interrupt overran its room (%#x)", at)
 	}

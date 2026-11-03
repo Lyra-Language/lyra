@@ -38,6 +38,23 @@ public:
     return true;
   }
 
+  // A pointer and a displacement that reaches both bytes of a 16-bit access. Not the frame, which
+  // is `selectFrameAddr`'s, or an address known at link time, which has its own instructions.
+  bool selectPointerAddr(SDValue N, SDValue &Base, SDValue &Disp) {
+    if (!CurDAG->isBaseWithConstantOffset(N))
+      return false;
+    int64_t Offset = cast<ConstantSDNode>(N.getOperand(1))->getSExtValue();
+    if (Offset < -128 || Offset > 126)
+      return false;
+    SDValue Root = N.getOperand(0);
+    if (isa<FrameIndexSDNode>(Root) || isa<RegisterSDNode>(Root) ||
+        isa<ConstantSDNode>(Root) || Root.getOpcode() == Z80ISD::WRAPPER)
+      return false;
+    Base = Root;
+    Disp = CurDAG->getSignedTargetConstant(Offset, SDLoc(N), MVT::i8);
+    return true;
+  }
+
 #include "Z80GenDAGISel.inc"
 
 private:

@@ -13,6 +13,9 @@ linked into LLVM's tree; `patches/` tell LLVM the triple, data layout, ELF machi
   indirect call's target to `__z80_callbc` (`push bc; ret`). Everything but IX is caller-saved.
 - **Frames**: SP does not move in a function's body, and IX equals it, so every slot is
   `(ix+d)`. The prologue uses no general register, so arguments stay where they are.
+- **Pointers**: a field through a pointer is `ld r, (iy+d)`. `Z80PointerBase` sets IY, not the
+  allocator, so it is never spilled: `push rr; pop iy`, 25 T-states, only where IY might not hold that
+  pointer already. A call takes it, except the helpers written by hand; the interrupt saves it.
 - **Compares**:
   `or a; sbc hl, rr; add hl, rr` compares and leaves HL as it was, its flags intact.
 - **A and HL**: `Z80ConstrainedCopies` gives each operand that must be in one register its own
@@ -66,5 +69,6 @@ random programs. Both at -O2 and -O0. The helpers come from `runtime/sms/runtime
 - Register allocation can still fail on a very large function (1 in 600 fuzz runs, at -O0, which lyrac does not use).
 - `opt` asserts on a constant address above 64 KB (its alignment is more than a 16-bit pointer holds), as
   Genesis IR has; IR emitted for the Z80 has none.
+- Stack slots are what a frame goes on: in a game's code about ten `(ix+d)` for each `(iy+d)`.
 - Registers run out fast: a loop with four live 16-bit values spills, about 250 T-states a pass where
   hand-written code would take perhaps a quarter of that. Frames cost about 100 T-states a call.

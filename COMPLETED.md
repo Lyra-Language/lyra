@@ -9,6 +9,10 @@ Newest first.
 
 ## Dated log
 
+### 11/03/26 — Z80 fields through IY
+
+A field through a pointer took `ld de, d; add hl, de; ld r, (hl)` and kept two pairs busy, so IY looked like the next win. It is a pass rather than an allocatable register: one register for every pointer would need spills with no register free to make them, while SSA makes "IY holds %p" a small dataflow problem and it cannot fail allocation. It gained less than predicted, 2–3% on a scene, 8% on `std.sms.music` and about 1 KB, since a game's code has about ten stack-slot accesses for each pointer one: the cost is spills, which the estimate had wrong.
+
 ### 11/03/26 — const generics: `N` as a value, on a type, and `[N + 1]t`
 
 `std.sms` and `std.genesis` already took tables of any length, but `N` stopped at the signature.

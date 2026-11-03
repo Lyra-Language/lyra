@@ -68,6 +68,21 @@ def memix : Operand<i16> {
   let EncoderMethod = "encodeMemIX";
 }
 def addr_ix : ComplexPattern<i16, 2, "selectFrameAddr", [frameindex, add]>;
+// Through IY and a displacement, once Z80PointerBase has put the pointer there.
+def memiy : Operand<i16> {
+  let MIOperandInfo = (ops IY16:$base, i8imm:$disp);
+  let PrintMethod = "printMemIY";
+  let EncoderMethod = "encodeMemIX";
+}
+// A pointer and a displacement, until then.
+def memptr : Operand<i16> {
+  let MIOperandInfo = (ops GR16:$base, i8imm:$disp);
+}
+def addr_ptr : ComplexPattern<i16, 2, "selectPointerAddr", [add, or]>;
+def mem_load : PatFrag<(ops node:$p), (load node:$p),
+                       [{ return cast<LoadSDNode>(N)->getAddressSpace() == 0; }]>;
+def mem_store : PatFrag<(ops node:$v, node:$p), (store node:$v, node:$p),
+                        [{ return cast<StoreSDNode>(N)->getAddressSpace() == 0; }]>;
 
 //===----------------------------------------------------------------------===//
 // Formats
@@ -151,6 +166,15 @@ let mayLoad = 1 in {
     let Inst{10-8} = 0b110;
     let Inst{7-0} = m;
   }
+  def LD8ry : Z80Inst<3, (outs GR8:$d), (ins memiy:$m), "ld\t$d, $m"> {
+    bits<3> d;
+    bits<8> m;
+    let Inst{23-16} = 0xFD;
+    let Inst{15-14} = 0b01;
+    let Inst{13-11} = d;
+    let Inst{10-8} = 0b110;
+    let Inst{7-0} = m;
+  }
   def LD8ra : Z80Inst<3, (outs ACC8:$d), (ins imm16op:$a), "ld\ta, ($a)"> {
     bits<16> a;
     let Inst{23-16} = 0x3A;
@@ -167,6 +191,12 @@ let mayLoad = 1 in {
                          [(set GR16:$d, (load HL16:$p))]>;
   def LD16rf : Z80Pseudo<(outs GR16:$d), (ins memix:$m),
                          [(set GR16:$d, (load addr_ix:$m))]>;
+  def LD16ry : Z80Pseudo<(outs GR16:$d), (ins memiy:$m)>;
+  // Z80PointerBase turns each of these into its IY form.
+  def LD8ro : Z80Pseudo<(outs GR8:$d), (ins memptr:$m),
+                        [(set GR8:$d, (i8 (mem_load addr_ptr:$m)))]>;
+  def LD16ro : Z80Pseudo<(outs GR16:$d), (ins memptr:$m),
+                         [(set GR16:$d, (i16 (mem_load addr_ptr:$m)))]>;
 }
 
 let mayStore = 1 in {
@@ -185,6 +215,14 @@ let mayStore = 1 in {
     let Inst{10-8} = s;
     let Inst{7-0} = m;
   }
+  def ST8yr : Z80Inst<3, (outs), (ins memiy:$m, GR8:$s), "ld\t$m, $s"> {
+    bits<8> m;
+    bits<3> s;
+    let Inst{23-16} = 0xFD;
+    let Inst{15-11} = 0b01110;
+    let Inst{10-8} = s;
+    let Inst{7-0} = m;
+  }
   def ST8ar : Z80Inst<3, (outs), (ins imm16op:$a, ACC8:$s), "ld\t($a), a"> {
     bits<16> a;
     let Inst{23-16} = 0x32;
@@ -199,6 +237,11 @@ let mayStore = 1 in {
                          [(store NOHL16:$s, HL16:$p)]>;
   def ST16fr : Z80Pseudo<(outs), (ins memix:$m, GR16:$s),
                          [(store GR16:$s, addr_ix:$m)]>;
+  def ST16yr : Z80Pseudo<(outs), (ins memiy:$m, GR16:$s)>;
+  def ST8ro : Z80Pseudo<(outs), (ins memptr:$m, GR8:$s),
+                        [(mem_store GR8:$s, addr_ptr:$m)]>;
+  def ST16ro : Z80Pseudo<(outs), (ins memptr:$m, GR16:$s),
+                         [(mem_store GR16:$s, addr_ptr:$m)]>;
 }
 
 def : Pat<(i8 (load (Z80wrapper tglobaladdr:$a))), (LD8ra tglobaladdr:$a)>;
@@ -567,6 +610,14 @@ def LDIXi : Z80Inst<4, (outs), (ins imm16op:$n), "ld\tix, $n"> {
   let Inst{31-16} = 0xDD21;
   let Inst{15-0} = n;
 }
+let Uses = [SP], Defs = [SP, IY], mayLoad = 1 in
+def POPIY : Z80Inst<2, (outs), (ins), "pop\tiy"> {
+  let Inst{15-0} = 0xFDE1;
+}
+// IY takes a pointer: `push rr; pop iy`, 25 T-states, with the flags and every register as they
+// were. Its side effects keep it where Z80PointerBase put it.
+let Defs = [IY], Uses = [SP], hasSideEffects = 1 in
+def SETIY : Z80Pseudo<(outs), (ins GR16:$p)>;
 let Defs = [IX, F], Uses = [IX, SP] in
 def ADDIXSP : Z80Inst<2, (outs), (ins), "add\tix, sp"> {
   let Inst{15-0} = 0xDD39;

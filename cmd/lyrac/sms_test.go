@@ -451,6 +451,38 @@ let main = () -> void => {
   vdp.init()
   answer(apply(plus_one, 41) == 42 && fib(10) == 55 && Coin { value: 4 }.score() == 8)
 }`},
+		// The game has a pointer in IY when the interrupt comes, and the handler uses IY for its own.
+		{"interrupt_leaves_iy", `
+struct Box { a: i16 = 0, b: i16 = 0, c: u8 = 0, d: i16 = 0 }
+var mine: [4]Box = #[Box { a: 1, b: 2, c: 3, d: 4 }; 4]
+var theirs: [4]Box = #[Box { a: 50, b: 60, c: 70, d: 80 }; 4]
+var frames: u16 = 0
+impl Box {
+  let turn = (self: mut) -> void => {
+    let a = self.a
+    self.a = self.b
+    self.b = self.d
+    self.d = a
+    self.c = self.c + 1
+  }
+  let right = pure (self: ref) -> bool => self.a == 1 && self.b == 2 && self.c == 3 && self.d == 4
+}
+@interrupt(vblank)
+let each_frame = () -> void => {
+  frames += 1
+  theirs[i16(frames & 3)].turn()
+}
+let main = () -> void => {
+  vdp.init()
+  vdp.interrupt_each_frame()
+  var i: i16 = 0
+  var all_right = true
+  while frames < 20 {
+    all_right = all_right && mine[i & 3].right()
+    i += 1
+  }
+  answer(all_right)
+}`},
 		{"interrupt", `
 var frames: u16 = 0
 @interrupt(vblank)
