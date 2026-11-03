@@ -946,3 +946,141 @@ define i16 @bigshifts() {
   %ok = icmp eq i16 %sb, 15
   %r = select i1 %ok, i16 %r0, i16 0
   ret i16 %r }
+
+
+; Checked multiplies, each width at its edge and just inside it.
+; test smulo0 hl=0
+define i16 @smulo0() {
+  %x = call i8 @b(i8 11)
+  %y = call i8 @b(i8 11)
+  %o = call { i8, i1 } @llvm.smul.with.overflow.i8(i8 %x, i8 %y)
+  %f = extractvalue { i8, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r }
+; test smulo1 hl=1
+define i16 @smulo1() {
+  %x = call i8 @b(i8 12)
+  %y = call i8 @b(i8 11)
+  %o = call { i8, i1 } @llvm.smul.with.overflow.i8(i8 %x, i8 %y)
+  %f = extractvalue { i8, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r }
+; test smulo2 hl=1
+define i16 @smulo2() {
+  %x = call i8 @b(i8 -128)
+  %y = call i8 @b(i8 -1)
+  %o = call { i8, i1 } @llvm.smul.with.overflow.i8(i8 %x, i8 %y)
+  %f = extractvalue { i8, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r }
+; test smulo3 hl=0
+define i16 @smulo3() {
+  %x = call i16 @w(i16 181)
+  %y = call i16 @w(i16 181)
+  %o = call { i16, i1 } @llvm.smul.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r }
+; test smulo4 hl=1
+define i16 @smulo4() {
+  %x = call i16 @w(i16 182)
+  %y = call i16 @w(i16 181)
+  %o = call { i16, i1 } @llvm.smul.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r }
+; test smulo5 hl=1
+define i16 @smulo5() {
+  %x = call i16 @w(i16 -32768)
+  %y = call i16 @w(i16 -1)
+  %o = call { i16, i1 } @llvm.smul.with.overflow.i16(i16 %x, i16 %y)
+  %f = extractvalue { i16, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r }
+; test smulo6 hl=0
+define i16 @smulo6() {
+  %x = call i32 @d(i32 46340)
+  %y = call i32 @d(i32 46340)
+  %o = call { i32, i1 } @llvm.smul.with.overflow.i32(i32 %x, i32 %y)
+  %f = extractvalue { i32, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r }
+; test smulo7 hl=1
+define i16 @smulo7() {
+  %x = call i32 @d(i32 46341)
+  %y = call i32 @d(i32 46341)
+  %o = call { i32, i1 } @llvm.smul.with.overflow.i32(i32 %x, i32 %y)
+  %f = extractvalue { i32, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r }
+; test smulo8 hl=1
+define i16 @smulo8() {
+  %x = call i32 @d(i32 -2147483648)
+  %y = call i32 @d(i32 -1)
+  %o = call { i32, i1 } @llvm.smul.with.overflow.i32(i32 %x, i32 %y)
+  %f = extractvalue { i32, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r }
+; test smulo9 hl=0
+define i16 @smulo9() {
+  %x = call i64 @q(i64 3037000499)
+  %y = call i64 @q(i64 3037000499)
+  %o = call { i64, i1 } @llvm.smul.with.overflow.i64(i64 %x, i64 %y)
+  %f = extractvalue { i64, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r }
+; test smulo10 hl=1
+define i16 @smulo10() {
+  %x = call i64 @q(i64 3037000500)
+  %y = call i64 @q(i64 3037000500)
+  %o = call { i64, i1 } @llvm.smul.with.overflow.i64(i64 %x, i64 %y)
+  %f = extractvalue { i64, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r }
+; test smulo11 hl=1
+define i16 @smulo11() {
+  %x = call i64 @q(i64 -9223372036854775808)
+  %y = call i64 @q(i64 -1)
+  %o = call { i64, i1 } @llvm.smul.with.overflow.i64(i64 %x, i64 %y)
+  %f = extractvalue { i64, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r }
+; test smulo12 hl=0
+define i16 @smulo12() {
+  %x = call i64 @q(i64 0)
+  %y = call i64 @q(i64 -1)
+  %o = call { i64, i1 } @llvm.smul.with.overflow.i64(i64 %x, i64 %y)
+  %f = extractvalue { i64, i1 } %o, 1
+  %r = zext i1 %f to i16
+  ret i16 %r }
+declare { i16, i1 } @llvm.smul.with.overflow.i16(i16, i16)
+declare { i32, i1 } @llvm.smul.with.overflow.i32(i32, i32)
+declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)
+declare { i8, i1 } @llvm.smul.with.overflow.i8(i8, i8)
+
+; The multiplies through their helpers at sizes that use each path.
+; test mulsmall hl=57763
+define i16 @mulsmall() {
+  %x = call i32 @d(i32 1000)
+  %y = call i32 @d(i32 300000)
+  %r = mul i32 %x, %y
+  %s = lshr i32 %r, 8
+  %t = trunc i32 %s to i16
+  ret i16 %t }
+; test mulhigh hl=64511
+define i16 @mulhigh() {
+  %x = call i32 @d(i32 123456789)
+  %y = call i32 @d(i32 987654321)
+  %r = mul i32 %x, %y
+  %s = lshr i32 %r, 16
+  %t = trunc i32 %s to i16
+  ret i16 %t }
+; test mulneg hl=65535
+define i16 @mulneg() {
+  %x = call i32 @d(i32 -300)
+  %y = call i32 @d(i32 200)
+  %o = call { i32, i1 } @llvm.smul.with.overflow.i32(i32 %x, i32 %y)
+  %v = extractvalue { i32, i1 } %o, 0
+  %s = lshr i32 %v, 16
+  %t = trunc i32 %s to i16
+  ret i16 %t }

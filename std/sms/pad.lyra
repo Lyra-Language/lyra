@@ -12,8 +12,13 @@ pub const BUTTON_2: u8 = 0x20
 /// The port's lines read 0 while held.
 const PAD_PORT: u8 = 0xDC
 
-/// The buttons held, as a set of the bits above.
-pub let read = () -> u8 => unsafe { ~port_read(PAD_PORT) & 0x3F }
+/// The Genesis's names for the two buttons, so a game's calls read the same.
+pub const A: u8 = BUTTON_1
+pub const B: u8 = BUTTON_2
+
+/// The buttons held on pad `port`, as a set of the bits above. Pad 1, the Game Gear's own; a
+/// second pad's lines are not read yet.
+pub let read = (_port: u8 = 1) -> u8 => unsafe { ~port_read(PAD_PORT) & 0x3F }
 
 /// Whether `button` is among `buttons`.
 pub let held = pure (buttons: u8, button: u8) -> bool => buttons & button != 0

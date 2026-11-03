@@ -15,7 +15,7 @@ import (
 // helpers are most of a small game otherwise.
 
 const (
-	z80CodeStart  = 0x0140
+	z80CodeStart  = 0x0180
 	z80HeaderAt   = 0x7FF0
 	z80HeaderEnd  = 0x8000
 	z80ROMEnd     = 0xC000
@@ -30,6 +30,10 @@ const (
 	z80OtirAt     = 0x006A
 	z80Bank       = "__z80_bank"
 	z80BankAt     = 0x0130
+	// HL × DE, unsigned: the 32-bit product in DE:HL, so its low half in HL is __mulhi3's answer.
+	z80Multiply   = "__z80_umul32"
+	z80MulLow     = "__mulhi3"
+	z80MultiplyAt = 0x0140
 
 	// The mapper's register for the window at 8000, which reads as nothing, so what it was
 	// set to is kept here too for an interrupt to put back.
@@ -56,6 +60,9 @@ type Z80Image struct {
 	BSSSize  int
 	// Used is how many bytes of ROM hold code and constants.
 	Used int
+	// Map is where each reached section went, `address size name` a line, with the bank in
+	// front of a banked table's: for reading a profile.
+	Map []string
 }
 
 type z80Section struct {
@@ -144,7 +151,7 @@ func LinkZ80(objects []Object) (*Z80Image, error) {
 			visit(t.section)
 			return
 		}
-		if t.name == z80CallBC || t.name == z80Otir || t.name == z80Bank {
+		if t.name == z80CallBC || t.name == z80Otir || t.name == z80Bank || t.name == z80Multiply || t.name == z80MulLow {
 			return
 		}
 		if strings.HasPrefix(t.name, z80BankSymbol) {
@@ -277,6 +284,9 @@ func LinkZ80(objects []Object) (*Z80Image, error) {
 		if t.name == z80Bank {
 			return z80BankAt
 		}
+		if t.name == z80Multiply || t.name == z80MulLow {
+			return z80MultiplyAt
+		}
 		if t.section != nil {
 			return t.section.address + t.value
 		}
@@ -324,7 +334,19 @@ func LinkZ80(objects []Object) (*Z80Image, error) {
 	if err := writeZ80Startup(rom, dataLoad, dataSize, bssStart, bssSize, address); err != nil {
 		return nil, err
 	}
-	return &Z80Image{ROM: rom, DataSize: dataSize, BSSSize: bssSize, Used: total}, nil
+	var layout []string
+	for _, s := range sections {
+		if s.reached {
+			layout = append(layout, fmt.Sprintf("%d %d %s", s.address, s.size, s.name))
+		}
+	}
+	sort.Slice(layout, func(i, j int) bool {
+		var a, b int
+		fmt.Sscan(layout[i], &a)
+		fmt.Sscan(layout[j], &b)
+		return a < b
+	})
+	return &Z80Image{ROM: rom, DataSize: dataSize, BSSSize: bssSize, Used: total, Map: layout}, nil
 }
 
 // placeZ80Banks gives each reached banked table a bank and its address in the window, largest
@@ -479,6 +501,7 @@ func writeZ80Startup(rom []byte, dataLoad, dataSize, bssStart, bssSize int, addr
 	put(z80OtirAt, 0x43, 0x4A, 0xED, 0xB3, 0xC9) // ld b, e; ld c, d; otir; ret
 	shadowLo, shadowHi := word(z80BankShadow)
 	registerLo, registerHi := word(z80BankRegister)
+	put(z80MultiplyAt, z80MultiplyCode...)
 	// __z80_bank(bank in HL, table in DE) -> table in HL.
 	put(z80BankAt, 0x7D, 0x32, registerLo, registerHi, 0x32, shadowLo, shadowHi, 0xEB, 0xC9) // ld a, l; ld (reg), a; ld (shadow), a; ex de, hl; ret
 
@@ -547,6 +570,24 @@ func writeZ80Startup(rom []byte, dataLoad, dataSize, bssStart, bssSize int, addr
 		return fmt.Errorf("the interrupt overran its room (%#x)", at)
 	}
 	return nil
+}
+
+// z80MultiplyCode is shift and add, sixteen times, about 900 T-states: what the runtime's
+// multiplies come down to, and every other way of writing it in IR took three times as long.
+var z80MultiplyCode = []byte{
+	0x44, 0x4D, // ld b, h; ld c, l: the multiplicand
+	0x21, 0x00, 0x00, // ld hl, 0
+	0x3E, 0x10, // ld a, 16
+	0x29,       // again: add hl, hl: DE:HL one left, DE's top bit the multiplier's next
+	0xCB, 0x13, // rl e
+	0xCB, 0x12, // rl d
+	0x30, 0x04, // jr nc, skip
+	0x09,       // add hl, bc
+	0x30, 0x01, // jr nc, skip
+	0x13,       // inc de
+	0x3D,       // skip: dec a
+	0x20, 0xF2, // jr nz, again
+	0xC9, // ret
 }
 
 // Z80Cartridge is the image as a cartridge, padded to the size its header says, with the

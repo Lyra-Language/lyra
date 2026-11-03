@@ -38,9 +38,27 @@ const END_OF_LIST: u8 = 0xD0
 const DISPLAY_OFF: u8 = 0x80
 const DISPLAY_ON: u8 = 0xC0
 const INTERRUPT_ON: u8 = 0x20
+const TALL: u8 = 0x02
+/// Register 0's: the leftmost column blank, which hides the seam of scrolling.
+const MODE_4: u8 = 0x04
+const HIDE_LEFT_COLUMN: u8 = 0x20
 
 /// The hardware's sprite count.
 pub const SPRITES: u8 = 64
+
+/// The screen, in pixels. A Game Gear shows the window of it from (48, 24), 160×144.
+pub const SCREEN_WIDTH: i16 = 256
+pub const SCREEN_HEIGHT: i16 = 192
+
+/// The one plane, as `std.genesis.vdp` names its two so a game's calls read the same: a map
+/// into either is a map into this one.
+pub const PLANE_A: u16 = NAME_TABLE
+pub const PLANE_B: u16 = NAME_TABLE
+pub const PLANE_WIDTH: u16 = 32
+pub const PLANE_HEIGHT: u16 = 28
+
+/// Register 1's bits but the display's.
+var mode: u8 = 0
 
 /// The list: every sprite's y, then its x and tile in pairs, as the chip's table has them, and
 /// how many are shown.
@@ -72,7 +90,31 @@ pub let init = () -> void => {
 }
 
 /// The display on, showing what has been loaded.
-pub let show = () -> void => { set_register(1, DISPLAY_ON) }
+pub let show = () -> void => { set_register(1, DISPLAY_ON | mode) }
+
+/// `show`, as `std.genesis.vdp` calls it.
+pub let display_on = () -> void => show()
+
+/// The display off: video memory may be written as fast as the Z80 can.
+pub let display_off = () -> void => { set_register(1, DISPLAY_OFF | mode) }
+
+/// Sprites are 8×16: each names an even tile and shows it and the next.
+pub let tall_sprites = () -> void => { mode = mode | TALL }
+
+/// The plane scrolled so that (`x`, `y`) of it is the screen's top-left. Call in the vertical
+/// blank. `plane` is for calls that read as the Genesis's; there is one.
+pub let set_scroll = (_plane: u16, x: i16, y: i16) -> void => {
+  set_register(0, MODE_4 | HIDE_LEFT_COLUMN)
+  // The chip's horizontal scroll moves the picture right, and wraps at 256.
+  set_register(8, u8((0 - x) & 0xFF))
+  set_register(9, u8(y % 224))
+}
+
+/// For calls that read as the Genesis's. A game here that waits on [wait_vblank] needs neither;
+/// one that takes [enable_vblank_interrupt] must leave video memory to its handler alone, as
+/// an interrupt inside a write's two control bytes spoils the address.
+pub let hold_vblank = pure () -> bool => false
+pub let release_vblank = pure (_held: bool) -> void => {}
 
 /// Colours from slot `first` on (16 is the sprites' palette), one byte each: `--BBGGRR`.
 pub let load_palette<const N: i64> = (first: u8, colors: ref [N]u8) -> void => {
@@ -89,10 +131,59 @@ pub let set_backdrop = (color: u8) -> void => {
   data(color)
 }
 
-/// Tiles from pattern `first` on, 32 bytes each.
-pub let load_tiles<const N: i64> = (first: u16, tiles: ref [N]u8) -> void => {
+/// Tiles from pattern `first` on, 32 bytes each, as fast as the Z80 writes: with the display off.
+pub let load_tiles<const N: i64> = (first: u16, tiles: ref [N]u8) -> void => unsafe {
   vram_address(first * 32)
-  for byte in tiles { data(byte) }
+  var at: u16 = 0
+  var left = u16(tiles.len())
+  while left > 0 {
+    let chunk = left.min(255)
+    port_write_bytes(DATA_PORT, &tiles[at], u8(chunk))
+    at += chunk
+    left -= chunk
+  }
+}
+
+/// A map's name-table words into the plane, from its cell (`left`, `top`) on — the whole plane's
+/// worth, so with the display off or a little at a time. `plane` is for calls that read as the
+/// Genesis's.
+pub let write_plane<const N: i64> = (
+  _plane: u16,
+  cells: ref [N]u16,
+  width: u16,
+  left: u16 = 0,
+  top: u16 = 0
+) -> void => {
+  var start = top * width
+  var row: u16 = 0
+  while row < PLANE_HEIGHT {
+    vram_address(NAME_TABLE + row * PLANE_WIDTH * 2)
+    var column: u16 = 0
+    while column < PLANE_WIDTH {
+      let x = left + column
+      let at = start + x
+      if x < width && i64(at) < cells.len() { write_word(cells[at]) } else { write_word(0) }
+      column += 1
+    }
+    start += width
+    row += 1
+  }
+}
+
+/// One cell of the plane set to a name-table word: `flip_y << 10 | flip_x << 9 | tile`, and
+/// `priority << 12 | palette << 11`. `x` and `y` wrap at its edges.
+pub let write_cell = (_plane: u16, x: u16, y: u16, word: u16) -> void => {
+  vram_address(NAME_TABLE + ((y % PLANE_HEIGHT) * PLANE_WIDTH + x % PLANE_WIDTH) * 2)
+  write_word(word)
+}
+
+/// Where the next [write_word] goes in video memory.
+pub let set_vram_address = (address: u16) -> void => vram_address(address)
+
+/// A word into video memory, low byte first.
+pub let write_word = (word: u16) -> void => {
+  data(u8(word & 0xFF))
+  data(u8(word >> 8))
 }
 
 /// The name table's cell at (`x`, `y`) shows tile `tile`.
@@ -121,8 +212,11 @@ pub let end_sprites = (index: u8) -> void => {
 /// display goes on with it, as both are in one register.
 pub let interrupt_each_frame = () -> void => { set_register(
   1,
-  DISPLAY_ON | INTERRUPT_ON
+  DISPLAY_ON | INTERRUPT_ON | mode
 ) }
+
+/// `interrupt_each_frame`, as `std.genesis.vdp` calls it.
+pub let enable_vblank_interrupt = () -> void => interrupt_each_frame()
 
 /// Wait for the next vertical blank, by the status port's frame flag.
 pub let wait_vblank = () -> void => unsafe {

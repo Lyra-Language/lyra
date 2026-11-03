@@ -41,6 +41,12 @@ def link(objects, start):
     image += bytes([0xC5, 0xC9])
     symbols["__z80_callbc"] = pc
     pc += 2
+    # pkg/rom/z80.go's z80MultiplyCode.
+    multiply = bytes([0x44, 0x4D, 0x21, 0, 0, 0x3E, 0x10, 0x29, 0xCB, 0x13, 0xCB, 0x12, 0x30, 0x04,
+                      0x09, 0x30, 0x01, 0x13, 0x3D, 0x20, 0xF2, 0xC9])
+    image += multiply
+    symbols["__mulhi3"] = symbols["__z80_umul32"] = pc
+    pc += len(multiply)
     for index, path in enumerate(objects):
         d, secs, name_at, strndx = read_elf(path)
         for i, s in enumerate(secs):

@@ -28,3 +28,18 @@ define i8 @absolute() {
   store volatile i8 42, ptr inttoptr (i16 49152 to ptr)
   %r = load volatile i8, ptr inttoptr (i16 49152 to ptr)
   ret i8 %r }
+
+; An object with lifetime markers, as the optimizer leaves after inlining: their operand must
+; stay a frame index.
+declare void @llvm.lifetime.start.p0(ptr)
+declare void @llvm.lifetime.end.p0(ptr)
+define void @fill(ptr %p) { store i16 77, ptr %p
+  ret void }
+; test lifetimes hl=77
+define i16 @lifetimes() {
+  %a = alloca i16
+  call void @llvm.lifetime.start.p0(ptr %a)
+  call void @fill(ptr %a)
+  %r = load i16, ptr %a
+  call void @llvm.lifetime.end.p0(ptr %a)
+  ret i16 %r }

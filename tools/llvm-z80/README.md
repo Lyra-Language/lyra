@@ -36,6 +36,15 @@ banks, from 2 up, largest first. The bank's number is the "address" of `__lyra_b
 interrupt saves and restores the current bank, from a copy in RAM at DFF8 since the register reads
 as nothing.
 
+## Finding where a frame goes
+
+```bash
+LYRA_Z80_MAP=game.map lyrac build -o game.sms game.lyra
+smscheck game.sms --frames 200 --ppm out.ppm --work on --profile game.prof
+```
+
+`game.map` is each section's `address size name`, and `game.prof` each address's T-states.
+
 ## Testing
 
 `test/run.py` runs `test/*.ll` on Sheliak's Z80 core (`sheliak/build/z80run`), each answer also

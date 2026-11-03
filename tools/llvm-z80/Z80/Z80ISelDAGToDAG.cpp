@@ -46,7 +46,10 @@ private:
       N->setNodeId(-1);
       return;
     }
-    if (auto *FI = dyn_cast<FrameIndexSDNode>(N)) {
+    // A stack object's address. Not a TargetFrameIndex, which is a FrameIndexSDNode too and
+    // is already what it should be: a lifetime marker's operand, for one.
+    if (N->getOpcode() == ISD::FrameIndex) {
+      auto *FI = cast<FrameIndexSDNode>(N);
       SDValue Base = CurDAG->getTargetFrameIndex(FI->getIndex(), MVT::i16);
       SDValue Disp = CurDAG->getTargetConstant(0, SDLoc(N), MVT::i8);
       CurDAG->SelectNodeTo(N, Z80::LEA16, MVT::i16, Base, Disp);

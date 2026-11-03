@@ -96,6 +96,12 @@ func buildZ80(o buildOptions, res *driver.Result, entry *driver.EntryPoint) (str
 		}
 		return fail(fmt.Errorf("linking %s: %w", o.path, err))
 	}
+	// Where everything went, for reading what `smscheck --profile` says.
+	if path := os.Getenv("LYRA_Z80_MAP"); path != "" {
+		if err := os.WriteFile(path, []byte(strings.Join(img.Map, "\n")), 0o644); err != nil {
+			return fail(err)
+		}
+	}
 	gameGear := res.Target.Name == "gg"
 	out := o.out
 	if out == "" {

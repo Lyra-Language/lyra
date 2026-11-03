@@ -8,28 +8,9 @@
 ;
 ; MIT, as Lyra is: it is linked into every game.
 
-define i16 @__mulhi3(i16 %a, i16 %b) {
-entry:
-  br label %loop
-loop:
-  %x = phi i16 [ %a, %entry ], [ %x2, %next ]
-  %y = phi i16 [ %b, %entry ], [ %y2, %next ]
-  %r = phi i16 [ 0, %entry ], [ %r2, %next ]
-  %done = icmp eq i16 %y, 0
-  br i1 %done, label %out, label %body
-body:
-  %bit = and i16 %y, 1
-  %odd = icmp ne i16 %bit, 0
-  %sum = add i16 %r, %x
-  %r2 = select i1 %odd, i16 %sum, i16 %r
-  br label %next
-next:
-  %x2 = shl i16 %x, 1
-  %y2 = lshr i16 %y, 1
-  br label %loop
-out:
-  ret i16 %r
-}
+; `__mulhi3` and `__z80_umul32` are the linker's, hand-written (pkg/rom/z80.go): HL × DE.
+declare i16 @__mulhi3(i16, i16)
+declare i32 @__z80_umul32(i16, i16)
 
 define i8 @__mulqi3(i8 %a, i8 %b) {
   %wa = zext i8 %a to i16
@@ -190,25 +171,31 @@ define i8 @__modqi3(i8 %n, i8 %d) {
 
 ; ── Wider arithmetic ──────────────────────────────────────────────────────────────────
 
+; a × b from the 16-bit multiply: low × low, and the cross terms' low halves shifted up. The
+; high × high term is entirely past 32 bits.
 define i32 @__mulsi3(i32 %a, i32 %b) {
 entry:
-  br label %loop
-loop:
-  %x = phi i32 [ %a, %entry ], [ %x2, %body ]
-  %y = phi i32 [ %b, %entry ], [ %y2, %body ]
-  %r = phi i32 [ 0, %entry ], [ %r2, %body ]
-  %done = icmp eq i32 %y, 0
-  br i1 %done, label %out, label %body
-body:
-  %bit = and i32 %y, 1
-  %odd = icmp ne i32 %bit, 0
-  %sum = add i32 %r, %x
-  %r2 = select i1 %odd, i32 %sum, i32 %r
-  %x2 = shl i32 %x, 1
-  %y2 = lshr i32 %y, 1
-  br label %loop
+  %al = trunc i32 %a to i16
+  %bl = trunc i32 %b to i16
+  %low = call i32 @__z80_umul32(i16 %al, i16 %bl)
+  %ah32 = lshr i32 %a, 16
+  %bh32 = lshr i32 %b, 16
+  %ah = trunc i32 %ah32 to i16
+  %bh = trunc i32 %bh32 to i16
+  %small = or i16 %ah, %bh
+  %simple = icmp eq i16 %small, 0
+  br i1 %simple, label %out, label %cross
+cross:
+  %x = call i16 @__mulhi3(i16 %ah, i16 %bl)
+  %y = call i16 @__mulhi3(i16 %al, i16 %bh)
+  %sum = add i16 %x, %y
+  %wide = zext i16 %sum to i32
+  %up = shl i32 %wide, 16
+  %r = add i32 %low, %up
+  br label %out
 out:
-  ret i32 %r
+  %answer = phi i32 [ %low, %entry ], [ %r, %cross ]
+  ret i32 %answer
 }
 
 define i64 @__muldi3(i64 %a, i64 %b) {
@@ -468,6 +455,67 @@ body:
   br label %loop
 out:
   ret i64 %v
+}
+
+; A multiply checked for overflow: the answer, and through the pointer whether it was wrong. The
+; product of two i32s fits an i64, and an i64's is checked by dividing back.
+define i32 @__mulosi4(i32 %a, i32 %b, ptr %overflow) {
+entry:
+  store i32 0, ptr %overflow
+  ; Both fitting 16 bits, as nearly all do, the product cannot overflow: sizes and signs apart.
+  %at = trunc i32 %a to i16
+  %bt = trunc i32 %b to i16
+  %ax = sext i16 %at to i32
+  %bx = sext i16 %bt to i32
+  %af = icmp eq i32 %ax, %a
+  %bf = icmp eq i32 %bx, %b
+  %fit = and i1 %af, %bf
+  br i1 %fit, label %small, label %large
+small:
+  %an = icmp slt i16 %at, 0
+  %bn = icmp slt i16 %bt, 0
+  %ana = sub i16 0, %at
+  %bna = sub i16 0, %bt
+  %am = select i1 %an, i16 %ana, i16 %at
+  %bm = select i1 %bn, i16 %bna, i16 %bt
+  %mag = call i32 @__z80_umul32(i16 %am, i16 %bm)
+  %flip = xor i1 %an, %bn
+  %neg = sub i32 0, %mag
+  %r = select i1 %flip, i32 %neg, i32 %mag
+  ret i32 %r
+large:
+  %wa = sext i32 %a to i64
+  %wb = sext i32 %b to i64
+  %wide = call i64 @__muldi3(i64 %wa, i64 %wb)
+  %lr = trunc i64 %wide to i32
+  %back = sext i32 %lr to i64
+  %wrong = icmp ne i64 %back, %wide
+  %flag = zext i1 %wrong to i32
+  store i32 %flag, ptr %overflow
+  ret i32 %lr
+}
+
+define i64 @__mulodi4(i64 %a, i64 %b, ptr %overflow) {
+entry:
+  %r = call i64 @__muldi3(i64 %a, i64 %b)
+  store i32 0, ptr %overflow
+  %zero = icmp eq i64 %a, 0
+  br i1 %zero, label %out, label %check
+check:
+  ; The one quotient a divide cannot do, MIN / -1, is its own overflow.
+  %minus = icmp eq i64 %a, -1
+  %least = icmp eq i64 %b, -9223372036854775808
+  %both = and i1 %minus, %least
+  br i1 %both, label %over, label %divide
+divide:
+  %q = call i64 @__divdi3(i64 %r, i64 %a)
+  %same = icmp eq i64 %q, %b
+  br i1 %same, label %out, label %over
+over:
+  store i32 1, ptr %overflow
+  br label %out
+out:
+  ret i64 %r
 }
 
 ; ── Memory ─────────────────────────────────────────────────────────────────────────────

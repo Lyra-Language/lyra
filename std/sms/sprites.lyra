@@ -1,0 +1,42 @@
+module std.sms.sprites
+//! A list of sprites in RAM, cleared and filled each frame and shown in the vertical blank.
+//!
+//! ```
+//! import std.sms.sprites
+//! import std.sms.sprites.{ Sprite }
+//!
+//! sprites.clear()
+//! sprites.add(Sprite { x: 100, y: 80, tile: 1 })
+//! vdp.wait_vblank()
+//! sprites.show()
+//! ```
+//!
+//! **What is off the screen is left out**, as the chip would wrap it round. A sprite past the
+//! hardware's 64 is dropped, as is the ninth on a line by the chip itself.
+
+import std.sms.vdp
+
+/// One hardware sprite: its top-left on the screen, and the tile it shows.
+pub struct Sprite {
+  x: i16,
+  y: i16,
+  tile: u16,
+}
+
+var count: u8 = 0
+
+/// Start the next frame's list.
+pub let clear = () -> void => { count = 0 }
+
+/// `s` onto the list.
+pub let add = (s: Sprite) -> void => {
+  if count >= vdp.SPRITES || s.x < 0 || s.x >= 256 || s.y <= -16 || s.y >= 192 { return }
+  vdp.set_sprite(count, u8(s.x), u8(s.y & 0xFF), u8(s.tile))
+  count += 1
+}
+
+/// The list to the chip, ended after what was added. Call in the vertical blank.
+pub let show = () -> void => {
+  vdp.end_sprites(count)
+  vdp.send_sprites()
+}

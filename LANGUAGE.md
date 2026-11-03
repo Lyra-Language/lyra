@@ -830,7 +830,9 @@ target = "genesis"
   costs about 80 T-states. On other targets it is an ordinary table.
 - **`std.sms`** is their library: `std.sms.vdp` (`init`, `show`, `load_palette`, `load_tiles`,
   `set_backdrop`, `set_cell`, `set_sprite`, `end_sprites`, `wait_vblank`, `send_sprites`,
-  `interrupt_each_frame`) and `std.sms.pad` (`read`, `held`). `examples/sms/` has two small games.
+  `interrupt_each_frame`), `std.sms.pad` (`read`, `held`), `std.sms.sprites` (`clear`, `add`, `show`) and `std.sms.camera`,
+  named as `std.genesis`'s are so a game reads the same, with `std.genesis.entity` and `.collision`
+  shared. One plane, no sprite flip, and no sound yet. `examples/sms/` has small games.
 - **`host` means "a program with an operating system"**, and which one is the build's choice,
   not the code's: **`lyrac build --target <platform>`** — `ios`, `ios-simulator`,
   `linux-arm64`, `linux-x86_64`, `macos` (`macos`/`linux` are this machine's processor's) —
