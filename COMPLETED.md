@@ -9,6 +9,31 @@ Newest first.
 
 ## Dated log
 
+### 11/03/26 — `data` is a name wherever no type follows it
+
+`let x = data()` compiled, and `data(1)` on a line of its own did not; nor did `data.f()`,
+`data = 4` or `data += 1`. The todo item called it a keyword "where a call is", but the position
+was the start of a statement, the one place a declaration can begin.
+
+- **The parser never saw the choice.** As the string `'data'` the word beat `identifier` in
+  every state where both were valid, and a lexer hands over one token. A GLR conflict could
+  not help, since both readings need different tokens, and aliasing `data` to an identifier
+  in each rule a statement can begin with would have to find them all.
+- **So the scanner decides, by what follows**: `_data_keyword` is the word, spaces or tabs, and
+  a capital, with the token's end marked before the look-ahead. `grammar.js` no longer has the
+  string, so every other `data` is an `identifier` with no rule to change. Aliased to `'data'`,
+  the node is the anonymous `data` that `lyrafmt`, the collector and the editors' queries read.
+  The parser grew 7 states.
+- **The scan runs before the comment scan.** That scan reads the `///` of a doc comment and
+  answers false, leaving the lookahead past it, so `///data Foo` would have read as a
+  declaration from its fourth byte. And once the word's first letter has been read, nothing
+  else in the scanner may run, because a lexer cannot rewind.
+- **What it costs**: `data` and the type's name must share a line, and a comment between them no
+  longer parses. Neither appears in any repo.
+- **Eight siblings remain** (`type`, `alias`, `extern`, `struct`, `union`, `trait`, `impl`,
+  `tuple`), each failing the same way (todo.md). A local `data` declared inside a function
+  parses and then fails in the backend, as a local `struct` does: that was already so.
+
 ### 11/02/26 — lyrafmt formats a broken `=>` the same the second time
 
 `lyrafmt -w` followed by `--check` could fail: a long `App { view: (f: Form) -> Node<Ev> =>

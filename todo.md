@@ -1223,9 +1223,13 @@ sets V on every add. What stands between that and a ROM:
   68000. A console profile should steer to `i16`/`i32`, or make the default per target.
 - **[OPEN] Memory-mapped I/O needs volatile reads and writes** (the VDP ports, the pads):
   LLVM may otherwise merge or drop them.
-- **[OPEN] `data` is a keyword where a call is**: `let data = …` declares, but `data()` and
-  `data.f()` do not parse, so a hardware helper named for the VDP's data port has to be
-  called something else. Either reserve it everywhere or accept it as a name in expressions.
+- **[DONE 11/03] `data` is a name wherever no type follows it**: `data()`, `data.f()` and
+  `data = 4` parse at the start of a statement, the keyword now lexed by the scanner
+  (COMPLETED.md, 11/03).
+- **[OPEN] Eight more words cannot begin a statement as a name**: `type`, `alias`, `extern`,
+  `struct`, `union`, `trait`, `impl` and `tuple` declare, as `data` did, so `type(1)` and
+  `alias = 4` do not parse. `scan_data_keyword`'s look-ahead would serve most; `extern` and
+  `impl` are followed by more than a capital.
 - **[OPEN] LLVM `main` turns a volatile zero store into `clr`** (16c337766166, 08/25), which on
   a 68000 reads the destination first — wrong for a volatile store, and fatal on the VDP's
   control port. `tools/llvm-m68k.sh` pins e7dd336e0f78, before it (and before the later
