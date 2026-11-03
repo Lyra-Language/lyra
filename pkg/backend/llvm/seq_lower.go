@@ -416,6 +416,10 @@ func (l *lowerer) bindInlineParams(block *ir.Block, call *ast.FunctionCallExpr, 
 	}
 	callerEnv := l.captureEnv()
 	bound := make([]boundArg, 0, len(lambda.Parameters))
+	// These arguments aren't held beside one that leaves (lowerExpr): the body runs inside the
+	// call, and a `return` in the consumer would release one held and in the callee's frame
+	// both. An `own` argument leaks on that path instead.
+	l.heldOperands = nil
 	for i, param := range lambda.Parameters {
 		ident, isIdent := param.Pattern.(*ast.IdentifierPattern)
 		if !isIdent {

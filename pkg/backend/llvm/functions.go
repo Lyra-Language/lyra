@@ -34,6 +34,7 @@ func (l *lowerer) beginFunction(retType lltypes.Type, retLyra types.Type, retSig
 	l.pendingReleases = nil
 	l.pendingBase = 0
 	l.exitReleases = nil
+	l.heldOperands = nil
 	l.reuseToken = nil
 	l.byRefParams = map[value.Value]bool{}
 	l.seqParams = map[string]seqBinding{}
@@ -750,7 +751,11 @@ func (l *lowerer) lowerDirectCall(block *ir.Block, e *ast.FunctionCallExpr, fn *
 // `panic` through a function value handed a nil argument to NewCall and segfaulted
 // inside llir — a Go crash out of lyrac, which is exactly what the guard exists to
 // prevent (hazard 8: the two argument loops travel in pairs).
+//
+// A by-reference argument naming storage gets its address after every argument has run, its
+// path's own operands having run in their turn (deferredPlace).
 func (l *lowerer) lowerCallArgs(block *ir.Block, args []value.Value, argExprs []ast.Expression, params []ast.Parameter, want []lltypes.Type, callee *ir.Func) ([]value.Value, *ir.Block, bool, error) {
+	var deferred []deferredPlace
 	for i, argExpr := range argExprs {
 		// **A C function-pointer slot takes the function's own symbol**, not Lyra's boxed
 		// closure. The expected type is the signal rather than a flag on the call: only an
@@ -787,6 +792,16 @@ func (l *lowerer) lowerCallArgs(block *ir.Block, args []value.Value, argExprs []
 		// function-long lifetime is more than enough, and an owned temporary is still
 		// released after the statement by the ordinary pending-temp machinery.
 		if i < len(params) && paramIsByRef(params[i]) {
+			if isLValuePath(argExpr) {
+				if block, err = l.deferByRefPlace(block, argExpr, len(args), &deferred); err != nil {
+					return nil, nil, false, err
+				}
+				if block.Term != nil {
+					return nil, block, false, nil
+				}
+				args = append(args, nil)
+				continue
+			}
 			var ptr value.Value
 			ptr, block, err = l.argumentAddress(block, argExpr)
 			if err != nil {
@@ -811,6 +826,10 @@ func (l *lowerer) lowerCallArgs(block *ir.Block, args []value.Value, argExprs []
 			v = l.copyForParam(block, v, l.lyraParams(callee)[i])
 		}
 		args = append(args, v)
+	}
+	block, err := l.findDeferredPlaces(block, args, deferred)
+	if err != nil {
+		return nil, nil, false, err
 	}
 	return args, block, true, nil
 }

@@ -127,10 +127,8 @@ func (l *lowerer) lowerTupleIndexExpr(block *ir.Block, e *ast.TupleIndexExpr) (v
 
 // lowerStructInstanceExpr lowers struct construction (`Node { value: 3 }`) to a
 // first-class struct value, the same insertvalue-over-undef shape as a tuple.
-// The one extra concern is ordering: a struct literal names its fields and may
-// list them in any order, but the LLVM struct is in *declaration* order — so the
-// fields are keyed by name and built in the declared order (also the index each
-// insertvalue targets).
+// A struct literal names its fields and may list them in any order: each is evaluated in
+// the order written and goes in at its declared position (lowerLiteralFields).
 //
 // **A record update** (`P { base | f: v }`) is the same construction with the base
 // supplying every field the literal does not: see lowerRecordBaseField.
@@ -165,17 +163,6 @@ func (l *lowerer) lowerStructInstanceExpr(block *ir.Block, e *ast.StructInstance
 		return nil, nil, fmt.Errorf("llvm: struct type %s did not lower to a struct", structType.Name)
 	}
 
-	// Key each supplied field's value by name (a positional literal field — Name
-	// "" — takes the declared name at that position), then build in declared order.
-	valueByName := make(map[string]ast.Expression, len(e.Fields))
-	for i, f := range e.Fields {
-		name := f.Name
-		if name == "" {
-			name = structType.Fields[i].Name
-		}
-		valueByName[name] = f.Value
-	}
-
 	var base value.Value
 	if e.BaseStruct != nil {
 		base, block, err = l.lowerExpr(block, e.BaseStruct)
@@ -183,46 +170,12 @@ func (l *lowerer) lowerStructInstanceExpr(block *ir.Block, e *ast.StructInstance
 			return nil, nil, err
 		}
 	}
-	var agg value.Value = constant.NewUndef(structTy)
-	for i, declField := range structType.Fields {
-		valExpr, ok := valueByName[declField.Name]
-		if !ok && base != nil {
-			v, err := l.lowerRecordBaseField(block, base, i, structTy.Fields[i], declField.Type)
-			if err != nil {
-				return nil, nil, err
-			}
-			agg = block.NewInsertValue(agg, v, uint64(i))
-			continue
-		}
-		if !ok {
-			return nil, nil, fmt.Errorf("llvm: struct %s field %q has no value (default values not implemented yet)", structType.Name, declField.Name)
-		}
-		var v value.Value
-		if dyn, ok := emptyDefaultArray(l.res.TypeTable, valExpr, declField.Type); ok {
-			// **A field's default is one node, shared by every literal it fills**, so the
-			// type recorded for it is the last literal's: an empty `items: []e = []` of a
-			// generic struct had no element type inside a generic function, and the other
-			// instantiation's beside a second one (10/21). This literal's own instantiation
-			// has the field's type, which is all an empty array needs.
-			v, block, err = l.lowerDynArrayConstruction(block, valExpr.(*ast.ArrayLiteralExpr), dyn)
-		} else {
-			v, block, err = l.lowerExpr(block, valExpr)
-		}
-		if err != nil {
-			return nil, nil, err
-		}
-		if diverged(v, block) {
-			return nil, block, nil
-		}
-		// Reconcile a residual width mismatch, as the tuple-literal and data-payload
-		// paths above already do. A struct literal is the third way into an aggregate
-		// and had none of this, so the one mismatch that is a loud error on a tuple
-		// would have been an llir panic here.
-		v, err = l.coerceAggregateElem(block, v, structTy.Fields[i], valExpr)
-		if err != nil {
-			return nil, nil, err
-		}
-		agg = block.NewInsertValue(agg, v, uint64(i))
+	agg, block, err := l.lowerLiteralFields(block, structTy, structType.Fields, e.Fields, base, "struct "+structType.Name)
+	if err != nil {
+		return nil, nil, err
+	}
+	if agg == nil {
+		return nil, block, nil
 	}
 	// A `shared`-flavored construction is heap-allocated in a ref-counted box; the
 	// value is the box pointer. The flavor is recorded on this node only when it's
@@ -232,6 +185,90 @@ func (l *lowerer) lowerStructInstanceExpr(block *ir.Block, e *ast.StructInstance
 		// not pointer-sized (WithAllocation treats Unspecified as "no change").
 		boxed, err := l.lowerBoxShared(block, agg, types.WithAllocation(structType, types.Stack))
 		return boxed, block, err
+	}
+	return agg, block, nil
+}
+
+// lowerLiteralFields builds a struct value from the fields a literal writes and, for the rest,
+// from a record update's base. A nil value with no error is a field that diverged.
+//
+// **The fields are evaluated as written**, which isn't the order the LLVM struct has: each goes
+// in at its declared position, wherever it is reached. Every pass walks a literal's fields as
+// written, so anything else here makes their answers wrong. Lowering them in declared order
+// until 11/03, the range pass dropped a bounds check on the strength of a write that hadn't
+// happened yet, and a value read after the `own` call the pass took for its last use was freed.
+//
+// The base is written first, and what it keeps is read straight after it, so a later field
+// that reassigns or frees what the base came from can't reach a kept field before its retain. A
+// filled-in default is at the end of the fields, after everything written.
+func (l *lowerer) lowerLiteralFields(block *ir.Block, structTy *lltypes.StructType, decl []types.StructField, written []ast.StructField, base value.Value, what string) (value.Value, *ir.Block, error) {
+	position := make(map[string]int, len(decl))
+	for i, f := range decl {
+		position[f.Name] = i
+	}
+	positions := make([]int, len(written))
+	isWritten := make([]bool, len(decl))
+	for n, f := range written {
+		// A positional literal field has no name, and takes the declared one at its place.
+		i, named := position[f.Name]
+		if f.Name == "" {
+			i, named = n, n < len(decl)
+		}
+		if !named {
+			return nil, nil, fmt.Errorf("llvm: %s has no field %q", what, f.Name)
+		}
+		positions[n], isWritten[i] = i, true
+	}
+
+	var agg value.Value = constant.NewUndef(structTy)
+	for i, f := range decl {
+		if isWritten[i] {
+			continue
+		}
+		if base == nil {
+			return nil, nil, fmt.Errorf("llvm: %s field %q has no value", what, f.Name)
+		}
+		v, err := l.lowerRecordBaseField(block, base, i, structTy.Fields[i], f.Type)
+		if err != nil {
+			return nil, nil, err
+		}
+		l.holdIfHolding(block, v, f.Type)
+		agg = block.NewInsertValue(agg, v, uint64(i))
+	}
+	for n, f := range written {
+		i := positions[n]
+		var (
+			v   value.Value
+			err error
+		)
+		if dyn, ok := emptyDefaultArray(l.res.TypeTable, f.Value, decl[i].Type); ok {
+			// **A field's default is one node, shared by every literal it fills**, so the
+			// type recorded for it is the last literal's: an empty `items: []e = []` of a
+			// generic struct had no element type inside a generic function, and the other
+			// instantiation's beside a second one (10/21). This literal's own instantiation
+			// has the field's type, which is all an empty array needs.
+			v, block, err = l.lowerDynArrayConstruction(block, f.Value.(*ast.ArrayLiteralExpr), dyn)
+			if err == nil {
+				l.holdIfHolding(block, v, dyn)
+			}
+		} else {
+			v, block, err = l.lowerExpr(block, f.Value)
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		if diverged(v, block) {
+			return nil, block, nil
+		}
+		// Reconcile a residual width mismatch, as the tuple-literal and data-payload
+		// paths already do. A struct literal is the third way into an aggregate and had
+		// none of this, so the one mismatch that is a loud error on a tuple would have
+		// been an llir panic here.
+		v, err = l.coerceAggregateElem(block, v, structTy.Fields[i], f.Value)
+		if err != nil {
+			return nil, nil, err
+		}
+		agg = block.NewInsertValue(agg, v, uint64(i))
 	}
 	return agg, block, nil
 }
@@ -846,8 +883,8 @@ func (l *lowerer) lowerAnonymousStructInstanceExpr(block *ir.Block, e *ast.Anony
 }
 
 // buildAnonymousStruct is an anonymous struct's inline value from the fields a literal
-// writes — and from base, a record update's, for the fields it does not — placed in the
-// type's own field order. A nil value with no error is a field that diverged. Shared by
+// writes — and from base, a record update's, for the fields it does not (lowerLiteralFields).
+// A nil value with no error is a field that diverged. Shared by
 // `{ x: 1 }` and an inline-record constructor's payload (`Square { side: 3 }`), which is
 // that literal under a constructor's name.
 func (l *lowerer) buildAnonymousStruct(block *ir.Block, structType types.AnonymousStructType, fields []ast.StructField, baseExpr ast.Expression) (value.Value, *ir.Block, error) {
@@ -860,11 +897,6 @@ func (l *lowerer) buildAnonymousStruct(block *ir.Block, structType types.Anonymo
 		return nil, nil, fmt.Errorf("llvm: anonymous struct %s did not lower to a struct", structType)
 	}
 
-	valueByName := make(map[string]ast.Expression, len(fields))
-	for _, f := range fields {
-		valueByName[f.Name] = f.Value
-	}
-
 	var base value.Value
 	if baseExpr != nil {
 		base, block, err = l.lowerExpr(block, baseExpr)
@@ -872,35 +904,7 @@ func (l *lowerer) buildAnonymousStruct(block *ir.Block, structType types.Anonymo
 			return nil, nil, err
 		}
 	}
-	var agg value.Value = constant.NewUndef(structTy)
-	for i, declField := range structType.Fields {
-		valExpr, ok := valueByName[declField.Name]
-		if !ok && base != nil {
-			v, err := l.lowerRecordBaseField(block, base, i, structTy.Fields[i], declField.Type)
-			if err != nil {
-				return nil, nil, err
-			}
-			agg = block.NewInsertValue(agg, v, uint64(i))
-			continue
-		}
-		if !ok {
-			return nil, nil, fmt.Errorf("llvm: anonymous struct field %q has no value", declField.Name)
-		}
-		var v value.Value
-		v, block, err = l.lowerExpr(block, valExpr)
-		if err != nil {
-			return nil, nil, err
-		}
-		if diverged(v, block) {
-			return nil, block, nil
-		}
-		v, err = l.coerceAggregateElem(block, v, structTy.Fields[i], valExpr)
-		if err != nil {
-			return nil, nil, err
-		}
-		agg = block.NewInsertValue(agg, v, uint64(i))
-	}
-	return agg, block, nil
+	return l.lowerLiteralFields(block, structTy, structType.Fields, fields, base, "anonymous struct")
 }
 
 // namespaceFunction is the funcKey of the function `m.f` names when m is an imported

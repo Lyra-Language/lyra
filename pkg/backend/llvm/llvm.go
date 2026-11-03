@@ -89,6 +89,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"slices"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
@@ -416,6 +417,9 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 }
 
 type lowerer struct {
+	// loweredPlaceOperands is, during placeAddress, the path's operands already evaluated.
+	loweredPlaceOperands placeOperands
+
 	module *ir.Module
 	// libc holds every lazily-declared external libc function, keyed by symbol, so each
 	// is declared once however many call sites want it. Eight named fields with eight
@@ -588,6 +592,11 @@ type lowerer struct {
 	// them once the body is complete. Reset by beginFunction.
 	exitReleases []exitRelease
 
+	// heldOperands is what the aggregate or call now being lowered wants held of its direct
+	// operands (ownership's HeldOperands), and managed frame on top is theirs while so. Every
+	// lowerExpr replaces it, so it is never asked about a deeper expression, and puts it back.
+	heldOperands []ast.Expression
+
 	// byRefParams holds the slots of this function's by-reference `mut` parameters
 	// (functions.go, paramIsByRef). Such a slot is the *caller's* storage, handed in
 	// as a pointer parameter rather than an entry-block alloca, which two things
@@ -736,7 +745,21 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 		l.locals = map[string]value.Value{}
 		defer func() { l.locals = saved }()
 	}
+	// **An operand already evaluated is nobody's until its aggregate or call is built**, and a
+	// `?`, `return`, `break` or `continue` in a later one leaves without building it. So where
+	// one can, each sits in a managed frame of its own, which every way out already releases;
+	// the frame is popped unreleased on the path that goes on, where the construct has it.
+	heldBy := l.heldOperands
+	l.heldOperands = l.ownership().OperandsToHold(expr)
+	holding := l.heldOperands != nil
+	if holding {
+		l.pushManagedFrame()
+	}
 	v, end, err := l.lowerExprDispatch(block, expr)
+	if holding {
+		l.popManagedFrame()
+	}
+	l.heldOperands = heldBy
 	if err != nil {
 		return nil, nil, err
 	}
@@ -789,6 +812,9 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 					l.retireManagedSlot(slot)
 				}
 			}
+		}
+		if end.Term == nil && slices.Contains(heldBy, expr) {
+			l.holdOperand(end, v, ty)
 		}
 	}
 	return v, end, nil

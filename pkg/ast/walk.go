@@ -26,6 +26,29 @@ func WalkExpr(expr Expression, onStmt func(Statement) bool, onExpr func(Expressi
 	WalkExprChildren(expr, onStmt, onExpr)
 }
 
+// CanLeave reports whether anything in expr can jump out of it: a `?`, `return`, `break` or
+// `continue`. A lambda's own leave its lambda instead. A `break` that only ends a loop inside
+// counts too, so a caller's answer to this should cost little when that is all it was.
+func CanLeave(expr Expression) bool {
+	leaves := false
+	WalkExpr(expr, func(s Statement) bool {
+		switch s.(type) {
+		case *ReturnStmt, *BreakStmt, *ContinueStmt:
+			leaves = true
+		}
+		return true
+	}, func(x Expression) bool {
+		switch x.(type) {
+		case *TryExpr:
+			leaves = true
+		case *LambdaExpr:
+			return false
+		}
+		return true
+	})
+	return leaves
+}
+
 // WalkStmtChildren visits stmt's children *without* visiting stmt itself.
 //
 // It is exported for the flow-sensitive passes, which cannot use WalkStmt: they handle a

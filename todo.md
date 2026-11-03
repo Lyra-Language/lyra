@@ -947,9 +947,30 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   11/03.)
 - **[DONE 11/03] A way out of a comprehension releases its box** and what it holds so far: a
   `?`, `return`, `break` or `continue` in a result, guard or source. (COMPLETED.md, 11/03.)
-- **[OPEN] A `?` leaks the operands already evaluated beside it**: `["a" ++ b, f()?]`,
-  `("a" ++ b, f()?)` and `g("a" ++ b, f()?)` leak the first on the early exit, as they aren't
-  pending temporaries. Found on Linux by LeakSanitizer; the answer is right.
+- **[DONE 11/03] A way out releases the operands already evaluated beside it**: an aggregate's
+  or call's owned operands, and a dynamic array's box, for a `?`, `return`, `break` or
+  `continue`. (COMPLETED.md, 11/03.)
+- **[OPEN] An inlined sequence function's `own` argument beside a way out**: `upto("a" ++ b,
+  f()?)` still leaks the first. The body runs inside the call, so holding it the same way would
+  release it twice; it has to end where `bindInlineParams` frames the parameters.
+- **[DONE 11/03] An assignment's target is walked for what it evaluates**: every index on the
+  path, so a temporary there is released and an `own` argument there retained. An operand can no
+  longer move the binding being written. (COMPLETED.md, 11/03.)
+- **[DONE 11/03] `lyra-E019` counts an assignment's store as a use**, after its operands:
+  `ys[swallow(ys)] = 7` and `ys[0] = swallow(ys)` are refused. (COMPLETED.md, 11/03.)
+- **[DONE 11/03] An assignment finds its place after its operands**, so one that reassigns the
+  array or grows it out of its buffer no longer has the store land in freed memory. A bounds trap
+  comes after the value now. (COMPLETED.md, 11/03.)
+- **[DONE 11/03] A by-reference argument can't dangle by way of a global**: its place is found after
+  every argument, and lending out a mutable global's array or `shared` value is `lyra-E091`.
+  (COMPLETED.md, 11/03.)
+- **[OPEN] A by-reference argument still dangles through a second name for its array**: `via(ys[0],
+  zs)` after `var zs = ys`, where `via` grows `zs`, and a local sharing a global's array when the
+  callee grows the global. A use-after-free under ASan; exclusivity is by place, and this is by box.
+- **[OPEN] A `gen` function's `ref` argument finds its place as it comes up** (`bindInlineParams`
+  in `seq_lower.go`), so a later argument can free it. Unlike a call's, it wasn't deferred.
+- **[OPEN] `lib.queue[0] = 1` and `lib.add(lib.queue[0])` say `undefined identifier "lib"`.** A
+  namespaced global is readable and `lib.queue.push(1)` works, but not as a place. A message at least.
 - **[OPEN] A `Seq` beside another clause** (`[n in ns, i in upto(n) | i]`) is still refused,
   though the comprehension can now grow. It would need a `compSource` over `lowerSeqConsume`.
 - **[DONE 09/29] A field, an element or a parenthesized expression is a comprehension

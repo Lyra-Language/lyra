@@ -45,6 +45,9 @@ import (
 // pointer. An empty literal still allocates a (len-0) box, keeping every dynamic
 // array a uniform managed box.
 func (l *lowerer) lowerDynArrayConstruction(block *ir.Block, e *ast.ArrayLiteralExpr, dynType types.DynamicArrayType) (value.Value, *ir.Block, error) {
+	if l.heldOperands != nil {
+		return l.lowerDynArrayBuiltLast(block, e, dynType)
+	}
 	box, boxTy, elemLL, err := l.dynArrayBox(block, dynType.ElementType, len(e.Elements))
 	if err != nil {
 		return nil, nil, err
@@ -66,6 +69,39 @@ func (l *lowerer) lowerDynArrayConstruction(block *ir.Block, e *ast.ArrayLiteral
 		}
 		elemPtr := dynArrayElemPtr(block, boxTy, box, i64c(int64(i)))
 		block.NewStore(v, elemPtr)
+	}
+	return box, block, nil
+}
+
+// lowerDynArrayBuiltLast is the literal when an element can leave: the box waits for the
+// elements, as the spread form's does, so a way out has none to release. lowerExpr is holding
+// each element until then. Not every literal, because the other way an element is written out
+// as soon as it exists, and a long table of aggregates doesn't pile up on the stack first.
+func (l *lowerer) lowerDynArrayBuiltLast(block *ir.Block, e *ast.ArrayLiteralExpr, dynType types.DynamicArrayType) (value.Value, *ir.Block, error) {
+	elemLL, err := l.lowerType(dynType.ElementType)
+	if err != nil {
+		return nil, nil, err
+	}
+	elems := make([]value.Value, len(e.Elements))
+	for i, elemExpr := range e.Elements {
+		var v value.Value
+		v, block, err = l.lowerExpr(block, elemExpr)
+		if err != nil {
+			return nil, nil, err
+		}
+		if diverged(v, block) {
+			return nil, block, nil
+		}
+		if elems[i], err = l.coerceAggregateElem(block, v, elemLL, elemExpr); err != nil {
+			return nil, nil, err
+		}
+	}
+	box, boxTy, _, err := l.dynArrayBox(block, dynType.ElementType, len(elems))
+	if err != nil {
+		return nil, nil, err
+	}
+	for i, v := range elems {
+		block.NewStore(v, dynArrayElemPtr(block, boxTy, box, i64c(int64(i))))
 	}
 	return box, block, nil
 }
@@ -532,18 +568,11 @@ func (l *lowerer) lowerDynArrayPush(block *ir.Block, call *ast.FunctionCallExpr,
 	}
 	stride := int64(bufferStride(elemSize, elemAlign))
 
-	box, block, err := l.lowerExpr(block, member.Object)
+	box, v, block, err := l.lowerReceiverAndArgument(block, member.Object, call.Arguments[0])
 	if err != nil {
 		return nil, nil, err
 	}
-	if diverged(box, block) {
-		return nil, block, nil
-	}
-	v, block, err := l.lowerExpr(block, call.Arguments[0])
-	if err != nil {
-		return nil, nil, err
-	}
-	if diverged(v, block) {
+	if v == nil {
 		return nil, block, nil
 	}
 	v, err = l.coerceAggregateElem(block, v, elemLL, call.Arguments[0])
@@ -623,14 +652,7 @@ func (l *lowerer) lowerDynArrayReserve(block *ir.Block, call *ast.FunctionCallEx
 	}
 	stride := int64(bufferStride(elemSize, elemAlign))
 
-	box, block, err := l.lowerExpr(block, member.Object)
-	if err != nil {
-		return nil, nil, err
-	}
-	if diverged(box, block) {
-		return nil, block, nil
-	}
-	want, block, err := l.lowerExpr(block, call.Arguments[0])
+	box, want, block, err := l.lowerReceiverAndArgument(block, member.Object, call.Arguments[0])
 	if err != nil {
 		return nil, nil, err
 	}
@@ -749,18 +771,11 @@ func (l *lowerer) lowerDynArrayPushUTF8(block *ir.Block, call *ast.FunctionCallE
 	if len(call.Arguments) != 1 {
 		return nil, nil, fmt.Errorf("llvm: push_utf8() expects 1 argument, got %d", len(call.Arguments))
 	}
-	box, block, err := l.lowerExpr(block, member.Object)
+	box, str, block, err := l.lowerReceiverAndArgument(block, member.Object, call.Arguments[0])
 	if err != nil {
 		return nil, nil, err
 	}
-	if diverged(box, block) {
-		return nil, block, nil
-	}
-	str, block, err := l.lowerExpr(block, call.Arguments[0])
-	if err != nil {
-		return nil, nil, err
-	}
-	if diverged(str, block) {
+	if str == nil {
 		return nil, block, nil
 	}
 	if !isStringLLVMType(str.Type()) {

@@ -640,13 +640,16 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 	// The place being updated, as an address plus the type stored there. A binding is a
 	// slot; anything else — `xs[i].n += 1` — is the same path walk `xs[i].n = v` takes.
 	//
-	// **The address is computed once**, which is the reason this is not desugared into
-	// `place = place op rhs` in the collector. That spelling re-evaluates the path, so an
+	// **The path's operands are evaluated once**, which is the reason this is not desugared
+	// into `place = place op rhs` in the collector. That spelling re-evaluates them, so an
 	// index with a side effect (`xs[next()].n += 1`) would run it twice, and a costly one
-	// twice over — a compound assignment reads and writes *one* place, and the shared
-	// address is what says so.
+	// twice over — a compound assignment reads and writes *one* place. Its address may not
+	// outlast the right side, though, which can reassign the array or grow it out of its
+	// buffer (lowerLValueAssignment): the read comes first, as a left operand's does, and
+	// unless the right side can do nothing of the kind the place is found again to write it.
 	var slot value.Value
 	var elem lltypes.Type
+	var operands placeOperands
 	if ident, isIdent := e.Left.(*ast.IdentifierExpr); isIdent {
 		s, found := l.slotFor(ident.Name, e.GetLocation())
 		if !found {
@@ -658,7 +661,15 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 		}
 		slot, elem = s, et
 	} else {
-		loc, b, err := l.lvalueAddress(block, e.Left)
+		ops, b, err := l.lowerPlaceOperands(block, e.Left)
+		if err != nil {
+			return nil, nil, err
+		}
+		if ops == nil {
+			return nil, b, nil
+		}
+		operands = ops
+		loc, b, err := l.placeAddress(b, e.Left, operands)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -682,6 +693,9 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 	if err != nil {
 		return nil, nil, err
 	}
+	if diverged(rhs, block) {
+		return nil, block, nil
+	}
 	// An overloaded operator: `a += b` calls the same `(_+_)` impl `a + b` does and
 	// stores the answer back. The load/store shape is the compound assignment's own —
 	// only the middle step changes.
@@ -693,6 +707,11 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 		result, block, err := l.lowerOperatorImplCall(block, res, cur, rhs)
 		if err != nil {
 			return nil, nil, err
+		}
+		if operands != nil {
+			if slot, block, err = l.placeAgain(block, e.Left, operands); err != nil {
+				return nil, nil, err
+			}
 		}
 		block.NewStore(result, slot).Volatile = shared
 		return result, block, nil
@@ -716,9 +735,49 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 	if err != nil {
 		return nil, nil, err
 	}
+	if operands != nil && !l.writesNothing(e.Right) {
+		if slot, block, err = l.placeAgain(block, e.Left, operands); err != nil {
+			return nil, nil, err
+		}
+	}
 	block.NewStore(result, slot).Volatile = shared
 	// A compound assignment yields no value (see the typechecker's void result).
 	return nil, block, nil
+}
+
+// placeAgain is a compound assignment's place found a second time, for the write.
+func (l *lowerer) placeAgain(block *ir.Block, place ast.Expression, operands placeOperands) (value.Value, *ir.Block, error) {
+	loc, block, err := l.placeAddress(block, place, operands)
+	if err != nil {
+		return nil, nil, err
+	}
+	return loc.ptr, block, nil
+}
+
+// writesNothing reports whether lowering e leaves the program's memory as it found it: names,
+// literals, reads along a path and arithmetic on them, which is what the right side of a compound
+// assignment in a hot loop usually is. Anything else may call something, so it answers false, and
+// the cost of that is one more bounds check.
+func (l *lowerer) writesNothing(e ast.Expression) bool {
+	switch e := e.(type) {
+	case *ast.IdentifierExpr, *ast.IntegerLiteralExpr, *ast.FloatLiteralExpr:
+		return true
+	case *ast.MemberExpr:
+		return l.writesNothing(e.Object)
+	case *ast.TupleIndexExpr:
+		return l.writesNothing(e.Object)
+	case *ast.IndexExpr:
+		return l.writesNothing(e.Object) && l.writesNothing(e.Index)
+	case *ast.MathBinaryOpExpr:
+		if _, overloaded := l.res.MethodTable.OperatorResolution(e); overloaded {
+			return false
+		}
+		if _, overloaded := l.operatorCandidate(e, e.Left); overloaded {
+			return false
+		}
+		return l.writesNothing(e.Left) && l.writesNothing(e.Right)
+	}
+	return false
 }
 
 func (l *lowerer) lowerNegationExpr(block *ir.Block, e *ast.NegationExpr) (value.Value, *ir.Block, error) {

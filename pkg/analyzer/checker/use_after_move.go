@@ -52,7 +52,9 @@ import (
 //   - a loop body is seeded with every move found anywhere inside it, so a move on
 //     one iteration is visible to the reads of the next;
 //   - a `let`/`var` declaration or a reassignment of the name re-initializes it and
-//     clears the move.
+//     clears the move;
+//   - an assignment into a place uses its root **last**, since the store follows the index
+//     and the value: `ys[0] = take(ys)` writes into what `take` was given.
 //
 // Uncertainty resolves toward *not* reporting: an unresolvable callee (a method
 // call, a call through a local, a function value) records no move at all, so a new
@@ -216,6 +218,8 @@ func (c *useAfterMove) stmt(st moveState, s ast.Statement) moveState {
 		st = c.expr(st, v.Value)
 		delete(st, v.Name) // reassignment gives the name a new value
 		return st
+	case *ast.LValueAssignmentStmt:
+		return c.place(c.expr(c.expr(st, v.Target), v.Value), v.Target)
 	case *ast.DestructuringDeclStmt:
 		// Every name the pattern binds is a *fresh* binding, exactly as VarDeclStmt's
 		// single name is, so each stops being moved here.
@@ -404,6 +408,9 @@ func (c *useAfterMove) expr(st moveState, e ast.Expression) moveState {
 	case *ast.ForInLoopExpr:
 		st = c.expr(st, v.Iterable)
 		return c.loopBody(st, v.Body)
+
+	case *ast.MathAssignOpExpr:
+		return c.place(c.expr(c.expr(st, v.Left), v.Right), v.Left)
 	}
 
 	// Straight-line expression: no joins, so just visit the children in order,
@@ -416,6 +423,17 @@ func (c *useAfterMove) expr(st moveState, e ast.Expression) moveState {
 		st = c.expr(st, child)
 		return false
 	})
+	return st
+}
+
+// place is an assignment's store: a use of the binding the written place is rooted at, after
+// every operand. Walking the target saw the root before an operand could move it, which took
+// `ys[swallow(ys)] = 7` for a read followed by a move. A root already moved before the statement
+// was reported by that walk, and reporting is once per move.
+func (c *useAfterMove) place(st moveState, target ast.Expression) moveState {
+	if root := ast.RootIdentifier(target); root != nil {
+		c.reportIfMoved(st, root)
+	}
 	return st
 }
 

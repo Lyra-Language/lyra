@@ -9,6 +9,99 @@ Newest first.
 
 ## Dated log
 
+### 11/03/26 — A by-reference argument can't dangle by way of a global
+
+`add(g[0], shrink())` freed the element a `mut` argument pointed at, and so did `replace_g(g[0])`, where
+the callee reassigns `g` itself. They looked like one bug and are two, with different answers.
+
+- **An argument changing the array is an ordering bug**, and gets an assignment's answer: a by-reference
+  argument's operands run in their turn and its address is taken once every argument has
+  (`deferredPlace`), through a call, a method's receiver and a trait path. A builtin's receiver is one in
+  all but name: `g.push(shrink())` pushed into a freed box, and `lowerReceiverAndArgument` loads the box
+  last for `push`, `push_utf8` and `reserve`.
+- **A callee changing it during its run can't be ordered away**, as it holds the pointer the whole time.
+  The candidates were a hold, a copy and a refusal. A hold doesn't survive growth, which frees the buffer
+  and keeps the box. Copying in and out does, but costs a copy on every call into such a place, and
+  deep-retains anything managed, to serve code nobody had written.
+- **That last part was measured, and it decided it.** An instrumented compiler over 406 files in every
+  repo found 672 by-reference place arguments and none rooted at a mutable global, boxed or not. So
+  `lyra-E091` refuses them, costing no program anything. 23 of Termina's files didn't check that day and
+  so weren't counted, but Termina has no module-level mutable binding for the rule to fire on.
+- **It asks what a call could do, not what this callee does.** A summary of which functions write which
+  globals would refuse less, but a callee's next edit would then break its callers. The rule is short
+  enough to say: what a box holds can't be lent out of a global, and everything else can.
+- **A local isn't refused**, since a callee reaches one only through its arguments, where exclusivity by
+  place answers for the place. **Left open (todo.md):** two names for one box, `via(ys[0], zs)` after
+  `var zs = ys`, which is what LANGUAGE.md already says exclusivity isn't about, and it is still memory
+  unsafety. `ownership.RootedAtMutableGlobal` and `ReachedThroughBox` are the one answer to the two
+  questions here, the first already the ownership pass's own.
+
+### 11/03/26 — An assignment finds its place after its operands
+
+`g[shrink()] = 9` and `g[0] = shrink()`, where `shrink` does `g = [1, 2]`, were use-after-frees: the
+path walk loaded the box and took the element's address, and then the index and the value ran. It was
+reported against mutable globals, and globals turned out to be the least of it. A local gets there by
+`ys[1] = grow(ys)` through a `mut` parameter, or `ys[1] = { ys = [1, 2]  5 }`, and a push that outgrows
+the buffer frees it with the box still alive. About two dozen shapes failed under ASan.
+
+- **Why not hold the old box**, as a read of a mutable global is held: a hold keeps the box, and `push`
+  frees the buffer under it, so it would have fixed reassignment and left growth. It would also have
+  cost a retain and a release on every element write, and sent the write into an array nobody could
+  see. Instead `lowerPlaceOperands` runs the indexes and any pointer, the value runs, and `placeAddress`
+  walks the path with those operands in hand. No code runs between finding the place and the store, so
+  there is nothing left to go stale, and the write lands in the array the program now has.
+- **The bounds trap moved with it**, and this is the one visible change to a program that was fine:
+  `xs[9] = f()` runs `f` before it traps. It has to, since the check is a question about the array being
+  written. Java and Go order it the same way. The trap's cost is unchanged, one check per store.
+- **Compound assignment kept its order**, the read before the right side as any left operand's, because
+  `n += f()` on a binding reads first and `xs[0] += f()` shouldn't differ. So it finds the place to read
+  and again to write, the operands not re-run, which is a second bounds check. `writesNothing` skips
+  that when the right side is names, literals, path reads and plain arithmetic, the usual right side in
+  a hot loop. A trap on the read still comes before the right side.
+- **`ast.PlaceOperands` is the one list** of what a path evaluates: ownership walks it, the backend
+  lowers it, and a difference between them is how the index leak below happened.
+- **A by-reference argument** has the same symptom and part of the same cause: the entry above.
+
+### 11/03/26 — An assignment's target is walked for what it evaluates
+
+`ys[mk().byte_len()] = 7` leaked the string, and `ys[(s ++ "!").byte_len()] = 7` the concat, though
+the same index in a read was fine. The backend lowers an index on an assignment's path like any other
+expression, and the ownership pass walked only the value and a pointer, so the index carried no
+annotations at all.
+
+- **It was never only a leak.** The package doc's warning about an unvisited node held: `ys[consume(s)]
+  = 7` and `ys[consume(p.name)] = 7` got no retain and no transfer, so the callee released a reference
+  it was never given, and ASan reported a use-after-free on every platform. A closure in an index went
+  unanalysed the same way, its body's temporaries leaking.
+- **`placeOperands` is the one walk** of what finding a place evaluates: each index, and the pointer a
+  deref ends the path at. The rest of the path is storage, addressed without being read, so its root
+  is deliberately not walked, and `pointerOfPath` went. `holdGlobalPlace` had its own copy of the loop
+  and uses it too.
+- **Walking the index exposed a wrong last use, in the value as well.** The last-use walk is pre-order,
+  so in `ys[swallow(ys)] = 7` the argument looks like `ys`'s final reference, but the store comes after
+  every operand. It moved the array into a callee that freed it and then wrote into the freed box. The
+  value had always done this: `ys[0] = swallow(ys)`. E019 now refuses the bare forms (below), but it
+  doesn't track `ys[swallow_all([ys])] = 7` or a call through a function value, so the fix is here: while an assignment's operands are walked, its root dups
+  rather than transfers (`writingTo`), as `conditional` makes a branch do. A borrowing last use stays:
+  its drop comes after the statement, past the store.
+- **Compound assignment** walked its left side all along and never had the leak, but had the wrong
+  last use, so it has an arm of its own now. The comment calling that walk "inert" went with it: it is
+  how the index got its annotations. **`p^ = v`** walks its operand and has no root to protect. Reuse
+  can't reach this, since a `data` value has no writable interior.
+- **`lyra-E019` counts the store as a use.** Its generic walker visited the target first, so it saw
+  `ys` read and then moved, when the store comes after the move. An assignment and a compound one now
+  use the root again after their operands (`place`), which gives `ys[swallow(ys)] = 7`, `ys[0] =
+  swallow(ys)` and both compound forms the error any later read gets. Reporting dedupes by binding and
+  move, so a root moved by an earlier statement is still one report; `ys = same(ys)` stays legal, as a
+  reassignment gives the name a new value. A refusal rather than only the dup because the dup leaves
+  the box shared, which is the reuse cliff E019 exists to expose, and because the program reads as
+  writing into what it gave away.
+- **The first tests proved nothing for the shape reported.** Run against the old pass on Linux,
+  `ys[mk().byte_len()] = 7` written in `main` passed: a leaked pointer in the frame of a function still
+  running is reachable to LeakSanitizer. Each case is now a function `main` calls, and 30 of them fail
+  without the fix. The rest are guards on what must not change: last uses of a binding in the index, a
+  binding in both index and value, and the compound forms.
+
 ### 11/03/26 — `HashMap`, `Set`, `Rng` and `std.temporal` construct through their types
 
 `hashmap_new()` is `HashMap.new()`, `set_new()` is `Set.new()`, `rng_seeded(n)` is `Rng.seeded(n)`,
@@ -83,6 +176,70 @@ by name: the grammar cannot keep a name out of a payload without keeping the pay
   false. For an integer it was. A string's test hands those bits to `memcmp` as a pointer, so `Some("a")`
   against a `None` read wherever the blob pointed: ASan's SEGV, an ordinary build's luck. The tests now
   run on zeroes when the tag does not hold (`select`).
+
+### 11/03/26 — A literal's fields are evaluated as written
+
+`P { y: f(), x: g() }` called `g` first, because the backend built a struct in declared order. An
+anonymous struct did so only under an annotation, so writing `: { x: i64, y: i64 }` on a binding
+swapped the two calls. Nothing documented any of it, and tuples, arrays and calls all go left to
+right.
+
+- **It was a memory-safety bug and not only a surprise.** Every pass walks a literal's fields as
+  written, so each answered about a program other than the one that ran. With `x` declared first,
+  `R { y: { i = 0; 1 }, x: xs[i] }` lost its bounds check, since the range pass saw the write first,
+  and read past the array. With `y` declared first, `U { x: s ++ "!", y: take(s) }` passed the move
+  checker and read `s` after `take` freed it. Both in safe code, both found by ASan on Linux.
+- **The backend moved rather than the passes.** Teaching each pass declared order means giving a
+  walk of the AST type information, and any pass that misses it is unsafe with nothing to say so.
+  Declared order's one advantage is that reordering a literal can't change what it does. Written
+  order is what tuples and calls already do here, and what Rust, C#, Kotlin and JavaScript do.
+  Requiring the declared order in the source (Swift, C++20) would refuse literals valid today.
+- **Nothing depended on the old order**: the suite, std and `ui` pass unchanged. A program with side
+  effects in out-of-order fields changes silently, which pre-release is the time for.
+- **A record update's kept fields are read straight after the base**, with their retains, so a later
+  field reassigning the base's binding can't free one first. Filled-in defaults are appended to the
+  fields, so they come after everything written without a case of their own.
+- Each field is inserted as it is reached (`lowerLiteralFields`, shared by the three literal
+  forms), so no values are kept back to build the struct at the end.
+
+### 11/03/26 — A way out releases the operands already evaluated beside it
+
+`["a" ++ b, f()?]`, `("a" ++ b, f()?)` and `g("a" ++ b, f()?)`, with `g` taking `own`, leaked the
+first operand when the `?` left. It has its +1 but isn't pending, since nothing will release it
+on the path that goes on, and isn't in the aggregate yet. `return`, `break` and `continue` in a
+later operand did the same, and so did every other aggregate. Only LeakSanitizer saw it.
+
+- **Each such operand sits in a managed frame until its construct is built**, as a comprehension's
+  box does, for the same reason: every exit already releases frames, `break` by depth, so a loop
+  inside the operand doesn't release what is outside it. The frame is popped unreleased on the
+  path that goes on. A pending temporary would be freed on that path.
+- **The pass says which operands, and lowerExpr does it**, in one place: `HeldOperands[c]` lists
+  c's owning operands if anything in c can leave. Which positions own is already decided in that
+  walk, and a call's depends on the callee, so the backend mustn't work it out again. Every
+  construct is then covered without learning about this, and one that can't leave pays nothing.
+- **All of a construct's owning operands, not just those before what leaves**: finding those is a
+  walk of its own, to save a store or two. A struct literal passed a probe because its fields were
+  then evaluated in declared order: with the `?` field declared first, nothing had been evaluated
+  when it left. `Two { y: f()?, x: "a" ++ b }` over `x, y` leaked the same as a tuple did. That
+  order was itself a bug (the entry above).
+- **The list is the construct's, not a flag on the operand**, and lowerExpr clears it for anything
+  deeper. A default lambda is one node shared by every literal it fills, so a flag set by a literal
+  that can leave would hold it in one that can't, with no frame of its own and a release at scope
+  exit on top of the struct's.
+- **A dynamic array's box leaked as well**, with nothing owned in it: `[1, f()?]`. A literal that
+  can leave now allocates after its elements, as the spread form does. Not every literal: the
+  other order writes each element out as it exists, so a long table doesn't pile up first.
+- **What has no node asks by hand** (`holdIfHolding`): a record update's kept field, retained
+  where it's read, and a struct's filled-in `[]`, which skips lowerExpr.
+- **A `return` in a reuse match's arm leaked the whole box**: past `lyra_rc_drop_reuse` the box
+  and payload belong to the arms' merge, which that path never reaches. Nothing to do with
+  operands; a test here happened to be shaped like one. A match with an arm that can leave no
+  longer reuses, since all that costs is the optimization.
+- **`[v; n]`'s count wasn't walked by the pass**, whose comment still said it was a folded literal.
+  Since run-time counts, a temporary in one leaked.
+- **Left open:** an `own` argument of an inlined sequence function. Its body runs inside the call,
+  so the frame would still hold the argument when the callee's own frame has it too, and a
+  `return` in the consumer would release it twice. It leaks instead (todo.md).
 
 ### 11/03/26 — A way out of a comprehension releases its box
 

@@ -250,12 +250,23 @@ same-named user `data Result` is not canonical.
   `ast.WalkStmt`/`WalkExpr` with pruning.
 - **`let … else` is not a branch** (`letElse`): the payload binds in the enclosing scope; the else
   diverges.
+- **An assignment's store is a use of the place's root, after its operands** (`place`), so
+  `ys[0] = take(ys)` and `ys[take(ys)] += 1` are refused. Moves it doesn't track there
+  (`ys[take([ys])] = 7`) are safe: ownership dups the root (`writingTo`).
 - Conservative toward silence: unresolvable callees record no move. Reports dedupe by
   (binding, move site).
 - Impl and default method bodies each start fresh. Not covered: moves through a nested lambda's
   captures.
 - Not a memory-safety fix (ownership retains defensively); it enforces `own` and exposes the
   reuse perf cliff.
+
+## `global_borrow.go` (`lyra-E091`)
+
+`CheckGlobalBorrows(program, symTable, tt, mt)`, post-typecheck: a by-reference argument into a box
+a mutable global holds. Asks `ownership.RootedAtMutableGlobal` and `ownership.ReachedThroughBox`;
+callees come from use-after-move's `calleeParams`, and a bound call from the trait's signature.
+Builtins and C functions aren't asked about. A name an enclosing function binds isn't the global
+(`bound`), impl and default method bodies included.
 
 ## `captured_assignment.go` (`lyra-E024`)
 

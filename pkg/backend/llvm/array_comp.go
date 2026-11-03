@@ -159,7 +159,7 @@ func (l *lowerer) lowerArrayComp(block *ir.Block, e *ast.ArrayCompExpr) (value.V
 	// file's header comment explains.
 	box := l.dynArrayAlloc(block, boxTy, elemLL, i64c(0), capacity, int64(stride))
 	defer l.holdCompBox(block, e, box, dynType)()
-	canLeave := compCanLeave(e)
+	canLeave := ast.CanLeave(e)
 
 	countSlot := block.Parent.Blocks[0].NewAlloca(lltypes.I64)
 	block.NewStore(i64c(0), countSlot)
@@ -190,7 +190,7 @@ func (l *lowerer) lowerArrayComp(block *ir.Block, e *ast.ArrayCompExpr) (value.V
 // comprehension can leave them, and answers what ends that. The frame is popped and not
 // released: the path that finishes the loops hands the box on as the comprehension's value.
 func (l *lowerer) holdCompBox(block *ir.Block, e *ast.ArrayCompExpr, box value.Value, dynType types.DynamicArrayType) func() {
-	if !compCanLeave(e) {
+	if !ast.CanLeave(e) {
 		return func() {}
 	}
 	slot := block.Parent.Blocks[0].NewAlloca(box.Type())
@@ -198,29 +198,6 @@ func (l *lowerer) holdCompBox(block *ir.Block, e *ast.ArrayCompExpr, box value.V
 	l.pushManagedFrame()
 	l.addManagedBinding(slot, dynType)
 	return l.popManagedFrame
-}
-
-// compCanLeave reports whether anything in the comprehension can leave it: a lambda's own
-// `?` or `return` leaves the lambda instead. A `break` that only ends a loop inside counts
-// too, which costs a slot and a store and nothing else.
-func compCanLeave(e *ast.ArrayCompExpr) bool {
-	leaves := false
-	ast.WalkExpr(e, func(s ast.Statement) bool {
-		switch s.(type) {
-		case *ast.ReturnStmt, *ast.BreakStmt, *ast.ContinueStmt:
-			leaves = true
-		}
-		return true
-	}, func(x ast.Expression) bool {
-		switch x.(type) {
-		case *ast.TryExpr:
-			leaves = true
-		case *ast.LambdaExpr:
-			return false
-		}
-		return true
-	})
-	return leaves
 }
 
 // overAllocates reports whether this comprehension's count can come in under its capacity,

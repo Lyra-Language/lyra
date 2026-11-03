@@ -527,3 +527,106 @@ let main = () -> u8 => {
   a
 }`, 0)
 }
+
+// --- an assignment's store ---
+
+const storePreamble = `struct Person { name: string, }
+let swallow = (xs: own []i64) -> i64 => 1
+let count = (xs: ref []i64) -> i64 => 1
+let same = (xs: own []i64) -> []i64 => xs
+let consume = (p: own shared Person) -> string => "a"
+`
+
+// The store follows the index and the value, so a move in either comes before it.
+func TestMove_AssignmentStoreIsAUseAfterItsOperands(t *testing.T) {
+	cases := []struct{ name, stmt string }{
+		{"the index", `ys[swallow(ys)] = 7`},
+		{"the value", `ys[0] = swallow(ys)`},
+		{"a compound index", `ys[swallow(ys)] += 7`},
+		{"a compound value", `ys[0] += swallow(ys)`},
+		{"in a branch", `if count(zs) == 0 { ys[0] = swallow(ys) }`},
+		{"in a block in the value", `ys[0] = { swallow(ys) }`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := assertMoveErrors(t, storePreamble+`
+let main = () -> void => {
+  var ys: []i64 = [1, 2]
+  let zs: []i64 = [3]
+  `+c.stmt+`
+}`, 1)
+			if !strings.Contains(got[0].Message, `"ys" is used after it was moved`) {
+				t.Errorf("message should name the written binding: %q", got[0].Message)
+			}
+		})
+	}
+}
+
+// A field of a managed value is written through the same root.
+func TestMove_FieldStoreIsAUseOfItsRoot(t *testing.T) {
+	assertMoveErrors(t, storePreamble+`
+let main = () -> void => {
+  var p: shared Person = Person { name: "a" }
+  p.name = consume(p)
+}`, 1)
+}
+
+// A loop's back edge brings the move round to the next iteration's store as well: one move,
+// one report.
+func TestMove_StoreInALoopReportsOnce(t *testing.T) {
+	got := assertMoveErrors(t, storePreamble+`
+let main = () -> void => {
+  var ys: []i64 = [1, 2]
+  for i in 0..<2 { ys[i] = swallow(ys) }
+}`, 1)
+	if !strings.Contains(got[0].Message, "later iteration") {
+		t.Errorf("a loop-carried move should say so: %q", got[0].Message)
+	}
+}
+
+// A root moved by an earlier statement is one report, whichever walk reaches it first.
+func TestMove_StoreAfterAnEarlierMoveReportsOnce(t *testing.T) {
+	for _, stmt := range []string{`ys[0] = 7`, `ys[0] += 7`, `ys[count(zs)] = count(zs)`} {
+		assertMoveErrors(t, storePreamble+`
+let main = () -> void => {
+  var ys: []i64 = [1, 2]
+  let zs: []i64 = [3]
+  let n = swallow(ys)
+  `+stmt+`
+}`, 1)
+	}
+}
+
+// What the store doesn't refuse: a reassignment gives the name a new value, a borrow moves
+// nothing, another binding's move is not this one's, and a field or element argument is not a
+// move at all.
+func TestMove_StoreStaysLegal(t *testing.T) {
+	for _, stmt := range []string{
+		`ys = same(ys)`,
+		`ys[count(ys)] = count(ys)`,
+		`ys[count(ys)] += count(ys)`,
+		`ys[swallow(zs)] = 7`,
+		`ys[0] = swallow(zs)`,
+		`grid[0][swallow(grid[0])] = 7`,
+		`ys[0] = 7`,
+	} {
+		assertMoveErrors(t, storePreamble+`
+let main = () -> void => {
+  var ys: []i64 = [1, 2]
+  var grid: [][]i64 = [[1, 2]]
+  let zs: []i64 = [3]
+  `+stmt+`
+}`, 0)
+	}
+}
+
+// Reassigning first gives the store a value to write into.
+func TestMove_StoreAfterReassignmentIsLegal(t *testing.T) {
+	assertMoveErrors(t, storePreamble+`
+let main = () -> void => {
+  var ys: []i64 = [1, 2]
+  let n = swallow(ys)
+  ys = [3, 4]
+  ys[0] = 7
+}`, 0)
+}

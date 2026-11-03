@@ -1048,6 +1048,11 @@ const (
 	// payload without keeping the payload out (collector, collectOrPattern).
 	CodeOrPatternAlternative = "lyra-E090"
 
+	// CodeGlobalBorrow: a by-reference argument into a box a mutable global holds (`add(g[0])`,
+	// `read(b.xs[i])`). Any function can reassign the global or grow the array, which frees
+	// the storage while the callee holds a pointer to it (checker, global_borrow.go).
+	CodeGlobalBorrow = "lyra-E091"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

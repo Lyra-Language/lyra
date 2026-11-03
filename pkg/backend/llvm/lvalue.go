@@ -26,9 +26,29 @@ import (
 // when the slot genuinely owns it rather than sharing a caller's. See
 // releaseOldTarget.
 //
+// **The operands run first and the place is found after them.** An index or the value can run
+// anything, and what they can do includes changing what the place is: reassign the array, as
+// `g[shrink()] = 9` or `ys[0] = renew(ys)` does, or grow it out of its buffer. Loaded before them,
+// the box or the element's address may be freed by the time of the store, which is why the
+// bounds check comes after them too: it is a question about the array being written.
+//
 // Deferred, loud error: an optional member target (`p?.x = v`).
 func (l *lowerer) lowerLValueAssignment(block *ir.Block, stmt *ast.LValueAssignmentStmt) (*ir.Block, error) {
-	loc, block, err := l.lvalueAddress(block, stmt.Target)
+	operands, block, err := l.lowerPlaceOperands(block, stmt.Target)
+	if err != nil {
+		return nil, err
+	}
+	if operands == nil {
+		return block, nil
+	}
+	v, block, err := l.lowerExpr(block, stmt.Value)
+	if err != nil {
+		return nil, err
+	}
+	if diverged(v, block) {
+		return block, nil
+	}
+	loc, block, err := l.placeAddress(block, stmt.Target, operands)
 	if err != nil {
 		return nil, err
 	}
@@ -38,13 +58,6 @@ func (l *lowerer) lowerLValueAssignment(block *ir.Block, stmt *ast.LValueAssignm
 	targetLL, err := l.lowerType(loc.ty)
 	if err != nil {
 		return nil, err
-	}
-	v, block, err := l.lowerExpr(block, stmt.Value)
-	if err != nil {
-		return nil, err
-	}
-	if diverged(v, block) {
-		return block, nil
 	}
 	// The typechecker already narrowed the value to the target type; coerce
 	// defensively so a residual int-width mismatch fixes rather than emitting bad IR.
@@ -196,6 +209,146 @@ func (l *lowerer) slotIsFramed(slot value.Value) bool {
 	})
 }
 
+// placeOperands holds what a place's path evaluates, lowered already (ast.PlaceOperands).
+type placeOperands map[ast.Expression]value.Value
+
+// lowerPlaceOperands evaluates a place's indexes and pointer, in the order they are written,
+// for placeAddress. It answers nil when one of them doesn't come back.
+func (l *lowerer) lowerPlaceOperands(block *ir.Block, place ast.Expression) (placeOperands, *ir.Block, error) {
+	exprs := ast.PlaceOperands(place)
+	operands := make(placeOperands, len(exprs))
+	for _, e := range exprs {
+		v, end, err := l.lowerExpr(block, e)
+		if err != nil {
+			return nil, nil, err
+		}
+		block = end
+		if diverged(v, block) {
+			return nil, block, nil
+		}
+		operands[e] = v
+	}
+	return operands, block, nil
+}
+
+// placeAddress is lvalueAddress with the path's operands already evaluated. Nothing it lowers
+// can run anything, so what it answers holds until the next call or write. Asking twice bounds
+// checks twice and evaluates nothing twice.
+func (l *lowerer) placeAddress(block *ir.Block, place ast.Expression, operands placeOperands) (lvalueLoc, *ir.Block, error) {
+	saved := l.loweredPlaceOperands
+	l.loweredPlaceOperands = operands
+	defer func() { l.loweredPlaceOperands = saved }()
+	return l.lvalueAddress(block, place)
+}
+
+// lowerPlaceOperand is an operand of the path being walked: placeAddress's, or lowered here for
+// a caller that addresses a place and uses it at once.
+func (l *lowerer) lowerPlaceOperand(block *ir.Block, e ast.Expression) (value.Value, *ir.Block, error) {
+	if v, ok := l.loweredPlaceOperands[e]; ok {
+		return v, block, nil
+	}
+	return l.lowerExpr(block, e)
+}
+
+// deferredPlace is a by-reference argument whose path's operands have run and whose address
+// waits for the other arguments: one of them can reassign the array or grow it out of its
+// buffer, as an assignment's value can (lowerLValueAssignment).
+type deferredPlace struct {
+	at       int // its position in the call's arguments
+	place    ast.Expression
+	operands placeOperands
+}
+
+// deferByRefPlace runs the operands of the by-reference argument at position `at` and records
+// it for findDeferredPlaces. A diverging operand seals the block, which diverged reports with
+// the nil this answers.
+func (l *lowerer) deferByRefPlace(block *ir.Block, place ast.Expression, at int, deferred *[]deferredPlace) (*ir.Block, error) {
+	operands, block, err := l.lowerPlaceOperands(block, place)
+	if err != nil {
+		return nil, err
+	}
+	if operands != nil {
+		*deferred = append(*deferred, deferredPlace{at: at, place: place, operands: operands})
+	}
+	return block, nil
+}
+
+// findDeferredPlaces fills in each deferred argument's address, once every argument has run.
+func (l *lowerer) findDeferredPlaces(block *ir.Block, args []value.Value, deferred []deferredPlace) (*ir.Block, error) {
+	for _, d := range deferred {
+		loc, end, err := l.placeAddress(block, d.place, d.operands)
+		if err != nil {
+			return nil, err
+		}
+		block = end
+		args[d.at] = loc.ptr
+	}
+	return block, nil
+}
+
+// lowerReceiverAndArgument lowers a mutating builtin's receiver and its one argument for
+// `xs.push(v)`: the receiver is a by-reference argument in all but name, so its box is loaded
+// after the argument has run. A receiver with no storage of its own has no place to find again
+// and is lowered first, in its turn. It answers two nils when either one doesn't come back.
+func (l *lowerer) lowerReceiverAndArgument(block *ir.Block, receiver, arg ast.Expression) (value.Value, value.Value, *ir.Block, error) {
+	if !l.namesStorage(receiver) {
+		box, block, err := l.lowerExpr(block, receiver)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if diverged(box, block) {
+			return nil, nil, block, nil
+		}
+		v, block, err := l.lowerExpr(block, arg)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if diverged(v, block) {
+			return nil, nil, block, nil
+		}
+		return box, v, block, nil
+	}
+	operands, block, err := l.lowerPlaceOperands(block, receiver)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if operands == nil {
+		return nil, nil, block, nil
+	}
+	v, block, err := l.lowerExpr(block, arg)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if diverged(v, block) {
+		return nil, nil, block, nil
+	}
+	loc, block, err := l.placeAddress(block, receiver, operands)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	boxTy, err := l.lowerType(loc.ty)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return block.NewLoad(boxTy, loc.ptr), v, block, nil
+}
+
+// namesStorage reports whether the path e ends at a slot this function can address, or at a
+// pointer: not a temporary, and not a name reached through a namespace, which lvalueAddress
+// doesn't walk.
+func (l *lowerer) namesStorage(e ast.Expression) bool {
+	for x, ok := e, true; ok; x, ok = ast.PlaceObject(x) {
+		switch x := x.(type) {
+		case *ast.IdentifierExpr:
+			_, found := l.slotFor(x.Name, x.GetLocation())
+			return found
+		case *ast.DerefExpr:
+			return true
+		}
+	}
+	return false
+}
+
 // lvalueLoc is an assignable location: its address, the Lyra type stored there, and
 // whether the hop that reached it went *through a ref-counted box* (a `shared`
 // struct/array or a dynamic array) rather than through inline aggregate storage.
@@ -262,7 +415,7 @@ func (l *lowerer) lvalueAddressRaw(block *ir.Block, e ast.Expression) (lvalueLoc
 		// makes `p.offset(i)^.field = v` a store into that element's field. The front end
 		// has already required `unsafe` and a `^mut` pointer (lyra-E011, lyra-E061); the
 		// pointee is whatever the pointer's owner laid out, never a Lyra box.
-		ptr, block, err := l.lowerExpr(block, t.Operand)
+		ptr, block, err := l.lowerPlaceOperand(block, t.Operand)
 		if err != nil {
 			return lvalueLoc{}, nil, err
 		}
@@ -463,7 +616,7 @@ func (l *lowerer) boundsCheckedIndex(block *ir.Block, e *ast.IndexExpr, size val
 	// An assignment's target is not lowered through lowerExpr, so the trap's place
 	// is set here.
 	defer l.at(e.GetLocation())()
-	idx, block, err := l.lowerExpr(block, e.Index)
+	idx, block, err := l.lowerPlaceOperand(block, e.Index)
 	if err != nil {
 		return nil, nil, err
 	}

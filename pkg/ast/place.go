@@ -1,5 +1,7 @@
 package ast
 
+import "slices"
+
 // RootIdentifier walks a *place* expression — a binding, a field, an element, or a path of
 // those (`p.x`, `xs[i]`, `grid[i].y`) — back to the identifier it is rooted at, and returns
 // nil for anything that is not rooted at one.
@@ -47,6 +49,23 @@ func PlaceObject(expr Expression) (Expression, bool) {
 		return e.Object, true
 	}
 	return nil, false
+}
+
+// PlaceOperands answers the expressions a place's path evaluates, in the order they are written:
+// each index, and the pointer a deref ends the path at (`p.offset(i)^.xs[j]` is `p.offset(i)`, then
+// `j`). The rest of a path is storage, addressed without being read.
+func PlaceOperands(place Expression) []Expression {
+	var operands []Expression
+	for x, ok := place, true; ok; x, ok = PlaceObject(x) {
+		switch x := x.(type) {
+		case *IndexExpr:
+			operands = append(operands, x.Index)
+		case *DerefExpr:
+			operands = append(operands, x.Operand)
+		}
+	}
+	slices.Reverse(operands)
+	return operands
 }
 
 // RootIdentifierName is RootIdentifier's name, or "" when the expression is not rooted at

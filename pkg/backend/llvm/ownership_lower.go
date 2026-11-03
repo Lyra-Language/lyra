@@ -69,6 +69,22 @@ func (l *lowerer) addManagedBinding(slot value.Value, lyraType types.Type) {
 	l.managedFrames[top] = append(l.managedFrames[top], managedSlot{slot, lyraType})
 }
 
+// holdOperand records an operand's value in the frame lowerExpr pushed for its aggregate or
+// call, which goes with that frame when the construct is built.
+func (l *lowerer) holdOperand(block *ir.Block, v value.Value, ty types.Type) {
+	slot := block.Parent.Blocks[0].NewAlloca(v.Type())
+	l.storeAggregate(block, v, slot)
+	l.addManagedBinding(slot, ty)
+}
+
+// holdIfHolding is holdOperand for a value the aggregate being lowered has by some way other
+// than lowerExpr: a record update's kept field, with a retain of its own and no node.
+func (l *lowerer) holdIfHolding(block *ir.Block, v value.Value, ty types.Type) {
+	if l.heldOperands != nil && l.needsDrop(ty) {
+		l.holdOperand(block, v, ty)
+	}
+}
+
 // retireManagedSlot removes a binding's alloca from whichever frame holds it, so
 // no later frame release touches it — the Perceus **transfer fusion** (stage 2):
 // a last-use transfer moves the reference to the consumer, so the binding's

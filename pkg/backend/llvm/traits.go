@@ -200,18 +200,22 @@ func (l *lowerer) lowerTraitMethodCall(block *ir.Block, call *ast.FunctionCallEx
 	// pointer handed a value (or the reverse) is not a type error the front end can catch,
 	// it is a wild load.
 	params := l.methodParams(call, res)
-	recv, block, err := l.methodOperand(block, member.Object, params, 0)
+	var deferred []deferredPlace
+	recv, block, err := l.methodOperand(block, member.Object, params, 0, 0, &deferred)
 	if err != nil {
 		return nil, nil, err
 	}
+	if diverged(recv, block) {
+		return nil, block, nil
+	}
 	// Each operand for a parameter passed by copy gets its copy as it is made (sret.go).
 	lyra := l.lyraParams(fn)
-	if len(lyra) > 0 {
+	if len(lyra) > 0 && recv != nil {
 		recv = l.copyForParam(block, recv, lyra[0])
 	}
 	args := []value.Value{recv}
 	for i, arg := range call.Arguments {
-		v, next, err := l.methodOperand(block, arg, params, i+1)
+		v, next, err := l.methodOperand(block, arg, params, i+1, len(args), &deferred)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -219,10 +223,13 @@ func (l *lowerer) lowerTraitMethodCall(block *ir.Block, call *ast.FunctionCallEx
 		if diverged(v, block) {
 			return nil, block, nil
 		}
-		if i+1 < len(lyra) {
+		if i+1 < len(lyra) && v != nil {
 			v = l.copyForParam(block, v, lyra[i+1])
 		}
 		args = append(args, v)
+	}
+	if block, err = l.findDeferredPlaces(block, args, deferred); err != nil {
+		return nil, nil, err
 	}
 	if len(args) != len(l.lyraParams(fn)) {
 		return nil, nil, fmt.Errorf("llvm: %s expects %d argument(s) including the receiver, got %d",
@@ -270,8 +277,15 @@ func (l *lowerer) methodParamModes(call *ast.FunctionCallExpr) []types.Parameter
 // It mirrors lowerDirectCall's argument loop rather than sharing it, because that loop walks
 // call.Arguments and a method call's receiver is not in there — the offset this function
 // takes as `idx` is the whole difference.
-func (l *lowerer) methodOperand(block *ir.Block, operand ast.Expression, params []types.ParameterType, idx int) (value.Value, *ir.Block, error) {
+//
+// A by-reference operand naming storage is deferred as lowerCallArgs defers one, to position
+// `at` in the arguments, and answers nil until findDeferredPlaces fills it in.
+func (l *lowerer) methodOperand(block *ir.Block, operand ast.Expression, params []types.ParameterType, idx, at int, deferred *[]deferredPlace) (value.Value, *ir.Block, error) {
 	if idx < len(params) && paramIsByRef(ast.Parameter{Type: params[idx].Type, TypeModifier: params[idx].Borrow}) {
+		if isLValuePath(operand) {
+			block, err := l.deferByRefPlace(block, operand, at, deferred)
+			return nil, block, err
+		}
 		return l.argumentAddress(block, operand)
 	}
 	return l.lowerExpr(block, operand)
@@ -499,8 +513,9 @@ func (l *lowerer) lowerTraitPathCall(block *ir.Block, call *ast.FunctionCallExpr
 	params := l.methodParams(call, res)
 	lyra := l.lyraParams(fn)
 	args := make([]value.Value, 0, len(call.Arguments))
+	var deferred []deferredPlace
 	for i, arg := range call.Arguments {
-		v, next, err := l.methodOperand(block, arg, params, i)
+		v, next, err := l.methodOperand(block, arg, params, i, len(args), &deferred)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -509,10 +524,13 @@ func (l *lowerer) lowerTraitPathCall(block *ir.Block, call *ast.FunctionCallExpr
 			return nil, block, nil
 		}
 		// Copied as it is made, for a parameter passed by copy (sret.go).
-		if i < len(lyra) {
+		if i < len(lyra) && v != nil {
 			v = l.copyForParam(block, v, lyra[i])
 		}
 		args = append(args, v)
+	}
+	if block, err = l.findDeferredPlaces(block, args, deferred); err != nil {
+		return nil, nil, err
 	}
 	if len(args) != len(l.lyraParams(fn)) {
 		return nil, nil, fmt.Errorf("llvm: %s::%s expects %d argument(s) including the receiver, got %d",

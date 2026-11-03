@@ -118,6 +118,11 @@ type Table struct {
 	// type) that consumes its enclosing reuse-match's token — it writes the new value
 	// into the reclaimed box instead of allocating, when the token is non-null.
 	ReuseTarget map[ast.Expression]bool
+	// HeldOperands[c]: c is an aggregate or call with something in it that can leave, and
+	// these are the operands it takes ownership of. Each has its +1 from when it is
+	// evaluated until c is built, and for that long nothing else knows of it, so the backend
+	// holds it where a way out will release it (lowerExpr).
+	HeldOperands map[ast.Expression][]ast.Expression
 }
 
 // ShouldRetain reports whether e's value must be retained when produced.
@@ -155,6 +160,16 @@ func (t *Table) ReuseScrutinee(m *ast.MatchExpr) (string, bool) {
 	}
 	name, ok := t.ReuseMatch[m]
 	return name, ok
+}
+
+// OperandsToHold answers e's HeldOperands, or nil when e is not an aggregate or call that can
+// leave with some of its operands evaluated. A literal's list is never empty: whichever of its
+// elements own nothing, a dynamic array needs telling that its box must wait for them.
+func (t *Table) OperandsToHold(e ast.Expression) []ast.Expression {
+	if t == nil {
+		return nil
+	}
+	return t.HeldOperands[e]
 }
 
 // IsReuseTarget reports whether e is a construction that consumes its enclosing
@@ -657,7 +672,9 @@ func newAnalyzer(symTable *symbols.SymbolTable, tt *typetable.TypeTable, subst m
 			LastUseDrop:     map[ast.Expression]bool{},
 			ReuseMatch:      map[*ast.MatchExpr]string{},
 			ReuseTarget:     map[ast.Expression]bool{},
+			HeldOperands:    map[ast.Expression][]ast.Expression{},
 		},
+		writing: map[string]int{},
 	}
 }
 
@@ -690,6 +707,9 @@ type analyzer struct {
 	// bound is, per enclosing function, every name it binds — its parameters and its
 	// body's binders — so a name none of them binds is a module-level one (mutableGlobal).
 	bound []map[string]bool
+	// writing counts, per name, the assignments to a place rooted at it whose operands are
+	// being walked (writingTo).
+	writing map[string]int
 }
 
 // lambda analyzes one function/lambda body under its own return-ownership.
@@ -698,8 +718,10 @@ func (a *analyzer) lambda(lam *ast.LambdaExpr) {
 	savedCond := a.conditional
 	savedLast := a.lastUse
 	savedReuse := a.reuseLastRef
+	savedWriting := a.writing
 	a.curReturnOwned = isOwnedReturn(lam.ReturnType.TypeModifier)
 	a.conditional = false
+	a.writing = map[string]int{}
 	a.lastUse = a.computeLastUse(lam)
 	a.reuseLastRef = a.computeOwnedLastRef(lam)
 	binds := captures.BodyBinders(lam)
@@ -711,6 +733,7 @@ func (a *analyzer) lambda(lam *ast.LambdaExpr) {
 		a.conditional = savedCond
 		a.lastUse = savedLast
 		a.reuseLastRef = savedReuse
+		a.writing = savedWriting
 		a.bound = a.bound[:len(a.bound)-1]
 	}()
 	// The body is the function's return value: pass the return's ownership need
@@ -914,10 +937,11 @@ func (a *analyzer) computeOwnedLastRef(lam *ast.LambdaExpr) map[string]ast.Expre
 //   - its type is a `shared data` value (reuse reclaims a heap box; strings and
 //     stack values don't qualify);
 //   - the arms are a plain tag switch — no guards, no value-testing payload
-//     sub-patterns — matching exactly the backend path that wires reuse; and
+//     sub-patterns — matching exactly the backend path that wires reuse;
 //   - at least one arm constructs a value of the *same* `data` type (so the
 //     reclaimed box, sized for that type, fits) — otherwise there's nothing to
-//     reuse it for.
+//     reuse it for; and
+//   - nothing in the match can leave (see below).
 func (a *analyzer) reuseSource(m *ast.MatchExpr) (string, bool) {
 	id, ok := m.Scrutinee.(*ast.IdentifierExpr)
 	if !ok || a.reuseLastRef[id.Name] != ast.Expression(id) {
@@ -925,6 +949,11 @@ func (a *analyzer) reuseSource(m *ast.MatchExpr) (string, bool) {
 	}
 	dtName, ok := a.sharedDataName(m.Scrutinee)
 	if !ok || !plainTagSwitch(m) || !a.anyArmConstructs(m, dtName) {
+		return "", false
+	}
+	// Past drop-reuse the box and its payload are the arms' to dispose of, and an arm's own
+	// merge is where they do. An arm that leaves never gets there, so such a match isn't one.
+	if ast.CanLeave(m) {
 		return "", false
 	}
 	return id.Name, true
@@ -1168,11 +1197,10 @@ func (a *analyzer) stmt(s ast.AstNode) {
 	case *ast.LValueAssignmentStmt:
 		// Interior assignment (`xs[i] = v`, `p.name = v`): the slot takes ownership of
 		// the new value (+1) — the backend releases whatever the slot held before. A
-		// non-managed target borrows (nothing to own). A path through a pointer walks the
-		// pointer borrowing, as `p^ = v` does: a place written through, not consumed.
-		if d := pointerOfPath(s.Target); d != nil {
-			a.expr(d.Operand, false)
-		}
+		// non-managed target borrows (nothing to own). Finding the place evaluates its
+		// indexes and any pointer on its path, before the value.
+		defer a.writingTo(s.Target)()
+		a.placeOperands(s.Target)
 		a.expr(s.Value, a.ownsManaged(s.Value))
 	case *ast.DerefAssignmentStmt:
 		// `p^ = v`. The pointee slot takes ownership of the new value, exactly as an
@@ -1246,15 +1274,19 @@ func (a *analyzer) destructuringValue(d *ast.DestructuringDeclStmt) {
 // that binding. A name both resolves to only where the conservative answer, a retain, is
 // the cost: BindingIn falls back to the program-wide binding.
 func (a *analyzer) mutableGlobal(name string, loc ast.Location) bool {
-	for _, frame := range a.bound {
+	return mutableGlobal(a.symTable, a.bound, name, loc)
+}
+
+func mutableGlobal(symTable *symbols.SymbolTable, bound []map[string]bool, name string, loc ast.Location) bool {
+	for _, frame := range bound {
 		if frame[name] {
 			return false
 		}
 	}
-	if a.symTable == nil {
+	if symTable == nil {
 		return false
 	}
-	decl, ok := a.symTable.BindingIn(a.symTable.ModuleOfFile[loc.File], name)
+	decl, ok := symTable.BindingIn(symTable.ModuleOfFile[loc.File], name)
 	return ok && isMutableData(decl)
 }
 
@@ -1270,45 +1302,96 @@ func (a *analyzer) holdGlobalPlace(e ast.Expression, needOwned bool) bool {
 	}
 	a.table.Retain[e] = true
 	a.table.ReleaseTemp[e] = true
-	for x, ok := e, true; ok; x, ok = ast.PlaceObject(x) {
-		if ix, isIndex := x.(*ast.IndexExpr); isIndex {
-			a.expr(ix.Index, false)
-		}
-	}
+	a.placeOperands(e)
 	return true
+}
+
+// placeOperands walks, borrowing, the expressions the backend lowers on its way along a place
+// path. The rest of the path is storage, so it owns nothing and uses nothing. An index's
+// temporary went unreleased until 11/03, when an assignment's target was walked for a pointer
+// alone, and a retain an `own` argument in it needed was missing, which freed it twice.
+func (a *analyzer) placeOperands(place ast.Expression) {
+	for _, operand := range ast.PlaceOperands(place) {
+		a.expr(operand, false)
+	}
+}
+
+// writingTo marks the binding target is rooted at as being written, until the function it
+// returns is called. **The store comes after every operand**, so while one is walked the
+// binding has a use to come that no textual order shows: the final reference to `ys` in
+// `ys[swallow(ys)] = 7` is the argument, and taking that for a last use moved the array into
+// a callee that freed it, before the write landed in it. The IdentifierExpr arm dups instead.
+func (a *analyzer) writingTo(target ast.Expression) (done func()) {
+	root := ast.RootIdentifierName(target)
+	a.writing[root]++
+	return func() { a.writing[root]-- }
 }
 
 // rootedAtMutableGlobal reports whether the place path e starts at a mutable global, by its
 // own name or through its namespace.
 func (a *analyzer) rootedAtMutableGlobal(e ast.Expression) bool {
+	return RootedAtMutableGlobal(e, a.symTable, a.bound)
+}
+
+// RootedAtMutableGlobal answers rootedAtMutableGlobal for a pass with its own record of what
+// the enclosing functions bind: per enclosing function, its parameters and its body's binders.
+func RootedAtMutableGlobal(e ast.Expression, symTable *symbols.SymbolTable, bound []map[string]bool) bool {
 	for x, ok := e, true; ok; x, ok = ast.PlaceObject(x) {
-		if m, isMember := x.(*ast.MemberExpr); isMember && a.namespacedMutableGlobal(m) {
+		if m, isMember := x.(*ast.MemberExpr); isMember && namespacedMutableGlobal(symTable, bound, m) {
 			return true
 		}
 		if id, isName := x.(*ast.IdentifierExpr); isName {
-			return a.mutableGlobal(id.Name, id.GetLocation())
+			return mutableGlobal(symTable, bound, id.Name, id.GetLocation())
 		}
 	}
 	return false
 }
 
 // namespacedMutableGlobal reports whether e is `lib.name` naming lib's mutable global.
-func (a *analyzer) namespacedMutableGlobal(e *ast.MemberExpr) bool {
+func namespacedMutableGlobal(symTable *symbols.SymbolTable, bound []map[string]bool, e *ast.MemberExpr) bool {
 	ns, ok := e.Object.(*ast.IdentifierExpr)
-	if !ok || a.symTable == nil {
+	if !ok || symTable == nil {
 		return false
 	}
-	for _, frame := range a.bound {
+	for _, frame := range bound {
 		if frame[ns.Name] {
 			return false
 		}
 	}
-	path, ok := a.symTable.NamespaceIn(a.symTable.ModuleOfFile[e.GetLocation().File], ns.Name)
+	path, ok := symTable.NamespaceIn(symTable.ModuleOfFile[e.GetLocation().File], ns.Name)
 	if !ok {
 		return false
 	}
-	decl, ok := a.symTable.BindingIn(path, e.Property.Name)
+	decl, ok := symTable.BindingIn(path, e.Property.Name)
 	return ok && isMutableData(decl)
+}
+
+// ReachedThroughBox reports whether the place path e crosses a ref-counted box on its way to
+// its storage: an element of a `[]T`, or a field of a `shared` value or of anything inside one.
+// Such storage can be freed under a pointer to it, by whatever replaces the box or grows the
+// array. A field of a stack struct, or an element of a fixed-size array, is the root's own.
+func ReachedThroughBox(e ast.Expression, tt *typetable.TypeTable, symTable *symbols.SymbolTable) bool {
+	for x, ok := ast.PlaceObject(e); ok; x, ok = ast.PlaceObject(x) {
+		t, recorded := tt.Get(x)
+		if !recorded {
+			continue
+		}
+		// An annotation keeps an alias's name, and an alias can name another.
+		for {
+			if _, named := t.(types.UnresolvedType); !named {
+				break
+			}
+			resolved := resolveNamedType(t, symTable, x.GetLocation())
+			if _, still := resolved.(types.UnresolvedType); still && resolved.GetName() == t.GetName() {
+				break
+			}
+			t = resolved
+		}
+		if IsManaged(t) {
+			return true
+		}
+	}
+	return false
 }
 
 // isMutableData is a top-level binding the backend gives storage (a global, not a function)
@@ -1464,7 +1547,7 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		}
 		last := a.lastUse[e]
 		switch {
-		case last && needOwned && !a.conditional:
+		case last && needOwned && !a.conditional && a.writing[e.Name] == 0:
 			a.table.LastUseTransfer[e] = true
 		case last && !needOwned:
 			a.table.LastUseDrop[e] = true
@@ -1671,7 +1754,16 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		// and cost a leak per managed value that lived only in there.
 		a.block(e.Body, needOwned)
 
-	case *ast.BooleanBinaryOpExpr, *ast.MathBinaryOpExpr, *ast.MathAssignOpExpr,
+	case *ast.MathAssignOpExpr:
+		// A place is read and written through one address, with the store after both sides.
+		// The walk of the left reaches the place's operands by the place forms' own arms,
+		// and what they hold on the place itself goes unread: lowerMathAssignOp addresses it
+		// with lvalueAddress rather than lowering it.
+		defer a.writingTo(e.Left)()
+		a.expr(e.Left, false)
+		a.expr(e.Right, false)
+
+	case *ast.BooleanBinaryOpExpr, *ast.MathBinaryOpExpr,
 		*ast.BitwiseNotExpr, *ast.NegationExpr, *ast.NotBooleanExpr,
 		*ast.AddressOfExpr, *ast.RangeExpr, *ast.GuardExpr:
 		// **Borrow-only forms**: the operation owns nothing itself — its result is a
@@ -1693,11 +1785,6 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		// its result is a managed value whenever its pointee is.) `&x` borrowing is not merely the
 		// conservative choice but the correct one — a raw pointer is not an owner
 		// (ownership never crosses the FFI boundary), so taking one must not retain.
-		//
-		// One asymmetry worth naming: this walks a compound assignment's **left** side,
-		// which the hand-written arm skipped. It is inert rather than a change — all
-		// eleven compound assignments are arithmetic or bitwise, so the target is a
-		// numeric binding and `ownsManaged` answers false before anything is recorded.
 		ast.WalkExprChildren(e, func(child ast.Statement) bool {
 			a.stmt(child)
 			return false
@@ -1765,6 +1852,7 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		for _, el := range e.Elements {
 			a.expr(el, true)
 		}
+		a.holdOperands(e, e.Elements)
 		// A **stack** tuple in a borrowing position is a temporary, and its elements'
 		// +1s die with it — so it needs the same release any other owned producer gets
 		// when its value is discarded (StringConcatExpr above is the model). Without
@@ -1801,6 +1889,7 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		for i := range e.Fields {
 			a.expr(e.Fields[i].Value, true)
 		}
+		a.holdOperands(e, fieldValues(e.Fields))
 		// A temporary in a borrowing position, like the tuple literal below: a struct or
 		// array built for a borrowed argument owns what was transferred into it — and a
 		// dynamic array owns its box — and nothing else will release it. `total([9, 9])`
@@ -1823,6 +1912,7 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		for i := range e.Fields {
 			a.expr(e.Fields[i].Value, true)
 		}
+		a.holdOperands(e, fieldValues(e.Fields))
 		// A temporary in a borrowing position, the same rule as a struct literal: a struct or
 		// array built for a borrowed argument owns what was transferred into it — and a
 		// dynamic array owns its box — and nothing else will release it. `total([9, 9])`
@@ -1840,6 +1930,7 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		for _, el := range e.Elements {
 			a.expr(el, true)
 		}
+		a.holdOperands(e, e.Elements)
 		// A temporary in a borrowing position, the same rule as a struct literal: a struct or
 		// array built for a borrowed argument owns what was transferred into it — and a
 		// dynamic array owns its box — and nothing else will release it. `total([9, 9])`
@@ -1861,14 +1952,16 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 
 	case *ast.ArrayRepeatExpr:
 		// `[v; n]` is the literal above with one element written once, so its value is
-		// transferred exactly the same way. The count is a folded integer literal by
-		// now and owns nothing, so it is not walked.
+		// transferred exactly the same way. The count is an integer read, for what it
+		// reaches: a temporary in it (`[0; name().len()]`) is released like any other.
 		//
 		// The array takes **n** references to that one value, and the backend emits the
 		// n-1 extra retains (lowerArrayRepeatExpr) — this pass only has to record the
 		// transfer of the first, which is what `needOwned` does. Missing this arm sent
 		// the value to `default`, where a managed element's transfer went unrecorded.
 		a.expr(e.Value, true)
+		a.expr(e.Count, false)
+		a.holdOperands(e, []ast.Expression{e.Value})
 		// A temporary in a borrowing position, the same rule as a struct literal: a struct or
 		// array built for a borrowed argument owns what was transferred into it — and a
 		// dynamic array owns its box — and nothing else will release it. `total([9, 9])`
@@ -2009,10 +2102,12 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 	// last use, so `n` died before `w` was upgraded, and `xs.data()` freed `xs` under the
 	// pointer it had just handed out. A receiver has never been a use; making it one is a
 	// liveness change with its own consequences, not part of stopping a leak.
+	var taken []ast.Expression
 	if member, isDot := e.Function.(*ast.MemberExpr); isDot {
 		switch {
 		case methodSig != nil && len(methodSig.Parameters) > 0 && paramOwnsArgument(methodSig.Parameters[0].Borrow):
 			a.expr(member.Object, true)
+			taken = append(taken, member.Object)
 		case !rootedAtBinding(member.Object):
 			a.expr(member.Object, false)
 		}
@@ -2039,6 +2134,12 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 			argOwns = false
 		}
 		a.expr(arg, argOwns)
+		if argOwns {
+			taken = append(taken, arg)
+		}
+	}
+	if len(taken) > 0 {
+		a.holdOperands(e, taken)
 	}
 
 	if !a.ownsManaged(e) {
@@ -2075,6 +2176,25 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 	} else if needOwned {
 		a.table.Retain[e] = true
 	}
+}
+
+// holdOperands records that c's owned operands are to be held while it is built, if anything
+// in it can leave. All of them, not only those before whatever leaves: finding those is a walk
+// of its own, to save a store or two on code that is rare. needsDrop decides at lowering what
+// each holds, since inside a generic body only the specialization knows.
+func (a *analyzer) holdOperands(c ast.Expression, operands []ast.Expression) {
+	if len(operands) > 0 && ast.CanLeave(c) {
+		a.table.HeldOperands[c] = operands
+	}
+}
+
+// fieldValues is a struct literal's values, the expressions holdOperands asks about.
+func fieldValues(fields []ast.StructField) []ast.Expression {
+	values := make([]ast.Expression, len(fields))
+	for i := range fields {
+		values[i] = fields[i].Value
+	}
+	return values
 }
 
 // rootedAtBinding reports whether e is a name, or a field, element or tuple-position path
@@ -2243,19 +2363,4 @@ func paramOwnsArgument(mod types.TypeModifier) bool {
 
 func isOwnedReturn(mod types.TypeModifier) bool {
 	return mod != types.Ref && mod != types.Mut
-}
-
-// pointerOfPath answers the deref nearest the written place of an assignment path, or nil
-// when the path reaches its storage without one.
-func pointerOfPath(target ast.Expression) *ast.DerefExpr {
-	for {
-		if deref, isDeref := target.(*ast.DerefExpr); isDeref {
-			return deref
-		}
-		object, ok := ast.PlaceObject(target)
-		if !ok {
-			return nil
-		}
-		target = object
-	}
 }

@@ -126,6 +126,18 @@ meaningful), both arms feed one phi. The Some payload has no node to mark, so it
 (`deepRetain`, duplicate never move) is emitted here. Non-Maybe left operands are
 `lyra-E049` in the front end; the backend's refusal stays as a defense.
 
+### Operands beside a way out (`heldOperands`, `lowerExpr`)
+
+An owned operand of an aggregate or call is nobody's until the construct is built, and a `?`,
+`return`, `break` or `continue` in another operand leaves without building it. Where ownership
+says one can (`HeldOperands`), `lowerExpr` pushes a managed frame for the construct and puts each
+of those operands in it as it comes back; every way out releases frames, and the path that goes
+on pops this one unreleased. `heldOperands` is the current construct's list and every `lowerExpr`
+replaces it, so only direct operands match, and `holdIfHolding` is for a value with no node (a
+record update's kept field). A dynamic array literal that can leave allocates its box after its
+elements (`lowerDynArrayBuiltLast`). An inlined sequence function's arguments aren't held: its
+body runs inside the call.
+
 ### Statement temporaries (`flushStmtTemps`, `dominators.go`)
 
 An owned temporary is released after its statement:
@@ -346,8 +358,9 @@ First-class values: `insertvalue` to build, `extractvalue` to read a value with 
 of a fixed array with storage (bounds-trapped as an element read is, `elementPtr`) — a GEP to
 the field and a load of it alone. Loading the object whole and extracting kept a 1 KB load
 per field read on the 68000 even after `opt -O2`. A `shared` object reads through its box.
-Anonymous tuples build a structural type on the fly (`lowerAnonymousTupleType`). Struct literals may list fields out
-of order; values are keyed by name and built in declared order. Field position comes from
+Anonymous tuples build a structural type on the fly (`lowerAnonymousTupleType`). Struct literals may list fields in any
+order; each is evaluated as written and goes in at its declared position, because every pass
+walks them as written (`lowerLiteralFields`). Field position comes from
 `namedStructFields`, which resolves `UnresolvedType` (how a field typed as another struct is
 recorded).
 
@@ -421,6 +434,12 @@ Loud errors: rest not last, nested non-scalar element patterns, destructuring an
 `let`/parameter.
 
 ## Assignment through a place (`lvalue.go`)
+
+**An assignment finds its place last** (`lowerPlaceOperands`, then the value, then `placeAddress`):
+an operand can reassign the array or grow it out of its buffer, so nothing loaded along the path
+outlasts one. A compound assignment finds it twice, to read and to write, unless the right side
+`writesNothing`. **A call's by-reference arguments likewise** (`deferredPlace`), and a mutating
+builtin's receiver (`lowerReceiverAndArgument`).
 
 **`lvalueAddress`** is the one recursive address computation: identifier → slot; `.field`
 → GEP (through the box for `shared`, `memberFieldAddress`); `[i]` → bounds-checked element

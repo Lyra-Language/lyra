@@ -62,11 +62,21 @@ A binding / `own` parameter holds one owning reference. The pass records:
     bodies are analyzed `conditional`, so an owning read there dups rather than transfers.
     `computeOwnedLastRef` (reuse) still excludes loop-referenced names: reuse reclaims at the
     `match` itself, which a back-edge would re-run.
+  - **The store of an assignment is a use no textual order shows.** The final reference to `ys`
+    in `ys[swallow(ys)] = 7` is the argument, with the write still to come, so while an
+    assignment's operands are walked its root dups rather than transfers (`writingTo`). A borrowing
+    last use is unaffected: its drop comes after the statement. What a place evaluates is
+    `placeOperands`: each index, and the pointer a deref ends the path at, never the storage.
 - **`ReuseMatch[m]` / `ReuseTarget[c]`** — FBIP reuse: a `match` on an owned binding
   (`computeOwnedLastRef`) at its last use, of a `shared data` type, with a plain tag switch
   (`plainTagSwitch`) and ≥1 arm constructing the same type. A borrowed scrutinee is never a reuse
   source. Backend: `lyra_rc_drop_reuse`, `lowerBoxSharedReuse`, `lowerDataMatch`,
-  `dropReclaimedPayload` (old payload dropped at the merge, not at reclaim).
+  `dropReclaimedPayload` (old payload dropped at the merge, not at reclaim). Not a match with
+  an arm that can leave (`ast.CanLeave`): that path never reaches the merge.
+- **`HeldOperands[c]`** — c is an aggregate or call that can leave, and these are the operands it
+  owns. Each has its +1 from when it is evaluated until c is built, with nothing else to release
+  it on a way out, so `lowerExpr` holds it in a managed frame for that long. **A new owning
+  construct with several operands calls `holdOperands`**, or leaks only under LeakSanitizer.
 
 Rules:
 
