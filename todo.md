@@ -1066,12 +1066,9 @@ annotations.
 
 ## Foreign functions — `extern`
 
-- **[OPEN] Two declarations of one C symbol compared with an alias's name unexpanded.**
-  `declareExtern` asks `TypesEqual` of the Lyra signatures, so `(surface: Surface)` over
-  `alias Surface = ^u8` and another module's `(surface: ^u8)` are "declared twice with
-  different signatures", though C sees one. Compare what is emitted (the lowered signature),
-  which also lets a nominal `type` over a pointer meet a plain one. `bindings.sdl3` declares
-  `SDL_DestroySurface` over `^u8` meanwhile (10/26).
+- **[DONE 11/02] Two declarations of one C symbol are compared by what crosses**: the emitted
+  signature, its extensions and its plan, so an alias or nominal `type` meets the plain spelling
+  (COMPLETED.md, 11/02). Pointers to two types are still refused; this IR's are typed.
 - **[OPEN] Returning a C function pointer, or passing a closure to C.** Both need a way to
   call a bare code address; the `void *` context parameter covers captures meanwhile. A
   closure could cross as that pair — a trampoline and its environment — where C takes a

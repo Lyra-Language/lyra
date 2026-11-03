@@ -332,3 +332,174 @@ let main = () -> void => {
 		t.Errorf("want a refusal naming the conflicting signatures; got %v", err)
 	}
 }
+
+// Two declarations of one C symbol are compared by what crosses, not by how the Lyra types are
+// spelled: an alias of `^u8` and a plain `^u8` were "declared twice with different signatures"
+// (10/26), though C sees one function. Both names call it, through its one `declare`.
+func TestExec_OneSymbolDeclaredInTwoSpellings(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ name, lib string }{
+		{"an alias", `alias N = i32
+@symbol("abs")
+unsafe extern c_abs: (n: N) -> N
+pub let via_lib = (x: i32) -> i32 => unsafe { c_abs(x) }
+`},
+		{"a nominal type", `type N = i32
+@symbol("abs")
+unsafe extern c_abs: (n: N) -> N
+pub let via_lib = (x: i32) -> i32 => base(unsafe { c_abs(N(x)) })
+`},
+		{"another sign at C's width", `@symbol("abs")
+unsafe extern c_abs: (n: u32) -> u32
+pub let via_lib = (x: i32) -> i32 => i32(unsafe { c_abs(u32(x)) })
+`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			files := map[string]string{
+				"lib/a.lyra": "module lib.a\n" + tc.lib,
+				"app.lyra": `import lib.a
+@symbol("abs")
+unsafe extern plain_abs: (n: i32) -> i32
+let main = () -> u8 => u8(a.via_lib(-3) + unsafe { plain_abs(-4) })
+`,
+			}
+			if n := strings.Count(emitModules(t, files), "declare i32 @abs("); n != 1 {
+				t.Errorf("got %d declarations of @abs; want exactly 1", n)
+			}
+			if got := buildAndRunModules(t, files); got != 7 {
+				t.Errorf("exit %d, want 7", got)
+			}
+		})
+	}
+}
+
+// What really differs stays refused, including what the LLVM signature alone cannot show.
+func TestEmit_OneSymbolDeclaredInTwoShapesIsRefused(t *testing.T) {
+	t.Parallel()
+	const decls = `struct Point { x: i64, y: i64 }
+struct Size { w: i64, h: i64 }
+`
+	cases := []struct{ name, a, b string }{
+		{"another width", "(n: i32) -> i32", "(n: i64) -> i32"},
+		{"another count", "(n: i32) -> i32", "(n: i32, m: i32) -> i32"},
+		{"another result", "(n: i32) -> i32", "(n: i32) -> i64"},
+		{"variadic beside fixed", "(s: ^u8, ...) -> i32", "(s: ^u8) -> i32"},
+		// One LLVM `i8`, and the register's upper bits differ.
+		{"u8 beside i8", "(c: u8) -> void", "(c: i8) -> void"},
+		{"a narrow result's sign", "() -> u16", "() -> i16"},
+		{"a struct beside its fields", "(p: Point) -> void", "(x: i64, y: i64) -> void"},
+		// One emitted signature, and a call built from the other's plan.
+		{"two structs of one shape", "(p: Point) -> void", "(s: Size) -> void"},
+		// One pointer to C, and two types to this IR, which a call must name exactly.
+		{"pointers to two types", "(p: ^Point) -> void", "(p: ^u8) -> void"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := emitWithPreludeErr(t, decls+`@symbol("shared_symbol")
+unsafe extern first: `+tc.a+`
+@symbol("shared_symbol")
+unsafe extern second: `+tc.b+`
+let main = () -> u8 => 0
+`)
+			if err == nil || !strings.Contains(err.Error(), "declared twice") {
+				t.Errorf("want a refusal naming the symbol declared twice, got %v", err)
+			}
+		})
+	}
+}
+
+// The other spellings that are one function to C, and sharing a `declare` through each: by value
+// through its plan, a libc function the compiler declares too, and what lowers alike.
+func TestExec_OneSymbolSpelledTwiceCallsThroughBoth(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"a struct by value and its alias", `struct DivT { quot: i32, rem: i32 }
+alias Answer = DivT
+@symbol("div")
+unsafe extern div_a: (a: i32, b: i32) -> DivT
+@symbol("div")
+unsafe extern div_b: (a: i32, b: i32) -> Answer
+let main = () -> u8 => {
+  let x = unsafe { div_a(17, 5) }
+  let y = unsafe { div_b(29, 4) }
+  u8(x.quot * 10 + x.rem + y.quot * 3 + y.rem)
+}`, 54},
+		{"a nominal pointer beside a plain one", `type CStr = ^u8
+@symbol("strlen")
+unsafe extern len_a: (s: CStr) -> u64
+@symbol("strlen")
+unsafe extern len_b: (s: ^u8) -> u64
+let main = () -> u8 => {
+  let s = "four"
+  let p = unsafe { s.cstring_ptr() }
+  u8(unsafe { len_a(CStr(p)) } + unsafe { len_b(p) })
+}`, 8},
+		{"a libc function the compiler declares too", `alias Fd = i32
+@symbol("write")
+unsafe extern write_a: (fd: Fd, p: ^u8, n: u64) -> i64
+@symbol("write")
+unsafe extern write_b: (fd: i32, p: ^u8, n: u64) -> i64
+let main = () -> u8 => {
+  let s = "ab"
+  let p = unsafe { s.cstring_ptr() }
+  print("")
+  u8(unsafe { write_a(1, p, 1) } + unsafe { write_b(1, p, 2) })
+}`, 3},
+		{"^mut beside ^", `@symbol("strlen")
+unsafe extern len_a: (s: ^mut u8) -> u64
+@symbol("strlen")
+unsafe extern len_b: (s: ^u8) -> u64
+let main = () -> u8 => {
+  var bytes: []u8 = [104, 105, 0]
+  bytes.push(0)
+  let w = unsafe { &mut bytes[0] }
+  let r = unsafe { &bytes[0] }
+  u8(unsafe { len_a(w) } + unsafe { len_b(r) })
+}`, 4},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRunASanWithPrelude(t, tc.src); got != tc.want {
+				t.Errorf("exit %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// Spellings that lower alike, seen in the one `declare` they leave.
+func TestEmit_OneSymbolSpelledTwiceSharesItsDeclaration(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ name, decls, a, b string }{
+		{"a struct's alias as a parameter", "struct Point { x: i64, y: i64 }\nalias Spot = Point\n", "(p: Point) -> void", "(p: Spot) -> void"},
+		{"an alias of an alias", "alias A = i32\nalias B = A\n", "(n: i32) -> void", "(n: B) -> void"},
+		{"a narrow integer's alias", "alias Byte = u8\n", "(c: u8) -> Byte", "(c: Byte) -> u8"},
+		{"a C callback's alias", "alias Cmp = (i32) -> i32\n", "(f: (i32) -> i32) -> void", "(f: Cmp) -> void"},
+		{"variadic in both", "alias S = ^u8\n", "(s: ^u8, ...) -> i32", "(s: S, ...) -> i32"},
+		{"an alias of void beside a struct by value", "struct Point { x: i64, y: i64 }\nalias Nothing = void\n", "(p: Point) -> void", "(p: Point) -> Nothing"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ir, err := emitWithPreludeErr(t, tc.decls+`@symbol("shared_symbol")
+unsafe extern first: `+tc.a+`
+@symbol("shared_symbol")
+unsafe extern second: `+tc.b+`
+let main = () -> u8 => 0
+`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := strings.Count(ir, "@shared_symbol("); n > 1 {
+				t.Errorf("%d declarations of the symbol", n)
+			}
+		})
+	}
+}

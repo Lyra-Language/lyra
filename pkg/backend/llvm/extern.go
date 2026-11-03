@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/enum"
@@ -196,6 +197,9 @@ func callWithDeclaredAttrs(block *ir.Block, fn *ir.Func, args []value.Value) *ir
 // library's own use of `strlen` collide with a program's. What *is* refused is two
 // declarations that disagree about the signature, because only one of them can describe
 // the function that will be linked, and emitting either silently picks a winner.
+//
+// **"Disagree" is about what crosses, not how the Lyra types are spelled** (11/02), so an alias
+// or a nominal `type` over `^u8` meets a plain `^u8`: see crossesAlike.
 func (l *lowerer) declareExtern(ext *ast.ExternDeclStmt) (*ir.Func, error) {
 	// **Keyed by the C symbol, not the Lyra name.** `@symbol("SDL_PollEvent")` makes the
 	// two differ, and it is the symbol that shares a namespace with every other
@@ -203,13 +207,8 @@ func (l *lowerer) declareExtern(ext *ast.ExternDeclStmt) (*ir.Func, error) {
 	// and must collapse to one `declare`, while two symbols under one Lyra name cannot
 	// happen (a name declares once per module).
 	symbol := ext.CSymbol()
-	if prior, ok := l.externs[symbol]; ok {
-		if !types.TypesEqual(prior.signature, ext.Signature) {
-			return nil, fmt.Errorf("llvm: the C symbol %q is declared twice with different signatures, "+
-				"%s at %s and %s at %s — one C symbol cannot have both",
-				symbol, prior.signature, describeLocation(prior.at), ext.Signature,
-				describeLocation(ext.NameLocation))
-		}
+	prior, declaredBefore := l.externs[symbol]
+	if declaredBefore && types.TypesEqual(prior.signature, ext.Signature) {
 		return prior.fn, nil
 	}
 	// **An aggregate crossing by value takes its own declaration path.** `declareFunctionAs`
@@ -251,6 +250,18 @@ func (l *lowerer) declareExtern(ext *ast.ExternDeclStmt) (*ir.Func, error) {
 	if ext.Signature != nil && ext.Signature.IsVariadic {
 		declared.Sig.Variadic = true
 	}
+	// A second spelling is emitted only to be compared and taken back (removeFunc says why).
+	if declaredBefore {
+		l.module.Funcs = removeFunc(l.module.Funcs, declared)
+		if !crossesAlike(prior.emitted, l.externPlans[prior.fn], declared, plan) {
+			return nil, fmt.Errorf("llvm: the C symbol %q is declared twice with different signatures, "+
+				"%s at %s and %s at %s — one C symbol cannot have both",
+				symbol, prior.signature, describeLocation(prior.at), ext.Signature,
+				describeLocation(ext.NameLocation))
+		}
+		return prior.fn, nil
+	}
+	emitted := declared
 	// The compiler declares libc functions of its own — `write` for `print`, `memcpy`,
 	// `realloc` — and a C symbol has one declaration per module, so an extern naming one
 	// of them shares that declaration rather than emitting a second. Here there *is* an
@@ -266,7 +277,7 @@ func (l *lowerer) declareExtern(ext *ast.ExternDeclStmt) (*ir.Func, error) {
 		l.module.Funcs = removeFunc(l.module.Funcs, declared)
 		declared = prior
 	}
-	l.externs[symbol] = externDecl{fn: declared, signature: ext.Signature, at: ext.NameLocation}
+	l.externs[symbol] = externDecl{fn: declared, emitted: emitted, signature: ext.Signature, at: ext.NameLocation}
 	if plan != nil {
 		if l.externPlans == nil {
 			l.externPlans = map[*ir.Func]*externPlan{}
@@ -280,9 +291,62 @@ func (l *lowerer) declareExtern(ext *ast.ExternDeclStmt) (*ir.Func, error) {
 // second declaration of the same symbol can be compared against the first and the
 // diagnostic can name where that first one is.
 type externDecl struct {
-	fn        *ir.Func
+	fn *ir.Func
+	// emitted is what this extern itself lowered to. fn is the compiler's own declaration when
+	// the symbol is a libc function it uses, and that one carries no extension marks.
+	emitted   *ir.Func
 	signature *types.LambdaType
 	at        ast.Location
+}
+
+// crossesAlike reports whether two declarations of one C symbol are one function to C and can
+// share one `declare`: the emitted signature, and what that signature does not show.
+//
+//   - **Each parameter's and the result's extension.** `u8` and `i8` are both LLVM `i8`, and C
+//     reads a register whose upper bits they fill differently (markNarrowCrossings).
+//   - **The plan.** A call is built from the plan of the function it names, so sharing a
+//     `declare` shares it: two structs of one shape emit one `[2 x i64]`, and a value of the
+//     second would spill into the first's slot.
+//
+// `i32` beside `u32` agree: one register, filled alike, each call reading its own Lyra type.
+func crossesAlike(a *ir.Func, aPlan *externPlan, b *ir.Func, bPlan *externPlan) bool {
+	if !lltypes.Equal(a.Sig, b.Sig) || !reflect.DeepEqual(a.ReturnAttrs, b.ReturnAttrs) {
+		return false
+	}
+	for i := range a.Params {
+		if !reflect.DeepEqual(a.Params[i].Attrs, b.Params[i].Attrs) {
+			return false
+		}
+	}
+	return plansAgree(aPlan, bPlan)
+}
+
+// plansAgree compares what a call is built from: each slot's LLVM shape, not its Lyra spelling.
+func plansAgree(a, b *externPlan) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if len(a.params) != len(b.params) || a.retIndirect != b.retIndirect || !slotsAgree(a.ret, b.ret) {
+		return false
+	}
+	for i := range a.params {
+		if !slotsAgree(a.params[i], b.params[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func slotsAgree(a, b abiSlot) bool {
+	if a.aggregate != b.aggregate || !reflect.DeepEqual(a.class, b.class) || len(a.llTypes) != len(b.llTypes) {
+		return false
+	}
+	for i := range a.llTypes {
+		if !lltypes.Equal(a.llTypes[i], b.llTypes[i]) {
+			return false
+		}
+	}
+	return a.aggTy == nil && b.aggTy == nil || a.aggTy != nil && b.aggTy != nil && lltypes.Equal(a.aggTy, b.aggTy)
 }
 
 // describeLocation is `file:line:col`, falling back to `line:col` for a program with no

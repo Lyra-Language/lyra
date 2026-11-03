@@ -80,7 +80,9 @@ are in [`bindings/README.md`](../../bindings/README.md).
 - **`pushExternSignature`** makes `lowerType` read a function type as C's for one
   declaration; the call site recognises the slot by lowered type.
 - **`l.externs` is keyed by C symbol** (`ExternDeclStmt.CSymbol()`), so two Lyra names for one
-  function collapse to one `declare`.
+  function collapse to one `declare`. A second spelling is lowered, compared and taken back
+  (`crossesAlike`): the emitted signature, each slot's `zeroext`/`signext`, and the plan, since a
+  call is built from the plan of the function it names.
 - **Externs and the compiler's own libc use share one symbol space.** `l.externs` and
   `l.libc` consult each other; a signature disagreement is refused by name — `declareExtern`
   returns the error, `declareLibc` records it in `l.symbolConflict` and `emitModule` fails.

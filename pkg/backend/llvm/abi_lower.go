@@ -114,7 +114,7 @@ func (l *lowerer) planSlot(t types.Type, isReturn bool) (abiSlot, error) {
 	if t == nil {
 		return abiSlot{}, fmt.Errorf("missing type")
 	}
-	if _, isVoid := t.(types.VoidType); isVoid {
+	if l.isVoidType(t) {
 		return abiSlot{lyra: t, llTypes: []lltypes.Type{lltypes.Void}}, nil
 	}
 	if !l.isCAggregate(t) {

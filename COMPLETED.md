@@ -9,6 +9,29 @@ Newest first.
 
 ## Dated log
 
+### 11/02/26 — Two declarations of one C symbol are compared by what crosses
+`declareExtern` asked `TypesEqual` of the Lyra signatures, so `(surface: Surface)` over `alias
+Surface = ^u8` and another module's `(surface: ^u8)` were "declared twice with different
+signatures", and `bindings.sdl3` wrote `^u8` to get past it. The entry said to compare the lowered
+signature. **That alone would have accepted two real disagreements**, so `crossesAlike` compares
+what it does not show:
+- **The extensions.** `u8` and `i8` are both LLVM `i8`, and C reads upper bits they fill
+  differently: the cyan-for-grey class of bug `markNarrowCrossings` exists for.
+- **The plan.** A call is built from `l.externPlans[fn]`, so sharing a `declare` shares its plan:
+  two structs of one shape emit one `[2 x i64]` on aarch64, and a value of the second would spill
+  into the first's slot.
+- **Against what the extern emitted** (`externDecl.emitted`), not `fn`: for a symbol the compiler
+  also uses, `fn` is its libc declaration, which carries no extension marks.
+
+`i32` beside `u32` now agree, where the Lyra types differed: one register, filled alike, each call
+reading its own Lyra type. Pointers to two types stay refused, one pointer to C but two types to
+this IR, whose calls must name them exactly.
+
+Two neighbours turned up writing the tests. `requireFFISafe` and the callback check looked one
+step through an alias, so `alias Spot = Point` and `alias Cmp = (i32) -> i32` had "no C spelling"
+(`expandAliases`). And `planSlot` tested void by the written type, which the 11/01 change to
+`lowerType` made a real bug: a by-value extern returning `alias Nothing = void` declared `{}`.
+
 ### 11/02/26 — A raw pointer pins what it may point into
 Asked to fix a buffer C keeps past the call, freed at its last Lyra use, for which the entry
 wanted a spelled keep-alive or a check. Reproducing it found the smaller program first:

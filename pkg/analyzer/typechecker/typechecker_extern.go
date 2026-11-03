@@ -59,7 +59,7 @@ func (tc *TypeChecker) checkExternSignatureIsFFISafe(decl *ast.ExternDeclStmt) {
 		// Returning one would hand back a value Lyra has no way to call — a bare code
 		// address is not a closure — so the type is admitted exactly where a callback is
 		// passed *in*, which is what every callback API does.
-		if fp, ok := types.StripNewtype(p.Type).(*types.LambdaType); ok {
+		if fp, ok := types.StripNewtype(expandAliases(p.Type, tc.symTable, decl.GetLocation())).(*types.LambdaType); ok {
 			tc.requireCallbackIsFFISafe(fp, decl, i+1)
 			tc.requireNoBorrow(p, decl, i+1)
 			continue
@@ -96,7 +96,8 @@ func (tc *TypeChecker) requireFFISafe(t types.Type, decl *ast.ExternDeclStmt, wh
 	if t == nil {
 		return
 	}
-	resolved := tc.resolveTypeIfKnown(t, decl.GetLocation())
+	// Every alias, not one step: `alias Spot = Point` resolves to the *name* `Point`.
+	resolved := tc.resolveTypeIfKnown(expandAliases(t, tc.symTable, decl.GetLocation()), decl.GetLocation())
 	if isFFISafe(resolved) {
 		return
 	}

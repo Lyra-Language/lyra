@@ -1079,7 +1079,7 @@ On a `struct`: the value names a foreign resource released by `fn`. A binding le
 
 ### `@symbol("Name")`
 
-On an `extern`, names the C symbol verbatim (one per declaration); needed because Lyra identifiers are lowercase-leading (`SDL_PollEvent`). Without it the extern's name is the symbol. The backend dedupes `declare`s by symbol.
+On an `extern`, names the C symbol verbatim (one per declaration); needed because Lyra identifiers are lowercase-leading (`SDL_PollEvent`). Without it the extern's name is the symbol. The backend dedupes `declare`s by symbol: **two declarations of one symbol are one function when they cross alike** (11/02), so `alias Surface = ^u8` or `type Fd = i32` meets the plain spelling, and `i32` meets `u32`, which fill one register the same way. Refused, by the symbol and both locations: another width or count, `...` on one, `u8` beside `i8` (the upper bits differ), a struct by value beside its fields or beside another struct of its shape, and pointers to two types.
 
 ### `@link("lib", pkg: "package")`
 
