@@ -1006,6 +1006,9 @@ func (c *Collector) parseAnonymousTupleType(node *sitter.Node) types.Type {
 }
 
 func (c *Collector) parseLambdaType(node *sitter.Node) *types.LambdaType {
+	if mode := cst.Field(node, "modifier"); mode != nil {
+		expressions.ReportReturnMode(mode, c.ctx)
+	}
 	params, variadic := c.parseParameterTypes(cst.Field(node, "parameter_types"), node)
 	return &types.LambdaType{
 		Parameters: params,
@@ -1051,7 +1054,7 @@ func (c *Collector) parseParameterTypes(node, owner *sitter.Node) ([]types.Param
 					"`...` must be the last parameter: everything after it in a C signature is variadic")
 				continue
 			}
-			pt := c.parseParameterType(child)
+			pt := c.parseParameterType(child, owner)
 			// **Named in an extern, unnamed everywhere else** (lyra-E067). An extern is a
 			// declaration standing in for a C prototype — where a positional mistake links
 			// cleanly and computes garbage — so it reads like the `let` it substitutes for;
@@ -1102,7 +1105,7 @@ func (c *Collector) parseParameterTypes(node, owner *sitter.Node) ([]types.Param
 	return parameterTypes, variadic
 }
 
-func (c *Collector) parseParameterType(node *sitter.Node) types.ParameterType {
+func (c *Collector) parseParameterType(node, owner *sitter.Node) types.ParameterType {
 	pt := types.ParameterType{Type: c.parseType(cst.Field(node, "type"))}
 	// `(dest: ^mut u8)`. The name and its colon are one token (lambda_type.js says why), so
 	// the text is trimmed back to the name here — the one place that knows the token's
@@ -1114,8 +1117,19 @@ func (c *Collector) parseParameterType(node *sitter.Node) types.ParameterType {
 	// always accepted it here (`parameter_type` carries an optional `type_modifier`); it was
 	// simply never read, which is why a trait signature's borrow modes were silently by
 	// value however they were written.
+	//
+	// **Only a trait method's or an `extern`'s own signature** (lyra-E094), each a declaration
+	// with a callee behind it, and the aliases the grammar puts on those two say which it is.
+	// Any other function type is a function value's, and a call through one passes every
+	// argument by value (lyra-E082): `mut` wrote nowhere, and an `own` argument leaked in a
+	// lambda, whose bare parameter never released it.
 	if m := cst.Field(node, "modifier"); m != nil {
 		pt.Borrow = types.TypeModifier(c.ctx.NodeText(m))
+		if owner == nil || owner.Kind() == "lambda_type" {
+			c.ctx.AddErrorCoded(m, CollectorErrorSeverityError, diag.CodeModeOnFunctionValue,
+				"a function value's parameter takes no `%s`: a call through a function value passes every argument by value. Drop it; a mode goes on a trait method's or an `extern`'s signature, or on the parameter of a function called by name",
+				pt.Borrow)
+		}
 	}
 	return pt
 }

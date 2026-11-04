@@ -84,3 +84,68 @@ let main = () -> void => {
 		t.Fatalf("want no errors, got %q", msgs)
 	}
 }
+
+// A function with an `own` parameter passed as a value freed what its caller still held: a
+// call through a function value keeps its argument, and the callee released it too. No mode
+// says otherwise, since a function value's type takes none (lyra-E094).
+func TestCheck_OwnFunctionAsAValueIsRefused(t *testing.T) {
+	msgs := byRefValueErrors(t, `
+let keep = (s: own string) -> string => s
+let apply = (f: (string) -> string, s: string) -> string => f(s)
+let main = () -> void => {
+  let r = apply(keep, "a")
+}
+`)
+	if len(msgs) != 1 || !strings.Contains(msgs[0], `"keep" takes an `+"`own`"+` parameter`) {
+		t.Fatalf("want one error naming keep, got %q", msgs)
+	}
+}
+
+// The literal has no name to be refused at, so it is refused where it is written.
+func TestCheck_OwnLambdaAsAValueIsRefused(t *testing.T) {
+	msgs := byRefValueErrors(t, `
+let apply = (f: (string) -> string, s: string) -> string => f(s)
+let main = () -> void => {
+  let r = apply((s: own string) -> string => s, "a")
+}
+`)
+	if len(msgs) != 1 || !strings.Contains(msgs[0], "can't take an `own` parameter") {
+		t.Fatalf("want one error at the lambda, got %q", msgs)
+	}
+}
+
+// Bound to a name, a nested lambda is called with its mode known; the name is what is refused
+// if it is used any other way.
+func TestCheck_OwnLambdaByItsName(t *testing.T) {
+	if msgs := byRefValueErrors(t, `
+let main = () -> void => {
+  let h = (s: own string) -> string => s
+  let r = h("a")
+}
+`); len(msgs) != 0 {
+		t.Fatalf("a call by name is direct, got %q", msgs)
+	}
+	msgs := byRefValueErrors(t, `
+let apply = (f: (string) -> string, s: string) -> string => f(s)
+let main = () -> void => {
+  let h = (s: own string) -> string => s
+  let r = apply(h, "a")
+}
+`)
+	if len(msgs) != 1 || !strings.Contains(msgs[0], `"h" takes an `+"`own`"+` parameter`) {
+		t.Fatalf("want one error naming h, got %q", msgs)
+	}
+}
+
+// `own` on a scalar is inert (lyra-W010), and there is nothing for the callee to release.
+func TestCheck_OwnScalarFunctionAsAValue(t *testing.T) {
+	if msgs := byRefValueErrors(t, `
+let bump = (n: own i64) -> i64 => n + 1
+let apply = (f: (i64) -> i64, n: i64) -> i64 => f(n)
+let main = () -> void => {
+  let r = apply(bump, 1)
+}
+`); len(msgs) != 0 {
+		t.Fatalf("a scalar goes by value either way, got %q", msgs)
+	}
+}

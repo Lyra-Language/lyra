@@ -560,7 +560,7 @@ regardless of scanner whitespace handling).
 `++`'s shape: allocate, memcpy, fat pointer. `byteBufferOf` gets the bytes (`[]u8`: load the
 buffer and len; `[N]u8`: `argumentAddress`, spilling a non-lvalue). The rune count is walked
 with `lyra_utf8_count`. `encode_utf8` is `dynArrayAlloc` plus a memcpy into the buffer. No
-ownership entry needed: the builtin's recorded signature makes `isOwnedReturn` answer owned.
+ownership entry needed: the builtin's recorded signature makes the call's result owned.
 (`calleeIsOwningBuiltin` is for builtins called as **free functions** with no signature —
 it must name every one, e.g. `read_line`, `program_arg`.)
 

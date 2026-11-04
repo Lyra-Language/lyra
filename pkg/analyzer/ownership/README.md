@@ -89,8 +89,8 @@ Rules:
 
 - An `if`/`match` produces **one merged owned value**; its release is one drop of the phi.
 - A field bound by a `match` arm is **duplicated, never moved** (the box drops its own fields).
-- Modes mirror the typechecker (`paramOwnsArgument`/`isOwnedReturn`): only `own` params consume;
-  bare/`ref`/`mut` borrow; bare/`own` returns transfer.
+- Modes mirror the typechecker (`paramOwnsArgument`): only `own` params consume; bare/`ref`/`mut`
+  borrow. A return always transfers: it takes no mode (`lyra-E093`).
 - **Safety bias**: uncertain cases transfer to the scope-exit frame (a leak), never release early.
   **This only holds for nodes the pass visits** — skipping a node misses a retain, which dangles.
   When adding an expression kind, recurse into every sub-expression (arithmetic and `?` were both

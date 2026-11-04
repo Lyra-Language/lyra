@@ -77,10 +77,6 @@ func lambdaSignature(l *ast.LambdaExpr) string {
 
 	if rt := l.ReturnType.Type; rt != nil {
 		b.WriteString(" -> ")
-		if mod := string(l.ReturnType.TypeModifier); mod != "" {
-			b.WriteString(mod)
-			b.WriteString(" ")
-		}
 		b.WriteString(typeName(rt))
 	}
 	return b.String()

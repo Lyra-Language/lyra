@@ -1059,8 +1059,10 @@ Item numbers (#3–#8) are cited from code comments.
   nothing about its siblings, so only the trait's is what a `where t: Trait` call can rely
   on — and an impl inherits it, so the trait is the one action that covers every impl.
   (COMPLETED.md, 09/23.)
-- **[OPEN] (#4) `ref`/`mut`/`own` outside parameter position**, driving move/copy/borrow
-  semantics.
+- **[DONE 11/03] (#4) `ref`/`mut`/`own` outside parameter position** is refused: a return, a
+  local, a field or an element (`lyra-E093`), and a function value's parameter (`lyra-E094`).
+  `-> ref` was a use after free, and an `own` function as a value now is `lyra-E082` too
+  (COMPLETED.md, 11/03).
 - **[OPEN] (#5) Allocation, remaining:** a nested `shared data` sub-pattern errors loudly;
   construction-site `shared T {…}` syntax; implicit-allocation escape analysis; atomic
   refcounts (deferred to the job system).
@@ -1084,15 +1086,15 @@ Item numbers (#3–#8) are cited from code comments.
 **[DECIDED]** RC carries memory safety; close only the holes it leaves, with no lifetime
 annotations.
 
-- **[OPEN] (b) Borrows are second-class**: never stored, captured by an escaping closure or
-  returned, except the borrow-from-self accessor `(self: ref T) -> ref F`.
+- **[PARTIAL] (b) Borrows are second-class**: never stored or returned, with no accessor
+  exception (`lyra-E093`, 11/03). Still open: captured by an escaping closure.
 - **[IDEA] A type parameter shared by a module's functions.** Sheliak's 68000 core has ~40
   functions that each begin `<b> where b: Bus = (cpu: mut Cpu, bus: mut b, …)`: the bus is
   generic for monomorphised speed, and nothing lets a module say it once. A module- or
   block-level `where` (or trait objects, at a dispatch cost) would remove the repetition.
-- **[IDEA] Borrow modes through function types.** `(mut i64) -> void` is spellable but a
-  call through a function value passes by value, so a by-reference function cannot be a
-  value (`lyra-E082`). Honouring the type's modes at an indirect call would lift it.
+- **[IDEA] Borrow modes through function types.** A call through a function value passes by
+  value, so `(mut i64) -> void` is refused (`lyra-E094`) and a by-reference or `own` function
+  cannot be a value (`lyra-E082`). Honouring the type's modes at an indirect call would lift both.
 - **[DEFERRED] (c) Exclusivity (`mut` XOR alias)** until the job system or resizable
   interior borrows force it. Leaning toward statement-scoped projections over a static
   container freeze.

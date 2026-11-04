@@ -376,18 +376,6 @@ func TestAlloc_OwnedReturnFlavorMismatch_Error(t *testing.T) {
 		"make: cannot store a 'stack' value where a 'shared' value is expected; converting allocation is an explicit operation")
 }
 
-// TestAlloc_BorrowedReturnFlavorMismatch_Ok verifies a `mut`/`ref` return is a
-// borrow — allocation-polymorphic — so the flavor check is skipped.
-func TestAlloc_BorrowedReturnFlavorMismatch_Ok(t *testing.T) {
-	res := parseCollectAndCheck(t, `
-		struct Node {
-			value: i64,
-		}
-		let make = (n: stack Node) -> mut shared Node => n
-	`, false)
-	assertNoErrors(t, res)
-}
-
 // TestResolve_NamedTupleElementType_Ok is a regression test for the resolveType
 // gap this slice fixed: a named struct/data used as a tuple element type in an
 // annotation was never resolved, so even an allocation-free `(Node, Node)`

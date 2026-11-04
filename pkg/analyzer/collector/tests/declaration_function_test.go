@@ -166,12 +166,3 @@ func TestCollector_TypeParameterModifiers(t *testing.T) {
 	}`
 	runGoldenTest(t, source, "type_parameter_modifiers")
 }
-
-func TestCollector_FunctionTypeReturnModifier(t *testing.T) {
-	source := `
-	let open_file = (path: string) -> mut File => {
-		// do some stuff
-		return file
-	}`
-	runGoldenTest(t, source, "function_type_return_modifier")
-}

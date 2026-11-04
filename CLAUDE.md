@@ -610,7 +610,10 @@ with all errors as `[]diagnostic.Diagnostic` (CST positions converted to 1-based
   unbalanced delimiters are matched over the CST's tokens (MISSING ones skipped) and named
   at the opener, replacing tree-sitter's ERROR/MISSING reports past the first; then every
   later error inside a top-level item holding a syntax error, and every warning in that
-  file, is held back. A new opening token in the grammar belongs in `closerOf`.
+  file, is held back. A new opening token in the grammar belongs in `closerOf`. A `ref`/`mut`/`own`
+  where no type takes one is one of these, told apart by the shapes recovery leaves and given
+  `lyra-E093`'s message (`mode_outside_parameter.go`); a return type's parses, and the collector
+  refuses it.
 - `driver.ResolveEntryPoint(res)` (`entrypoint.go`): top-level `let main`, zero parameters,
   returning `u8` or void. Build-time only, not part of `Analyze`.
 

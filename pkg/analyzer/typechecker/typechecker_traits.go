@@ -259,15 +259,12 @@ func (tc *TypeChecker) checkTraitImplMethodBody(methodName string, implMethod as
 		tc.inferExprType(body) // no declared return to check against; still infer
 		return
 	}
-	// An owned return must match the declared return type's allocation flavor; a
-	// `ref`/`mut` return is a borrow and polymorphic (see isOwnedReturn).
-	ownedReturn := isOwnedReturn(traitSig.ReturnType.TypeModifier)
 	_, isVoid := declaredReturn.(types.VoidType)
 	if block, ok := body.(*ast.BlockExpr); ok {
 		if isVoid {
 			tc.checkBlockVoidReturn(methodName, block)
 		} else {
-			tc.checkBlockReturn(methodName, block, declaredReturn, ownedReturn)
+			tc.checkBlockReturn(methodName, block, declaredReturn)
 		}
 		return
 	}
@@ -277,7 +274,7 @@ func (tc *TypeChecker) checkTraitImplMethodBody(methodName string, implMethod as
 		tc.inferExprType(body)
 		return
 	}
-	tc.checkReturnValue(methodName, body, body.GetLocation(), declaredReturn, ownedReturn)
+	tc.checkReturnValue(methodName, body, body.GetLocation(), declaredReturn)
 }
 
 // implLambdaSignature builds a *types.LambdaType from a LambdaExpr only when

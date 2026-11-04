@@ -106,9 +106,9 @@ let run = (n: i64) -> Maybe<i64> => Some(["a" ++ b; num(n)? + 1].len())`},
 let run = (n: i64) -> Maybe<i64> => Some([n; ("a" ++ b).byte_len()].len() + (num(n)?))`},
 
 		// The calls.
-		{"a call through a value", `
+		{"a nested function taking `own`, called by its name", `
 let run = (n: i64) -> Maybe<i64> => {
-  let f: (own string, own string) -> string = glue
+  let f = (a: own string, c: own string) -> string => glue(a, c)
   Some(f("a" ++ b, one(n)?).byte_len())
 }`},
 		{"a method taking `own`, on its receiver", `

@@ -291,7 +291,9 @@ A function with a by-reference parameter (`types.IsByRefParam`) used as a value:
 lambda (anything not a top-level `let`'s value — every one is a closure), or an identifier
 whose recorded type is such a function outside a call's function position. An indirect call
 passes by value, so the backend cannot honour the mode; the named-function case segfaulted.
-Runs after typechecking (it reads recorded `LambdaType`s).
+`own` on anything but a scalar is refused the same way, since the call keeps what the callee
+releases, except that a nested lambda bound by a `let` is left to its name's uses (a call by name
+knows the mode). Runs after typechecking (it reads recorded `LambdaType`s).
 
 ## `large_by_value_param.go` (`lyra-W031`)
 

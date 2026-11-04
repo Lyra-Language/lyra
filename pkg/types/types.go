@@ -275,8 +275,7 @@ const (
 )
 
 type ReturnType struct {
-	Type         Type
-	TypeModifier TypeModifier
+	Type Type
 }
 
 func (r ReturnType) GetName() string {
@@ -286,9 +285,6 @@ func (r ReturnType) GetName() string {
 	typeName := "?"
 	if r.Type != nil {
 		typeName = r.Type.GetName()
-	}
-	if r.TypeModifier != "" {
-		return fmt.Sprintf("%s %s", r.TypeModifier, typeName)
 	}
 	return typeName
 }

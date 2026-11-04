@@ -267,10 +267,10 @@ let run = () -> void => {
   ys[swallow_all([ys])] = 7
   print("${ys[3]}")
 }`, "7"},
-		{"moving: the written array, through a function value", `
+		{"moving: the written array, to a nested function called by its name", `
 let run = () -> void => {
   var ys = numbers()
-  let f: (own []i64) -> i64 = swallow
+  let f = (xs: own []i64) -> i64 => swallow(xs)
   ys[f(ys)] = 7
   print("${ys[3]}")
 }`, "7"},

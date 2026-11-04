@@ -18,6 +18,36 @@ A profile by T-state, not instruction, said spills were 49% of a frame's work. T
 - **IX in the middle of a large frame** took 346 far-slot sequences of 340 T-states out and 2.2 KB of code, and 1% of a frame. They were cold; counting them had promised far more.
 - **A race found**: the changed timing exposed `__z80_bank` writing the bank register before the copy the interrupt restores, so an interrupt between them left the old bank selected. Copy first.
 
+### 11/03/26 — `ref`/`mut`/`own` go only on a parameter
+
+The item asked what a mode means elsewhere. Measured first, and the answer was mostly that it
+already meant something wrong:
+
+- **`-> ref T` was a use after free in safe code.** Treated as a borrow, the return took no retain,
+  so a fresh value, a field of a local or an `own` parameter was released on the way out and the
+  caller printed garbage. `-> mut T` never wrote through (`f(a)[0] = 7` died in the backend), and
+  `-> own T` was bare. No Lyra program used any of them, in about 180k lines. Refused rather than
+  restricted to the accessor rooted at a parameter that todo.md excepted: that saved one retain and
+  still copied a struct, for no caller. `ReturnType.TypeModifier`, `isOwnedReturn` and the
+  typechecker's flavor exemption went with it, as nothing can set them.
+- **Locals and fields stay borrow-free.** Both were already syntax errors, so this is only a message.
+  A `mut` local would replace 11 copy-out-write-back sites and shorten 71 writes through a repeated
+  path, but needs exclusivity across statements, since `xs.push` moves what it would point at, and
+  (c) is deferred. 35 fields already say `shared`. No grammar change, so no Zed pin: the driver
+  names the error, by the shapes recovery leaves. An error can swallow a whole function, so it reads
+  no further than those; a tuple inside a generic argument (`Maybe<(ref t, u)>`) keeps the plain
+  syntax error.
+- **A function value's type lied about its modes.** `(own string) -> i64` leaked each call (194 MB
+  against 1.7 MB over 3M calls): the caller handed over +1 and a lambda's bare parameter never
+  released it. A named `own` function in that slot did work, and two backend fixtures spelled it;
+  no program did, so they moved to a nested function called by its name, the same transfer.
+  `(mut i64) -> void` had no possible value (`lyra-E082`). The grammar's aliases already say which
+  function types are a trait method's or an extern's, which keep their modes.
+- **Found on the way: an `own` function as a value freed its caller's value.** `apply(keep, t)`
+  through a bare slot: the call keeps `t`, `keep` releases it. With the `own` slot gone that was the
+  only spelling left, so `lyra-E082` covers it, on anything but a scalar. It also refuses a struct
+  with nothing to release, the conservative side; nothing in the workspace hit it.
+
 ### 11/03/26 — Z80 fields through IY
 
 A field through a pointer took `ld de, d; add hl, de; ld r, (hl)` and kept two pairs busy, so IY looked like the next win. It is a pass rather than an allocatable register: one register for every pointer would need spills with no register free to make them, while SSA makes "IY holds %p" a small dataflow problem and it cannot fail allocation. It gained less than predicted, 2–3% on a scene, 8% on `std.sms.music` and about 1 KB, since a game's code has about ten stack-slot accesses for each pointer one: the cost is spills, which the estimate had wrong.

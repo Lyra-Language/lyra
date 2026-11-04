@@ -178,18 +178,29 @@ func collectParameter(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Parameter {
 }
 
 func collectReturnType(node *sitter.Node, ctx *collector_ctx.Ctx) types.ReturnType {
-	typeModifierNode := cst.Field(node, "type_modifier")
-	var typeModifier string
-	if typeModifierNode != nil {
-		typeModifier = ctx.NodeText(typeModifierNode)
+	if mode := cst.Field(node, "type_modifier"); mode != nil {
+		ReportReturnMode(mode, ctx)
 	}
 	typeNode := cst.Field(node, "type")
 	if typeNode == nil {
 		ctx.AddError(node, diag.SeverityError, "return type node missing type")
 		return types.ReturnType{}
 	}
-	return types.ReturnType{
-		Type:         ctx.ParseType(typeNode),
-		TypeModifier: types.TypeModifier(typeModifier),
+	return types.ReturnType{Type: ctx.ParseType(typeNode)}
+}
+
+// ReportReturnMode refuses `ref`/`mut`/`own` on a return type, a function's or a function
+// type's (lyra-E093). The grammar admits them on the standing trade that a message naming the
+// fix beats a syntax error. A borrow lasts for the call that lent it and a result outlives
+// that call, so `-> ref` handed back a value its function had already released.
+func ReportReturnMode(mode *sitter.Node, ctx *collector_ctx.Ctx) {
+	text := ctx.NodeText(mode)
+	why := "a borrow lasts for the call that lent it, and a result outlives that call. Drop it: the value is handed to the caller, and an array, a string or a `shared` value is not copied to do it"
+	switch text {
+	case "mut":
+		why = "a borrow lasts for the call that lent it, so a caller has nothing to write through. Drop it and store the result, or take the place as a `mut` parameter"
+	case "own":
+		why = "a return hands its value to the caller already. Drop it"
 	}
+	ctx.AddErrorCoded(mode, diag.SeverityError, diag.CodeModeOutsideParameter, "a return type takes no `%s`: %s", text, why)
 }

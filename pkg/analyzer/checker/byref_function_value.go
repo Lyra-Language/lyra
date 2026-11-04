@@ -28,6 +28,12 @@ import (
 //
 // Carrying the mode in the function type and passing through it by reference would lift
 // both; until then the refusal is the honest answer, at `check`.
+//
+// **An `own` parameter is refused the same way**, on anything but a scalar, where it is
+// inert. It goes by value, so nothing misreads an address, but a call through a function
+// value keeps its argument while the callee releases it: `apply(keep, t)` freed `t` under
+// the caller. A nested lambda is excepted when it is bound to a name and only called by it,
+// since that call knows the mode; used any other way, the name is refused below.
 func CheckByRefFunctionValues(program *ast.Program, tt *typetable.TypeTable) []diag.Diagnostic {
 	declared := map[*ast.LambdaExpr]bool{}
 	for _, node := range program.Statements {
@@ -37,22 +43,40 @@ func CheckByRefFunctionValues(program *ast.Program, tt *typetable.TypeTable) []d
 			}
 		}
 	}
-	c := &byRefValues{tt: tt, declared: declared, callees: map[ast.Expression]bool{}}
+	c := &byRefValues{tt: tt, declared: declared, named: map[*ast.LambdaExpr]bool{}, callees: map[ast.Expression]bool{}}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
-			ast.WalkStmt(stmt, nil, c.visit)
+			ast.WalkStmt(stmt, c.visitStmt, c.visit)
 		}
 	}
 	return c.out
 }
 
+// ownedThroughValue reports whether a parameter's `own` would be broken by a call through a
+// function value: the callee releases what that call keeps. A scalar has nothing to release.
+func ownedThroughValue(mod types.TypeModifier, t types.Type) bool {
+	return mod == types.Own && !types.IsCopiedScalar(t)
+}
+
 type byRefValues struct {
 	tt       *typetable.TypeTable
 	declared map[*ast.LambdaExpr]bool
+	// named are the lambdas bound to a name by a `let`, nested ones included: a use of the
+	// name other than a call is what a by-value `own` is refused at.
+	named map[*ast.LambdaExpr]bool
 	// callees are the expressions in a call's function position: there a function is
 	// called directly, with its declaration's calling convention, not used as a value.
 	callees map[ast.Expression]bool
 	out     []diag.Diagnostic
+}
+
+func (c *byRefValues) visitStmt(s ast.Statement) bool {
+	if v, ok := s.(*ast.VarDeclStmt); ok {
+		if lam, isLambda := v.Value.(*ast.LambdaExpr); isLambda {
+			c.named[lam] = true
+		}
+	}
+	return true
 }
 
 func (c *byRefValues) visit(e ast.Expression) bool {
@@ -67,6 +91,11 @@ func (c *byRefValues) visit(e ast.Expression) bool {
 					c.report(p.GetLocation(), fmt.Sprintf(
 						"a lambda written inside a function is a function value, and its `%s` parameter cannot be passed by reference through one — declare it as a top-level function, or take the parameter by value and return the result",
 						p.TypeModifier))
+					break
+				}
+				if !c.named[ex] && ownedThroughValue(p.TypeModifier, p.Type) {
+					c.report(p.GetLocation(),
+						"a lambda used as a function value can't take an `own` parameter: a call through one keeps its argument, and this lambda would release it — take the parameter bare")
 					break
 				}
 			}
@@ -85,6 +114,12 @@ func (c *byRefValues) visit(e ast.Expression) bool {
 					c.report(ex.GetLocation(), fmt.Sprintf(
 						"%q takes a `%s` parameter, so it cannot be used as a function value: a call through one passes every argument by value — call it directly, or wrap the call in a function that takes the value",
 						ex.Name, p.Borrow))
+					break
+				}
+				if ownedThroughValue(p.Borrow, p.Type) {
+					c.report(ex.GetLocation(), fmt.Sprintf(
+						"%q takes an `own` parameter, so it cannot be used as a function value: a call through one keeps its argument, and %q would release it — call it directly, or wrap the call in a function that takes the value",
+						ex.Name, ex.Name))
 					break
 				}
 			}

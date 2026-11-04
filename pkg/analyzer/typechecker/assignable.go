@@ -864,15 +864,6 @@ func paramOwnsArgument(mod types.TypeModifier) bool {
 	return mod == types.Own
 }
 
-// isOwnedReturn reports whether a function's return value is owned out to the
-// caller — so its allocation flavor must match the declared return type — rather
-// than borrowed. A `ref`/`mut` return is a borrow (allocation-polymorphic); a
-// bare or `own` return transfers ownership. Mirror of paramOwnsArgument for the
-// return position (Decision (b) applies symmetrically to owned returns).
-func isOwnedReturn(mod types.TypeModifier) bool {
-	return mod != types.Ref && mod != types.Mut
-}
-
 // nominalDataMatch reports whether from and to denote the same nominal data
 // type by head name, ignoring generic arguments. At least one side must be a
 // concrete DataType; the other may be a DataType, a ParameterizedType

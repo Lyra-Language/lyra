@@ -66,8 +66,13 @@ func collectParseErrors(root *sitter.Node, source []byte) syntaxReport {
 			if hint, ok := uppercaseTypeParamMessage(source, node.StartByte(), node.EndByte()); ok {
 				msg = "syntax error: " + hint
 			}
+			code := ""
+			if hint, ok := modeOutsideParameterMessage(node, source); ok {
+				msg, code = hint, diag.CodeModeOutsideParameter
+			}
 			r.diags = append(r.diags, diag.Diagnostic{
 				Severity: diag.SeverityError,
+				Code:     code,
 				Location: nodeLocation(node),
 				Message:  msg,
 			})

@@ -1058,6 +1058,17 @@ const (
 	// free that storage (checker, global_borrow.go).
 	CodeSeqBorrow = "lyra-E092"
 
+	// CodeModeOutsideParameter: `ref`/`mut`/`own` on a return type, a local, a field or an
+	// element. A borrow lasts for the call that lent it, so only a parameter can take one, and
+	// everywhere else a value is owned already. A return type parses and the collector refuses
+	// it; the rest are syntax errors that name the rule (driver, syntax_errors.go).
+	CodeModeOutsideParameter = "lyra-E093"
+
+	// CodeModeOnFunctionValue: `ref`/`mut`/`own` on a parameter of a function value's type
+	// (`g: (mut i64) -> void`). A call through a function value passes every argument by value,
+	// so no mode holds there; a trait method's or an `extern`'s signature keeps them.
+	CodeModeOnFunctionValue = "lyra-E094"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

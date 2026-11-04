@@ -701,10 +701,9 @@ type analyzer struct {
 	// because managed-ness is a property of the concrete type: with `t` abstract,
 	// IsManaged is false and the pass records no retain, release, or drop anywhere —
 	// decisions that are simply wrong at `t = string`. Nil for ordinary code.
-	subst          map[string]types.Type
-	table          *Table
-	curReturnOwned bool // does the enclosing function return an owned value?
-	conditional    bool // are we inside a branch body (if/match arm)? gates transfers
+	subst       map[string]types.Type
+	table       *Table
+	conditional bool // are we inside a branch body (if/match arm)? gates transfers
 	// lastUse holds the final-textual-reference node of each managed binding that is
 	// eligible for last-use precision, in the function currently being analyzed.
 	lastUse map[ast.Expression]bool
@@ -724,12 +723,10 @@ type analyzer struct {
 
 // lambda analyzes one function/lambda body under its own return-ownership.
 func (a *analyzer) lambda(lam *ast.LambdaExpr) {
-	saved := a.curReturnOwned
 	savedCond := a.conditional
 	savedLast := a.lastUse
 	savedReuse := a.reuseLastRef
 	savedWriting := a.writing
-	a.curReturnOwned = isOwnedReturn(lam.ReturnType.TypeModifier)
 	a.conditional = false
 	a.writing = map[string]int{}
 	a.lastUse = a.computeLastUse(lam)
@@ -746,22 +743,21 @@ func (a *analyzer) lambda(lam *ast.LambdaExpr) {
 		a.writing = savedWriting
 		a.bound = a.bound[:len(a.bound)-1]
 	}()
-	// The body is the function's return value: pass the return's ownership need
+	// The body is the function's return value, and a return is owned: pass that need
 	// down unconditionally. Whether it actually causes a retain is decided at the
 	// managed leaves (a non-managed return simply has none) — we don't gate on the
 	// body's own type, which for a block/if isn't reliably recorded.
 	if lam.Body != nil {
-		a.expr(lam.Body, a.curReturnOwned)
+		a.expr(lam.Body, true)
 	}
 	for i := range lam.LambdaClauses {
 		if b := lam.LambdaClauses[i].Body; b != nil {
-			a.expr(b, a.curReturnOwned)
+			a.expr(b, true)
 		}
 		if g := lam.LambdaClauses[i].Guard; g != nil {
 			a.expr(g.Condition, false)
 		}
 	}
-	a.curReturnOwned = saved
 }
 
 // computeLastUse finds, for each managed binding eligible for last-use precision,
@@ -1244,8 +1240,8 @@ func (a *analyzer) stmt(s ast.AstNode) {
 		a.expr(s.Value, a.ownsManaged(s.Value))
 	case *ast.ReturnStmt:
 		if s.Value != nil {
-			// Pass the return's ownership need down; managed leaves decide the retain.
-			a.expr(s.Value, a.curReturnOwned)
+			// A return is owned; managed leaves decide the retain.
+			a.expr(s.Value, true)
 		}
 	}
 }
@@ -2225,9 +2221,9 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 		case methodSig != nil:
 			argOwns = i+1 < len(methodSig.Parameters) && paramOwnsArgument(methodSig.Parameters[i+1].Borrow)
 		case calleeType != nil:
-			// A function type *can* now express a mode (`(own i64) -> t`), so read it;
-			// an unwritten one is a borrow, which is what the lifted closure body does
-			// with it and what every function type meant before modes were collected.
+			// A named function's signature carries its modes. A function value's type takes
+			// none (lyra-E094), so there it is a borrow, which is what the lifted closure body
+			// does with it.
 			argOwns = i < len(calleeType.Parameters) && paramOwnsArgument(calleeType.Parameters[i].Borrow)
 		case builtinBorrows:
 			argOwns = false
@@ -2245,20 +2241,13 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 	if !a.ownsManaged(e) {
 		return
 	}
-	// The result's ownership: an owned return is a fresh +1; anything else (a
-	// borrowed return, or an unresolved callee) is treated as borrowed.
-	resultOwned := lam != nil && isOwnedReturn(lam.ReturnType.TypeModifier)
-	if lam == nil && calleeType != nil {
-		resultOwned = isOwnedReturn(calleeType.ReturnType.TypeModifier)
-	}
-	// A **trait method** has neither: its callee is an impl clause the typechecker resolved,
-	// and its conventions are the trait's declared signature — the same one the argument
-	// loop above already reads modes from. Reading the parameters and not the return is
-	// how `t.show()` leaked its string wherever it went, bound, compared or printed (09/13):
-	// a fresh +1 taken for a borrow is never released.
-	if lam == nil && calleeType == nil && methodSig != nil {
-		resultOwned = isOwnedReturn(methodSig.ReturnType.TypeModifier)
-	}
+	// The result's ownership: a return is a fresh +1, and an unresolved callee is treated
+	// as borrowed. A **trait method** has neither a LambdaExpr nor a LambdaType: its callee is
+	// an impl clause the typechecker resolved, and its conventions are the trait's declared
+	// signature — the same one the argument loop above already reads modes from. Counting
+	// only the other two is how `t.show()` leaked its string wherever it went, bound, compared
+	// or printed (09/13): a fresh +1 taken for a borrow is never released.
+	resultOwned := lam != nil || calleeType != nil || methodSig != nil
 	// A compiler-provided builtin has neither a LambdaExpr nor a LambdaType, so it
 	// lands on the "unresolved callee" default above — *borrowed*. That default is
 	// the leak-safe one for arguments, but for a **result** it is the unsafe
@@ -2477,13 +2466,8 @@ func calleeIsOwningBuiltin(e *ast.FunctionCallExpr) bool {
 	return id.Name == "read_line" || id.Name == "program_arg" || id.Name == "dir_names"
 }
 
-// paramOwnsArgument / isOwnedReturn mirror the typechecker's ownership predicates
-// (assignable.go): only an `own` parameter adopts its argument, and a bare or
-// `own` return transfers ownership to the caller (a `ref`/`mut` return borrows).
+// paramOwnsArgument mirrors the typechecker's predicate (assignable.go): only an `own`
+// parameter adopts its argument.
 func paramOwnsArgument(mod types.TypeModifier) bool {
 	return mod == types.Own
-}
-
-func isOwnedReturn(mod types.TypeModifier) bool {
-	return mod != types.Ref && mod != types.Mut
 }

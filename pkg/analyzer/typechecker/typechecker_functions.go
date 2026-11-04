@@ -164,11 +164,6 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 			declaredReturn = tc.resolveTypeIfKnown(declaredReturn, lambda.GetLocation())
 		}
 
-		// An owned return (bare or `own`) transfers the value to the caller, so its
-		// allocation flavor must match the declared return type; a `ref`/`mut`
-		// return is a borrow and is allocation-polymorphic (see isOwnedReturn).
-		ownedReturn := isOwnedReturn(lambda.ReturnType.TypeModifier)
-
 		_, isVoid := declaredReturn.(types.VoidType)
 		// A `gen` body yields its elements and returns by finishing, so it is checked
 		// as a void body — under the element type its `-> Seq<t>` names, which is what
@@ -194,11 +189,11 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 					// declaredReturn may be nil (inferred return); checkBlockReturn
 					// still walks every statement, skipping only the return-type
 					// comparison.
-					tc.checkBlockReturn(funcName, block, declaredReturn, ownedReturn)
+					tc.checkBlockReturn(funcName, block, declaredReturn)
 				}
 			} else if !isVoid {
 				// Single-expression body: the expression value is the return value.
-				tc.checkReturnValue(funcName, lambda.Body, lambda.Body.GetLocation(), declaredReturn, ownedReturn)
+				tc.checkReturnValue(funcName, lambda.Body, lambda.Body.GetLocation(), declaredReturn)
 			} else {
 				// Single-expression body of a void function: the value is discarded, so it
 				// is checked as a statement — an effectful call (`() -> void =>
@@ -220,7 +215,7 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 					tc.addError(clause.Body.GetLocation(), SeverityError,
 						"%s: return type mismatch: expected %s, got %s",
 						funcName, declaredReturn, clauseType)
-				} else if declaredReturn != nil && clauseType != nil && ownedReturn {
+				} else if declaredReturn != nil && clauseType != nil {
 					tc.checkAllocationCompat(clauseType, declaredReturn, clause.Body.GetLocation(), funcName)
 				}
 			}
@@ -456,13 +451,12 @@ func (tc *TypeChecker) checkBlockVoidReturn(funcName string, block *ast.BlockExp
 // width onto untyped literal leaves so `() -> u8 => 5 + 3` lowers at u8, and
 // stamping construction leaves with its allocation flavor so
 // `(xs) -> shared List => match xs { … => Cons(…) }` builds shared nodes inside
-// match arms. The allocation *check* is last and only for an owned return, since a
-// `ref`/`mut` return is a borrow and allocation-polymorphic (isOwnedReturn).
+// match arms. The allocation *check* is last, as a return hands its value to the caller.
 //
 // Written four times until 08/05, and the fourth had already drifted: the trait-impl
 // copy did none of the propagation, so a method body's literals kept their default
 // width where the identical free function's narrowed (hazard 8).
-func (tc *TypeChecker) checkReturnValue(funcName string, value ast.Expression, loc ast.Location, declaredReturn types.Type, ownedReturn bool) {
+func (tc *TypeChecker) checkReturnValue(funcName string, value ast.Expression, loc ast.Location, declaredReturn types.Type) {
 	// The declared return is a context for inferring the value, not only something to
 	// check it against — see pushExpectedType. A generic callee whose variables live only
 	// in its own return type is solvable here and nowhere else.
@@ -486,12 +480,10 @@ func (tc *TypeChecker) checkReturnValue(funcName string, value ast.Expression, l
 	// so this is the same call the decl/reassign sites make, with the same dedup.
 	tc.checkLiteralRange(funcName, value, declaredReturn)
 	tc.propagateExpectedType(value, declaredReturn)
-	if ownedReturn {
-		tc.checkAllocationCompat(valueType, declaredReturn, loc, funcName)
-	}
+	tc.checkAllocationCompat(valueType, declaredReturn, loc, funcName)
 }
 
-func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, declaredReturn types.Type, ownedReturn bool) {
+func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, declaredReturn types.Type) {
 	tc.enterScope(block, func() {
 		stmts := block.Statements
 		for i, stmt := range stmts {
@@ -509,7 +501,7 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 				if s.Value == nil {
 					continue // bare return – void compatibility is not checked yet
 				}
-				tc.checkReturnValue(funcName, s.Value, s.GetLocation(), declaredReturn, ownedReturn)
+				tc.checkReturnValue(funcName, s.Value, s.GetLocation(), declaredReturn)
 			case *ast.ExpressionStmt:
 				if i == len(stmts)-1 {
 					// A loop that can finish as the body's last statement leaves the
@@ -525,7 +517,7 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 					}
 					// The last expression in a block is its implicit return value,
 					// so it is being used (returned), not dropped.
-					tc.checkReturnValue(funcName, s.Expression, s.GetLocation(), declaredReturn, ownedReturn)
+					tc.checkReturnValue(funcName, s.Expression, s.GetLocation(), declaredReturn)
 				} else {
 					// A non-final expression statement is evaluated for effect and
 					// its value discarded; run the full statement check so dropped
@@ -1950,8 +1942,7 @@ func (tc *TypeChecker) checkReturnStmt(s *ast.ReturnStmt) {
 	// twin, since an unknown name in the annotation was already reported by the
 	// signature pass and must not be reported twice.
 	declared := tc.resolveTypeIfKnown(tc.enclosingRet.Type, s.GetLocation())
-	tc.checkReturnValue(tc.enclosingFuncName, s.Value, s.GetLocation(),
-		declared, isOwnedReturn(tc.enclosingRet.TypeModifier))
+	tc.checkReturnValue(tc.enclosingFuncName, s.Value, s.GetLocation(), declared)
 }
 
 // checkBuiltinMutatesReceiver enforces the mutability rule for a builtin method that
