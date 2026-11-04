@@ -1367,9 +1367,10 @@ target, 10/11). In order:
   `clock_gettime`, `localtime_r`, std.io's `open`/`mkdir`/`readlink`).
 - **[OPEN] The web** — the backend's 64-bit pointers and `i64` `size_t` (`layout.go`'s
   `pointerSize`, the libc declarations, `coro.size.i64`) need a per-target width first.
-- **[OPEN] Z80 code speed**: fields through a pointer now go through IY, which gained only 2–3% on a scene and 8% on `std.sms.music`: a game's code has about ten stack-slot accesses `(ix+d)` for each `(iy+d)`. Fewer spills is the next win, and checked adds after it; measure with `smscheck --work on`.
+- **[OPEN] Z80 code speed**: arithmetic on any pair and fixed spill slots took a scene from 34,400 T-states to 25,100. What is left is checked adds and copies; a song's row (30,000–55,000) is what still drops frames. Measure with `smscheck --work on`, by T-states rather than instruction counts.
+- **[OPEN] Share Z80 fixed spill slots**: each function keeps its own for good, 184 bytes in the demo. Functions never active together could overlay them, as a large game may need the RAM.
 - **[OPEN] A const passed to a generic `ref` parameter**: `p.go(X)` with `go<d> where d: R = (self: mut, t: ref d)` and `const X: T` fails `lyrac` with `assignment to unbound identifier "X"`. Passing the value literally works.
-- **[PARTIAL] A Z80 backend, for new Master System and Game Gear games**: `target = "sms"` builds games up to 1 MB with `@banked` tables, and Vega generates them, with PSG effects and songs (`tools/llvm-z80/README.md`, `vega/todo.md`). Songs play on `std.sms.music`. Speed left: an entity on a map is about 35,000 T-states of a 59,736 frame standing and 68,000 walking right, which drops frames.
+- **[PARTIAL] A Z80 backend, for new Master System and Game Gear games**: `target = "sms"` builds games up to 1 MB with `@banked` tables, and Vega generates them, with PSG effects and songs (`tools/llvm-z80/README.md`, `vega/todo.md`). Songs play on `std.sms.music`. Speed left: an entity on a map is about 25,000 T-states of a 59,736 frame standing and 48,000 walking right.
 
 ## Target introspection
 

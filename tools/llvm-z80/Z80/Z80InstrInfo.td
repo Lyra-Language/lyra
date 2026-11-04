@@ -14,6 +14,8 @@ def Z80wrapper : SDNode<"Z80ISD::WRAPPER",
                         SDTypeProfile<1, 1, [SDTCisSameAs<0, 1>, SDTCisPtrTy<0>]>>;
 def Z80cmp : SDNode<"Z80ISD::CMP", SDTypeProfile<0, 2, [SDTCisSameAs<0, 1>]>,
                     [SDNPOutGlue]>;
+def Z80cmpeq : SDNode<"Z80ISD::CMPEQ", SDTypeProfile<0, 2, [SDTCisSameAs<0, 1>]>,
+                      [SDNPOutGlue]>;
 def Z80brcond : SDNode<"Z80ISD::BRCOND",
                        SDTypeProfile<0, 2, [SDTCisVT<0, OtherVT>, SDTCisVT<1, i8>]>,
                        [SDNPHasChain, SDNPInGlue]>;
@@ -185,6 +187,16 @@ let mayLoad = 1 in {
     let Inst{23-16} = 0x2A;
     let Inst{15-0} = a;
   }
+  // A pair other than HL from a fixed address.
+  def LD16rm : Z80Inst<4, (outs NOHL16:$d), (ins imm16op:$a), "ld\t$d, ($a)"> {
+    bits<2> d;
+    bits<16> a;
+    let Inst{31-24} = 0xED;
+    let Inst{23-22} = 0b01;
+    let Inst{21-20} = d;
+    let Inst{19-16} = 0b1011;
+    let Inst{15-0} = a;
+  }
   // Through HL, left as it was unless it is the destination. Clobbers A for that case.
   let Defs = [A] in
   def LD16rp : Z80Pseudo<(outs GR16:$d), (ins HL16:$p),
@@ -231,6 +243,15 @@ let mayStore = 1 in {
   def ST16ar : Z80Inst<3, (outs), (ins imm16op:$a, HL16:$s), "ld\t($a), hl"> {
     bits<16> a;
     let Inst{23-16} = 0x22;
+    let Inst{15-0} = a;
+  }
+  def ST16mr : Z80Inst<4, (outs), (ins imm16op:$a, NOHL16:$s), "ld\t($a), $s"> {
+    bits<16> a;
+    bits<2> s;
+    let Inst{31-24} = 0xED;
+    let Inst{23-22} = 0b01;
+    let Inst{21-20} = s;
+    let Inst{19-16} = 0b0011;
     let Inst{15-0} = a;
   }
   def ST16pr : Z80Pseudo<(outs), (ins HL16:$p, NOHL16:$s),
@@ -331,6 +352,10 @@ multiclass ALU8<bits<3> op, string name, SDPatternOperator node, bit commutes> {
 
 defm ADD8 : ALU8<0b000, "add\ta,", add, 1>;
 defm SUB8 : ALU8<0b010, "sub", sub, 0>;
+let Uses = [F] in {
+  defm ADC8 : ALU8<0b001, "adc\ta,", adde, 0>;
+  defm SBC8 : ALU8<0b011, "sbc\ta,", sube, 0>;
+}
 defm AND8 : ALU8<0b100, "and", and, 1>;
 defm XOR8 : ALU8<0b101, "xor", xor, 1>;
 defm OR8 : ALU8<0b110, "or", or, 1>;
@@ -348,9 +373,17 @@ let Defs = [F] in {
     let Inst{15-8} = 0xFE;
     let Inst{7-0} = n;
   }
-  // Compares HL with a pair and leaves HL as it was: `or a; sbc hl, rr; add hl, rr`. The add
-  // changes neither Z nor, since it undoes the subtraction exactly, the carry.
-  def CP16 : Z80Pseudo<(outs), (ins HL16:$a, NOHL16:$b), [(Z80cmp HL16:$a, NOHL16:$b)]>;
+}
+
+// Compares of any pair, through A, which take no pair of their own for a constant. `ld a, l;
+// sub e; ld a, h; sbc a, d` leaves carry, sign and overflow true of the whole, but Z of the high
+// byte alone, so equality is its own: `ld a, l; cp e; jp nz, past; ld a, h; cp d; past:`, written
+// by the printer unless a zero byte in a constant lets `or` do it with no jump.
+let Defs = [A, F] in {
+  def CP16 : Z80Pseudo<(outs), (ins GR16:$a, GR16:$b), [(Z80cmp GR16:$a, GR16:$b)]>;
+  def CP16i : Z80Pseudo<(outs), (ins GR16:$a, imm16op:$n), [(Z80cmp GR16:$a, imm:$n)]>;
+  def CPEQ16 : Z80Pseudo<(outs), (ins GR16:$a, GR16:$b), [(Z80cmpeq GR16:$a, GR16:$b)]>;
+  def CPEQ16i : Z80Pseudo<(outs), (ins GR16:$a, imm16op:$n), [(Z80cmpeq GR16:$a, imm:$n)]>;
 }
 
 let Defs = [F] in {
@@ -417,25 +450,23 @@ def ORAA : Z80Inst<1, (outs), (ins), "or\ta"> {
 // 16-bit arithmetic, through HL
 //===----------------------------------------------------------------------===//
 
+// What the pseudos below expand to when their value is in HL.
 let Defs = [F], Constraints = "$d = $a" in {
-  def ADD16 : Z80Inst<1, (outs HL16:$d), (ins HL16:$a, GR16:$r), "add\thl, $r",
-                      [(set HL16:$d, (add HL16:$a, GR16:$r))]> {
+  def ADD16 : Z80Inst<1, (outs HL16:$d), (ins HL16:$a, GR16:$r), "add\thl, $r"> {
     bits<2> r;
     let Inst{7-6} = 0b00;
     let Inst{5-4} = r;
     let Inst{3-0} = 0b1001;
   }
   let Uses = [F] in {
-    def ADC16 : Z80Inst<2, (outs HL16:$d), (ins HL16:$a, GR16:$r), "adc\thl, $r",
-                        [(set HL16:$d, (adde HL16:$a, GR16:$r))]> {
+    def ADC16 : Z80Inst<2, (outs HL16:$d), (ins HL16:$a, GR16:$r), "adc\thl, $r"> {
       bits<2> r;
       let Inst{15-8} = 0xED;
       let Inst{7-6} = 0b01;
       let Inst{5-4} = r;
       let Inst{3-0} = 0b1010;
     }
-    def SBC16 : Z80Inst<2, (outs HL16:$d), (ins HL16:$a, GR16:$r), "sbc\thl, $r",
-                        [(set HL16:$d, (sube HL16:$a, GR16:$r))]> {
+    def SBC16 : Z80Inst<2, (outs HL16:$d), (ins HL16:$a, GR16:$r), "sbc\thl, $r"> {
       bits<2> r;
       let Inst{15-8} = 0xED;
       let Inst{7-6} = 0b01;
@@ -443,12 +474,41 @@ let Defs = [F], Constraints = "$d = $a" in {
       let Inst{3-0} = 0b0010;
     }
   }
-  // `or a; sbc hl, rr`.
-  def SUB16 : Z80Pseudo<(outs HL16:$d), (ins HL16:$a, GR16:$r),
-                        [(set HL16:$d, (sub HL16:$a, GR16:$r))]>;
 }
-def : Pat<(addc HL16:$a, GR16:$r), (ADD16 HL16:$a, GR16:$r)>;
-def : Pat<(subc HL16:$a, GR16:$r), (SUB16 HL16:$a, GR16:$r)>;
+
+// Of any pair, so a value need not leave its register to be added to, nor a constant take a pair
+// of its own. In HL they expand to `add hl, rr` and the like; elsewhere a byte at a time through
+// A, whose carry and overflow are the whole's. That is what keeps 16-bit values out of the stack:
+// half a frame's work went on spills when all of this wanted HL and a second pair for a constant.
+let Defs = [A, F], Constraints = "$d = $a" in {
+  let isCommutable = 1 in
+  def ADD16p : Z80Pseudo<(outs GR16:$d), (ins GR16:$a, GR16:$r),
+                         [(set GR16:$d, (add GR16:$a, GR16:$r))]>;
+  def SUB16p : Z80Pseudo<(outs GR16:$d), (ins GR16:$a, GR16:$r),
+                         [(set GR16:$d, (sub GR16:$a, GR16:$r))]>;
+  let Uses = [F] in {
+    def ADC16p : Z80Pseudo<(outs GR16:$d), (ins GR16:$a, GR16:$r),
+                           [(set GR16:$d, (adde GR16:$a, GR16:$r))]>;
+    def SBC16p : Z80Pseudo<(outs GR16:$d), (ins GR16:$a, GR16:$r),
+                           [(set GR16:$d, (sube GR16:$a, GR16:$r))]>;
+  }
+  // For an overflow check: `or a; adc hl, rr`, since `add hl, rr` sets no overflow flag.
+  def SADD16p : Z80Pseudo<(outs GR16:$d), (ins GR16:$a, GR16:$r)>;
+  // A constant. These leave no flags anyone reads, so they may take whichever way is cheapest.
+  def ADD16i : Z80Pseudo<(outs GR16:$d), (ins GR16:$a, imm16op:$n),
+                         [(set GR16:$d, (add GR16:$a, imm:$n))]>;
+  // A constant with a check after it: carry and overflow true of the whole.
+  def CADD16i : Z80Pseudo<(outs GR16:$d), (ins GR16:$a, imm16op:$n)>;
+  def CSUB16i : Z80Pseudo<(outs GR16:$d), (ins GR16:$a, imm16op:$n)>;
+  def AND16i : Z80Pseudo<(outs GR16:$d), (ins GR16:$a, imm16op:$n),
+                         [(set GR16:$d, (and GR16:$a, imm:$n))]>;
+  def OR16i : Z80Pseudo<(outs GR16:$d), (ins GR16:$a, imm16op:$n),
+                        [(set GR16:$d, (or GR16:$a, imm:$n))]>;
+  def XOR16i : Z80Pseudo<(outs GR16:$d), (ins GR16:$a, imm16op:$n),
+                         [(set GR16:$d, (xor GR16:$a, imm:$n))]>;
+}
+def : Pat<(addc GR16:$a, GR16:$r), (ADD16p GR16:$a, GR16:$r)>;
+def : Pat<(subc GR16:$a, GR16:$r), (SUB16p GR16:$a, GR16:$r)>;
 
 // A byte at a time through A.
 let Defs = [A, F], Constraints = "$d = $a" in {
@@ -483,20 +543,18 @@ let Constraints = "$d = $s" in {
   }
 }
 
-def : Pat<(add GR16:$s, 1), (INC16 GR16:$s)>;
-def : Pat<(add GR16:$s, 2), (INC16 (INC16 GR16:$s))>;
-def : Pat<(add GR16:$s, 3), (INC16 (INC16 (INC16 GR16:$s)))>;
-def : Pat<(add GR16:$s, -1), (DEC16 GR16:$s)>;
-def : Pat<(add GR16:$s, -2), (DEC16 (DEC16 GR16:$s))>;
-def : Pat<(add GR16:$s, -3), (DEC16 (DEC16 (DEC16 GR16:$s)))>;
+let AddedComplexity = 10 in {
+  def : Pat<(add GR16:$s, 1), (INC16 GR16:$s)>;
+  def : Pat<(add GR16:$s, 2), (INC16 (INC16 GR16:$s))>;
+  def : Pat<(add GR16:$s, 3), (INC16 (INC16 (INC16 GR16:$s)))>;
+  def : Pat<(add GR16:$s, -1), (DEC16 GR16:$s)>;
+  def : Pat<(add GR16:$s, -2), (DEC16 (DEC16 GR16:$s))>;
+  def : Pat<(add GR16:$s, -3), (DEC16 (DEC16 (DEC16 GR16:$s)))>;
+}
 
 //===----------------------------------------------------------------------===//
 // Checked arithmetic
 //===----------------------------------------------------------------------===//
-
-// `or a; adc hl, rr`: unlike `add hl, rr`, this sets the overflow flag.
-let Defs = [A, F], Constraints = "$d = $a" in
-def SADD16 : Z80Pseudo<(outs HL16:$d), (ins HL16:$a, GR16:$r)>;
 
 // A flag as a 0 or 1: the printer writes `ld r, 0; jp !cc, past; inc r; past:`.
 let Uses = [F], Defs = [F] in
@@ -519,15 +577,16 @@ let Defs = [F], Constraints = "@earlyclobber $o, $d = $a" in {
                          [(set ACC8:$d, GR8:$o, (Z80uaddo ACC8:$a, GR8:$r))]>;
   def USUBO8 : Z80Pseudo<(outs ACC8:$d, GR8:$o), (ins ACC8:$a, GR8:$r),
                          [(set ACC8:$d, GR8:$o, (Z80usubo ACC8:$a, GR8:$r))]>;
-  let Defs = [A, F] in
-  def SADDO16 : Z80Pseudo<(outs HL16:$d, GR8:$o), (ins HL16:$a, GR16:$r),
-                          [(set HL16:$d, GR8:$o, (Z80saddo HL16:$a, GR16:$r))]>;
-  def SSUBO16 : Z80Pseudo<(outs HL16:$d, GR8:$o), (ins HL16:$a, GR16:$r),
-                          [(set HL16:$d, GR8:$o, (Z80ssubo HL16:$a, GR16:$r))]>;
-  def UADDO16 : Z80Pseudo<(outs HL16:$d, GR8:$o), (ins HL16:$a, GR16:$r),
-                          [(set HL16:$d, GR8:$o, (Z80uaddo HL16:$a, GR16:$r))]>;
-  def USUBO16 : Z80Pseudo<(outs HL16:$d, GR8:$o), (ins HL16:$a, GR16:$r),
-                          [(set HL16:$d, GR8:$o, (Z80usubo HL16:$a, GR16:$r))]>;
+  let Defs = [A, F] in {
+  def SADDO16 : Z80Pseudo<(outs GR16:$d, GR8:$o), (ins GR16:$a, GR16:$r),
+                          [(set GR16:$d, GR8:$o, (Z80saddo GR16:$a, GR16:$r))]>;
+  def SSUBO16 : Z80Pseudo<(outs GR16:$d, GR8:$o), (ins GR16:$a, GR16:$r),
+                          [(set GR16:$d, GR8:$o, (Z80ssubo GR16:$a, GR16:$r))]>;
+  def UADDO16 : Z80Pseudo<(outs GR16:$d, GR8:$o), (ins GR16:$a, GR16:$r),
+                          [(set GR16:$d, GR8:$o, (Z80uaddo GR16:$a, GR16:$r))]>;
+  def USUBO16 : Z80Pseudo<(outs GR16:$d, GR8:$o), (ins GR16:$a, GR16:$r),
+                          [(set GR16:$d, GR8:$o, (Z80usubo GR16:$a, GR16:$r))]>;
+  }
 }
 
 //===----------------------------------------------------------------------===//

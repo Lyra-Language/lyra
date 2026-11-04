@@ -535,8 +535,9 @@ func writeZ80Startup(rom []byte, dataLoad, dataSize, bssStart, bssSize int, addr
 	registerLo, registerHi := word(z80BankRegister)
 	put(z80MultiplyAt, z80MultiplyCode...)
 	put(z80RemainderAt, z80DivideCode...)
-	// __z80_bank(bank in HL, table in DE) -> table in HL.
-	put(z80BankAt, 0x7D, 0x32, registerLo, registerHi, 0x32, shadowLo, shadowHi, 0xEB, 0xC9) // ld a, l; ld (reg), a; ld (shadow), a; ex de, hl; ret
+	// __z80_bank(bank in HL, table in DE) -> table in HL. The copy first: an interrupt between the
+	// two writes puts back the copy, and must find the bank being selected there, not the last.
+	put(z80BankAt, 0x7D, 0x32, shadowLo, shadowHi, 0x32, registerLo, registerHi, 0xEB, 0xC9) // ld a, l; ld (shadow), a; ld (reg), a; ex de, hl; ret
 
 	at := startAt
 	lo, hi = word(z80StackTop)

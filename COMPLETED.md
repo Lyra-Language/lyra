@@ -9,6 +9,15 @@ Newest first.
 
 ## Dated log
 
+### 11/03/26 — Z80 spills: half of a frame's work, down by a quarter
+
+A profile by T-state, not instruction, said spills were 49% of a frame's work. Two changes, and neither is the obvious one of allocating better, since three pairs cannot hold eight values:
+
+- **Fewer**: everything 16-bit wanted HL and a second pair for a constant. Now any pair, expanding after allocation to `add hl, rr` or a byte at a time through A. Equality is its own compare as A's Z is only the high byte's. 14%.
+- **Cheaper**: a spill through IX is 38 T-states and `ld (nn), hl` 16, but a fixed address is only right if a function cannot run twice at once. C compilers ask to be told; a whole game in one module can be proved from the call graph, with an interrupt as a second way in. 15% more, for 184 bytes of RAM here. A wrong proof corrupts silently, so each of its three checks has a test shown to fail with the check removed.
+- **IX in the middle of a large frame** took 346 far-slot sequences of 340 T-states out and 2.2 KB of code, and 1% of a frame. They were cold; counting them had promised far more.
+- **A race found**: the changed timing exposed `__z80_bank` writing the bank register before the copy the interrupt restores, so an interrupt between them left the old bank selected. Copy first.
+
 ### 11/03/26 — Z80 fields through IY
 
 A field through a pointer took `ld de, d; add hl, de; ld r, (hl)` and kept two pairs busy, so IY looked like the next win. It is a pass rather than an allocatable register: one register for every pointer would need spills with no register free to make them, while SSA makes "IY holds %p" a small dataflow problem and it cannot fail allocation. It gained less than predicted, 2–3% on a scene, 8% on `std.sms.music` and about 1 KB, since a game's code has about ten stack-slot accesses for each pointer one: the cost is spills, which the estimate had wrong.

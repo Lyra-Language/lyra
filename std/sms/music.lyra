@@ -10,8 +10,8 @@ module std.sms.music
 //! **Pitch fits 16 bits**: 64ths of a semitone from MIDI 0 reach 127 × 64. Only a period's working
 //! seems to want more, and [period] works it in 16 bits exactly.
 //!
-//! **What it costs** is what it is shaped by: 13,000 to 20,000 T-states of a frame's 59,736 for a
-//! tick with notes sounding and 40,000 to 70,000 for a row's, against about 1,700 with no song. So
+//! **What it costs** is what it is shaped by: 10,000 to 15,000 T-states of a frame's 59,736 for a
+//! tick with notes sounding and 30,000 to 55,000 for a row's, against about 1,700 with no song. So
 //! a voice at rest does nothing, a voice's envelope is kept in it, levels are looked up, and each
 //! channel's pattern is found once an order. Each of those came from measuring.
 

@@ -124,6 +124,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         for level in ("-O2", "-O0"):
             subprocess.check_call([harness.LLC, "-mtriple=z80-unknown-elf", level, "-filetype=obj",
+                                   "-z80-public-functions-are-entries",
                                    harness.RUNTIME, "-o",
                                    os.path.join(tmp, f"rt{level}.o")])
         for i in range(count):
@@ -134,6 +135,7 @@ def main():
             for level in ("-O2", "-O0"):
                 obj = os.path.join(tmp, "f.o")
                 build = subprocess.run([harness.LLC, "-mtriple=z80-unknown-elf", level, "-filetype=obj",
+                                   "-z80-public-functions-are-entries",
                                         ll, "-o", obj], capture_output=True, text=True)
                 if build.returncode:
                     failures += 1

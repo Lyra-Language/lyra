@@ -2,6 +2,7 @@
 #include "Z80.h"
 #include "Z80Subtarget.h"
 #include "MCTargetDesc/Z80MCTargetDesc.h"
+#include "llvm/CodeGen/LiveRegUnits.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineMemOperand.h"
@@ -169,6 +170,20 @@ bool Z80InstrInfo::reverseBranchCondition(
   return false;
 }
 
+// A pair other than HL that nothing needs after MI, to hold a constant for it.
+static Register freePair(MachineInstr &MI) {
+  MachineBasicBlock &MBB = *MI.getParent();
+  const TargetRegisterInfo &TRI = *MBB.getParent()->getSubtarget().getRegisterInfo();
+  LiveRegUnits Live(TRI);
+  Live.addLiveOuts(MBB);
+  for (auto I = MBB.rbegin(); &*I != &MI; ++I)
+    Live.stepBackward(*I);
+  for (Register P : {Z80::DE, Z80::BC})
+    if (Live.available(P))
+      return P;
+  return Register();
+}
+
 bool Z80InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   MachineBasicBlock &MBB = *MI.getParent();
   DebugLoc DL = MI.getDebugLoc();
@@ -181,6 +196,24 @@ bool Z80InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   auto Move = [&](Register D, Register S) {
     if (D != S)
       BuildTo(Z80::LD8rr, D).addReg(S);
+  };
+  // A pair's two bytes combined with a pair's or a constant's, through A: flags as `LoOp` then
+  // `HiOp` leave them, which `ld` does not touch.
+  auto Through = [&](unsigned LoOp, unsigned HiOp, Register D, Register R) {
+    Move(Z80::A, Lo(D));
+    BuildTo(LoOp, Z80::A).addReg(Z80::A).addReg(Lo(R));
+    Move(Lo(D), Z80::A);
+    Move(Z80::A, Hi(D));
+    BuildTo(HiOp, Z80::A).addReg(Z80::A).addReg(Hi(R));
+    Move(Hi(D), Z80::A);
+  };
+  auto ThroughImm = [&](unsigned LoOp, unsigned HiOp, Register D, int64_t N) {
+    Move(Z80::A, Lo(D));
+    BuildTo(LoOp, Z80::A).addReg(Z80::A).addImm(N & 0xFF);
+    Move(Lo(D), Z80::A);
+    Move(Z80::A, Hi(D));
+    BuildTo(HiOp, Z80::A).addReg(Z80::A).addImm((N >> 8) & 0xFF);
+    Move(Hi(D), Z80::A);
   };
   // `op` of a pair's byte, the result staying in that byte: read through A.
   auto ByteOp = [&](unsigned Opc, Register D, Register S) {
@@ -218,15 +251,15 @@ bool Z80InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   case Z80::LD16rf: {
     Register D = MI.getOperand(0).getReg();
     int64_t Disp = MI.getOperand(2).getImm();
-    BuildTo(Z80::LD8rf, Lo(D)).addReg(Z80::IX).addImm(Disp);
-    BuildTo(Z80::LD8rf, Hi(D)).addReg(Z80::IX).addImm(Disp + 1);
+    BuildTo(Z80::LD8rf, Lo(D)).addReg(Z80::IX).addImm(Disp).cloneMemRefs(MI);
+    BuildTo(Z80::LD8rf, Hi(D)).addReg(Z80::IX).addImm(Disp + 1).cloneMemRefs(MI);
     break;
   }
   case Z80::ST16fr: {
     int64_t Disp = MI.getOperand(1).getImm();
     Register S = MI.getOperand(2).getReg();
-    Build(Z80::ST8fr).addReg(Z80::IX).addImm(Disp).addReg(Lo(S));
-    Build(Z80::ST8fr).addReg(Z80::IX).addImm(Disp + 1).addReg(Hi(S));
+    Build(Z80::ST8fr).addReg(Z80::IX).addImm(Disp).addReg(Lo(S)).cloneMemRefs(MI);
+    Build(Z80::ST8fr).addReg(Z80::IX).addImm(Disp + 1).addReg(Hi(S)).cloneMemRefs(MI);
     break;
   }
   case Z80::LD16ry: {
@@ -248,21 +281,131 @@ bool Z80InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     Build(Z80::POPIY);
     break;
   case Z80::LEA16:
-    // SP and IX are the same through the body, and SP takes no 8-bit limit on the offset.
+    // From SP, which takes no 8-bit limit on the offset.
     BuildTo(Z80::LD16ri, Z80::HL).addImm(MI.getOperand(2).getImm() & 0xFFFF);
     BuildTo(Z80::ADDHLSP, Z80::HL).addReg(Z80::HL);
     break;
   case Z80::CP16: {
-    Register B = MI.getOperand(1).getReg();
-    Build(Z80::ORAA);
-    BuildTo(Z80::SBC16, Z80::HL).addReg(Z80::HL).addReg(B);
-    BuildTo(Z80::ADD16, Z80::HL).addReg(Z80::HL).addReg(B);
+    Register X = MI.getOperand(0).getReg(), Y = MI.getOperand(1).getReg();
+    Move(Z80::A, Lo(X));
+    BuildTo(Z80::SUB8r, Z80::A).addReg(Z80::A).addReg(Lo(Y));
+    Move(Z80::A, Hi(X));
+    BuildTo(Z80::SBC8r, Z80::A).addReg(Z80::A).addReg(Hi(Y));
     break;
   }
-  case Z80::SUB16: {
-    Register R = MI.getOperand(2).getReg();
-    Build(Z80::ORAA);
-    BuildTo(Z80::SBC16, Z80::HL).addReg(Z80::HL).addReg(R);
+  case Z80::CP16i: {
+    Register X = MI.getOperand(0).getReg();
+    int64_t N = MI.getOperand(1).getImm();
+    Move(Z80::A, Lo(X));
+    BuildTo(Z80::SUB8i, Z80::A).addReg(Z80::A).addImm(N & 0xFF);
+    Move(Z80::A, Hi(X));
+    BuildTo(Z80::SBC8i, Z80::A).addReg(Z80::A).addImm((N >> 8) & 0xFF);
+    break;
+  }
+  case Z80::CPEQ16i: {
+    // With a zero byte in the constant, `or` of what is left says it all. Otherwise the printer.
+    Register X = MI.getOperand(0).getReg();
+    int64_t N = MI.getOperand(1).getImm() & 0xFFFF;
+    if ((N >> 8) == 0) {
+      Move(Z80::A, Lo(X));
+      BuildTo(Z80::XOR8i, Z80::A).addReg(Z80::A).addImm(N);
+      BuildTo(Z80::OR8r, Z80::A).addReg(Z80::A).addReg(Hi(X));
+    } else if ((N & 0xFF) == 0) {
+      Move(Z80::A, Hi(X));
+      BuildTo(Z80::XOR8i, Z80::A).addReg(Z80::A).addImm(N >> 8);
+      BuildTo(Z80::OR8r, Z80::A).addReg(Z80::A).addReg(Lo(X));
+    } else {
+      return false;
+    }
+    break;
+  }
+  case Z80::ADD16p: {
+    Register D = MI.getOperand(0).getReg(), R = MI.getOperand(2).getReg();
+    if (D == Z80::HL)
+      BuildTo(Z80::ADD16, Z80::HL).addReg(Z80::HL).addReg(R);
+    else
+      Through(Z80::ADD8r, Z80::ADC8r, D, R);
+    break;
+  }
+  case Z80::ADC16p: {
+    Register D = MI.getOperand(0).getReg(), R = MI.getOperand(2).getReg();
+    if (D == Z80::HL)
+      BuildTo(Z80::ADC16, Z80::HL).addReg(Z80::HL).addReg(R);
+    else
+      Through(Z80::ADC8r, Z80::ADC8r, D, R);
+    break;
+  }
+  case Z80::SUB16p: {
+    Register D = MI.getOperand(0).getReg(), R = MI.getOperand(2).getReg();
+    if (D == Z80::HL) {
+      Build(Z80::ORAA);
+      BuildTo(Z80::SBC16, Z80::HL).addReg(Z80::HL).addReg(R);
+    } else {
+      Through(Z80::SUB8r, Z80::SBC8r, D, R);
+    }
+    break;
+  }
+  case Z80::SBC16p: {
+    Register D = MI.getOperand(0).getReg(), R = MI.getOperand(2).getReg();
+    if (D == Z80::HL)
+      BuildTo(Z80::SBC16, Z80::HL).addReg(Z80::HL).addReg(R);
+    else
+      Through(Z80::SBC8r, Z80::SBC8r, D, R);
+    break;
+  }
+  case Z80::SADD16p: {
+    Register D = MI.getOperand(0).getReg(), R = MI.getOperand(2).getReg();
+    if (D == Z80::HL) {
+      Build(Z80::ORAA);
+      BuildTo(Z80::ADC16, Z80::HL).addReg(Z80::HL).addReg(R);
+    } else {
+      Through(Z80::ADD8r, Z80::ADC8r, D, R);
+    }
+    break;
+  }
+  case Z80::ADD16i: {
+    Register D = MI.getOperand(0).getReg();
+    int64_t N = MI.getOperand(2).getImm() & 0xFFFF;
+    // A whole number of 256s is the high byte alone.
+    if ((N & 0xFF) == 0) {
+      Move(Z80::A, Hi(D));
+      BuildTo(Z80::ADD8i, Z80::A).addReg(Z80::A).addImm(N >> 8);
+      Move(Hi(D), Z80::A);
+    } else if (D == Z80::HL && freePair(MI)) {
+      // 21 T-states where nothing lives in the other pair, against 30.
+      Register Free = freePair(MI);
+      BuildTo(Z80::LD16ri, Free).addImm(N);
+      BuildTo(Z80::ADD16, Z80::HL).addReg(Z80::HL).addReg(Free);
+    } else {
+      ThroughImm(Z80::ADD8i, Z80::ADC8i, D, N);
+    }
+    break;
+  }
+  case Z80::CADD16i:
+    ThroughImm(Z80::ADD8i, Z80::ADC8i, MI.getOperand(0).getReg(), MI.getOperand(2).getImm());
+    break;
+  case Z80::CSUB16i:
+    ThroughImm(Z80::SUB8i, Z80::SBC8i, MI.getOperand(0).getReg(), MI.getOperand(2).getImm());
+    break;
+  case Z80::AND16i:
+  case Z80::OR16i:
+  case Z80::XOR16i: {
+    unsigned Op = MI.getOpcode();
+    unsigned Opc = Op == Z80::AND16i ? Z80::AND8i : Op == Z80::OR16i ? Z80::OR8i : Z80::XOR8i;
+    int64_t Same = Op == Z80::AND16i ? 0xFF : 0;
+    Register D = MI.getOperand(0).getReg();
+    int64_t N = MI.getOperand(2).getImm() & 0xFFFF;
+    for (auto [Byte, Part] : {std::pair<Register, int64_t>{Lo(D), N & 0xFF}, {Hi(D), N >> 8}}) {
+      if (Part == Same)
+        continue;
+      if (Op == Z80::AND16i && Part == 0) {
+        BuildTo(Z80::LD8ri, Byte).addImm(0);
+        continue;
+      }
+      Move(Z80::A, Byte);
+      BuildTo(Opc, Z80::A).addReg(Z80::A).addImm(Part);
+      Move(Byte, Z80::A);
+    }
     break;
   }
   case Z80::AND16:
@@ -305,12 +448,6 @@ bool Z80InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   case Z80::TESTS16:
     Build(Z80::BIT7r).addReg(Hi(MI.getOperand(0).getReg()));
     break;
-  case Z80::SADD16: {
-    Register R = MI.getOperand(2).getReg();
-    Build(Z80::ORAA);
-    BuildTo(Z80::ADC16, Z80::HL).addReg(Z80::HL).addReg(R);
-    break;
-  }
   case Z80::SADDO8:
   case Z80::SSUBO8:
   case Z80::UADDO8:
@@ -329,14 +466,15 @@ bool Z80InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
       BuildTo(Z80::ADD8r, Z80::A).addReg(Z80::A).addReg(R);
     } else if (Op == Z80::SSUBO8 || Op == Z80::USUBO8) {
       BuildTo(Z80::SUB8r, Z80::A).addReg(Z80::A).addReg(R);
-    } else if (Op == Z80::SADDO16) {
-      Build(Z80::ORAA);
-      BuildTo(Z80::ADC16, Z80::HL).addReg(Z80::HL).addReg(R);
-    } else if (Op == Z80::UADDO16) {
-      BuildTo(Z80::ADD16, Z80::HL).addReg(Z80::HL).addReg(R);
     } else {
-      Build(Z80::ORAA);
-      BuildTo(Z80::SBC16, Z80::HL).addReg(Z80::HL).addReg(R);
+      Register D = MI.getOperand(0).getReg();
+      bool Adds = Op == Z80::SADDO16 || Op == Z80::UADDO16;
+      if (D != Z80::HL) {
+        Through(Adds ? Z80::ADD8r : Z80::SUB8r, Adds ? Z80::ADC8r : Z80::SBC8r, D, R);
+      } else {
+        Build(Z80::ORAA);
+        BuildTo(Adds ? Z80::ADC16 : Z80::SBC16, Z80::HL).addReg(Z80::HL).addReg(R);
+      }
     }
     bool Signed = Op == Z80::SADDO8 || Op == Z80::SSUBO8 || Op == Z80::SADDO16 || Op == Z80::SSUBO16;
     Cond = Signed ? Z80CC::PE : Z80CC::C;

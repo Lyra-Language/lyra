@@ -154,7 +154,7 @@ def main():
             for path in files:
                 obj = os.path.join(tmp, f"t{level}.o")
                 subprocess.check_call([LLC, "-mtriple=z80-unknown-elf", level, "-filetype=obj",
-                                       path, "-o", obj])
+                                       "-z80-public-functions-are-entries", path, "-o", obj])
                 # What pointers.ll is for: the fields going through IY, not around it.
                 if path.endswith("pointers.ll"):
                     asm = subprocess.check_output([LLC, "-mtriple=z80-unknown-elf", level,

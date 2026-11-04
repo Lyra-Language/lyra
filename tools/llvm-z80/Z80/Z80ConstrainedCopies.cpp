@@ -58,10 +58,10 @@ static bool jumpOnFlag(MachineInstr &MI, const TargetInstrInfo &TII, MachineRegi
   case Z80::SSUBO8: Real = Z80::SUB8r; Cond = Z80CC::PE; break;
   case Z80::UADDO8: Real = Z80::ADD8r; Cond = Z80CC::C; break;
   case Z80::USUBO8: Real = Z80::SUB8r; Cond = Z80CC::C; break;
-  case Z80::SADDO16: Real = Z80::SADD16; Cond = Z80CC::PE; break;
-  case Z80::SSUBO16: Real = Z80::SUB16; Cond = Z80CC::PE; break;
-  case Z80::UADDO16: Real = Z80::ADD16; Cond = Z80CC::C; break;
-  case Z80::USUBO16: Real = Z80::SUB16; Cond = Z80CC::C; break;
+  case Z80::SADDO16: Real = Z80::SADD16p; Cond = Z80CC::PE; break;
+  case Z80::SSUBO16: Real = Z80::SUB16p; Cond = Z80CC::PE; break;
+  case Z80::UADDO16: Real = Z80::ADD16p; Cond = Z80CC::C; break;
+  case Z80::USUBO16: Real = Z80::SUB16p; Cond = Z80CC::C; break;
   default:
     return false;
   }
@@ -108,9 +108,23 @@ static bool jumpOnFlag(MachineInstr &MI, const TargetInstrInfo &TII, MachineRegi
   Test->eraseFromParent();
   for (MachineInstr *Copy : llvm::reverse(Dead))
     Copy->eraseFromParent();
+  // A constant goes in the instruction, and its pair stays free.
+  Register Right = MI.getOperand(3).getReg();
+  MachineInstr *Constant = Right.isVirtual() ? MRI.getUniqueVRegDef(Right) : nullptr;
+  bool Word = Real == Z80::SADD16p || Real == Z80::ADD16p || Real == Z80::SUB16p;
+  if (Word && Constant && Constant->getOpcode() == Z80::LD16ri && Constant->getOperand(1).isImm()) {
+    BuildMI(MBB, MI, MI.getDebugLoc(), TII.get(Real == Z80::SUB16p ? Z80::CSUB16i : Z80::CADD16i),
+            MI.getOperand(0).getReg())
+        .addReg(MI.getOperand(2).getReg())
+        .addImm(Constant->getOperand(1).getImm());
+    MI.eraseFromParent();
+    if (MRI.use_nodbg_empty(Right))
+      Constant->eraseFromParent();
+    return true;
+  }
   BuildMI(MBB, MI, MI.getDebugLoc(), TII.get(Real), MI.getOperand(0).getReg())
       .addReg(MI.getOperand(2).getReg())
-      .addReg(MI.getOperand(3).getReg());
+      .addReg(Right);
   MI.eraseFromParent();
   return true;
 }

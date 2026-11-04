@@ -31,6 +31,10 @@ public:
       emitSetCC(MI);
       return;
     }
+    if (MI->getOpcode() == Z80::CPEQ16 || MI->getOpcode() == Z80::CPEQ16i) {
+      emitEquals(MI);
+      return;
+    }
     MCInst Out;
     Out.setOpcode(MI->getOpcode());
     for (const MachineOperand &MO : MI->operands()) {
@@ -70,6 +74,35 @@ private:
     plainJump(symbol(Past, 0));
     OutStreamer->emitLabel(Overflowed);
     jump(Less ? Z80CC::P : Z80CC::M, Target);
+    OutStreamer->emitLabel(Past);
+  }
+
+  // Z of the whole: the low bytes, and if those match the high.
+  void emitEquals(const MachineInstr *MI) {
+    const TargetRegisterInfo &TRI = *MI->getMF()->getSubtarget().getRegisterInfo();
+    Register X = MI->getOperand(0).getReg();
+    MCSymbol *Past = OutContext.createTempSymbol();
+    auto Compare = [&](unsigned Sub, int Shift) {
+      MCInst Load;
+      Load.setOpcode(Z80::LD8rr);
+      Load.addOperand(MCOperand::createReg(Z80::A));
+      Load.addOperand(MCOperand::createReg(TRI.getSubReg(X, Sub)));
+      EmitToStreamer(*OutStreamer, Load);
+      MCInst Cp;
+      if (MI->getOpcode() == Z80::CPEQ16) {
+        Cp.setOpcode(Z80::CP8r);
+        Cp.addOperand(MCOperand::createReg(Z80::A));
+        Cp.addOperand(MCOperand::createReg(TRI.getSubReg(MI->getOperand(1).getReg(), Sub)));
+      } else {
+        Cp.setOpcode(Z80::CP8i);
+        Cp.addOperand(MCOperand::createReg(Z80::A));
+        Cp.addOperand(MCOperand::createImm((MI->getOperand(1).getImm() >> Shift) & 0xFF));
+      }
+      EmitToStreamer(*OutStreamer, Cp);
+    };
+    Compare(Z80::sub_lo, 0);
+    jump(Z80CC::NZ, symbol(Past, 0));
+    Compare(Z80::sub_hi, 8);
     OutStreamer->emitLabel(Past);
   }
 

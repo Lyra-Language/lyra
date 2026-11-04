@@ -206,6 +206,41 @@ let main = () -> void => {
 	}
 }
 
+// Nothing but selecting banks, so an interrupt lands inside `__z80_bank`, between its writes of the
+// register and of the copy the interrupt puts back. In the wrong order that left the last bank
+// selected, and a table read from it.
+func TestSMS_AnInterruptInsideABankSwitchLeavesTheRightBank(t *testing.T) {
+	t.Parallel()
+	got := smsProgramScreen(t, "bank_switches", `
+@banked const FIRST: [14000]u8 = #[11; 14000]
+@banked const SECOND: [14000]u8 = #[22; 14000]
+@banked const THIRD: [14000]u8 = #[33; 14000]
+@banked const FOURTH: [14000]u8 = #[44; 14000]
+
+var frames: u16 = 0
+var wrong: u16 = 0
+
+@interrupt(vblank)
+let each_frame = () -> void => {
+  frames += 1
+  if THIRD[100] != 33 { wrong += 1 }
+}
+
+let main = () -> void => {
+  vdp.init()
+  vdp.interrupt_each_frame()
+  var i: i16 = 0
+  while frames < 200 {
+    if FIRST[i & 255] != 11 || SECOND[i & 255] != 22 || FOURTH[i & 255] != 44 { wrong += 1 }
+    i += 1
+  }
+  answer(wrong == 0)
+}`)
+	if got != smsGreen {
+		t.Errorf("the screen is %s, want green (%s); red is a table read from the wrong bank", got, smsGreen)
+	}
+}
+
 // The example: a cartridge larger than the Z80 sees, its size and checksum as the header says, and
 // a table's own colour on the screen, red until a button brings the next table's.
 func TestSMS_ABankedCartridgeIsWhatItsHeaderSays(t *testing.T) {
@@ -482,6 +517,100 @@ let main = () -> void => {
     i += 1
   }
   answer(all_right)
+}`},
+		// A function both the game and the handler call could be running twice at once, so its
+		// spills cannot be at fixed addresses. Each answer is held to one made before interrupts.
+		{"interrupt_shares_a_function", `
+var seeds: [8]i16 = #[3, 5, 7, 11, 13, 17, 19, 23]
+var answers: [16]i16 = #[0; 16]
+var frames: u16 = 0
+var handler_right = true
+let crowded = (n: i16) -> i16 => {
+  let a = seeds[n & 7] + n
+  let b = seeds[(n + 1) & 7] + a
+  let c = seeds[(n + 2) & 7] + b
+  let d = seeds[(n + 3) & 7] + c
+  let e = seeds[(n + 4) & 7] + (a ~ d)
+  let f = seeds[(n + 5) & 7] + (b | e)
+  let g = seeds[(n + 6) & 7] + (c & f)
+  let h = seeds[(n + 7) & 7] + (d ~ g)
+  let i = (a + h) ~ (b + g)
+  let j = (c + f) ~ (d + e)
+  a + (b ~ c) + (d & e) + (f | g) + (h ~ i) + j + (a ~ j) + (b + i) + (c ~ h) + (d + g) + (e ~ f)
+}
+@interrupt(vblank)
+let each_frame = () -> void => {
+  frames += 1
+  let n = i16(frames & 15)
+  handler_right = handler_right && crowded(n) == answers[n]
+}
+let main = () -> void => {
+  vdp.init()
+  var k: i16 = 0
+  while k < 16 {
+    answers[k] = crowded(k)
+    k += 1
+  }
+  vdp.interrupt_each_frame()
+  var i: i16 = 0
+  var all_right = true
+  while frames < 60 {
+    all_right = all_right && crowded(i & 15) == answers[i & 15]
+    i += 1
+  }
+  answer(all_right && handler_right)
+}`},
+		// The game's own function, with its spills at fixed addresses, and a handler that has its own.
+		{"interrupt_leaves_fixed_spills", `
+var seeds: [8]i16 = #[3, 5, 7, 11, 13, 17, 19, 23]
+var answers: [16]i16 = #[0; 16]
+var frames: u16 = 0
+var handler_right = true
+let crowded = (n: i16) -> i16 => {
+  let a = seeds[n & 7] + n
+  let b = seeds[(n + 1) & 7] + a
+  let c = seeds[(n + 2) & 7] + b
+  let d = seeds[(n + 3) & 7] + c
+  let e = seeds[(n + 4) & 7] + (a ~ d)
+  let f = seeds[(n + 5) & 7] + (b | e)
+  let g = seeds[(n + 6) & 7] + (c & f)
+  let h = seeds[(n + 7) & 7] + (d ~ g)
+  let i = (a + h) ~ (b + g)
+  let j = (c + f) ~ (d + e)
+  a + (b ~ c) + (d & e) + (f | g) + (h ~ i) + j + (a ~ j) + (b + i) + (c ~ h) + (d + g) + (e ~ f)
+}
+let its_own = (n: i16) -> i16 => {
+  let a = seeds[n & 7] + n
+  let b = seeds[(n + 1) & 7] + a
+  let c = seeds[(n + 2) & 7] + b
+  let d = seeds[(n + 3) & 7] + c
+  let e = seeds[(n + 4) & 7] + (a ~ d)
+  let f = seeds[(n + 5) & 7] + (b | e)
+  let g = seeds[(n + 6) & 7] + (c & f)
+  let h = seeds[(n + 7) & 7] + (d ~ g)
+  a + (b ~ c) + (d & e) + (f | g) + (h ~ a) + (e ~ b) + (g + c) + (f ~ d)
+}
+var handled: i16 = 0
+@interrupt(vblank)
+let each_frame = () -> void => {
+  frames += 1
+  handled = its_own(i16(frames & 15))
+}
+let main = () -> void => {
+  vdp.init()
+  var k: i16 = 0
+  while k < 16 {
+    answers[k] = crowded(k)
+    k += 1
+  }
+  vdp.interrupt_each_frame()
+  var i: i16 = 0
+  var all_right = true
+  while frames < 60 {
+    all_right = all_right && crowded(i & 15) == answers[i & 15]
+    i += 1
+  }
+  answer(all_right && handled != 0)
 }`},
 		{"interrupt", `
 var frames: u16 = 0

@@ -18,6 +18,7 @@ add_llvm_target(Z80CodeGen
   Z80ConstrainedCopies.cpp
   Z80NarrowLoops.cpp
   Z80PointerBase.cpp
+  Z80StaticSpills.cpp
   Z80FrameLowering.cpp
   Z80InstrInfo.cpp
   Z80ISelDAGToDAG.cpp

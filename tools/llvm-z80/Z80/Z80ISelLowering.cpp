@@ -105,6 +105,20 @@ SDValue Z80TargetLowering::compare(SDValue LHS, SDValue RHS, ISD::CondCode CC,
     default: break;
     }
   }
+  // Past a constant is at or past the next, with no need to turn the operands around.
+  if (auto *K = dyn_cast<ConstantSDNode>(RHS)) {
+    uint64_t Bits = LHS.getValueSizeInBits();
+    APInt V = K->getAPIntValue();
+    bool Signed = CC == ISD::SETGT || CC == ISD::SETLE;
+    bool Unsigned = CC == ISD::SETUGT || CC == ISD::SETULE;
+    if ((Signed && !V.isMaxSignedValue()) || (Unsigned && !V.isMaxValue())) {
+      RHS = DAG.getConstant(V + 1, DL, EVT::getIntegerVT(*DAG.getContext(), Bits));
+      CC = CC == ISD::SETGT    ? ISD::SETGE
+           : CC == ISD::SETLE  ? ISD::SETLT
+           : CC == ISD::SETUGT ? ISD::SETUGE
+                               : ISD::SETULT;
+    }
+  }
   switch (CC) {
   // S and V differing is "less": the printer writes the jumps for LT and GE.
   case ISD::SETLT: Cond = Z80CC::LT; break;
@@ -119,6 +133,9 @@ SDValue Z80TargetLowering::compare(SDValue LHS, SDValue RHS, ISD::CondCode CC,
   case ISD::SETULE: std::swap(LHS, RHS); Cond = Z80CC::NC; break;
   default: llvm_unreachable("a condition an integer compare does not have");
   }
+  // Through A a whole's Z is not the high byte's: equality of a pair is its own compare.
+  if (LHS.getValueType() == MVT::i16 && (CC == ISD::SETEQ || CC == ISD::SETNE))
+    return DAG.getNode(Z80ISD::CMPEQ, DL, MVT::Glue, LHS, RHS);
   return DAG.getNode(Z80ISD::CMP, DL, MVT::Glue, LHS, RHS);
 }
 

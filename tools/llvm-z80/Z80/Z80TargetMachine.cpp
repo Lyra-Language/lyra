@@ -15,6 +15,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeZ80Target() {
   initializeZ80AsmPrinterPass(PR);
   initializeZ80ConstrainedCopiesPass(PR);
   initializeZ80PointerBasePass(PR);
+  initializeZ80StaticSpillsPass(PR);
   initializeZ80NarrowLoopsPass(PR);
   initializeZ80DAGToDAGISelLegacyPass(PR);
 }
@@ -55,6 +56,8 @@ public:
     addPass(createZ80PointerBase());
     addPass(createZ80ConstrainedCopies());
   }
+
+  void addPostRegAlloc() override { addPass(createZ80StaticSpills()); }
 
   // The fast allocator cannot satisfy instructions that each want HL or A; -O0 is no
   // different a program to allocate.

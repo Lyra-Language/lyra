@@ -50,8 +50,9 @@ static void moveIX(MachineBasicBlock &MBB, MachineBasicBlock::iterator I, int64_
   BuildMI(MBB, I, DL, TII.get(Z80::POPAF));
 }
 
-// IX is the stack pointer's value through a function's body, so a slot's displacement is from
-// the frame's bottom: its offset from the entry SP, the frame's size, and the saved IX.
+// IX is the stack pointer's value through a function's body, or a fixed distance above it in a
+// large frame (Z80FrameLowering), so a slot's displacement is from there: its offset from the
+// entry SP, the frame's size and the saved IX, less that distance. LEA16 counts from SP itself.
 bool Z80RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int,
                                           unsigned FIOperandNum,
                                           RegScavenger *) const {
@@ -62,6 +63,8 @@ bool Z80RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int,
   int64_t Disp = MFI.getObjectOffset(FI) + MFI.getStackSize() + 2 +
                  MI.getOperand(FIOperandNum + 1).getImm();
   // A 16-bit access reads the displacement and the one after it.
+  if (MI.getOpcode() != Z80::LEA16)
+    Disp -= MFI.getOffsetAdjustment();
   bool Wide = MI.getOpcode() == Z80::LD16rf || MI.getOpcode() == Z80::ST16fr;
   if (MI.getOpcode() != Z80::LEA16 && (Disp < -128 || Disp + Wide > 127)) {
     moveIX(*MI.getParent(), II, Disp);
