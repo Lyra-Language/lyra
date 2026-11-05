@@ -87,6 +87,11 @@ impl Collider {
   pub let flipped = pure (self, height: f32) -> Collider =>
     Collider { self | shape: self.shape.flipped(height) }
 
+  /// The collider with its shape grown `scale` times about the middle of an owner `width` ×
+  /// `height`, as `std.game.sprites` grows the owner's picture.
+  pub let scaled = pure (self, scale: f32, width: f32, height: f32) -> Collider =>
+    Collider { self | shape: self.shape.scaled(scale, width, height) }
+
   /// Whether this collider on something at (`x`, `y`) meets one of `others` it looks for —
   /// colliders placed in the world itself, at its origin: a map's own shapes, in the map's
   /// pixels. One-sided, as [meets] is.
@@ -340,6 +345,15 @@ impl Shape {
   /// The shape flipped top to bottom on an owner `height` tall.
   pub let flipped = pure (self, height: f32) -> Shape =>
     Shape { self | y: height - self.y - self.height }
+
+  /// The shape grown `scale` times about the middle of an owner `width` × `height`.
+  pub let scaled = pure (self, scale: f32, width: f32, height: f32) -> Shape => Shape {
+    self |
+    x: width / 2.0 + (self.x - width / 2.0) * scale,
+    y: height / 2.0 + (self.y - height / 2.0) * scale,
+    width: self.width * scale,
+    height: self.height * scale
+  }
 
   /// Whether the shape on something at (`x`, `y`) overlaps a shape of any of a tile map's
   /// cells — [Collider]'s `hits_map`, for shapes on no layers.

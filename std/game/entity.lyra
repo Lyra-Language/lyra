@@ -29,6 +29,11 @@ module std.game.entity
 //!
 //! **Meeting is one-sided**, as `std.game.collision` says: `a.meets(b)` asks whether a
 //! collider of `a` looks for a layer one of `b`'s is on, whatever `b` looks for.
+//!
+//! **An entity turns and grows about its middle** (`angle` in degrees, `scale`), as a modern
+//! sprite does: its colliders grow with it, but keep their shapes as it turns — a box turned is
+//! no box, and a game of this kind seldom wants one. Grown against a map, its colliders follow
+//! once that would not put one into a wall, as turning to face the other way does.
 
 import std.game.collision.{ Shape, Collider, TILE }
 
@@ -100,6 +105,14 @@ pub struct Entity {
   /// Which way its colliders face against a map: `mirrored`'s once turning would not put
   /// one into a tile it looks for — turning beside a wall must not push it in.
   hit_mirrored: bool,
+  /// Turned clockwise about its middle, in degrees: its picture only, as its colliders keep
+  /// their shapes.
+  angle: f32 = 0.0,
+  /// Drawn this many times its size about its middle, and its colliders with it.
+  scale: f32 = 1.0,
+  /// How big its colliders are against a map: `scale`'s once growing would not put one into
+  /// a tile it looks for, as [hit_mirrored] follows turning.
+  hit_scale: f32 = 1.0,
   /// Drawn this frame: the game's assets set it as they draw it (`play`, `draw`), and a
   /// scene's `draw` skips it and clears it, so an entity played is not drawn twice.
   drawn: bool = false,
@@ -204,6 +217,7 @@ impl Entity {
       self.fy,
       self.fy,
       self.mirrored,
+      self.hit_scale,
       cells,
       width,
       first_tile,
@@ -213,6 +227,23 @@ impl Entity {
       map_shapes
     ) {
       self.hit_mirrored = self.mirrored
+    }
+    // Grown: its colliders grow too, the same way.
+    if (self.hit_scale < self.scale || self.hit_scale > self.scale) && !self.kind.hits_tiles(
+      self.fx,
+      self.fy,
+      self.fy,
+      self.hit_mirrored,
+      self.scale,
+      cells,
+      width,
+      first_tile,
+      starts,
+      shapes,
+      bands,
+      map_shapes
+    ) {
+      self.hit_scale = self.scale
     }
     // An axis not moving is not tested.
     if nonzero(self.vx) {
@@ -224,6 +255,7 @@ impl Entity {
         self.fy,
         self.fy,
         self.hit_mirrored,
+        self.hit_scale,
         cells,
         width,
         first_tile,
@@ -248,6 +280,7 @@ impl Entity {
         ny,
         self.fy,
         self.hit_mirrored,
+        self.hit_scale,
         cells,
         width,
         first_tile,
@@ -310,14 +343,12 @@ impl Entity {
   }
 
   /// Whether it meets `other`: one of its colliders looks for a layer one of `other`'s is on,
-  /// and their shapes overlap — each mirrored as its entity faces.
+  /// and their shapes overlap — each mirrored as its entity faces, and grown as it is.
   pub let meets = pure (self: ref, other: ref Entity) -> bool => {
     for i in 0..<self.kind.collider_count {
-      let ac = self.kind.colliders[i]
-      let a = if self.mirrored { ac.mirrored(self.kind.width) } else { ac }
+      let a = self.kind.placed(self.kind.colliders[i], self.mirrored, self.scale)
       for j in 0..<other.kind.collider_count {
-        let bc = other.kind.colliders[j]
-        let b = if other.mirrored { bc.mirrored(other.kind.width) } else { bc }
+        let b = other.kind.placed(other.kind.colliders[j], other.mirrored, other.scale)
         if a.meets(self.fx, self.fy, b, other.fx, other.fy) { return true }
       }
     }
@@ -348,7 +379,7 @@ impl EntityKind {
   }
 
   /// Whether an entity of this kind moved to (`x`, `y`) from (`x`, `from_y`), mirrored or
-  /// not, is stopped by a tile of the map, or one of the map's own colliders, on a layer one
+  /// not and grown `scale` times, is stopped by a tile of the map, or one of the map's own colliders, on a layer one
   /// of its colliders looks for (a one-way collider only from above). A move across, or no
   /// move, passes `from_y` = `y`, which no one-way collider stops.
   let hits_tiles<const N: i64, const M: i64, const K: i64, const B: i64, const P: i64> = pure (
@@ -357,6 +388,7 @@ impl EntityKind {
     y: f32,
     from_y: f32,
     mirrored: bool,
+    scale: f32,
     cells: ref [N]u32,
     width: i64,
     first_tile: u32,
@@ -368,9 +400,8 @@ impl EntityKind {
     // Tiles that carry no shapes — a map whose collision is its own — are not walked.
     let tiled = starts[starts.len() - 1] != 0
     for i in 0..<self.collider_count {
-      let c = self.colliders[i]
-      let placed = if mirrored { c.mirrored(self.width) } else { c }
-      if tiled && placed.hits_map_moving(
+      let held = self.placed(self.colliders[i], mirrored, scale)
+      if tiled && held.hits_map_moving(
         x,
         y,
         from_y,
@@ -382,9 +413,21 @@ impl EntityKind {
       ) {
         return true
       }
-      if placed.hits_banded_moving(x, y, from_y, bands, map_shapes) { return true }
+      if held.hits_banded_moving(x, y, from_y, bands, map_shapes) { return true }
     }
     false
+  }
+}
+
+impl EntityKind {
+  /// One of its colliders as an entity of the kind has it: mirrored as it faces, grown as it is.
+  let placed = pure (self: ref, c: Collider, mirrored: bool, scale: f32) -> Collider => {
+    let facing = if mirrored { c.mirrored(self.width) } else { c }
+    if scale >= 1.0 && scale <= 1.0 { facing } else { facing.scaled(
+      scale,
+      self.width,
+      self.height
+    ) }
   }
 }
 

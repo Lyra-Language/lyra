@@ -334,6 +334,28 @@ let main = () -> u8 => {
   for _ in 0..<10 { stick.push(1.0, 0.0) }
   stick.push(0.5, 0.0)
   if !near(stick.vx, 1.0) { return 43 }
+
+  // Grown about the middle: the hero's feet, 2..12 and 12..16 of 16, twice the size are -4..16
+  // and 16..24, reaching a star at 15, 10 that they did not. Looking for its layer, as
+  // looking above does.
+  var big = HERO.spawn(0.0, 0.0)
+  big.kind.colliders[0].mask = 8
+  let star_beside = STAR.spawn(15.0, 10.0)
+  if big.meets(star_beside) { return 44 }
+  big.scale = 2.0
+  if !big.meets(star_beside) { return 45 }
+  // Turned, its colliders keep their shapes.
+  big.angle = 90.0
+  if !big.meets(star_beside) { return 46 }
+  // Against the wall, its colliders wait to grow, as turning waits; clear of it, they grow.
+  walled.scale = 2.0
+  walled.move_in_with(empty, 4, 1, starts, tiles, one_band, wall, false)
+  if !near(walled.hit_scale, 1.0) || !near(walled.x(), 8.0) { return 47 }
+  for _ in 0..<10 {
+    walled.push(-1.0, 0.0)
+    walled.move_in_with(empty, 4, 1, starts, tiles, one_band, wall, false)
+  }
+  if !near(walled.hit_scale, 2.0) { return 48 }
   0
 }
 `), 0o644); err != nil {
