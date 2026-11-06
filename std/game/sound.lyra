@@ -33,6 +33,10 @@ import std.chips.resample.{ Resampler, new_resampler }
 /// The rate a game's sound is heard at, in samples a second.
 pub const RATE: i64 = 48000
 
+/// Samples in one update — `std.game.screen.UPDATES_PER_SECOND`, 60 a second,
+/// which the players step at: a sound effect's step, a song's tick.
+const UPDATE_SAMPLES: i64 = RATE / 60
+
 /// The PSG's clock, as the Sega consoles feed it (their Z80's): what pitches an effect's
 /// periods, so a period is the same note here.
 pub const PSG_CLOCK: i64 = 3579545
@@ -103,7 +107,7 @@ pub let update_music<const N: i64, const P: i64, const S: i64, d> where d: Music
     synth.play_sample(dac, [k in from..<to | samples[k]])
   }
   synth.follow(dac)
-  heard(synth.run(RATE / 60))
+  heard(synth.run(UPDATE_SAMPLES))
 }
 
 /// An update's samples to the device, or kept for the WAV.
@@ -188,7 +192,7 @@ impl Synth {
   ) -> []f32 => {
     for i in 0..<n.min(8) { self.psg.write(bytes[i]) }
     for i in 0..<writes.min(42) { self.write_fm(fm[i * 3], fm[i * 3 + 1], fm[i * 3 + 2]) }
-    self.run(RATE / 60)
+    self.run(UPDATE_SAMPLES)
   }
 
   /// A byte written to the PSG.

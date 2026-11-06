@@ -780,7 +780,8 @@ of Markdown.
   `std/tui/`, `std/temporal/`, `std/genesis/` (the console's vdp, pad, sprites, camera, collision — a map's tiles' and its own colliders, one-way or not — entity, and sound — `std.chips.effects`' and `std.chips.music`'s bytes to the PSG's port, and the YM2612 given to **a Z80 driver** (`Z80_DRIVER`, hand-assembled, loaded by `sound.init`): it plays the DAC's sample from the cartridge through the bank window, a byte every 312 T-states whichever way through its loop, and makes the YM2612 writes the 68000 queues in its RAM between bytes, spaced so the chip is never written busy; the 68000 takes the Z80's bus once a frame only to copy what it made, the arithmetic done before — held through the music's frame, the sample stuttered every frame — modules —
   Genesis-only, exercised by `examples/genesis` and `cmd/lyrac/genesis_test.go`),
   `std/game/` (the same runtime for every modern platform, on SDL3, in `f32` pixels at a fixed
-  60 updates a second: screen, pad, planes, sprites, camera, collision, entity — the first std
+  60 updates a second — `screen.UPDATES_PER_SECOND` and `UPDATE_MS`, as the consoles'
+  `vdp.UPDATES_PER_SECOND` names their frames; a game moves by updates, never a measured time: screen, pad, planes, sprites, camera, collision, entity — the first std
   module to import `bindings`; its pure half mirrors the Genesis tests case for case and its
   screen is played headless by `--frames`/`--ppm`/`--hold` under SDL's dummy driver, both in
   `cmd/lyrac/game_test.go`; a `Sprite` also fades, tints, turns, grows and draws as light —

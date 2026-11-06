@@ -496,6 +496,10 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Language surface
 
+- **[OPEN] A type error leaves a misleading `lyra-E007` behind it**: `(x * f64(n)).floor()` with
+  `x: f32` reports `pure function calls impure function "floor"` before the real E001 (f32 and
+  f64), and on up through every pure caller. A method on an operand that failed should charge nothing.
+
 - **[DONE 10/19] `if let … { } else if … { }` parses**, `else if let` too, and an `if`'s
   `else` may be an `if let`. (COMPLETED.md, 10/19.)
 - **[DONE 10/19] A constructor means the type its module reaches** — `TrueColor` in a

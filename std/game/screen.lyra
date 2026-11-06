@@ -99,7 +99,15 @@ import std.game.planes.{
 import std.game.sprites
 import std.game.sprites.{ Sprite }
 
-/// One update, in nanoseconds: 60 a second.
+/// Updates a second, whatever the display's rate: a game's speeds are pixels an update, and
+/// a time in milliseconds is `ms * UPDATES_PER_SECOND / 1000` updates.
+pub const UPDATES_PER_SECOND: i64 = 60
+
+/// One update, in milliseconds: 1000 / [UPDATES_PER_SECOND]. For showing a time or timing
+/// what is not the game's own; a game moves by updates, never by a measured time.
+pub const UPDATE_MS: f32 = 16.666666
+
+/// One update, in nanoseconds: 1000000000 / [UPDATES_PER_SECOND].
 pub const STEP_NS: i64 = 16666667
 
 /// At most this many updates a frame: after a stall the game resumes slowed, rather than

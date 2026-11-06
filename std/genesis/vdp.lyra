@@ -35,6 +35,11 @@ module std.genesis.vdp
 pub const SCREEN_WIDTH: i16 = 320
 pub const SCREEN_HEIGHT: i16 = 224
 
+/// Frames a second on an NTSC console — the game's updates, a frame each, its speeds pixels
+/// a frame, as `std.game.screen`'s are an update. A time in milliseconds is
+/// `ms * UPDATES_PER_SECOND / 1000` frames. (A PAL console's 50 is not built.)
+pub const UPDATES_PER_SECOND: i16 = 60
+
 /// Where [init] puts the VDP's tables in VRAM. Tiles go below `WINDOW`.
 pub const WINDOW: u16 = 0xB000
 pub const PLANE_A: u16 = 0xC000

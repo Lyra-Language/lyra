@@ -46,6 +46,11 @@ const HIDE_LEFT_COLUMN: u8 = 0x20
 /// The hardware's sprite count.
 pub const SPRITES: u8 = 64
 
+/// Frames a second on an NTSC Master System and on a Game Gear — the game's updates, a
+/// frame each, as `std.genesis.vdp`'s. A time in milliseconds is
+/// `ms * UPDATES_PER_SECOND / 1000` frames. (A PAL Master System's 50 is not built.)
+pub const UPDATES_PER_SECOND: i16 = 60
+
 /// The screen, in pixels. A Game Gear shows the window of it from (48, 24), 160×144.
 pub const SCREEN_WIDTH: i16 = 256
 pub const SCREEN_HEIGHT: i16 = 192
