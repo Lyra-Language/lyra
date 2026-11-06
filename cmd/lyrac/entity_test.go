@@ -455,3 +455,91 @@ let main = () -> u8 => {
   0
 }
 `
+
+// A side-on entity lands and jumps, on every runtime alike: falling onto a floor (a map's
+// collider, or the map's bottom edge kept in) it is on the floor, and stays so standing; a
+// jump leaves the floor at the kind's jump speed and goes up, and none starts in the air; a
+// kind with no gravity standing still is on no floor and never jumps.
+func TestRun_EntitiesLandAndJump(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	for _, rt := range []struct {
+		name string
+		repl *strings.Replacer
+	}{
+		{"genesis", strings.NewReplacer("@RT", "genesis", "@WORD", "u16", "@D", "", "@ONE", "256", "@G", "64", "@J", "1024", "@ZERO", "0")},
+		{"sms", strings.NewReplacer("@RT", "sms", "@WORD", "u16", "@D", "", "@ONE", "256", "@G", "64", "@J", "1024", "@ZERO", "0")},
+		{"game", strings.NewReplacer("@RT", "game", "@WORD", "u32", "@D", ".0", "@ONE", "1.0", "@G", "0.25", "@J", "4.0", "@ZERO", "0.0")},
+	} {
+		t.Run(rt.name, func(t *testing.T) {
+			src := filepath.Join(t.TempDir(), "main.lyra")
+			if err := os.WriteFile(src, []byte(rt.repl.Replace(entityJumpSource)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, stderr, code := captureRun(t, "run", src); code != 0 {
+				t.Errorf("case %d failed; stderr: %s", code, stderr)
+			}
+		})
+	}
+}
+
+const entityJumpSource = `import std.@RT.collision.{ Shape, Collider }
+import std.@RT.entity.{ Animation, EntityKind }
+
+const STILL: Animation = Animation { sprite: 0, first: 0, count: 1, total: 1, looping: false }
+const NONE: Collider = Collider { shape: Shape { x: 0@D, y: 0@D, width: 0@D, height: 0@D }, layers: 0, mask: 0 }
+const BODY: Collider = Collider { shape: Shape { x: 0@D, y: 0@D, width: 8@D, height: 8@D }, layers: 0, mask: 1 }
+const JUMPER: EntityKind = EntityKind {
+  width: 8@D,
+  height: 8@D,
+  animation: STILL,
+  colliders: #[BODY, NONE, NONE, NONE],
+  collider_count: 1,
+  max_speed: @ONE,
+  acceleration: @ONE,
+  friction: @ONE,
+  gravity: @G,
+  jump_speed: @J
+}
+
+let main = () -> u8 => {
+  // A map 32 cells across and 8 down, 256 × 64 pixels, its tiles carrying nothing.
+  let empty: [256]@WORD = #[0; 256]
+  let starts: [3]@WORD = #[0, 0, 1]
+  let tiles: [1]Collider = #[Collider { shape: Shape { x: 0@D, y: 0@D, width: 8@D, height: 8@D }, layers: 1, mask: 0 }]
+  let one_band: [2]@WORD = #[0, 1]
+  let floor: [1]Collider = #[Collider { shape: Shape { x: 0@D, y: 40@D, width: 256@D, height: 8@D }, layers: 1, mask: 0 }]
+  let nothing: [1]Collider = #[NONE]
+
+  var e = JUMPER.spawn(0@D, 0@D)
+  if e.on_floor { return 1 }
+  if e.jump() { return 2 }
+  for _ in 0..<60 {
+    e.push(0@D, 0@D)
+    e.move_in_with(empty, 32, 1, starts, tiles, one_band, floor)
+  }
+  if !e.on_floor || e.y() < 24@D || e.y() > 32@D { return 3 }
+  e.push(0@D, 0@D)
+  e.move_in_with(empty, 32, 1, starts, tiles, one_band, floor)
+  if !e.on_floor { return 4 }
+  let stood = e.y()
+  if !e.jump() || e.vy != -@J || e.on_floor { return 5 }
+  e.push(0@D, 0@D)
+  e.move_in_with(empty, 32, 1, starts, tiles, one_band, floor)
+  if e.on_floor || e.y() >= stood { return 6 }
+  if e.jump() { return 7 }
+
+  var flat = EntityKind { JUMPER | gravity: @ZERO, jump_speed: @ZERO }.spawn(0@D, 0@D)
+  flat.move_in_with(empty, 32, 1, starts, tiles, one_band, floor)
+  if flat.on_floor || flat.jump() { return 8 }
+
+  var edge = JUMPER.spawn(0@D, 0@D)
+  for _ in 0..<80 {
+    edge.push(0@D, 0@D)
+    edge.move_in_with(empty, 32, 1, starts, tiles, one_band, nothing)
+  }
+  if !edge.on_floor || edge.y() < 55@D { return 9 }
+  0
+}
+`

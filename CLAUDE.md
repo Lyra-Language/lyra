@@ -788,7 +788,9 @@ of Markdown.
   written anew is a jump (`sprites.snap`), and an entity trails its sprites by `shown_at`;
   **tiles are 8 pixels unless a game says otherwise** — `screen.load_tiles`' `tile_size`, and a
   `tile_size` (default `collision.TILE`) on `hits_map`, `hits_map_moving`, `move_in` and
-  `move_in_with`; **how the screen fills the window** is `screen.set_fit` (`Whole`, the default,
+  `move_in_with`; **an entity lands and jumps** — `on_floor` set when a move in a map stops a
+  fall, `jump()` leaving a floor at the kind's `jump_speed`, alike on `std.genesis.entity` and
+  `std.sms.entity` (`entity_test.go`'s `TestRun_EntitiesLandAndJump`); **how the screen fills the window** is `screen.set_fit` (`Whole`, the default,
   by whole numbers; `Letterbox`; `Stretch`; `Crop`, SDL's overscan): screen, pad, planes, sprites, camera, collision, entity — the first std
   module to import `bindings`; its pure half mirrors the Genesis tests case for case and its
   screen is played headless by `--frames`/`--ppm`/`--hold` under SDL's dummy driver, both in
