@@ -34,8 +34,14 @@ module std.game.entity
 //! sprite does: its colliders grow with it, but keep their shapes as it turns — a box turned is
 //! no box, and a game of this kind seldom wants one. Grown against a map, its colliders follow
 //! once that would not put one into a wall, as turning to face the other way does.
+//!
+//! **Drawn smoothly between updates**: shown at a place on the screen ([shown_at], which
+//! Vega's `draw` calls), an entity marks its sprites as coming from where it was shown the
+//! update before, and `std.game.screen` draws them sliding between the two. Put somewhere
+//! ([place]), it does not slide there.
 
 import std.game.collision.{ Shape, Collider, TILE }
+import std.game.sprites
 
 /// An animation of a sprite: where its steps are in the game's step table, how many, how
 /// long they take in all (updates, 1/60 s), and whether it goes round. The game's assets
@@ -118,6 +124,16 @@ pub struct Entity {
   drawn: bool = false,
   /// The row of the game's shapes by frame it shows ([show_frame_shapes]).
   shown_row: i64 = NO_FRAME_SHAPES,
+  /// Where on the screen it was last shown ([shown_at]), and in which update
+  /// (`sprites.updates`; -1, none to slide from).
+  shown_x: f32 = 0.0,
+  shown_y: f32 = 0.0,
+  shown_in: i64 = -1,
+  /// How far it was from where it was shown last, the update before — what its sprites
+  /// slide from — when `trailing`.
+  trail_x: f32 = 0.0,
+  trail_y: f32 = 0.0,
+  trailing: bool = false,
 }
 
 /// The fastest an entity falls, in pixels an update: a tile, so a fall never steps over a
@@ -129,10 +145,32 @@ impl Entity {
   pub let x = pure (self: ref) -> f32 => self.fx
   pub let y = pure (self: ref) -> f32 => self.fy
 
-  /// Put it with its top-left at (`x`, `y`), its speed kept.
+  /// Put it with its top-left at (`x`, `y`), its speed kept — drawn there at once, not
+  /// sliding from where it was.
   pub let place = (self: mut, x: f32, y: f32) -> void => {
     self.fx = x
     self.fy = y
+    self.shown_in = -1
+  }
+
+  /// Shown this update at (`sx`, `sy`) on the screen, its sprites added from `first`
+  /// (`sprites.listed()` before they were): they slide from where it was shown the update
+  /// before — once an update, as it is drawn, whether or not it is on the screen.
+  pub let shown_at = (self: mut, sx: f32, sy: f32, first: i64) -> void => {
+    let now = sprites.updates()
+    self.trailing = self.shown_in == now - 1
+    self.trail_x = self.shown_x - sx
+    self.trail_y = self.shown_y - sy
+    self.shown_x = sx
+    self.shown_y = sy
+    self.shown_in = now
+    self.trail_sprites(first)
+  }
+
+  /// Sprites added from `first` that go with it — a glow drawn beside it — sliding as it
+  /// does this update ([shown_at] first).
+  pub let trail_sprites = (self: ref, first: i64) -> void => {
+    if self.trailing { sprites.came_from(first, self.trail_x, self.trail_y) }
   }
 
   /// An update's push, `dx` and `dy` each from -1 to 1 (the pad's directions, or a stick's

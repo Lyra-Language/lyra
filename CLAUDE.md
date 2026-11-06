@@ -781,7 +781,11 @@ of Markdown.
   Genesis-only, exercised by `examples/genesis` and `cmd/lyrac/genesis_test.go`),
   `std/game/` (the same runtime for every modern platform, on SDL3, in `f32` pixels at a fixed
   60 updates a second — `screen.UPDATES_PER_SECOND` and `UPDATE_MS`, as the consoles'
-  `vdp.UPDATES_PER_SECOND` names their frames; a game moves by updates, never a measured time: screen, pad, planes, sprites, camera, collision, entity — the first std
+  `vdp.UPDATES_PER_SECOND` names their frames; a game moves by updates, never a measured time,
+  and **is drawn between them** — `screen.blend()`, the clock's fraction to the next update
+  (1 under `--frames`), slides a sprite marked `sprites.came_from` and a plane scrolled this
+  update from where the update before had it; `sprites.clear()` counts the updates, a plane
+  written anew is a jump (`sprites.snap`), and an entity trails its sprites by `shown_at`: screen, pad, planes, sprites, camera, collision, entity — the first std
   module to import `bindings`; its pure half mirrors the Genesis tests case for case and its
   screen is played headless by `--frames`/`--ppm`/`--hold` under SDL's dummy driver, both in
   `cmd/lyrac/game_test.go`; a `Sprite` also fades, tints, turns, grows and draws as light —

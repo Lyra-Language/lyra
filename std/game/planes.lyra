@@ -23,8 +23,14 @@ module std.game.planes
 //! covers the hero walking under it. The [WINDOW] takes plane A's place in its rows, and
 //! never scrolls.
 //!
+//! **A plane scrolled during an update remembers where it was scrolled before** ([set_scroll]),
+//! and the screen draws it between the two, as it does the sprites (`std.game.sprites`): a
+//! map written anew ([write_plane]) is a jump, and slides from nowhere.
+//!
 //! This module only keeps the planes; `std.game.screen` draws them, so a game's camera and
 //! collision can name these without the window.
+
+import std.game.sprites
 
 /// The planes, as the Genesis names them: A in front of B.
 pub const PLANE_A: i64 = 0
@@ -48,6 +54,11 @@ pub struct Plane {
   width: i64,
   x: f32 = 0.0,
   y: f32 = 0.0,
+  /// Where it was scrolled to before the update numbered `scrolled_in` (`sprites.updates`)
+  /// scrolled it, which it is drawn sliding from.
+  was_x: f32 = 0.0,
+  was_y: f32 = 0.0,
+  scrolled_in: i64 = -1,
 }
 
 /// A cell's bits for palette `p`: `FRONT | planes.palette(2) | tile`.
@@ -65,7 +76,12 @@ pub let write_plane<const N: i64> = (
   width: i64
 ) -> void => {
   if plane < 0 || plane >= 3 || width <= 0 { return }
-  all[plane] = Plane { all[plane] | cells: [c in cells | c], width: width }
+  all[plane] = Plane {
+    all[plane] | cells: [c in cells | c],
+    width: width,
+    scrolled_in: -1
+  }
+  sprites.snap()
 }
 
 /// One cell of `plane`, at column `x` and row `y`. A cell past a map's edge is not kept;
@@ -83,6 +99,15 @@ pub let write_cell = (plane: i64, x: i64, y: i64, word: u32) -> void => {
 /// not scroll.
 pub let set_scroll = (plane: i64, x: f32, y: f32) -> void => {
   if plane == PLANE_A || plane == PLANE_B {
+    let now = sprites.updates()
+    if all[plane].scrolled_in != now {
+      // The first scroll this update: where it was is where the last update left it — or,
+      // after a jump, here.
+      let fresh = all[plane].scrolled_in < 0 || sprites.snapped()
+      all[plane].was_x = if fresh { x } else { all[plane].x }
+      all[plane].was_y = if fresh { y } else { all[plane].y }
+      all[plane].scrolled_in = now
+    }
     all[plane].x = x
     all[plane].y = y
   }
@@ -99,6 +124,17 @@ pub let clear = (plane: i64) -> void => {
 
 /// What `plane` holds now — for `std.game.screen`, which draws it.
 pub let plane = (index: i64) -> Plane => all[index]
+
+impl Plane {
+  /// Where it is scrolled to `t` of the way from the update before to this one (0 to 1):
+  /// between where it was and where it is when this update scrolled it, else where it is.
+  pub let scrolled_at = (self: ref, t: f32) -> (f32, f32) =>
+    if self.scrolled_in == sprites.updates() {
+      (self.was_x + (self.x - self.was_x) * t, self.was_y + (self.y - self.was_y) * t)
+    } else {
+      (self.x, self.y)
+    }
+}
 
 /// How many rows the window covers — for `std.game.screen`.
 pub let rows_in_window = () -> i64 => shown_rows

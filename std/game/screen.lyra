@@ -23,6 +23,13 @@ module std.game.screen
 //! speeds are pixels an update, as a Genesis game's are pixels a frame, so it plays at the
 //! same pace on a 60 Hz screen and a 144 Hz one.
 //!
+//! **Drawn between updates** ([blend]): a sprite that says where it was the update before
+//! (`sprites.came_from` — Vega's entities do) and a plane scrolled this update are drawn that
+//! far from there to here, so a 120 Hz display shows motion in steps of half an update rather
+//! than an update and a repeat. The game is unchanged: it updates 60 times a second, and what
+//! it moves through or meets is where the update put it. Played with `--frames`, it is drawn
+//! where it is, so a frame is the same on every machine.
+//!
 //! **The frame is composed in the Genesis's order** ([show]): the backdrop; plane B's cells,
 //! then plane A's (the window in its rows), then the sprites; then the planes' cells in
 //! front, and the sprites in front. Pixel art stays sharp: the screen is scaled by whole
@@ -208,6 +215,12 @@ pub let updates_due = () -> i64 => {
   steps
 }
 
+/// How far the clock is from the last update run to the next, 0 to 1: where [show] draws what
+/// moves, between where the update before had it and where the last one put it. Played with
+/// `--frames`, or paused, 1 — drawn where it is.
+pub let blend = () -> f32 =>
+  if limit > 0 || paused { 1.0 } else { (f32(owed_ns) / f32(STEP_NS)).clamp(0.0, 1.0) }
+
 /// The updates to run and the time still owed, given what was owed and the time just
 /// elapsed — [updates_due]'s arithmetic, pure so it can be tested.
 pub let accrue = pure (owed: i64, elapsed: i64) -> (i64, i64) => {
@@ -254,10 +267,11 @@ pub let show = () -> void => {
   if paused { return }
   r.set_draw_color(backdrop)
   r.clear()
-  draw_planes(r, false)
-  draw_sprites(r, false)
-  draw_planes(r, true)
-  draw_sprites(r, true)
+  let t = blend()
+  draw_planes(r, false, t)
+  draw_sprites(r, false, t)
+  draw_planes(r, true, t)
+  draw_sprites(r, true, t)
   frame += 1
   if limit > 0 && frame == limit && ppm_path != "" && !write_ppm(r, ppm_path) {
     println("could not write ${ppm_path}")
@@ -365,15 +379,27 @@ let picture<const N: i64> = (width: i64, pixels: ref [N]u32) -> Maybe<Texture> =
 }
 
 /// Plane B, then plane A below the window's rows and the window in them — the cells in
-/// front, or those behind.
-let draw_planes = (r: Renderer, front: bool) -> void => {
+/// front, or those behind; each scrolled `t` of the way from the update before ([blend]).
+let draw_planes = (r: Renderer, front: bool, t: f32) -> void => {
   let window_bottom = planes.rows_in_window() * TILE
-  draw_plane(r, planes.plane(planes.PLANE_B), front, 0, screen_height)
-  draw_plane(r, planes.plane(planes.PLANE_A), front, window_bottom, screen_height)
+  draw_plane(r, scrolled(planes.plane(planes.PLANE_B), t), front, 0, screen_height)
+  draw_plane(
+    r,
+    scrolled(planes.plane(planes.PLANE_A), t),
+    front,
+    window_bottom,
+    screen_height
+  )
   if window_bottom > 0 {
     let w = planes.plane(planes.WINDOW)
     draw_plane(r, Plane { w | x: 0.0, y: 0.0 }, front, 0, window_bottom)
   }
+}
+
+/// `p` where it shows `t` of the way from the update before.
+let scrolled = (p: Plane, t: f32) -> Plane => {
+  let (x, y) = p.scrolled_at(t)
+  Plane { p | x: x, y: y }
 }
 
 /// A plane's cells that show between screen rows `top` and `bottom`, those in front or
@@ -417,15 +443,17 @@ let draw_plane = (r: Renderer, p: Plane, front: bool, top: i64, bottom: i64) -> 
   }
 }
 
-/// The sprites in front, or those behind — the earliest added on top. One drawn as it is
-/// keeps to whole pixels; one faded, tinted, turned, grown or added as light sets the
-/// sprite art's state for its draw ([draw_changed]).
-let draw_sprites = (r: Renderer, front: bool) -> void => {
+/// The sprites in front, or those behind — the earliest added on top, each `t` of the way
+/// from where it was the update before ([blend]). One drawn as it is keeps to whole
+/// pixels; one faded, tinted, turned, grown or added as light sets the sprite art's state
+/// for its draw ([draw_changed]).
+let draw_sprites = (r: Renderer, front: bool, t: f32) -> void => {
   let Some(art) = sprite_art else { return }
   let list = sprites.added()
   var i = list.len() - 1
   while i >= 0 {
-    let s = list[i]
+    let (x, y) = list[i].at(t)
+    let s = Sprite { list[i] | x: x, y: y }
     if s.front == front && s.alpha > 0.0 && s.scale > 0.0 {
       let source = Rect { x: s.sheet_x, y: s.sheet_y, w: s.width, h: s.height }
       if s.as_drawn() {

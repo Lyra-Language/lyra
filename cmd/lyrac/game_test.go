@@ -366,6 +366,110 @@ let main = () -> u8 => {
 	}
 }
 
+// Drawn between updates: a sprite slides from where it came from by the fraction given, and
+// stays put without one; a plane scrolled this update slides from where the last left it, one
+// not scrolled stays, and a map written anew slides from nowhere; an entity shown in two
+// updates in a row trails its sprites, a glow beside it too, and put somewhere it does not.
+func TestRun_GameDrawsBetweenUpdates(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	src := filepath.Join(t.TempDir(), "main.lyra")
+	if err := os.WriteFile(src, []byte(`import std.game.collision.{ Shape, Collider }
+import std.game.entity.{ Animation, EntityKind }
+import std.game.planes
+import std.game.sprites
+import std.game.sprites.{ Sprite }
+
+const STILL: Animation = Animation { sprite: 0, first: 0, count: 1, total: 1, looping: false }
+const NONE: Collider = Collider { shape: Shape { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }, layers: 0, mask: 0 }
+const HERO: EntityKind = EntityKind {
+  width: 16.0,
+  height: 16.0,
+  animation: STILL,
+  colliders: #[NONE, NONE, NONE, NONE],
+  collider_count: 0,
+  max_speed: 2.0,
+  acceleration: 0.5,
+  friction: 1.0,
+  gravity: 0.0
+}
+const CELLS: [4]u32 = #[0, 0, 0, 0]
+
+let near = pure (a: f32, b: f32) -> bool => (a - b).abs() < 0.001
+
+let piece = pure (x: f32, y: f32) -> Sprite =>
+  Sprite { x: x, y: y, width: 16.0, height: 16.0, sheet_x: 0.0, sheet_y: 0.0 }
+
+let main = () -> u8 => {
+  // A sprite on its own is where it is; one that came from 4 left of it is halfway at 0.5.
+  sprites.clear()
+  sprites.add(piece(10.0, 20.0))
+  let (x0, y0) = sprites.added()[0].at(0.5)
+  if !near(x0, 10.0) || !near(y0, 20.0) { return 1 }
+  sprites.came_from(0, -4.0, 0.0)
+  let (x1, _) = sprites.added()[0].at(0.5)
+  if !near(x1, 8.0) { return 2 }
+  let (x2, _) = sprites.added()[0].at(1.0)
+  if !near(x2, 10.0) { return 3 }
+
+  // A map written anew: its first scroll slides from nowhere, nor do sprites that update.
+  planes.write_plane(planes.PLANE_B, CELLS, 2)
+  sprites.clear()
+  planes.set_scroll(planes.PLANE_B, 0.0, 0.0)
+  sprites.add(piece(10.0, 20.0))
+  sprites.came_from(0, -4.0, 0.0)
+  if sprites.added()[0].was_there { return 4 }
+  // The next update scrolls it on: halfway, it is halfway; scrolled twice in an update, it
+  // slides from where the last update left it.
+  sprites.clear()
+  planes.set_scroll(planes.PLANE_B, 5.0, 2.0)
+  planes.set_scroll(planes.PLANE_B, 10.0, 4.0)
+  let (px, py) = planes.plane(planes.PLANE_B).scrolled_at(0.5)
+  if !near(px, 5.0) || !near(py, 2.0) { return 5 }
+  // An update that does not scroll it leaves it where it is.
+  sprites.clear()
+  let (qx, _) = planes.plane(planes.PLANE_B).scrolled_at(0.5)
+  if !near(qx, 10.0) { return 6 }
+
+  // An entity shown in one update, then 4 right in the next: its sprites trail, and a glow
+  // added after it trails with it.
+  var hero = HERO.spawn(0.0, 0.0)
+  sprites.clear()
+  sprites.add(piece(10.0, 10.0))
+  hero.shown_at(10.0, 10.0, 0)
+  if sprites.added()[0].was_there { return 7 }
+  sprites.clear()
+  sprites.add(piece(14.0, 10.0))
+  hero.shown_at(14.0, 10.0, 0)
+  let (hx, _) = sprites.added()[0].at(0.5)
+  if !near(hx, 12.0) { return 8 }
+  sprites.add(piece(10.0, 6.0))
+  hero.trail_sprites(1)
+  let (gx, _) = sprites.added()[1].at(0.5)
+  if !near(gx, 8.0) { return 9 }
+  // Put somewhere, it is there at once.
+  hero.place(100.0, 0.0)
+  sprites.clear()
+  sprites.add(piece(110.0, 10.0))
+  hero.shown_at(110.0, 10.0, 0)
+  if sprites.added()[0].was_there { return 10 }
+  // Not shown for an update, it does not slide across the gap.
+  sprites.clear()
+  sprites.clear()
+  sprites.add(piece(130.0, 10.0))
+  hero.shown_at(130.0, 10.0, 0)
+  if sprites.added()[0].was_there { return 11 }
+  0
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, stderr, code := captureRun(t, "run", src); code != 0 {
+		t.Errorf("case %d failed; stderr: %s", code, stderr)
+	}
+}
+
 // std.game.camera: the view moves only when what it follows leaves the zone, by just enough,
 // never past the world, at whole pixels; `sees` is the screen's edges; show_map and
 // scroll_map write and scroll the plane.

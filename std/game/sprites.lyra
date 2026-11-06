@@ -21,6 +21,12 @@ module std.game.sprites
 //! draws it as it is: see through it (`alpha`), colour it (`tint`), turn it (`angle`), grow it
 //! (`scale`, about its middle), and make it light rather than paint (`additive`: its colours
 //! add to what is beneath — a glow, a spark, fire).
+//!
+//! **A sprite may say where it was the update before** ([came_from]), and the screen draws it
+//! between there and here by how far the clock is between updates (`screen.blend`), so
+//! motion is smooth on a display faster than the game's 60 updates. Each [clear] starts an
+//! update's list and counts it ([updates]); a map shown anew ([snap]) is a jump, which
+//! nothing slides across.
 
 /// One sprite: where on the screen, how big, and which part of the sprite art it shows, in
 /// pixels.
@@ -46,13 +52,59 @@ pub struct Sprite {
   scale: f32 = 1.0,
   /// Light rather than paint: its colours, times its alpha, added to what is beneath.
   additive: bool = false,
+  /// Where it was on the screen the update before, when `was_there` ([came_from]): it is
+  /// drawn between there and (`x`, `y`).
+  was_x: f32 = 0.0,
+  was_y: f32 = 0.0,
+  was_there: bool = false,
 }
 
-/// Start a new list: nothing is shown until [add]ed.
-pub let clear = () -> void => { list = [] }
+/// Start a new list — an update's: nothing is shown until [add]ed.
+pub let clear = () -> void => {
+  list = []
+  counted += 1
+  jumped = jumping
+  jumping = false
+}
 
 /// Add a sprite behind those already added.
 pub let add = (s: Sprite) -> void => { list.push(s) }
+
+/// How many sprites the list holds: where the next one [add]ed goes, for [came_from].
+pub let listed = () -> i64 => list.len()
+
+/// The sprites added from `first` on were `dx`, `dy` from where they are the update before —
+/// drawn sliding from there. Nothing, across a [snap].
+pub let came_from = (first: i64, dx: f32, dy: f32) -> void => {
+  if snapped() { return }
+  for i in first.max(0)..<list.len() {
+    list[i].was_x = list[i].x + dx
+    list[i].was_y = list[i].y + dy
+    list[i].was_there = true
+  }
+}
+
+/// How many lists have been started: the updates so far, for what remembers where it was
+/// shown the update before.
+pub let updates = () -> i64 => counted
+
+/// The view jumped — a map shown anew, an entity put somewhere: nothing slides into this
+/// update or the next from where it was.
+pub let snap = () -> void => { jumping = true }
+
+/// Whether this update follows a [snap], so where things were before means nothing.
+pub let snapped = () -> bool => jumping || jumped
+
+impl Sprite {
+  /// Where it is drawn `t` of the way from the update before to this one (0 to 1): its place,
+  /// or between where it was and its place when it came from somewhere.
+  pub let at = pure (self, t: f32) -> (f32, f32) =>
+    if self.was_there {
+      (self.was_x + (self.x - self.was_x) * t, self.was_y + (self.y - self.was_y) * t)
+    } else {
+      (self.x, self.y)
+    }
+}
 
 /// The list, front first — for `std.game.screen`, which draws it.
 pub let added = () -> []Sprite => list
@@ -60,3 +112,7 @@ pub let added = () -> []Sprite => list
 // ── Beneath ──────────────────────────────────────────────────────────────────────────
 
 var list: []Sprite = []
+var counted: i64 = 0
+/// A [snap] since this update's [clear], and one before it.
+var jumping = false
+var jumped = false
