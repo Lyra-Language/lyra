@@ -785,7 +785,11 @@ of Markdown.
   and **is drawn between them** — `screen.blend()`, the clock's fraction to the next update
   (1 under `--frames`), slides a sprite marked `sprites.came_from` and a plane scrolled this
   update from where the update before had it; `sprites.clear()` counts the updates, a plane
-  written anew is a jump (`sprites.snap`), and an entity trails its sprites by `shown_at`: screen, pad, planes, sprites, camera, collision, entity — the first std
+  written anew is a jump (`sprites.snap`), and an entity trails its sprites by `shown_at`;
+  **tiles are 8 pixels unless a game says otherwise** — `screen.load_tiles`' `tile_size`, and a
+  `tile_size` (default `collision.TILE`) on `hits_map`, `hits_map_moving`, `move_in` and
+  `move_in_with`; **how the screen fills the window** is `screen.set_fit` (`Whole`, the default,
+  by whole numbers; `Letterbox`; `Stretch`; `Crop`, SDL's overscan): screen, pad, planes, sprites, camera, collision, entity — the first std
   module to import `bindings`; its pure half mirrors the Genesis tests case for case and its
   screen is played headless by `--frames`/`--ppm`/`--hold` under SDL's dummy driver, both in
   `cmd/lyrac/game_test.go`; a `Sprite` also fades, tints, turns, grows and draws as light —

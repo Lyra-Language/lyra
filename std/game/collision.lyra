@@ -59,7 +59,8 @@ pub struct Collider {
   one_way: bool = false,
 }
 
-/// A map's tiles are this many pixels square: the model Vega edits, 8×8, on every target.
+/// A map's tiles are this many pixels square unless a game says otherwise: the map functions
+/// take a `tile_size`, defaulting to it (a modern project's tiles may be 16 or 32).
 pub const TILE: f32 = 8.0
 
 /// How wide a band of a map's own colliders is ([hits_banded]): Vega gathers them by
@@ -148,8 +149,10 @@ impl Collider {
     width: i64,
     first_tile: u32,
     starts: ref [M]u32,
-    shapes: ref [K]Collider
-  ) -> bool => self.map_stops(x, y, y, false, cells, width, first_tile, starts, shapes)
+    shapes: ref [K]Collider,
+    tile_size: f32 = TILE
+  ) -> bool =>
+    self.map_stops(x, y, y, false, cells, width, first_tile, starts, shapes, tile_size)
 
   /// [hits_map] for something moved to (`x`, `y`) from (`x`, `from_y`): a one-way tile
   /// collider counts only when the move came down onto it, as in [hits_any_moving].
@@ -162,9 +165,21 @@ impl Collider {
     width: i64,
     first_tile: u32,
     starts: ref [M]u32,
-    shapes: ref [K]Collider
+    shapes: ref [K]Collider,
+    tile_size: f32 = TILE
   ) -> bool =>
-    self.map_stops(x, y, from_y, true, cells, width, first_tile, starts, shapes)
+    self.map_stops(
+      x,
+      y,
+      from_y,
+      true,
+      cells,
+      width,
+      first_tile,
+      starts,
+      shapes,
+      tile_size
+    )
 
   // ── Beneath ──────────────────────────────────────────────────────────────────────────
 
@@ -248,7 +263,8 @@ impl Collider {
     width: i64,
     first_tile: u32,
     starts: ref [M]u32,
-    shapes: ref [K]Collider
+    shapes: ref [K]Collider,
+    tile_size: f32
   ) -> bool => {
     // Tiles that carry no shapes at all — a map whose collision is its own — meet nothing.
     if starts[starts.len() - 1] == 0 || width <= 0 { return false }
@@ -258,7 +274,8 @@ impl Collider {
       self.shape.width,
       self.shape.height,
       width,
-      cells.len() / width
+      cells.len() / width,
+      tile_size
     )
     let tiles = starts.len() - 1
     for row in first_row..<=last_row {
@@ -269,16 +286,16 @@ impl Collider {
           for k: u32 in starts[tile]..<starts[tile + 1] {
             var other = shapes[k]
             if (self.mask & other.layers) == 0 { continue }
-            if (word & FLIP_X) != 0 { other = other.mirrored(TILE) }
-            if (word & FLIP_Y) != 0 { other = other.flipped(TILE) }
+            if (word & FLIP_X) != 0 { other = other.mirrored(tile_size) }
+            if (word & FLIP_Y) != 0 { other = other.flipped(tile_size) }
             if self.stopped_by(
               x,
               y,
               from_y,
               moving,
               other,
-              f32(column) * TILE,
-              f32(row) * TILE
+              f32(column) * tile_size,
+              f32(row) * tile_size
             ) {
               return true
             }
@@ -365,7 +382,8 @@ impl Shape {
     width: i64,
     first_tile: u32,
     starts: ref [M]u32,
-    shapes: ref [K]Shape
+    shapes: ref [K]Shape,
+    tile_size: f32 = TILE
   ) -> bool => {
     if width <= 0 { return false }
     let (first_column, last_column, first_row, last_row) = covered(
@@ -374,7 +392,8 @@ impl Shape {
       self.width,
       self.height,
       width,
-      cells.len() / width
+      cells.len() / width,
+      tile_size
     )
     let tiles = starts.len() - 1
     for row in first_row..<=last_row {
@@ -384,14 +403,14 @@ impl Shape {
         if tile >= 0 && tile < tiles {
           for k: u32 in starts[tile]..<starts[tile + 1] {
             var shape = shapes[k]
-            if (word & FLIP_X) != 0 { shape = shape.mirrored(TILE) }
-            if (word & FLIP_Y) != 0 { shape = shape.flipped(TILE) }
+            if (word & FLIP_X) != 0 { shape = shape.mirrored(tile_size) }
+            if (word & FLIP_Y) != 0 { shape = shape.flipped(tile_size) }
             if self.overlaps(
               x,
               y,
               shape,
-              f32(column) * TILE,
-              f32(row) * TILE
+              f32(column) * tile_size,
+              f32(row) * tile_size
             ) { return true }
           }
         }
@@ -403,21 +422,22 @@ impl Shape {
 
 // ── Beneath ──────────────────────────────────────────────────────────────────────────
 
-/// The cells a rectangle from (`left`, `top`), `w` × `h`, covers inside a map `columns` ×
-/// `rows`: first and last column, first and last row. Empty — a first past its last — for
-/// a rectangle wholly off the map.
+/// The cells, `tile_size` pixels square, a rectangle from (`left`, `top`), `w` × `h`, covers
+/// inside a map `columns` × `rows`: first and last column, first and last row. Empty — a
+/// first past its last — for a rectangle wholly off the map.
 let covered = pure (
   left: f32,
   top: f32,
   w: f32,
   h: f32,
   columns: i64,
-  rows: i64
+  rows: i64,
+  tile_size: f32
 ) -> (i64, i64, i64, i64) => (
-  (left / TILE).floor().max(0),
-  (((left + w) / TILE).ceil() - 1).min(columns - 1),
-  (top / TILE).floor().max(0),
-  (((top + h) / TILE).ceil() - 1).min(rows - 1),
+  (left / tile_size).floor().max(0),
+  (((left + w) / tile_size).ceil() - 1).min(columns - 1),
+  (top / tile_size).floor().max(0),
+  (((top + h) / tile_size).ceil() - 1).min(rows - 1),
 )
 
 /// Whether (`dx`, `dy`) from an ellipse's centre is inside it, its radii `rx` and `ry`.

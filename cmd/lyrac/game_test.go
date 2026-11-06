@@ -613,6 +613,91 @@ let main = () -> u8 => {
 	}
 }
 
+// Tiles of another size: a plane of 16-pixel tiles drawn from art loaded at that size; a map
+// of them met at 16 pixels a cell (and not at the default 8); an entity kept inside one by
+// its 16-pixel cells; and set_fit choosing how the screen fills the window, here a window
+// of the screen's own size, which every fit fills alike.
+func TestRun_GameTilesOfOtherSizes(t *testing.T) {
+	t.Parallel()
+	src := filepath.Join(t.TempDir(), "main.lyra")
+	if err := os.WriteFile(src, []byte(`import std.game.screen
+import std.game.screen.{ Crop }
+import std.game.planes
+import std.game.sprites
+import std.game.collision.{ Shape, Collider }
+import std.game.entity.{ Animation, EntityKind }
+
+const STILL: Animation = Animation { sprite: 0, first: 0, count: 1, total: 1, looping: false }
+const NONE: Collider = Collider { shape: Shape { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }, layers: 0, mask: 0 }
+const BODY: Collider = Collider { shape: Shape { x: 0.0, y: 0.0, width: 4.0, height: 4.0 }, layers: 0, mask: 1 }
+const BOX: EntityKind = EntityKind {
+  width: 8.0,
+  height: 8.0,
+  animation: STILL,
+  colliders: #[BODY, NONE, NONE, NONE],
+  collider_count: 1,
+  max_speed: 4.0,
+  acceleration: 4.0,
+  friction: 4.0,
+  gravity: 0.0
+}
+const CELLS: [2]u32 = #[1, 2]
+const OPEN: [2]u32 = #[1, 1]
+const STARTS: [3]u32 = #[0, 0, 1]
+const SOLID: [1]Collider = #[Collider { shape: Shape { x: 0.0, y: 0.0, width: 16.0, height: 16.0 }, layers: 1, mask: 0 }]
+
+let main = () -> u8 => {
+  // Tile 2 of a map of two 16-pixel cells is solid: met at x 20 in 16-pixel cells, where
+  // 8-pixel ones would put x 20 off the map.
+  if !BODY.hits_map(20.0, 4.0, CELLS, 2, 1, STARTS, SOLID, 16.0) { return 3 }
+  if BODY.hits_map(20.0, 4.0, CELLS, 2, 1, STARTS, SOLID) { return 4 }
+  // Kept inside a map two 16-pixel cells wide: stopped at 32 less its width.
+  var b = BOX.spawn(0.0, 0.0)
+  for _ in 0..<20 {
+    b.push(1.0, 0.0)
+    b.move_in(OPEN, 2, 1, STARTS, SOLID, true, 16.0)
+  }
+  if b.x() < 23.9 || b.x() > 24.1 { return 5 }
+
+  if !screen.open("tiles", 32, 16) { return 2 }
+  screen.set_fit(Crop)
+  // Three 16-pixel tiles a row: blank, green, and black on the left half, white on the right.
+  var tiles: [768]u32 = #[0; 768]
+  for row in 0..<16 {
+    for column in 0..<16 {
+      tiles[row * 48 + 16 + column] = 0xFF00FF00
+      tiles[row * 48 + 32 + column] = if column < 8 { 0xFF000000 } else { 0xFFFFFFFF }
+    }
+  }
+  screen.load_tiles(3, tiles, 0, 16)
+  planes.write_plane(planes.PLANE_B, CELLS, 2)
+  while screen.running() {
+    sprites.clear()
+    screen.show()
+  }
+  screen.close()
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	frame := playGame(t, src, "--frames", "1")
+	green, white, black := [3]byte{0, 255, 0}, [3]byte{255, 255, 255}, [3]byte{0, 0, 0}
+	for _, c := range []struct {
+		x, y int
+		want [3]byte
+		what string
+	}{
+		{4, 4, green, "tile 1 across its first 16 pixels"},
+		{12, 12, green, "tile 1 to the bottom of its 16"},
+		{20, 4, black, "tile 2's left half"},
+		{28, 12, white, "tile 2's right half"},
+	} {
+		if got := frame.at(c.x, c.y); got != c.want {
+			t.Errorf("%s: (%d, %d) is %v, want %v", c.what, c.x, c.y, got, c.want)
+		}
+	}
+}
+
 // ppm is a frame a game wrote with --ppm.
 type ppm struct {
 	w, h int

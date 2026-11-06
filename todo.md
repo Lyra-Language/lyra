@@ -496,6 +496,10 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Language surface
 
+- **[OPEN] A `const` cannot be another module's `const`**: `const WIDTH: i64 = assets.SCREEN_WIDTH`
+  is `lyra-E012` ("a member access is not constant"). A qualified constant is as constant as a
+  bare one; Vega's starter game uses `assets.SCREEN_WIDTH` at each use instead.
+
 - **[OPEN] A type error leaves a misleading `lyra-E007` behind it**: `(x * f64(n)).floor()` with
   `x: f32` reports `pure function calls impure function "floor"` before the real E001 (f32 and
   f64), and on up through every pure caller. A method on an operand that failed should charge nothing.

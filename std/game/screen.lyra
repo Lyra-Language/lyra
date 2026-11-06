@@ -23,6 +23,10 @@ module std.game.screen
 //! speeds are pixels an update, as a Genesis game's are pixels a frame, so it plays at the
 //! same pace on a 60 Hz screen and a 144 Hz one.
 //!
+//! **How the screen fills the window** is the game's choice ([set_fit]): by whole numbers, the
+//! default, with borders where the window's shape or size leaves them; or as large as fits; or
+//! stretched to fill it; or filling it with the edges cut off.
+//!
 //! **Drawn between updates** ([blend]): a sprite that says where it was the update before
 //! (`sprites.came_from` — Vega's entities do) and a plane scrolled this update are drawn that
 //! far from there to here, so a 120 Hz display shows motion in steps of half an update rather
@@ -69,6 +73,9 @@ import bindings.sdl3.{
   Renderer,
   destroy_renderer,
   PRESENT_INTEGER_SCALE,
+  PRESENT_LETTERBOX,
+  PRESENT_STRETCH,
+  PRESENT_OVERSCAN,
   SCALE_NEAREST,
   set_default_scale_mode,
   Color,
@@ -158,7 +165,7 @@ pub let open = (title: string, width: i64, height: i64) -> bool => {
     quit()
     return false
   }
-  r.set_logical_presentation(i32(width), i32(height), PRESENT_INTEGER_SCALE)
+  r.set_logical_presentation(i32(width), i32(height), presentation(fitting))
   r.set_vsync(limit <= 0)
   set_default_scale_mode(r, SCALE_NEAREST)
   window = Some(w)
@@ -229,11 +236,33 @@ pub let accrue = pure (owed: i64, elapsed: i64) -> (i64, i64) => {
   if steps > MAX_STEPS { (MAX_STEPS, 0) } else { (steps, total % STEP_NS) }
 }
 
+/// How the screen fills a window of another shape or size ([set_fit]).
+pub data Fit =
+  /// Scaled by a whole number, the largest that fits, with borders round it: every pixel the
+  /// same size and square. The default.
+  | Whole
+  /// As large as fits, its shape kept: borders on two sides at most, pixels not all alike.
+  | Letterbox
+  /// Stretched to fill the window, its shape lost: no borders, pixels no longer square.
+  | Stretch
+  /// Filling the window, its shape kept: no borders, its edges cut off where they spill over.
+  | Crop
+
+/// Fill the window as `fit` says — once after [open], or whenever the game likes.
+pub let set_fit = (fit: Fit) -> void => {
+  fitting = fit
+  if let Some(r) = renderer { r.set_logical_presentation(
+    i32(screen_width),
+    i32(screen_height),
+    presentation(fit)
+  ) }
+}
+
 /// The colour behind everything, where no cell or sprite is.
 pub let set_backdrop = (r: u8, g: u8, b: u8) -> void => { backdrop = rgb(r, g, b) }
 
-/// The art the planes' cells show in `palette` (0–15): `columns` tiles a row, 8×8 pixels
-/// each, `pixels` the whole picture row by row, `0xAARRGGBB` (alpha 0 is transparent). Tile
+/// The art the planes' cells show in `palette` (0–15): `columns` tiles a row, `tile_size`
+/// pixels square each (every palette's alike), `pixels` the whole picture row by row, `0xAARRGGBB` (alpha 0 is transparent). Tile
 /// `t` is the `t`-th, left to right, top to bottom; tile 0 should be blank. A cell in palette
 /// `p` shows tile `t` of palette `p`'s art — the Genesis's tile and palette, apart — so each
 /// palette a game's cells use has its art, every one laid out alike. Replaces any loaded
@@ -241,10 +270,12 @@ pub let set_backdrop = (r: u8, g: u8, b: u8) -> void => { backdrop = rgb(r, g, b
 pub let load_tiles<const N: i64> = (
   columns: i64,
   pixels: ref [N]u32,
-  palette: i64 = 0
+  palette: i64 = 0,
+  tile_size: i64 = 8
 ) -> bool => {
-  if palette < 0 || palette >= PALETTES { return false }
-  let Some(t) = picture(columns * TILE, pixels) else { return false }
+  if palette < 0 || palette >= PALETTES || tile_size <= 0 { return false }
+  let Some(t) = picture(columns * tile_size, pixels) else { return false }
+  tile_side = tile_size
   if let Some(old) = tile_art[palette] { destroy_texture(old) }
   tile_art[palette] = Some(t)
   tile_columns = columns
@@ -304,15 +335,15 @@ pub let close = () -> u8 => {
 /// The window opens at this many times the screen; resizing it keeps whole-number scaling.
 const WINDOW_SCALE: i64 = 3
 
-/// A tile's side, in pixels.
-const TILE: i64 = 8
-
 /// The palettes a cell may name.
 const PALETTES: i64 = 16
 
 var window: Maybe<Window> = None
 var renderer: Maybe<Renderer> = None
 var screen_width: i64 = 0
+/// A tile's side, in pixels, as [load_tiles] was given it.
+var tile_side: i64 = 8
+var fitting: Fit = Whole
 var screen_height: i64 = 0
 var backdrop: Color = rgb(0, 0, 0)
 var tile_art: []Maybe<Texture> = [None; PALETTES]
@@ -381,7 +412,7 @@ let picture<const N: i64> = (width: i64, pixels: ref [N]u32) -> Maybe<Texture> =
 /// Plane B, then plane A below the window's rows and the window in them — the cells in
 /// front, or those behind; each scrolled `t` of the way from the update before ([blend]).
 let draw_planes = (r: Renderer, front: bool, t: f32) -> void => {
-  let window_bottom = planes.rows_in_window() * TILE
+  let window_bottom = planes.rows_in_window() * tile_side
   draw_plane(r, scrolled(planes.plane(planes.PLANE_B), t), front, 0, screen_height)
   draw_plane(
     r,
@@ -409,10 +440,10 @@ let draw_plane = (r: Renderer, p: Plane, front: bool, top: i64, bottom: i64) -> 
   let rows = p.cells.len() / p.width
   let sx = p.x.floor()
   let sy = p.y.floor()
-  let first_column = (sx / TILE).max(0)
-  let last_column = ((sx + screen_width - 1) / TILE).min(p.width - 1)
-  let first_row = ((sy + top) / TILE).max(0)
-  let last_row = ((sy + bottom - 1) / TILE).min(rows - 1)
+  let first_column = (sx / tile_side).max(0)
+  let last_column = ((sx + screen_width - 1) / tile_side).min(p.width - 1)
+  let first_row = ((sy + top) / tile_side).max(0)
+  let last_row = ((sy + bottom - 1) / tile_side).min(rows - 1)
   for row in first_row..<=last_row {
     for column in first_column..<=last_column {
       let word = p.cells[row * p.width + column]
@@ -420,22 +451,22 @@ let draw_plane = (r: Renderer, p: Plane, front: bool, top: i64, bottom: i64) -> 
       if tile == 0 || ((word & FRONT) != 0) != front { continue }
       let Some(art) = tile_art[i64((word & PALETTE_MASK) >> PALETTE_SHIFT)] else { continue }
       // The part of the cell between `top` and `bottom` on the screen.
-      let y = row * TILE - sy
+      let y = row * tile_side - sy
       let from = y.max(top)
-      let to = (y + TILE).min(bottom)
+      let to = (y + tile_side).min(bottom)
       if from >= to { continue }
       let flip_y = (word & FLIP_Y) != 0
-      let cut = if flip_y { y + TILE - to } else { from - y }
+      let cut = if flip_y { y + tile_side - to } else { from - y }
       let source = Rect {
-        x: f32((tile % tile_columns) * TILE),
-        y: f32((tile / tile_columns) * TILE + cut),
-        w: f32(TILE),
+        x: f32((tile % tile_columns) * tile_side),
+        y: f32((tile / tile_columns) * tile_side + cut),
+        w: f32(tile_side),
         h: f32(to - from),
       }
       let place = Rect {
-        x: f32(column * TILE - sx),
+        x: f32(column * tile_side - sx),
         y: f32(from),
-        w: f32(TILE),
+        w: f32(tile_side),
         h: f32(to - from)
       }
       draw_texture_flipped(r, art, source, place, flips((word & FLIP_X) != 0, flip_y))
@@ -568,5 +599,13 @@ let draw_touch_pad = (r: Renderer) -> void => {
     r.set_scale(1.0, 1.0)
   }
   r.set_draw_blend(BLEND_NONE)
-  r.set_logical_presentation(i32(screen_width), i32(screen_height), PRESENT_INTEGER_SCALE)
+  r.set_logical_presentation(i32(screen_width), i32(screen_height), presentation(fitting))
+}
+
+/// SDL's logical presentation for `fit`.
+let presentation = pure (fit: Fit) -> i32 => match fit {
+  Whole => PRESENT_INTEGER_SCALE,
+  Letterbox => PRESENT_LETTERBOX,
+  Stretch => PRESENT_STRETCH,
+  Crop => PRESENT_OVERSCAN,
 }

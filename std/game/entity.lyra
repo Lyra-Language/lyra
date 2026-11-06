@@ -206,7 +206,8 @@ impl Entity {
   /// leaves where the map's collision leaves a gap, and the game decides what that means.
   /// Its colliders turn as it has once they fit. The map is `std.game.collision`'s
   /// `hits_map`'s: `cells` row by row, `width` a row, its tile set's tiles from
-  /// `first_tile`, their colliders `shapes[starts[t]]` up to `starts[t + 1]`.
+  /// `first_tile`, their colliders `shapes[starts[t]]` up to `starts[t + 1]`, its tiles
+  /// `tile_size` pixels square.
   pub let move_in<const N: i64, const M: i64, const K: i64> = (
     self: mut,
     cells: ref [N]u32,
@@ -214,7 +215,8 @@ impl Entity {
     first_tile: u32,
     starts: ref [M]u32,
     shapes: ref [K]Collider,
-    kept_in: bool = true
+    kept_in: bool = true,
+    tile_size: f32 = TILE
   ) -> void =>
     self.move_in_with(
       cells,
@@ -224,7 +226,8 @@ impl Entity {
       shapes,
       NO_BANDS,
       NO_MAP_SHAPES,
-      kept_in
+      kept_in,
+      tile_size
     )
 
   /// [move_in], stopped too by the map's own colliders — shapes drawn on the map itself, in
@@ -243,12 +246,13 @@ impl Entity {
     shapes: ref [K]Collider,
     bands: ref [B]u32,
     map_shapes: ref [P]Collider,
-    kept_in: bool = true
+    kept_in: bool = true,
+    tile_size: f32 = TILE
   ) -> void => {
     let rows = if width > 0 { cells.len() / width } else { 0 }
     let open = !kept_in
-    let right = f32(width) * TILE - self.kind.width
-    let bottom = f32(rows) * TILE - self.kind.height
+    let right = f32(width) * tile_size - self.kind.width
+    let bottom = f32(rows) * tile_size - self.kind.height
     // Turned: its colliders turn too, unless that would put one into a wall here.
     if self.hit_mirrored != self.mirrored && !self.kind.hits_tiles(
       self.fx,
@@ -262,7 +266,8 @@ impl Entity {
       starts,
       shapes,
       bands,
-      map_shapes
+      map_shapes,
+      tile_size
     ) {
       self.hit_mirrored = self.mirrored
     }
@@ -279,7 +284,8 @@ impl Entity {
       starts,
       shapes,
       bands,
-      map_shapes
+      map_shapes,
+      tile_size
     ) {
       self.hit_scale = self.scale
     }
@@ -300,7 +306,8 @@ impl Entity {
         starts,
         shapes,
         bands,
-        map_shapes
+        map_shapes,
+        tile_size
       ) {
         self.vx = 0.0
       } else {
@@ -325,7 +332,8 @@ impl Entity {
         starts,
         shapes,
         bands,
-        map_shapes
+        map_shapes,
+        tile_size
       ) {
         self.vy = 0.0
       } else {
@@ -433,7 +441,8 @@ impl EntityKind {
     starts: ref [M]u32,
     shapes: ref [K]Collider,
     bands: ref [B]u32,
-    map_shapes: ref [P]Collider
+    map_shapes: ref [P]Collider,
+    tile_size: f32 = TILE
   ) -> bool => {
     // Tiles that carry no shapes — a map whose collision is its own — are not walked.
     let tiled = starts[starts.len() - 1] != 0
@@ -447,7 +456,8 @@ impl EntityKind {
         width,
         first_tile,
         starts,
-        shapes
+        shapes,
+        tile_size
       ) {
         return true
       }
