@@ -111,7 +111,7 @@ impl ZonedDateTime {
   /// a gap is possible — a monthly meeting at 02:30 meets the March morning that has no
   /// 02:30), and the clock part is then added to the instant, exactly.
   pub let add = pure (
-    self,
+    self: ref,
     amount: Duration,
     how: Disambiguation = Compatible
   ) -> Maybe<ZonedDateTime> => {
@@ -136,7 +136,7 @@ impl ZonedDateTime {
 
   /// This moment moved back by `amount`: `add` of its negation, so the two cannot disagree.
   pub let subtract = pure (
-    self,
+    self: ref,
     amount: Duration,
     how: Disambiguation = Compatible
   ) -> Maybe<ZonedDateTime> => self.add(amount.negated(), how)

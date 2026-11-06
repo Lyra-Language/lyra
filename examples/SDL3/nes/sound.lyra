@@ -227,7 +227,7 @@ let write_song = (path: string) -> u8 => {
 
 /// `samples` as a 16-bit mono PCM WAV file: the 44-byte RIFF header, then little-endian
 /// samples.
-let wav = (samples: []f32) -> []u8 => {
+let wav = pure (samples: []f32) -> []u8 => {
   var out: []u8 = []
   let data = samples.len() * 2
   let rate = i64(SAMPLE_RATE)
@@ -348,7 +348,7 @@ let lfsr_period = pure (short: bool) -> i64 => {
 
 /// The share of samples above zero over one second of a lone pulse wave at 441 Hz (after
 /// a settling second, so the high-pass filter has centred it).
-let high_share = (duty: f64) -> f64 => {
+let high_share = pure (duty: f64) -> f64 => {
   var chip = SILENT
   chip.pulse1 = chip.pulse1.play(69, duty, 15.0, 0.0)
   var settle: []f32 = []

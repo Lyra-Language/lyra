@@ -765,7 +765,7 @@ let component_size = pure (ctype: i64) -> i64 =>
 /// One component as a float; a normalized integer mapped to [0, 1] or [-1, 1] as glTF
 /// defines it.
 let component = pure (b: []u8, at: i64, ctype: i64) -> f32 =>
-  if ctype == FLOAT { f32_from_bits(u32_at(b, at)) }
+  if ctype == FLOAT { u32_at(b, at).f32_from_bits() }
   else if ctype == 5121 { f32(b[at]) / 255.0 }
   else if ctype == 5123 { f32(u16_at(b, at)) / 65535.0 }
   else if ctype == 5120 { at_least(f32(signed(i64(b[at]), 256)) / 127.0, 0.0 - 1.0) }
@@ -778,15 +778,6 @@ let width_of = pure (t: string) -> i64 =>
   else if t == "VEC4" { 4 }
   else if t == "MAT4" { 16 }
   else { 0 }
-
-/// A float's 32 bits, reinterpreted — a C union is the one place Lyra reads memory as a type
-/// other than the one written.
-union F32Bits {
-  bits: u32,
-  value: f32,
-}
-
-let f32_from_bits = pure (bits: u32) -> f32 => unsafe { F32Bits { bits: bits }.value }
 
 let u32_at = pure (b: []u8, at: i64) -> u32 =>
   u32(b[at]) | (u32(b[at + 1]) << 8) | (u32(b[at + 2]) << 16) | (u32(b[at + 3]) << 24)

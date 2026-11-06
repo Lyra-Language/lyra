@@ -88,22 +88,22 @@ impl ZonedDateTime {
   }
 
   /// The moment itself, with the zone forgotten.
-  pub let to_instant = pure (self) -> Instant => self.instant
+  pub let to_instant = pure (self: ref) -> Instant => self.instant
 
   /// The zone's offset from UTC at this moment, in seconds east.
-  pub let offset_seconds = pure (self) -> i64 =>
+  pub let offset_seconds = pure (self: ref) -> i64 =>
     self.zone.offset_at(self.instant.epoch_second())
 
   /// What a clock showing this moment is called here — `EST`, `EDT`, `+0530`.
-  pub let abbreviation = pure (self) -> string =>
+  pub let abbreviation = pure (self: ref) -> string =>
     self.zone.abbreviation_at(self.instant.epoch_second())
 
   /// Whether the zone is on its daylight rule at this moment.
-  pub let is_dst = pure (self) -> bool =>
+  pub let is_dst = pure (self: ref) -> bool =>
     self.zone.is_dst_at(self.instant.epoch_second())
 
   /// The date and wall-clock time a person here would read off a clock.
-  pub let to_plain_date_time = pure (self) -> PlainDateTime => {
+  pub let to_plain_date_time = pure (self: ref) -> PlainDateTime => {
     let local = i128(self.instant) + i128(self.offset_seconds()) * i128(NS_PER_SECOND)
     let day_ns = i128(NS_PER_DAY)
     let into_day = local %% day_ns
@@ -115,11 +115,11 @@ impl ZonedDateTime {
 
   /// The date here, which is not always the date in UTC — at 23:30 in New York it is already
   /// tomorrow in Greenwich.
-  pub let to_plain_date = pure (self) -> PlainDate =>
+  pub let to_plain_date = pure (self: ref) -> PlainDate =>
     self.to_plain_date_time().date
 
   /// The wall-clock time here.
-  pub let to_plain_time = pure (self) -> PlainTime =>
+  pub let to_plain_time = pure (self: ref) -> PlainTime =>
     self.to_plain_date_time().time
 }
 

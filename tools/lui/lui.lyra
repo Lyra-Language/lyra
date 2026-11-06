@@ -1039,12 +1039,12 @@ impl Writer {
   let imports = pure (self) -> string => {
     var import_lines: []string = []
     if self.target == UI {
-      for (module, listed) in UI_MODULES {
+      for (module, module_names) in UI_MODULES {
         // `ui.style`'s layout names are kept in a list of their own.
         let names = if module == "ui.style" { [
-          ...listed,
+          ...module_names,
           ...LAYOUT_NAMES
-        ] } else { listed }
+        ] } else { module_names }
         let mine = [n in names | self.used.any((u) => u == n) | n]
         if mine.len() > 0 { import_lines.push("import ${module}.{ ${mine.join(", ")} }") }
       }
@@ -2466,7 +2466,7 @@ const GRID_ATTRIBUTES = [
 ]
 
 /// The style property (in `ui.style`'s spelling) attribute `name` of `builder`'s element sets.
-let layout_attribute = pure (builder: string, name: string) -> string => match name {
+let layout_attribute = pure (_builder: string, name: string) -> string => match name {
   "direction" => "flex_direction",
   "wrap" => "flex_wrap",
   "justify" => "justify_content",
@@ -2831,7 +2831,7 @@ let ui_declarations = pure (
   var fields: []string = []
   // `transition` and its longhands, put together once every declaration is read: the lists
   // pair up by place, a shorter one repeated, as CSS does.
-  var moves = Moves {}
+  var moving = Moves {}
   for d in text.split(";") {
     if d.trim().len() == 0 { continue }
     let Some(colon) = d.index(":") else { return Err("${line}: \"${d.trim()}\" has no `:`") }
@@ -2841,7 +2841,7 @@ let ui_declarations = pure (
       return Err("${line}: ${given} reads the theme, which an inline style cannot; give the element a class and the rule to a <style>")
     }
     if name.starts_with("transition") {
-      moves = moves.taking(name, given).map_err((why) => "${line}: ${why}")?
+      moving = moving.taking(name, given).map_err((why) => "${line}: ${why}")?
       continue
     }
     let field = match name {
@@ -2884,7 +2884,7 @@ let ui_declarations = pure (
       Err(what) => return Err("${line}: ${what}"),
     }
   }
-  if moves.given { fields = with_field(fields, "transition: Some(${moves.as_lyra()})") }
+  if moving.given { fields = with_field(fields, "transition: Some(${moving.as_lyra()})") }
   Ok(fields)
 }
 
@@ -3185,14 +3185,14 @@ let shadow_list = pure (value: string) -> Result<string, string> => {
   var each: []string = []
   for one in top_level(value, ',')? {
     var lengths: []string = []
-    var color = ""
+    var shadow_color = ""
     var inset = false
     for word in top_level(one, ' ')? {
       if word == "inset" {
         inset = true
       } else if word.starts_with("#") || word.starts_with("$") || word.contains("(") {
-        if color.len() > 0 { return Err("a box-shadow has one colour, not ${one}") }
-        color = ui_color(word)?
+        if shadow_color.len() > 0 { return Err("a box-shadow has one colour, not ${one}") }
+        shadow_color = ui_color(word)?
       } else {
         let n = word.strip_suffix("px") ?? word
         match number(n) {
@@ -3202,13 +3202,13 @@ let shadow_list = pure (value: string) -> Result<string, string> => {
         }
       }
     }
-    if lengths.len() < 2 || lengths.len() > 4 || color.len() == 0 {
+    if lengths.len() < 2 || lengths.len() > 4 || shadow_color.len() == 0 {
       return Err("a box-shadow is [inset] x y [blur [spread]] #colour, not ${one}")
     }
     let blur = if lengths.len() > 2 { lengths[2] } else { "0.0" }
     if blur.starts_with("-") { return Err("a box-shadow's blur is not negative: ${one}") }
     let spread = if lengths.len() > 3 { lengths[3] } else { "0.0" }
-    each.push("BoxShadow { x: ${lengths[0]}, y: ${lengths[1]}, blur: ${blur}, spread: ${spread}, color: ${color}${if inset { ", inset: true" } else { "" }} }")
+    each.push("BoxShadow { x: ${lengths[0]}, y: ${lengths[1]}, blur: ${blur}, spread: ${spread}, color: ${shadow_color}${if inset { ", inset: true" } else { "" }} }")
   }
   Ok("[${each.join(", ")}]")
 }
@@ -3242,14 +3242,14 @@ let gradient_of = pure (value: string) -> Result<string, string> => {
     // Words outside parentheses: an `oklch(…)` is one.
     let words = top_level(part.trim(), ' ')?
     if words.len() == 0 || words.len() > 2 { return Err("a colour stop is #colour [N%], not ${part.trim()}") }
-    let color = ui_color(words[0])?
+    let stop_color = ui_color(words[0])?
     if words.len() == 1 {
-      stops.push("ColorStop { color: ${color} }")
+      stops.push("ColorStop { color: ${stop_color} }")
     } else {
       let Some(pct) = words[1].strip_suffix("%") else {
         return Err("a colour stop's place is a percentage, not ${words[1]}")
       }
-      stops.push("ColorStop { color: ${color}, at: Some(${number(pct)?} / 100.0) }")
+      stops.push("ColorStop { color: ${stop_color}, at: Some(${number(pct)?} / 100.0) }")
     }
   }
   Ok("Gradient { kind: ${made}, stops: [${stops.join(", ")}] }")

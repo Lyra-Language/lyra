@@ -36,7 +36,7 @@ let main = () -> u8 => {
     return store(path, tasks)
   }
   if command == "done" {
-    match index_of(rest, tasks.len()) {
+    match chosen_index(rest, tasks.len()) {
       None => {
         println("done needs the number of a task on the list")
         return 2
@@ -48,7 +48,7 @@ let main = () -> u8 => {
     }
   }
   if command == "remove" {
-    match index_of(rest, tasks.len()) {
+    match chosen_index(rest, tasks.len()) {
       None => {
         println("remove needs the number of a task on the list")
         return 2
@@ -133,7 +133,7 @@ let store = (path: string, tasks: []Task) -> u8 => {
 // The 1-based number a caller typed, as an index into the list — `None` when it is
 // missing, not a number, or not on the list. One answer for every way it can be wrong,
 // because the caller's next move is the same in each case.
-let index_of = pure (rest: []string, count: i64) -> Maybe<i64> => {
+let chosen_index = pure (rest: []string, count: i64) -> Maybe<i64> => {
   if rest.len() == 0 { return None }
   match rest[0].parse_i64() {
     None => None,

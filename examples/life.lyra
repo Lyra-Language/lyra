@@ -223,7 +223,7 @@ let empty_grid = pure (width: i64, height: i64) -> [][]bool =>
 /// was handed, and `Rng.seeded` only mutates its own receiver. Asking the OS for entropy
 /// is the non-deterministic act, and it happens once, at the call site in `main` — so the
 /// same seed replays the same world exactly.
-let random_grid = det (width: i64, height: i64, seed: u64) -> [][]bool => {
+let random_grid = pure (width: i64, height: i64, seed: u64) -> [][]bool => {
   var rng = Rng.seeded(seed)
   var grid: [][]bool = []
   for _ in 0..<height {

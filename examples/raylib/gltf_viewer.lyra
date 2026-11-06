@@ -896,7 +896,7 @@ let fill_slot = (model: Model, material: i64, map: i32, colour: Color) -> void =
 let set_params = (model: Model, material: i64, floats: []f32) -> void => {
   var texels: []Color = []
   for f in floats {
-    let bits = float_bits(f)
+    let bits = f.to_bits()
     texels.push(Color {
       r: u8(bits & 255),
       g: u8((bits >> 8) & 255),
@@ -939,14 +939,6 @@ let param_floats = pure (p: MaterialParams) -> []f32 => {
   }
   out
 }
-
-/// A float's 32 bits — written as one member of a C union and read as the other.
-union Bits32 {
-  value: f32,
-  bits: u32,
-}
-
-let float_bits = pure (v: f32) -> u32 => unsafe { Bits32 { value: v }.bits }
 
 /// Draw a white sphere with the lighting shader and read two points of it back off the
 /// screen: the side facing the key light must come out clearly brighter than the side

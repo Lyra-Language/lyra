@@ -167,13 +167,21 @@ impl PsgMusic {
     let noise_owns = self.voices[NOISE].sounding && !is_held(held, NOISE)
     var c: i16 = 0
     while c < PSG_CHANNELS {
-      let lent = is_held(held, c)
+      let taken = is_held(held, c)
       if reading {
         let cell = tables.cell(self.starts[FM_CHANNELS + c] + row)
         self.song_control(cell)
-        self.voices[c].read(tables, c, cell, lent, self.speed, self.out)
+        self.voices[c].read(tables, c, cell, taken, self.speed, self.out)
       }
-      self.voices[c].tick_along(tables, c, reading, lent, noise_owns, self.tick, self.out)
+      self.voices[c].tick_along(
+        tables,
+        c,
+        reading,
+        taken,
+        noise_owns,
+        self.tick,
+        self.out
+      )
       c += 1
     }
     if reading && self.song.extended {

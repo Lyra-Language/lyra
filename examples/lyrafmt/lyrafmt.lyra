@@ -309,7 +309,7 @@ let format_source = (
 /// The pass cap is what makes this terminate whatever the planner does. Each pass must add
 /// a break or it stops, so the cap is only reached by a file nested deeper than it — and a
 /// line that is still long then is one no further break would shorten.
-let lay_out = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
+let lay_out = pure (bytes: []u8, len: i64, leaves: []Leaf, rule: bool) -> []u8 => {
   var breaks = [false; leaves.len()]
   // The tokens a chain or a condition breaks before. Both continue the line above and
   // indent alike, so one marker serves both.
@@ -646,8 +646,8 @@ let plan_breaks = (bytes: []u8, leaves: []Leaf, cols: []i64, lines: []i64,
   var open_stack: []i64 = []
   var interp_depth = 0
   for i in 0..<leaves.len() {
-    let kind = leaves[i].kind
-    if (closes(kind) || closes_type_arguments(leaves[i])) && open_stack.len() > 0 {
+    let leaf_kind = leaves[i].kind
+    if (closes(leaf_kind) || closes_type_arguments(leaves[i])) && open_stack.len() > 0 {
       let opener = open_stack[open_stack.len() - 1]
       open_stack = open_stack.slice(0, open_stack.len() - 1)
       closer_of[opener] = i
@@ -655,8 +655,8 @@ let plan_breaks = (bytes: []u8, leaves: []Leaf, cols: []i64, lines: []i64,
     }
     inside[i] = if open_stack.len() > 0 { open_stack[open_stack.len() - 1] } else { 0 - 1 }
     in_interp[i] = interp_depth > 0
-    if opens(kind) || opens_type_arguments(leaves[i]) {
-      if kind == `${` { interp_depth += 1 }
+    if opens(leaf_kind) || opens_type_arguments(leaves[i]) {
+      if leaf_kind == `${` { interp_depth += 1 }
       open_stack.push(i)
     }
   }
