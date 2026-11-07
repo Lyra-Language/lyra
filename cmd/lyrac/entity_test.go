@@ -540,6 +540,24 @@ let main = () -> u8 => {
     edge.move_in_with(empty, 32, 1, starts, tiles, one_band, nothing)
   }
   if !edge.on_floor || edge.y() < 55@D { return 9 }
+
+  // Kept in a world 64 × 48 pixels with no collision: it lands on the bottom edge, and is
+  // stopped at the right and left ones.
+  var kept = JUMPER.spawn(0@D, 0@D)
+  for _ in 0..<80 {
+    kept.push(1@D, 0@D)
+    kept.move_kept_in(64, 48)
+  }
+  if !kept.on_floor || kept.y() != 40@D || kept.x() != 56@D || kept.vx != @ZERO { return 10 }
+  for _ in 0..<80 {
+    kept.push(-1@D, 0@D)
+    kept.move_kept_in(64, 48)
+  }
+  if kept.x() != 0@D || kept.vx != @ZERO { return 11 }
+  if !kept.jump() { return 12 }
+  kept.push(0@D, 0@D)
+  kept.move_kept_in(64, 48)
+  if kept.on_floor || kept.y() >= 40@D { return 13 }
   0
 }
 `

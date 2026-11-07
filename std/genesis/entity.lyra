@@ -167,6 +167,32 @@ impl Entity {
     self.on_floor = false
   }
 
+  /// Moved by its speed, a frame's worth, through anything but out of a world `width` by
+  /// `height` pixels: at its edges it stops, as at a wall, and stands on the bottom one —
+  /// what a level whose map has no collision moves by, so nothing leaves the map.
+  pub let move_kept_in = (self: mut, width: u16, height: u16) -> void => {
+    let across = i32(width) - i32(self.kind.width)
+    let down = i32(height) - i32(self.kind.height)
+    let right = if across > 0 { across << 8 } else { 0 }
+    let bottom = if down > 0 { down << 8 } else { 0 }
+    self.move()
+    if self.fx < 0 {
+      self.fx = 0
+      self.vx = 0
+    } else if self.fx > right {
+      self.fx = right
+      self.vx = 0
+    }
+    if self.fy < 0 {
+      self.fy = 0
+      self.vy = 0
+    } else if self.fy > bottom {
+      self.on_floor = self.vy > 0
+      self.fy = bottom
+      self.vy = 0
+    }
+  }
+
   /// Leave the floor at the kind's `jump_speed`, if it is on one ([on_floor]) and jumps at
   /// all; whether it did. Before its frame's `push` and move, which take it up from there.
   pub let jump = (self: mut) -> bool => {
