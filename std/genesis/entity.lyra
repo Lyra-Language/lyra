@@ -388,22 +388,37 @@ impl Entity {
   /// layer its colliders look for — backed off it along the way it came, to a whole pixel,
   /// that axis's speed dropped; one coming down onto it stands on it ([on_floor]), and so
   /// does one resting on it. Once a frame after the entity moves, for each solid it may
-  /// meet: a scene's `block` does it for every character and solid Vega placed. A solid
-  /// moving into it pushes nothing — it is the entity's own move that is undone.
+  /// meet: a scene's `block` does it for every character and solid Vega placed.
+  ///
+  /// **A solid that moved** this frame (its own move, from `was_x`/`was_y`) carries an
+  /// entity that started the frame resting on top of it, by as far as it went; and one it
+  /// moved into is pushed out ahead of it, backed off towards where it started taken along
+  /// by the solid's move. A push answers only to this solid: it may push the entity into
+  /// the map, or another solid — squeezed, as the game decides.
   pub let blocked_by = (self: mut, solid: ref Entity) -> void => {
+    // Where it started, taken along by the solid's move: clear of the solid there.
+    let dx = solid.x() - solid.was_x
+    let dy = solid.y() - solid.was_y
+    let wx = self.was_x + dx
+    let wy = self.was_y + dy
+    // Riding it: resting on it where it started — carried, keeping its fraction of a pixel.
+    if (dx != 0 || dy != 0) && !self.meets_at(wx, wy, solid) && self.meets_at(wx, wy + 1, solid) {
+      self.fx += i32(dx) << 8
+      self.fy += i32(dy) << 8
+    }
     let px = self.x()
     let py = self.y()
     if self.meets_at(px, py, solid) {
-      if !self.meets_at(self.was_x, py, solid) {
-        self.fx = i32(back_off(self, px, self.was_x, true, solid)) << 8
+      if !self.meets_at(wx, py, solid) {
+        self.fx = i32(back_off(self, px, wx, true, solid)) << 8
         self.vx = 0
-      } else if !self.meets_at(px, self.was_y, solid) {
-        if py > self.was_y { self.on_floor = true }
-        self.fy = i32(back_off(self, py, self.was_y, false, solid)) << 8
+      } else if !self.meets_at(px, wy, solid) {
+        if py > wy { self.on_floor = true }
+        self.fy = i32(back_off(self, py, wy, false, solid)) << 8
         self.vy = 0
-      } else if !self.meets_at(self.was_x, self.was_y, solid) {
-        self.fx = i32(self.was_x) << 8
-        self.fy = i32(self.was_y) << 8
+      } else if !self.meets_at(wx, wy, solid) {
+        self.fx = i32(wx) << 8
+        self.fy = i32(wy) << 8
         self.vx = 0
         self.vy = 0
       }
@@ -512,6 +527,8 @@ impl EntityKind {
     kind: self,
     fx: i32(x) << 8,
     fy: i32(y) << 8,
+    was_x: x,
+    was_y: y,
     vx: 0,
     vy: 0,
     animation: self.animation,

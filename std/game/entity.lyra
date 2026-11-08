@@ -456,20 +456,35 @@ impl Entity {
   /// layer its colliders look for — backed off it along the way it came, that axis's speed
   /// dropped; one coming down onto it stands on it ([on_floor]), and so does one resting on
   /// it. Once an update after the entity moves, for each solid it may meet: a scene's
-  /// `block` does it for every character and solid Vega placed. A solid moving into it
-  /// pushes nothing — it is the entity's own move that is undone.
+  /// `block` does it for every character and solid Vega placed.
+  ///
+  /// **A solid that moved** this update (its own move, from `was_x`/`was_y`) carries an
+  /// entity that started the update resting on top of it, by as far as it went; and one it
+  /// moved into is pushed out ahead of it, backed off towards where it started taken along
+  /// by the solid's move. A push answers only to this solid: it may push the entity into
+  /// the map, or another solid — squeezed, as the game decides.
   pub let blocked_by = (self: mut, solid: ref Entity) -> void => {
+    // Where it started, taken along by the solid's move: clear of the solid there.
+    let dx = solid.fx - solid.was_x
+    let dy = solid.fy - solid.was_y
+    let wx = self.was_x + dx
+    let wy = self.was_y + dy
+    // Riding it: resting on it where it started — carried.
+    if (dx < 0.0 || dx > 0.0 || dy < 0.0 || dy > 0.0) && !self.meets_at(wx, wy, solid) && self.meets_at(wx, wy + 1.0, solid) {
+      self.fx += dx
+      self.fy += dy
+    }
     if self.meets(solid) {
-      if !self.meets_at(self.was_x, self.fy, solid) {
-        self.fx = back_off(self, self.fx, self.was_x, true, solid)
+      if !self.meets_at(wx, self.fy, solid) {
+        self.fx = back_off(self, self.fx, wx, true, solid)
         self.vx = 0.0
-      } else if !self.meets_at(self.fx, self.was_y, solid) {
-        if self.fy > self.was_y { self.on_floor = true }
-        self.fy = back_off(self, self.fy, self.was_y, false, solid)
+      } else if !self.meets_at(self.fx, wy, solid) {
+        if self.fy > wy { self.on_floor = true }
+        self.fy = back_off(self, self.fy, wy, false, solid)
         self.vy = 0.0
-      } else if !self.meets_at(self.was_x, self.was_y, solid) {
-        self.fx = self.was_x
-        self.fy = self.was_y
+      } else if !self.meets_at(wx, wy, solid) {
+        self.fx = wx
+        self.fy = wy
         self.vx = 0.0
         self.vy = 0.0
       }
@@ -495,6 +510,8 @@ impl EntityKind {
     kind: self,
     fx: x,
     fy: y,
+    was_x: x,
+    was_y: y,
     vx: 0.0,
     vy: 0.0,
     animation: self.animation,

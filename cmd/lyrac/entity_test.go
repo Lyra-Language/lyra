@@ -594,6 +594,51 @@ let main = () -> u8 => {
   walker.blocked_by(ground)
   walker.blocked_by(wall)
   if walker.on_floor || walker.y() >= 32@D { return 18 }
+
+  // A solid that moves: a platform 32 wide at (100, 100). The jumper lands on it, then rides
+  // it 20 pixels right, 10 up and 10 down, on its floor all the while.
+  let platform_body = Collider { shape: Shape { x: 0@D, y: 0@D, width: 32@D, height: 8@D }, layers: 1, mask: 0 }
+  var platform = EntityKind { JUMPER | width: 32@D, gravity: @ZERO, colliders: #[platform_body, NONE, NONE, NONE] }.spawn(100@D, 100@D)
+  var rider = JUMPER.spawn(110@D, 0@D)
+  for _ in 0..<60 {
+    platform.move()
+    rider.push(0@D, 0@D)
+    rider.move_kept_in(256, 256)
+    rider.blocked_by(platform)
+  }
+  if !rider.on_floor || rider.y() != 92@D || rider.x() != 110@D { return 19 }
+  for step in 0..<40 {
+    platform.vx = if step < 20 { @ONE } else { @ZERO }
+    platform.vy = if step < 20 { @ZERO } else if step < 30 { -@ONE } else { @ONE }
+    platform.move()
+    rider.push(0@D, 0@D)
+    rider.move_kept_in(256, 256)
+    rider.blocked_by(platform)
+    if !rider.on_floor || rider.y() != platform.y() - 8@D { return 20 }
+  }
+  if rider.x() != 130@D || rider.y() != 92@D { return 21 }
+
+  // A solid moving left into a still entity pushes it out ahead: they touch after 2 pixels,
+  // and 8 more push it 8.
+  let block_body = Collider { shape: Shape { x: 0@D, y: 0@D, width: 8@D, height: 8@D }, layers: 1, mask: 0 }
+  var pusher = EntityKind { JUMPER | gravity: @ZERO, colliders: #[block_body, NONE, NONE, NONE] }.spawn(70@D, 200@D)
+  var pushed = EntityKind { JUMPER | gravity: @ZERO }.spawn(60@D, 200@D)
+  for _ in 0..<10 {
+    pusher.vx = -@ONE
+    pusher.move()
+    pushed.push(0@D, 0@D)
+    pushed.move_kept_in(256, 256)
+    pushed.blocked_by(pusher)
+  }
+  if pusher.x() != 60@D || pushed.x() != 52@D || pushed.y() != 200@D || pushed.meets(pusher) { return 22 }
+  // Unmoved, a solid neither carries nor pushes: the platform still, the rider stays put.
+  platform.vx = @ZERO
+  platform.vy = @ZERO
+  platform.move()
+  rider.push(0@D, 0@D)
+  rider.move_kept_in(256, 256)
+  rider.blocked_by(platform)
+  if rider.x() != 130@D || rider.y() != 92@D || !rider.on_floor { return 23 }
   0
 }
 `
