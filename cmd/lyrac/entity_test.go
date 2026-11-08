@@ -558,6 +558,42 @@ let main = () -> u8 => {
   kept.push(0@D, 0@D)
   kept.move_kept_in(64, 48)
   if kept.on_floor || kept.y() >= 40@D { return 13 }
+
+  // Solids: a floor 64 wide at y 40 and a wall at x 40 on it, each on the layer the
+  // jumper's mask looks for. It lands on the floor and stands there update after update,
+  // walks into the wall and stops at it, and jumps from the floor.
+  let floor_body = Collider { shape: Shape { x: 0@D, y: 0@D, width: 64@D, height: 8@D }, layers: 1, mask: 0 }
+  let wall_body = Collider { shape: Shape { x: 0@D, y: 0@D, width: 8@D, height: 8@D }, layers: 1, mask: 0 }
+  let ground = EntityKind { JUMPER | width: 64@D, colliders: #[floor_body, NONE, NONE, NONE] }.spawn(0@D, 40@D)
+  let wall = EntityKind { JUMPER | colliders: #[wall_body, NONE, NONE, NONE] }.spawn(40@D, 32@D)
+  var walker = JUMPER.spawn(8@D, 0@D)
+  for _ in 0..<60 {
+    walker.push(0@D, 0@D)
+    walker.move_kept_in(256, 256)
+    walker.blocked_by(ground)
+    walker.blocked_by(wall)
+  }
+  if !walker.on_floor || walker.y() != 32@D { return 14 }
+  for _ in 0..<8 {
+    walker.push(0@D, 0@D)
+    walker.move_kept_in(256, 256)
+    walker.blocked_by(ground)
+    walker.blocked_by(wall)
+    if !walker.on_floor || walker.y() != 32@D { return 15 }
+  }
+  for _ in 0..<60 {
+    walker.push(1@D, 0@D)
+    walker.move_kept_in(256, 256)
+    walker.blocked_by(ground)
+    walker.blocked_by(wall)
+  }
+  if walker.x() != 32@D || walker.vx != @ZERO || walker.y() != 32@D { return 16 }
+  if !walker.jump() { return 17 }
+  walker.push(0@D, 0@D)
+  walker.move_kept_in(256, 256)
+  walker.blocked_by(ground)
+  walker.blocked_by(wall)
+  if walker.on_floor || walker.y() >= 32@D { return 18 }
   0
 }
 `

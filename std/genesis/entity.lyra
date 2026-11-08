@@ -120,6 +120,10 @@ pub struct Entity {
   /// Standing on something: its last move in a map was a fall stopped — by a tile, a map's
   /// own collider, or the map's bottom edge ([move_in]). What [jump] asks.
   on_floor: bool = false,
+  /// Where its last move started, its top-left in whole pixels: what [blocked_by] backs it
+  /// off a solid towards.
+  was_x: i16 = 0,
+  was_y: i16 = 0,
 }
 
 /// The fastest an entity falls, in 256ths of a pixel a frame: 8 pixels, a tile, so a fall
@@ -162,6 +166,8 @@ impl Entity {
 
   /// Moved by its speed, a frame's worth, through anything — so on no floor.
   pub let move = (self: mut) -> void => {
+    self.was_x = self.x()
+    self.was_y = self.y()
     self.fx += i32(self.vx)
     self.fy += i32(self.vy)
     self.on_floor = false
@@ -248,6 +254,8 @@ impl Entity {
     map_shapes: ref [P]Collider,
     kept_in: bool = true
   ) -> void => {
+    self.was_x = self.x()
+    self.was_y = self.y()
     let rows = i32(cells.len()) / i32(width)
     // Where it may go, in 256ths of a pixel: the map, its edges' walls — or, not kept in,
     // as far as its place stays a pixel an i16 holds.
@@ -345,9 +353,10 @@ impl Entity {
 
   /// Whether it meets `other`: one of its colliders looks for a layer one of `other`'s is on,
   /// and their shapes overlap — each mirrored as its entity faces.
-  pub let meets = pure (self: ref, other: ref Entity) -> bool => {
-    let ax = self.x()
-    let ay = self.y()
+  pub let meets = pure (self: ref, other: ref Entity) -> bool => self.meets_at(self.x(), self.y(), other)
+
+  /// [meets], were its top-left at (`ax`, `ay`).
+  pub let meets_at = pure (self: ref, ax: i16, ay: i16, other: ref Entity) -> bool => {
     let bx = other.x()
     let by = other.y()
     for i: u16 in 0..<self.kind.collider_count {
@@ -373,6 +382,36 @@ impl Entity {
       }
     }
     false
+  }
+
+  /// Stopped by `solid` as by a wall: an entity its move took into one — meeting it, on a
+  /// layer its colliders look for — backed off it along the way it came, to a whole pixel,
+  /// that axis's speed dropped; one coming down onto it stands on it ([on_floor]), and so
+  /// does one resting on it. Once a frame after the entity moves, for each solid it may
+  /// meet: a scene's `block` does it for every character and solid Vega placed. A solid
+  /// moving into it pushes nothing — it is the entity's own move that is undone.
+  pub let blocked_by = (self: mut, solid: ref Entity) -> void => {
+    let px = self.x()
+    let py = self.y()
+    if self.meets_at(px, py, solid) {
+      if !self.meets_at(self.was_x, py, solid) {
+        self.fx = i32(back_off(self, px, self.was_x, true, solid)) << 8
+        self.vx = 0
+      } else if !self.meets_at(px, self.was_y, solid) {
+        if py > self.was_y { self.on_floor = true }
+        self.fy = i32(back_off(self, py, self.was_y, false, solid)) << 8
+        self.vy = 0
+      } else if !self.meets_at(self.was_x, self.was_y, solid) {
+        self.fx = i32(self.was_x) << 8
+        self.fy = i32(self.was_y) << 8
+        self.vx = 0
+        self.vy = 0
+      }
+    }
+    // Resting on it: what it stood on is a pixel down.
+    if self.vy >= 0 && !self.on_floor && self.meets_at(self.x(), self.y() + 1, solid) {
+      self.on_floor = true
+    }
   }
 
   // ── Beneath ──────────────────────────────────────────────────────────────────────────
@@ -542,4 +581,17 @@ let accelerate = pure (v: i16, d: i16, rate: i16, friction: i16, top: i16) -> i1
   if d > 0 { return (v + rate).min(top) }
   if d < 0 { return (v - rate).max(-top) }
   if v > 0 { (v - friction).max(0) } else { (v + friction).min(0) }
+}
+
+/// Where `entity`, at `at` along one axis (`across`, else up or down) and meeting `solid`,
+/// clears it stepping towards `was`, a pixel at a time, where it did not meet it.
+let back_off = pure (entity: ref Entity, at: i16, was: i16, across: bool, solid: ref Entity) -> i16 => {
+  let step: i16 = if was < at { -1 } else { 1 }
+  var p = at + step
+  while p != was {
+    let clear = if across { !entity.meets_at(p, entity.y(), solid) } else { !entity.meets_at(entity.x(), p, solid) }
+    if clear { return p }
+    p += step
+  }
+  was
 }

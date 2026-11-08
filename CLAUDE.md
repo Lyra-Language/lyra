@@ -789,7 +789,7 @@ of Markdown.
   **tiles are 8 pixels unless a game says otherwise** — `screen.load_tiles`' `tile_size`, and a
   `tile_size` (default `collision.TILE`) on `hits_map`, `hits_map_moving`, `move_in` and
   `move_in_with`; **an entity lands and jumps** — `on_floor` set when a move in a map stops a
-  fall, `jump()` leaving a floor at the kind's `jump_speed`, and `move_kept_in(width, height)` moving through anything but out of a world that size (a level whose map has no collision), alike on `std.genesis.entity` and
+  fall, `jump()` leaving a floor at the kind's `jump_speed`, `move_kept_in(width, height)` moving through anything but out of a world that size (a level whose map has no collision), and `blocked_by(solid)` backing an entity its move took into another off it along the way it came (standing on it when falling; `was_x`/`was_y` are where each move started, `meets_at` is `meets` elsewhere), alike on `std.genesis.entity` and
   `std.sms.entity` (`entity_test.go`'s `TestRun_EntitiesLandAndJump`); **how the screen fills the window** is `screen.set_fit` (`Whole`, the default,
   by whole numbers; `Letterbox`; `Stretch`; `Crop`, SDL's overscan): screen, pad, planes, sprites, camera, collision, entity — the first std
   module to import `bindings`; its pure half mirrors the Genesis tests case for case and its

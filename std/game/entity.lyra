@@ -140,6 +140,10 @@ pub struct Entity {
   /// Standing on something: its last move in a map was a fall stopped — by a tile, a map's
   /// own collider, or the map's bottom edge ([move_in]). What [jump] asks.
   on_floor: bool = false,
+  /// Where its last move started, its top-left in the world: what [blocked_by] backs it off
+  /// a solid towards.
+  was_x: f32 = 0.0,
+  was_y: f32 = 0.0,
 }
 
 /// The fastest an entity falls, in pixels an update: a tile, so a fall never steps over a
@@ -202,6 +206,8 @@ impl Entity {
 
   /// Moved by its speed, an update's worth, through anything — so on no floor.
   pub let move = (self: mut) -> void => {
+    self.was_x = self.fx
+    self.was_y = self.fy
     self.fx += self.vx
     self.fy += self.vy
     self.on_floor = false
@@ -283,6 +289,8 @@ impl Entity {
     kept_in: bool = true,
     tile_size: f32 = TILE
   ) -> void => {
+    self.was_x = self.fx
+    self.was_y = self.fy
     let rows = if width > 0 { cells.len() / width } else { 0 }
     let open = !kept_in
     let right = f32(width) * tile_size - self.kind.width
@@ -430,15 +438,46 @@ impl Entity {
 
   /// Whether it meets `other`: one of its colliders looks for a layer one of `other`'s is on,
   /// and their shapes overlap — each mirrored as its entity faces, and grown as it is.
-  pub let meets = pure (self: ref, other: ref Entity) -> bool => {
+  pub let meets = pure (self: ref, other: ref Entity) -> bool => self.meets_at(self.fx, self.fy, other)
+
+  /// [meets], were its top-left at (`x`, `y`).
+  pub let meets_at = pure (self: ref, x: f32, y: f32, other: ref Entity) -> bool => {
     for i in 0..<self.kind.collider_count {
       let a = self.kind.placed(self.kind.colliders[i], self.mirrored, self.scale)
       for j in 0..<other.kind.collider_count {
         let b = other.kind.placed(other.kind.colliders[j], other.mirrored, other.scale)
-        if a.meets(self.fx, self.fy, b, other.fx, other.fy) { return true }
+        if a.meets(x, y, b, other.fx, other.fy) { return true }
       }
     }
     false
+  }
+
+  /// Stopped by `solid` as by a wall: an entity its move took into one — meeting it, on a
+  /// layer its colliders look for — backed off it along the way it came, that axis's speed
+  /// dropped; one coming down onto it stands on it ([on_floor]), and so does one resting on
+  /// it. Once an update after the entity moves, for each solid it may meet: a scene's
+  /// `block` does it for every character and solid Vega placed. A solid moving into it
+  /// pushes nothing — it is the entity's own move that is undone.
+  pub let blocked_by = (self: mut, solid: ref Entity) -> void => {
+    if self.meets(solid) {
+      if !self.meets_at(self.was_x, self.fy, solid) {
+        self.fx = back_off(self, self.fx, self.was_x, true, solid)
+        self.vx = 0.0
+      } else if !self.meets_at(self.fx, self.was_y, solid) {
+        if self.fy > self.was_y { self.on_floor = true }
+        self.fy = back_off(self, self.fy, self.was_y, false, solid)
+        self.vy = 0.0
+      } else if !self.meets_at(self.was_x, self.was_y, solid) {
+        self.fx = self.was_x
+        self.fy = self.was_y
+        self.vx = 0.0
+        self.vy = 0.0
+      }
+    }
+    // Resting on it: what it stood on is a pixel down.
+    if self.vy >= 0.0 && !self.on_floor && self.meets_at(self.fx, self.fy + 1.0, solid) {
+      self.on_floor = true
+    }
   }
 
   /// Its colliders' shapes `table`'s row `row`.
@@ -520,6 +559,19 @@ impl EntityKind {
 }
 
 // ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// Where `entity`, at `at` along one axis (`across`, else up or down) and meeting `solid`,
+/// clears it stepping towards `was`, a pixel at a time, where it did not meet it.
+let back_off = pure (entity: ref Entity, at: f32, was: f32, across: bool, solid: ref Entity) -> f32 => {
+  let step: f32 = if was < at { -1.0 } else { 1.0 }
+  var p = at
+  while (p - was) * step < -1.0 {
+    p += step
+    let clear = if across { !entity.meets_at(p, entity.fy, solid) } else { !entity.meets_at(entity.fx, p, solid) }
+    if clear { return p }
+  }
+  was
+}
 
 /// A map with no colliders of its own: one band of none, and a collider that meets nothing.
 const NO_BANDS: [2]u32 = #[0, 0]
