@@ -441,7 +441,8 @@ impl Entity {
 
   /// Whether it meets `other`: one of its colliders looks for a layer one of `other`'s is on,
   /// and their shapes overlap — each mirrored as its entity faces, and grown as it is.
-  pub let meets = pure (self: ref, other: ref Entity) -> bool => self.meets_at(self.fx, self.fy, other)
+  pub let meets = pure (self: ref, other: ref Entity) -> bool =>
+    self.meets_at(self.fx, self.fy, other)
 
   /// [meets], were its top-left at (`x`, `y`).
   pub let meets_at = pure (self: ref, x: f32, y: f32, other: ref Entity) -> bool => {
@@ -473,7 +474,8 @@ impl Entity {
     let wx = self.was_x + dx
     let wy = self.was_y + dy
     // Riding it: resting on it where it started — carried.
-    if (dx < 0.0 || dx > 0.0 || dy < 0.0 || dy > 0.0) && !self.meets_at(wx, wy, solid) && self.meets_at(wx, wy + 1.0, solid) {
+    let moved = dx < 0.0 || dx > 0.0 || dy < 0.0 || dy > 0.0
+    if moved && !self.meets_at(wx, wy, solid) && self.meets_at(wx, wy + 1.0, solid) {
       self.fx += dx
       self.fy += dy
     }
@@ -582,12 +584,22 @@ impl EntityKind {
 
 /// Where `entity`, at `at` along one axis (`across`, else up or down) and meeting `solid`,
 /// clears it stepping towards `was`, a pixel at a time, where it did not meet it.
-let back_off = pure (entity: ref Entity, at: f32, was: f32, across: bool, solid: ref Entity) -> f32 => {
+let back_off = pure (
+  entity: ref Entity,
+  at: f32,
+  was: f32,
+  across: bool,
+  solid: ref Entity
+) -> f32 => {
   let step: f32 = if was < at { -1.0 } else { 1.0 }
   var p = at
   while (p - was) * step < -1.0 {
     p += step
-    let clear = if across { !entity.meets_at(p, entity.fy, solid) } else { !entity.meets_at(entity.fx, p, solid) }
+    let clear = if across {
+      !entity.meets_at(p, entity.fy, solid)
+    } else {
+      !entity.meets_at(entity.fx, p, solid)
+    }
     if clear { return p }
   }
   was

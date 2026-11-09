@@ -284,7 +284,11 @@ pub let load_tiles<const N: i64> = (
 
 /// [load_tiles], the art a PNG file the program ships ([load_sprites_file] says where): as many
 /// columns as its width holds. False, having said why, when it cannot be read.
-pub let load_tiles_file = (name: string, palette: i64 = 0, tile_size: i64 = 8) -> bool => {
+pub let load_tiles_file = (
+  name: string,
+  palette: i64 = 0,
+  tile_size: i64 = 8
+) -> bool => {
   if palette < 0 || palette >= PALETTES || tile_size <= 0 { return false }
   let Some((t, wide)) = picture_file(name) else { return false }
   use_tiles(t, wide / tile_size, palette, tile_size)

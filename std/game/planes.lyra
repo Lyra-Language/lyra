@@ -158,7 +158,9 @@ pub let animate_tiles<const N: i64> = (table: ref [N]i64) -> void => {
   while i + 1 < N {
     let count = table[i + 1]
     runs.push(TileRun { tile: table[i], at: i + 2, count: count })
-    if table[i] >= shown.len() { shown = [...shown, ...[k in shown.len()..<=table[i] | 0]] }
+    if table[i] >= shown.len() {
+      shown = [...shown, ...[k in shown.len()..<=table[i] | 0]]
+    }
     i += 2 + count * 2
   }
   run_table = [v in table | v]
@@ -205,7 +207,9 @@ impl Layout {
   /// The top-left of cell (`x`, `y`)'s box, in the map's pixels.
   pub let box_of = pure (self, x: i64, y: i64) -> (i64, i64) => {
     let (cw, ch) = (self.cell_width, self.cell_height)
-    if self.grid == ISOMETRIC { return ((x - y + self.rows - 1) * cw / 2, (x + y) * ch / 2) }
+    if self.grid == ISOMETRIC {
+      return ((x - y + self.rows - 1) * cw / 2, (x + y) * ch / 2)
+    }
     if self.grid == SQUARE { return (x * cw, y * ch) }
     let side = if self.grid == HEXAGONAL { self.hex_side } else { 0 }
     if self.stagger_x {
@@ -244,7 +248,12 @@ struct TileRun {
   count: i64,
 }
 
-var all: []Plane = [empty(0), empty(0), empty(WINDOW_COLUMNS), ...[k in 0..<MAX_LAYERS | empty(0)]]
+var all: []Plane = [
+  empty(0),
+  empty(0),
+  empty(WINDOW_COLUMNS),
+  ...[k in 0..<MAX_LAYERS | empty(0)]
+]
 var runs: []TileRun = []
 var run_table: []i64 = []
 var shown: []i64 = []
