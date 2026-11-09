@@ -26,6 +26,7 @@ The reference for Lyra's semantics as implemented. Compiler internals live in `l
 | Signed int | `i8` `i16` `i32` `i64` `i128` | no platform `int`/`uint`; untyped int literal defaults to `i64` |
 | Unsigned int | `u8` `u16` `u32` `u64` `u128` | |
 | Float | `f16` `f32` `f64` | no bare `float`; untyped float literal defaults to `f64` |
+| Fixed point | `fixed<I, F>` | signed; `I` integer bits (the sign among them) and `F` fractional bits; see [Fixed point](#fixed-point) |
 | Other | `bool`, `string`, `rune` | `rune` is a Unicode code point (i32) |
 | Internal | `never`, `untyped_int`, `untyped_signed_int`, `untyped_float` | no syntax |
 
@@ -39,6 +40,7 @@ The reference for Lyra's semantics as implemented. Compiler internals live in `l
 - **`==`/`!=` on floats warns** (`lyra-W008`), except a bare name compared with itself: `x != x` is exact and true for NaN alone, so it is the NaN test and draws nothing.
 - **An integer literal beside a float is a float**, whether the float is typed (`x < 1`, `x + 1`) or a literal (`5 < 5.0`, `5 == 5.0`, `5 * 2.5`), in every operator; a context still narrows the pair (`let f: f32 = 5 * 2.5`). A *typed* integer against a float is refused (`n < 2.0`; convert with `f64(n)`).
 - **Float narrowing is allowed and rounds to nearest** (`f32(x)`), as integer narrowing truncates (`u8(x)`). Refused: a compile-time constant that would become infinity (`f32(1.0e40)`). Precision loss is never an error.
+- **`u8(x)` truncates and says nothing of whether that was meant**; `x.truncate()`, `x.saturate()` and `x.narrow()` (§ Overflow) each say what becomes of a value the target can't hold.
 
 ### Struct literals and record update
 
@@ -60,6 +62,19 @@ lambda). The one named argument in the language is `@link`'s `pkg:`, an attribut
 ### Literals must fit
 
 A literal that cannot hold its value is a compile error **in every position, floats included**: match arm `300` on a `u8`, range-pattern bounds, `Some(300)` for `Maybe<u8>`, a `type` constraint, a return-position `() -> u8 => 300`, and each arm of an `if` or `match` whose value has the type (`let x: u8 = if c { 300 } else { 2 }`), an operand's arms included (`x + if c { 300 } else { 2 }` on a `u8` `x`, and `d += 300` on a `u8` name) (`lyra-E048` for patterns). Grace: an exclusive range end is a position, so `0..<256` on `u8` is legal, `0..<257` is not.
+
+### Fixed point
+
+`fixed<I, F>` is a signed binary-scaled number: `I` integer bits, the sign among them, and `F` fractional bits, so a `fixed<8, 8>` runs from -128 to 127.99609375 in steps of 1/256. It is its storage integer at run time, and exists for what has no floating point. (Decimal money has a better answer: `type Cents = i64`.)
+
+- **The bits add up to 8, 16, 32 or 64**, each at least 1; any other format is `lyra-E055`. No format is unsigned. A 64-bit format's multiply and divide take a 128-bit integer, so a console refuses them (`lyra-E096`); the rest of what it does is its 64-bit integer's. A console warns of a format emulated as its storage integer is.
+- **A literal adopts the format, and a literal is all that does.** `let v: fixed<8, 8> = 1.5` and `v + 1` take their format from the context; an integer literal is a whole value. A typed integer or float beside one is refused, as `fixed<8, 8> + fixed<24, 8>` is: convert. A literal rounds to the nearest stored value, a half going up (`0.1` is `26/256`), and one past the format is refused, as any literal is.
+- **`+`, `-`, unary `-`, `%` and `%%` are the storage integer's and trap as it does.** Bitwise and shift operators are refused.
+- **A `*` multiplies at twice the width, rounds to the nearest stored value with a half going up, and traps if that doesn't fit; a `/` truncates toward zero** as integer `/` does, traps on zero, and on a quotient that doesn't fit. The format doesn't change. `wrapping_add`/`_sub`/`_mul`, `saturating_add`/`_sub`/`_mul` and `checked_add`/`_sub`/`_mul`/`_div` work as on integers (no `rotate_*`, no `checked_rem*`).
+- **Comparison is exact**, so `==` draws no `lyra-W008`, and `<=>` orders one. A fixed value is matched by a guard: a literal or range pattern is refused, its written value being one it may only round to. There's no range of them (`a..<b`): walk an integer and convert it.
+- **Conversions name the target, `fixed<I, F>(x)`**, written with no space before the `<`: `fixed` stays an ordinary name in an expression, and `fixed < 8` a comparison. From an integer (traps if the value doesn't fit); from a float, rounding to nearest with a half up (traps past the format, and on NaN); from another format, rounding to nearest (traps if rounding carries past the top). A conversion to fewer integer bits is refused: `.narrow`, `.saturate` or `.truncate` say what should happen, and they convert between formats. `f64(v)` and `f32(v)` convert out. `i16(v)` is refused.
+- **`.floor()`, `.ceil()`, `.round()` answer the storage integer** (an `i16` for a `fixed<8, 8>`, which holds every whole part), the last with a half going up. `.to_bits()` reads the stored integer and `fixed<8, 8>.from_bits(n)` makes a value from one, `n` being exactly that integer. `.min`, `.max`, `.clamp`, `.abs`, `.is_negative`, `.show()` and a `where t: Ord`, `Add`… bound reach a format through impls the driver generates for each one written.
+- **Printing shows the exact decimal**, to the last digit the format has (`1.5`, `0.1015625`), with a `.0` on a whole value as a float has.
 
 ### Ranges
 
@@ -223,6 +238,16 @@ Integer `+ - * /` **trap** on overflow. Explicit alternatives, builtin on every 
 | `rotate_*` | `left` `right` | the bits that leave one end arrive at the other; the amount is **modulo the width**, so `rotate_right(0)` and `rotate_right(32)` on a `u32` are both the identity. Bit-level, so signedness does not enter (LLVM `fshl`/`fshr`) |
 
 `checked_rem` is `%` and `checked_rem_floor` is `%%` — see the two remainders below.
+
+**Narrowing has three names**, on any integer, each saying what becomes of a value the target can't hold:
+
+| Method | A value that doesn't fit |
+|---|---|
+| `x.truncate()` | keeps the low bits, as `u8(x)` does |
+| `x.saturate()` | answers the target's nearest value |
+| `x.narrow()` | traps; the check is dropped where the value is proven to fit |
+
+The target is a turbofish or the context: `x.narrow::<u8>()`, `let b: u8 = x.narrow()`, and an argument, a return or an assignment; nothing is `lyra-E095`, as a target that holds every value of the receiver is (write the conversion), as is a float receiver (round it first). A receiver may be a `type` over an integer, and a fixed value narrowing to another format.
 `INT_MIN % -1` answers `None` although its mathematical value is 0: the name means "the
 operation the operator would have refused, as a value", and `%` traps there.
 

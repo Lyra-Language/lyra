@@ -427,6 +427,14 @@ func (l *lowerer) formatForPrint(block *ir.Block, val value.Value, argType types
 		length := block.NewCall(l.i128ToStrFunc(), val, dataPtr, constant.NewInt(lltypes.I1, signedBit))
 		return dataPtr, length, nil
 
+	case isFixedName(prim.Name):
+		format, _ := types.FixedFormatOf(prim.Name)
+		buf := entry.NewAlloca(lltypes.NewArray(fixedStrBufBytes, lltypes.I8))
+		dataPtr := block.NewGetElementPtr(lltypes.NewArray(fixedStrBufBytes, lltypes.I8), buf,
+			i64c(0), i64c(0))
+		raw := coerceIntWidth(block, val, true, lltypes.I64)
+		return dataPtr, block.NewCall(l.fixedToStrFunc(), raw, i64c(int64(format.Fraction)), dataPtr), nil
+
 	default: // an integer type
 		buf := entry.NewAlloca(lltypes.NewArray(24, lltypes.I8))
 		dataPtr := block.NewGetElementPtr(lltypes.NewArray(24, lltypes.I8), buf,

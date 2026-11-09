@@ -64,6 +64,8 @@ func collectExpressionByKind(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expr
 		return CollectMatchExpression(node, ctx, loc)
 	case "block", "loop_body", "while_body", "for_in_body":
 		return CollectBlockExpr(node, ctx, loc)
+	case "fixed_point_type":
+		return collectFixedHead(node, ctx, loc)
 	case "identifier":
 		return CollectIdentifierExpr(node, false, loc, ctx)
 	case "const_identifier":

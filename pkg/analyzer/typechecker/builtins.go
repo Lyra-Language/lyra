@@ -694,9 +694,12 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 	if !ok {
 		return nil, false
 	}
+	if sig, ok := fixedMethodSignature(p, name); ok {
+		return sig, true
+	}
 	if intBinaryOps[name] {
 		// Explicit-overflow integer arithmetic: same integer type in and out.
-		if !isAnyConcreteInt(p.Name) {
+		if !isAnyConcreteInt(p.Name) && !isFixedOverflowMethod(p, name) {
 			return nil, false
 		}
 		return &types.LambdaType{
@@ -705,7 +708,7 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 		}, true
 	}
 	if _, isChecked := checkedIntBinaryOps[name]; isChecked {
-		if !isAnyConcreteInt(p.Name) {
+		if !isAnyConcreteInt(p.Name) && !isFixedOverflowMethod(p, name) {
 			return nil, false
 		}
 		// The result is a `Maybe<T>` of the **canonical** Maybe, resolved through the

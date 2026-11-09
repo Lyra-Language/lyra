@@ -134,6 +134,22 @@ func emulatedArithmetic(lam *ast.LambdaExpr, typeTable *typetable.TypeTable, tgt
 			return true
 		}
 		name := string(prim.Name)
+		if format, fixed := types.FixedFormatOf(prim.Name); fixed {
+			// What a fixed value costs is its storage integer's.
+			name = string(format.Storage())
+			if op.Operator == ast.MathBinaryOpMul || op.Operator == ast.MathBinaryOpDiv {
+				if format.Bits() == 64 && !warned[string(prim.Name)] {
+					warned[string(prim.Name)] = true
+					diags = append(diags, diag.Diagnostic{
+						Location: op.GetLocation(),
+						Severity: diag.SeverityError,
+						Code:     diag.CodeFixedNoWideArithmetic,
+						Message: fmt.Sprintf("`%s` %s on the %s takes a 128-bit integer, and it has none: use a format of 32 bits or fewer",
+							prim.Name, op.Operator, tgt.CPU),
+					})
+				}
+			}
+		}
 		if !tgt.Emulates(name) || warned[name] {
 			return true
 		}

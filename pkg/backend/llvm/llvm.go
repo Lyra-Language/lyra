@@ -1089,6 +1089,9 @@ func (l *lowerer) lowerConstParam(e *ast.IdentifierExpr) (value.Value, error) {
 func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value.Value, *ir.Block, error) {
 	switch e := expr.(type) {
 	case *ast.IntegerLiteralExpr:
+		if c, isFixed, err := l.fixedLiteral(e, false); isFixed {
+			return c, block, err
+		}
 		// An int literal the typechecker adapted to a float context (`let x: f64
 		// = 5` — propagateExpectedType, or the annotation record in checkVarDecl)
 		// is a float constant, not an i64 one.
@@ -1113,6 +1116,9 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		}
 		return constant.NewInt(l.literalIntType(e), e.Value), block, nil
 	case *ast.FloatLiteralExpr:
+		if c, isFixed, err := l.fixedLiteral(e, false); isFixed {
+			return c, block, err
+		}
 		return floatConst(l.literalFloatType(e), e.Value), block, nil
 	case *ast.CharacterLiteralExpr:
 		// A rune is a Unicode code point, represented as i32.

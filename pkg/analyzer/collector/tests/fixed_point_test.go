@@ -7,32 +7,21 @@ import (
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
-// ── fixed<I, F>: refused as unimplemented (lyra-E055, 08/14) ────────────────
+// ── fixed<I, F> formats (lyra-E055) ─────────────────────────────────────────
 //
-// The annotation parses and collects into a real `types.FixedPointType`, and no pass
-// after the collector knows what one is — so the type is *uninhabitable*: every literal
-// and every conversion into it is refused, and no value of it can be constructed by any
-// spelling.
-//
-// Before this, an author met that as a series of ordinary type errors — "cannot assign
-// integer literal to `fixed<16,16>`" — which reads as a fixable mistake and invites
-// trying `1.5`, then `f64(1.5)`, then `i32(1)`, each answered by the same sentence with
-// one noun changed. The lyra-E035/E052 rule applies: when a construct is unimplemented,
-// say so, rather than leaving it to be inferred from what fails.
-//
-// The syntax is kept rather than deleted because the intent is to build it, and
-// `fixed<I, F>` already commits to the design that serves determinism (binary scaling).
+// The syntax takes any two integers and a format exists only where they add up to a width
+// with an integer to hold it, so a format that can't exist is the collector's to refuse: it
+// is the one place the syntax becomes a type.
 
 func fixedPointRefusal(t *testing.T, source string, wantCount int) {
 	t.Helper()
 	diags := diagnosticsOf(t, source)
-
 	got := 0
 	for _, d := range diags {
-		if d.Code == diag.CodeFixedPointNotImplemented {
+		if d.Code == diag.CodeFixedPointFormat {
 			got++
-			if !strings.Contains(d.Message, "not implemented") {
-				t.Errorf("E055 message should say it is not implemented: %q", d.Message)
+			if !strings.Contains(d.Message, "is not a format") {
+				t.Errorf("E055 message should say what is wrong: %q", d.Message)
 			}
 		}
 	}
@@ -44,7 +33,7 @@ func fixedPointRefusal(t *testing.T, source string, wantCount int) {
 func TestFixedPoint_AnnotationIsRefused(t *testing.T) {
 	fixedPointRefusal(t, `
 let main = () => {
-  let x: fixed<16, 16> = 1
+  let x: fixed<16, 17> = 1
 }
 `, 1)
 }
@@ -56,7 +45,7 @@ let main = () => {
 func TestFixedPoint_ReportsOncePerMention(t *testing.T) {
 	diags := diagnosticsOf(t, `
 let main = () => {
-  let x: fixed<16, 16> = 1
+  let x: fixed<16, 17> = 1
 }
 `)
 	if len(diags) != 1 {
@@ -71,15 +60,35 @@ let main = () => {
 // parseType has already reported.
 func TestFixedPoint_RefusedInEveryTypePosition(t *testing.T) {
 	for name, source := range map[string]string{
-		"struct field":  `struct Point { x: fixed<16, 16> }`,
-		"newtype base":  `type Scaled = fixed<8, 8>`,
-		"parameter":     `let take = (v: fixed<16, 16>) -> i64 => 1`,
-		"return type":   `let give = () -> fixed<16, 16> => 1`,
-		"array element": `let arr: []fixed<16, 16> = []`,
-		"type alias":    `alias Alias = fixed<4, 4>`,
+		"struct field":  `struct Point { x: fixed<16, 17> }`,
+		"newtype base":  `type Scaled = fixed<8, 9>`,
+		"parameter":     `let take = (v: fixed<16, 17>) -> i64 => 1`,
+		"return type":   `let give = () -> fixed<16, 17> => 1`,
+		"array element": `let arr: []fixed<16, 17> = []`,
+		"type alias":    `alias Alias = fixed<4, 3>`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			fixedPointRefusal(t, source, 1)
 		})
+	}
+}
+
+// Every width and split that can exist is collected, at both ends of what a split allows.
+func TestFixedPoint_AFormatOfAWidthLyraHasIsCollected(t *testing.T) {
+	for _, source := range []string{
+		`let a: fixed<4, 4> = 1`, `let a: fixed<1, 7> = 0`, `let a: fixed<7, 1> = 1`,
+		`let a: fixed<8, 8> = 1`, `let a: fixed<24, 8> = 1`, `let a: fixed<16, 16> = 1`,
+		`let a: fixed<32, 32> = 1`, `let a: fixed<1, 63> = 0`, `let a: fixed<63, 1> = 1`,
+	} {
+		fixedPointRefusal(t, source, 0)
+	}
+}
+
+func TestFixedPoint_AFormatThatCantExistIsRefused(t *testing.T) {
+	for _, source := range []string{
+		`let a: fixed<0, 8> = 1`, `let a: fixed<8, 0> = 1`, `let a: fixed<3, 8> = 1`,
+		`let a: fixed<64, 64> = 1`, `let a: fixed<8, 4> = 1`,
+	} {
+		fixedPointRefusal(t, source, 1)
 	}
 }

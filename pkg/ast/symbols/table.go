@@ -80,6 +80,10 @@ type SymbolTable struct {
 	GlobalScope  *Scope
 	CurrentScope *Scope
 
+	// FixedFormats holds every `fixed<I, F>` a program wrote, so the driver can give each
+	// one the prelude's trait impls (FixedFormats' doc comment, fixed_formats.go).
+	fixedFormats map[types.FixedFormat]bool
+
 	// PreludeScope holds the prelude's exported bindings, and sits **between** every
 	// module scope and the global one: a lookup runs module → prelude → global.
 	//

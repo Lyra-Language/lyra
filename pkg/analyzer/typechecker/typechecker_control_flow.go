@@ -1360,6 +1360,14 @@ func (tc *TypeChecker) checkNumericMatchArm(pattern ast.Pattern, scrutineeType t
 	// This checks *kind* only (an int literal where an int belongs). The *value* —
 	// does 300 fit a u8, is 200 inside Percent's range — is checkPatternLiterals's
 	// (lyra-E048), which runs for every arm before the kind dispatch.
+	if _, fixed := types.AsFixed(scrutineeType); fixed {
+		switch pattern.(type) {
+		case *ast.LiteralPattern, *ast.RangePattern:
+			tc.addError(pattern.GetLocation(), SeverityError,
+				"a %s can't be matched against a literal or a range, whose written value it may only round to: compare it with `==` or `<`, in a guard if need be", scrutineeType)
+			return
+		}
+	}
 	switch p := pattern.(type) {
 	case *ast.OrPattern:
 		for _, alt := range p.Alternatives {
@@ -1854,6 +1862,11 @@ func (tc *TypeChecker) inferRangeExpr(expr *ast.RangeExpr) types.Type {
 		} else {
 			commonType = ct
 		}
+	}
+	if _, fixed := types.AsFixed(commonType); fixed {
+		tc.addError(expr.GetLocation(), SeverityError,
+			"a range of %s has no unit to step by: walk an integer and convert it, `fixed<I, F>(n)`", commonType)
+		return nil
 	}
 
 	if expr.Step != nil {

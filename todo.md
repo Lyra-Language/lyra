@@ -1027,8 +1027,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   accumulator need not spell `wrapping_*` per op and `saturating` can clamp to a `range`.
   Open: explicit-method precedence, and whether saturation clamps every intermediate or
   only at store. Wrapping-only is the cheap first slice.
-- **[DECIDED] Narrowing gets named methods** (`truncate`/`saturate`/`narrow`). **[OPEN]**
-  they need return-type-from-context inference or a turbofish.
+- **[DONE 11/09] Narrowing has named methods** (`truncate`/`saturate`/`narrow`), taking the
+  target from a turbofish or the context. (COMPLETED.md, 11/09.)
 - **[PARTIAL 10/29] An uppercase type parameter** (`let f<R> where R: Renderer`): the parse
   error now says a type parameter is lowercase and gives the list fixed (`<R>` is `<r>`).
   **[OPEN]** the errors the parser's recovery leaves after it — "unknown type \"R\"",
@@ -1151,7 +1151,7 @@ per size, a generic passing its own size on. LANGUAGE.md § Generic parameter li
 - **[DONE 11/03] `N` as a value** in the body, `#[v; N]` included. (COMPLETED.md, 11/03.)
 - **[DONE 11/03] A `const` parameter on a type** (`struct Ring<t, const N: i64>`), with `impl
   Ring<t, N>`. (COMPLETED.md, 11/03.)
-- **[OPEN] A `const` parameter on a trait**, and `fixed<I, F>` / `simd<T, N>` over the type form.
+- **[OPEN] A `const` parameter on a trait**, and `simd<T, N>` over the type form.
 - **[DONE 11/03] Arithmetic in a size** (`[N + 1]t`): linear, solved from arguments.
   (COMPLETED.md, 11/03.)
 - **[OPEN] A size no sum can write** (`[N * M]t`), and constraints on a value parameter (`where N
@@ -1404,10 +1404,14 @@ target, 10/11). In order:
 
 ## Traits
 
-- **[OPEN] Fixed-point types — `fixed<I, F>` is refused** (`lyra-E055`). First confirm the
-  purpose (binary-scaled determinism vs decimal money, which a newtype serves) and what
-  arithmetic does to the parameters; blocked on const generics. Add `fixed_point_type` to
-  both highlight query files when built.
+- **[DONE 11/09] Fixed-point types, `fixed<I, F>`.** (COMPLETED.md, 11/09.)
+- **[OPEN] The game runtimes hand-roll their 8.8.** `std.genesis.entity`, `std.sms.entity` and
+  what Vega generates hold 256ths in `i16`/`i32`; moving them to `fixed<8, 8>`/`fixed<24, 8>`
+  needs a measure of each trap and multiply first, on a frame.
+- **[OPEN] A fixed value isn't a `HashMap` key** and has no range facts: `Hash` isn't generated
+  (`std.collections` is outside the prelude), and every check on a fixed value stays.
+- **[OPEN] A fixed-point format with a `const` parameter** (`fixed<N, 8>`): the grammar takes
+  literals, and no program has wanted one; would need generic impls of the prelude's traits.
 - **[DONE 09/23] Overlapping impls are ranked.** A more specific target wins by
   subsumption; incomparable targets stay ambiguous and ranking never reaches across traits.
   Identical targets are still `lyra-E037`. (COMPLETED.md, 09/23.)

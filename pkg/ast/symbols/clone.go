@@ -41,6 +41,7 @@ func (st *SymbolTable) Clone() (*SymbolTable, map[*Scope]*Scope) {
 		ModuleOf:        cloneMap(st.ModuleOf),
 		ModuleOfFile:    cloneMap(st.ModuleOfFile),
 		PreludeModule:   st.PreludeModule,
+		fixedFormats:    cloneMap(st.fixedFormats),
 		ModuleDocs:      cloneMap(st.ModuleDocs),
 		Shadowed:        append([]ShadowedName(nil), st.Shadowed...),
 		ImportedModules: cloneMapOfSlice(st.ImportedModules),

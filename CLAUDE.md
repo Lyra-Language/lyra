@@ -497,6 +497,8 @@ in the source belongs to its module's parts** (`funcModule`): in the program's p
 by a hash of the name, a line added above a file's closures renamed them all and changed
 every pool part. Details: cmd/lyrac/README.md.
 
+**Fixed point** (`pkg/types/fixed_point.go`, typechecker and backend `fixed_point.go`, `driver/fixed_impls.go`) — a format is a primitive named `fixed<8,8>`, so a primitive-keyed walk is right unless it asks by width (`LLVMPrimitive`, `IsSignedInt`, `primitiveLayout`). Arithmetic asks `types.AsFixed`. The expression head `fixed<8, 8>` is an identifier of that name, which `types.ConversionTargetName` takes for a conversion. `driver/fixed_impls.go` adds the prelude's trait impls for each format the collector saw, as a generated file of the prelude's module.
+
 **Foreign functions** — see [`pkg/backend/FFI.md`](pkg/backend/FFI.md).
 
 **Live reload (`lyrac run --live`)** — design `pkg/backend/LIVE.md`; backend

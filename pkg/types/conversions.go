@@ -37,5 +37,8 @@ func ConversionTargetName(callee string) (PrimitiveTypeName, bool) {
 	case "bool":
 		return Boolean, true
 	}
+	if _, fixed := FixedFormatOf(PrimitiveTypeName(callee)); fixed {
+		return PrimitiveTypeName(callee), true
+	}
 	return "", false
 }

@@ -55,6 +55,8 @@ const (
 	// rather than for `floor`/`ceil`/`round`, because that is where the loss happens —
 	// the rounding itself is exact and total.
 	floatToIntTrapMessage = "lyra: float value is out of range for an integer"
+	// `x.narrow()` of a value its target cannot hold.
+	narrowOverflowTrapMessage = "lyra: value does not fit the narrowing's target"
 	// `[v; n]` with a negative runtime n. The constant form refuses one at compile
 	// time; this is the same rule at the only moment a runtime count exists.
 	negativeLengthTrapMessage = "lyra: array length must not be negative"
@@ -288,6 +290,10 @@ func (l *lowerer) panicRangeStepFunc() *ir.Func {
 // coordinate silently rendering the wrong pixel is the failure this exists to prevent.
 func (l *lowerer) panicFloatToIntFunc() *ir.Func {
 	return l.panicFunc("lyra_panic_float_to_int", floatToIntTrapMessage)
+}
+
+func (l *lowerer) narrowOverflowFunc() *ir.Func {
+	return l.panicFunc("lyra_panic_narrow", narrowOverflowTrapMessage)
 }
 
 // panicNegativeLengthFunc is the trap for `[v; n]` whose runtime count is negative.

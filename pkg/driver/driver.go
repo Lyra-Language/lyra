@@ -198,6 +198,16 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 		c.AddFile(u.Root, u.Source, u.File, u.Path)
 	}
 	parseDiagnostics := len(res.Diagnostics)
+	if prelude != "" {
+		tree, err := addFixedImpls(c, prelude, c.FixedFormats())
+		if err != nil {
+			res.err(ast.Location{}, "", "generating the fixed-point impls: "+err.Error())
+			return res
+		}
+		if tree != nil {
+			defer tree.Close()
+		}
+	}
 	program, symTable, scopeTable, collectorErrors := c.Finish()
 	res.Program, res.SymbolTable, res.ScopeTable = program, symTable, scopeTable
 	// Before every pass: an aliased constructor import is erased into the constructor's own
@@ -805,7 +815,7 @@ func checkTarget(res *Result, units []modules.Unit, tt *typetable.TypeTable) []d
 			library[u.File] = true
 		}
 	}
-	inScope := func(file string) bool { return !library[file] }
+	inScope := func(file string) bool { return !library[file] && file != fixedImplsFile }
 	return append(interrupts, checker.CheckTarget(res.Program, res.SymbolTable, res.ScopeTable, tt, res.MethodTable, res.Captures, tgt, inScope)...)
 }
 

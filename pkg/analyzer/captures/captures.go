@@ -243,6 +243,9 @@ func (a *analyzer) capturesOf(fn *ast.LambdaExpr) []Capture {
 		// `Color` was expected, and the ABI lowering died in a Go panic storing a
 		// `{ i8*, i8* }` into a `%Color*` (09/10). It needed a sibling *file* of the
 		// same module to declare the name, which is why it resisted reduction.
+		if _, fixed := types.FixedFormatOf(types.PrimitiveTypeName(name)); fixed {
+			continue // a format's name heads a conversion, and is never a binding
+		}
 		if a.globals[name] && !a.outer[name] {
 			continue
 		}

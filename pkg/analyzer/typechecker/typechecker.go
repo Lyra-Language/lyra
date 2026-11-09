@@ -1768,7 +1768,9 @@ func (tc *TypeChecker) checkStorable(
 // paths of checkAssignToBinding so both apply exactly the same rules — inferring
 // the RHS here is also what records its subexpression types for the backend.
 func (tc *TypeChecker) checkAssignedValue(name string, value ast.Expression, target types.Type, loc ast.Location) types.Type {
+	restoreExpected := tc.pushExpectedType(target, value.GetLocation())
 	rhsType := tc.inferExprType(value)
+	restoreExpected()
 	if rhsType == nil {
 		return nil
 	}
@@ -2349,7 +2351,9 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 			// question — it is exact, and true for NaN alone, which makes it the NaN
 			// test (the prelude's float `min`/`max`/`clamp` use it). Only a bare name on
 			// both sides qualifies; `f() != f()` compares two evaluations.
-			if (isFloatType(leftType) || isFloatType(rightType)) && !isSelfComparison(expr) {
+			_, leftFixed := types.AsFixed(leftType)
+			_, rightFixed := types.AsFixed(rightType)
+			if (isFloatType(leftType) || isFloatType(rightType)) && !leftFixed && !rightFixed && !isSelfComparison(expr) {
 				tc.addWarning(expr.GetLocation(), diag.CodeImpreciseFloatEquality,
 					"operator %s: comparing float values with == or != may give unexpected results due to floating-point precision", expr.Operator)
 			}
@@ -2368,6 +2372,15 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 		// integer `match` carry a case that cannot occur, so the decision is deferred
 		// rather than guessed — see todo.md.
 		if isRuneType(leftType) && isRuneType(rightType) {
+			return
+		}
+		// A fixed value has no NaN, and a float literal beside one is that fixed type.
+		if _, fixed := types.AsFixed(leftType); fixed && isUntypedNumericOrFixed(rightType) {
+			tc.propagateComparisonWidth(expr, leftType, rightType)
+			return
+		}
+		if _, fixed := types.AsFixed(rightType); fixed && isUntypedNumericOrFixed(leftType) {
+			tc.propagateComparisonWidth(expr, leftType, rightType)
 			return
 		}
 		if isFloatType(leftType) || isFloatType(rightType) {
@@ -3712,6 +3725,9 @@ func (tc *TypeChecker) inferTypeConversion(call *ast.FunctionCallExpr) types.Typ
 	// making `rune` itself numeric — it has no arithmetic of its own, so the
 	// conversion is where the intent is written down (the same split Rust draws for
 	// `char`).
+	if tc.checkFixedConversion(call, ident.Name, argType, targetType) {
+		return targetType
+	}
 	if isRuneType(argType) || isRuneType(targetType) {
 		bothRunes := isRuneType(argType) && isRuneType(targetType)
 		toInt := isRuneType(argType) && isIntType(targetType)
@@ -4284,6 +4300,15 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 	}
 	switch e := expr.(type) {
 	case *ast.IntegerLiteralExpr:
+		if _, fixed := types.FixedFormatOf(cp.Name); fixed {
+			// Recorded whether it fits or not, as a negated minimum's magnitude doesn't:
+			// checkLiteralRange reports the one that doesn't, and the backend refuses
+			// any that got past it.
+			if tc.currentTypeIsUntyped(e) {
+				tc.typeTable.Set(e, cp)
+			}
+			return
+		}
 		if isAnyConcreteFloat(cp.Name) {
 			// An int literal adapting to a float context (`let x: f64 = 5`, a call
 			// argument against a float param, a float field/payload/return).
@@ -4323,6 +4348,12 @@ func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Typ
 		}
 		tc.typeTable.Set(e, cp)
 	case *ast.FloatLiteralExpr:
+		if _, fixed := types.FixedFormatOf(cp.Name); fixed {
+			if tc.currentTypeIsUntyped(e) {
+				tc.typeTable.Set(e, cp)
+			}
+			return
+		}
 		if !isAnyConcreteFloat(cp.Name) || !tc.currentTypeIsUntyped(e) {
 			return
 		}

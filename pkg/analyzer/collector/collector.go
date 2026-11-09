@@ -1199,40 +1199,39 @@ func (c *Collector) parseRawPointerType(node *sitter.Node) types.Type {
 	}
 }
 
-// parseFixedPointType refuses `fixed<I, F>` as unimplemented (lyra-E055).
-//
-// The type is *uninhabitable*: it parses and collects, and nothing downstream knows what
-// it is, so every literal and every conversion into it is refused and no value of it can
-// be constructed by any spelling. Reported **here** because this is the one place the
-// syntax becomes a type — one diagnostic per mention, at the mention, which is lyra-E035's
-// rule — and returning nil rather than the type keeps it to one: a nil annotation reads as
-// *absent* downstream, so `let x: fixed<16,16> = 1` infers `i64` for the binding instead of
-// adding "cannot assign integer literal to fixed<16,16>" underneath this.
-//
-// The bits are still parsed, so the message can name what was written. `types.FixedPointType`
-// stays for the same reason the grammar rule does: this is deferred, not abandoned.
+// FixedFormats answers every `fixed<I, F>` written so far.
+func (c *Collector) FixedFormats() []types.FixedFormat { return c.table.FixedFormats() }
+
+// parseFixedPointType collects `fixed<I, F>` into its primitive type, refusing a format with no
+// storage integer (lyra-E055). It is the one place the syntax becomes a type, as a type or as
+// the head of a conversion, so it is where a format is noted for the driver, which gives each
+// one written its trait impls. A format that can't exist answers nil: a nil annotation reads
+// as absent downstream, which keeps it to one diagnostic.
 func (c *Collector) parseFixedPointType(node *sitter.Node) types.Type {
-	intBits, fracBits := 0, 0
-	idx := 0
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		if child.Kind() != "integer_literal" {
-			continue
-		}
-		val, _ := strconv.Atoi(c.ctx.NodeText(child))
-		if idx == 0 {
-			intBits = val
-		} else {
-			fracBits = val
-		}
-		idx++
+	format := types.FixedFormat{
+		Integer:  c.fixedBits(node, "integer_bits"),
+		Fraction: c.fixedBits(node, "fractional_bits"),
 	}
-	c.ctx.AddErrorCoded(node, diag.SeverityError, diag.CodeFixedPointNotImplemented,
-		"fixed-point types are not implemented: `fixed<%d, %d>` parses but no value of it "+
-			"can be constructed; use `f64` for fractional arithmetic, or `type Cents = i64` "+
-			"with a `where range(...)` constraint for a scaled integer",
-		intBits, fracBits)
-	return nil
+	if !format.Valid() {
+		c.ctx.AddErrorCoded(node, diag.SeverityError, diag.CodeFixedPointFormat,
+			"`fixed<%d, %d>` is not a format: the integer and fractional bits must each be at least 1 and add up to 8, 16, 32 or 64 (the integer bits count the sign)",
+			format.Integer, format.Fraction)
+		return nil
+	}
+	c.table.NoteFixedFormat(format)
+	return types.Fixed(format)
+}
+
+func (c *Collector) fixedBits(node *sitter.Node, field string) int {
+	bits := cst.Field(node, field)
+	if bits == nil {
+		return 0
+	}
+	value, err := strconv.Atoi(c.ctx.NodeText(bits))
+	if err != nil {
+		return 0
+	}
+	return value
 }
 
 // parseWeakType collects a `weak T` node into a types.WeakType wrapping the

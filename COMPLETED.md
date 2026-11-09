@@ -27688,3 +27688,43 @@ beside the planes so a game links only MIT code, and repeat Vega's `TileMap.cell
 ## 11/09 — A modern game's art is read when it runs
 
 `assets.lyra` held every pixel as hex text: 30 MB for Sticker Knight, most of a 70 s build. Vega now writes PNGs to `art/`, `std.game` decodes them at start-up, and `lyra.toml`'s `resources` has lyrac put the folder beside the program, which is one rule for `lyrac run`, a build elsewhere and an iOS app (inside it before signing, since signing seals the bundle). Files beside the program over an embedded blob: no language change, and a large game can later load art per level. Consoles keep their art in the ROM.
+
+## 11/09 — Named narrowing methods; `fixed<I, F>`
+
+**`truncate`, `saturate`, `narrow`.** Open since July as "needs return-type-from-context
+inference or a turbofish"; both had landed for other reasons, so the target comes from either.
+`narrow` traps, rather than answering `Maybe`, because the plain name traps and `checked_`
+answers `Maybe` everywhere else, and the range pass drops the check where the receiver is
+proven to fit. A target holding every value of the receiver is refused: nothing is being
+narrowed, so the conversion is the honest spelling. `u8(x)` keeps truncating. An assignment now
+pushes the binding's type as context (it was the one storing position that didn't).
+
+**`fixed<I, F>` is a primitive named by its format**, not a type kind of its own: every "is this
+a scalar", "does it own anything", "how large" and "same type" is right with no case added,
+which is what rule 8 says to want. `AsFixed` is the one question arithmetic asks.
+
+**Measured before building.** Two programs want it: the entity runtimes, 8.8 speeds and 24.8
+places (add, compare, clamp, floor, convert), and a 12.4 example. One multiply exists, camera
+parallax, as `(i32(x) * i32(f)) >> 8`. Nothing unsigned, decimal or 16.16 was found; it
+needs no `const` trait parameter and no const generics, because the grammar takes literal bits.
+
+**`*` rounds to nearest, a half up, and the format doesn't change.** The user chose rounding over
+the floor the games' `>> 8` does today; growing the parameters was the other option, and it would
+make every stored product a narrowing. A literal rounds the same way, as a float's does, and
+printing is the exact decimal, every digit the format has.
+
+**Trait impls are generated per written format** (`driver/fixed_impls.go`): the prelude writes them
+out per integer width, and there are 116 formats. A file of the prelude's module, in its own words,
+holding `Add`, `Sub`, `Mul`, `Div`, `Arithmetic`, `Ord`, `Show`, `Signed` for each format the
+collector saw, so `.min`, a `where t: Ord` and the rest are ordinary trait dispatch. Formats are
+literal, and `parseFixedPointType` is the one place the syntax becomes a type, so the set is complete.
+
+**In an expression the head is one token, `fixed<`.** `fixed` is a keyword only in a type, and a
+program may name a variable that (`bindings/freetype.lyra` does). Added plainly to the expression
+head, the keyword took the name away in every expression of every file, which only the whole
+suite showed: all of `ui` stopped parsing.
+
+**Found on the way:** `fixed<16, 16>(n)` emitted a `trunc` from a type to itself because the scaled
+integer's width equalled the storage's, a clang-only error only a width-for-width case reached; the
+scaling integer is now always strictly wider. `SizeAndAlign` had to learn formats too, or a
+`Maybe<fixed<8, 8>>` failed to lay out in the backend while the type checked clean.

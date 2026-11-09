@@ -961,6 +961,69 @@ let word = (v: i64) -> u32 => u32(v & 0xFFFFFFFF)
 	}
 }
 
+// TestGenesis_FixedPointRunsOnThe68000 runs the arithmetic a console game does in fixed point,
+// 8.8 and 24.8, on the processor: a multiply and a divide at twice the width, a negative floor,
+// and a conversion across formats. Compared on the machine rather than against the host, since
+// what matters is that every answer below is the one the format says.
+func TestGenesis_FixedPointRunsOnThe68000(t *testing.T) {
+	t.Parallel()
+	genesisToolchainOrSkip(t)
+	out := genesisProgram(t, "fixedpoint", `import std.genesis.vdp
+
+let identity = (v: fixed<8, 8>) -> fixed<8, 8> => v
+
+let main = () -> void => {
+  vdp.init()
+  vdp.display_on()
+  let speed: fixed<8, 8> = identity(1.5)
+  let place: fixed<24, 8> = 1000.25
+  let moved = place + fixed<24, 8>(speed)
+  let down: fixed<8, 8> = identity(-1.5)
+  let ok = (speed * 2.5).to_bits() == 960 &&
+    (speed * 0.00390625).to_bits() == 2 &&
+    (down * 2).to_bits() == -768 &&
+    (speed / 0.5).to_bits() == 768 &&
+    (down / 0.5).to_bits() == -768 &&
+    moved.to_bits() == 256448 &&
+    moved.floor() == 1001 &&
+    down.floor() == -2 &&
+    down.ceil() == -1 &&
+    down.round() == -1 &&
+    moved.saturate::<fixed<8, 8>>().to_bits() == 32767 &&
+    speed < 2.0 &&
+    speed.max(0.5).to_bits() == 384 &&
+    (fixed<24, 8>(speed) * 100.5).to_bits() == 38592
+  // Green when right, blue when wrong; the runtime's panic screen is red.
+  vdp.set_color(0, 0, if ok { vdp.rgb(0, 7, 0) } else { vdp.rgb(0, 0, 7) })
+  loop {}
+}
+`)
+	if got := runROM(t, out, "60", "").dominant(); got != "00ff00" {
+		t.Errorf("the screen is %s, want 00ff00 (blue: an answer is wrong, red: a trap)", got)
+	}
+}
+
+// TestGenesis_ANarrowingOverflowTraps: `narrow` reaches the console's own trap.
+func TestGenesis_ANarrowingOverflowTraps(t *testing.T) {
+	t.Parallel()
+	genesisToolchainOrSkip(t)
+	out := genesisProgram(t, "narrowtrap", `import std.genesis.vdp
+
+let big = (n: i32) -> i32 => n * 300
+
+let main = () -> void => {
+  vdp.init()
+  vdp.display_on()
+  let b: u8 = big(1).narrow()
+  vdp.set_color(0, 0, vdp.rgb(u16(b), 0, 7))
+  loop {}
+}
+`)
+	if got := runROM(t, out, "60", "").dominant(); !strings.HasPrefix(got, "ff") {
+		t.Errorf("the screen is %s, want the panic screen's red", got)
+	}
+}
+
 // TestGenesis_WriteCellSetsOneCell puts one tile into plane A's cell (2, 1) with
 // vdp.write_cell: it must show at pixels 16–24 across and 8–16 down, and nothing else.
 func TestGenesis_WriteCellSetsOneCell(t *testing.T) {

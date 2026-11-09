@@ -102,6 +102,9 @@ func layoutOf(t Type, resolve Resolver, depth int) (size, align int, ok bool) {
 }
 
 func primitiveLayout(name PrimitiveTypeName) (int, int, bool) {
+	if format, fixed := FixedFormatOf(name); fixed {
+		name = format.Storage()
+	}
 	switch name {
 	case Int8, UInt8, Boolean:
 		return 1, 1, true

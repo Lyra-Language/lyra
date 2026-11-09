@@ -22,7 +22,8 @@ func IsNumeric(t Type) bool {
 		Float16, Float32, Float64, UntypedInt, UntypedSignedInt, UntypedFloat:
 		return true
 	default:
-		return false
+		_, fixed := FixedFormatOf(primitive.Name)
+		return fixed
 	}
 }
 

@@ -119,6 +119,9 @@ type SafetyTable struct {
 	// noFloatToIntTrap — `x.floor()`/`.ceil()`/`.round()` whose receiver is provably
 	// finite and well inside i64's range (drops the conversion's guard; range_float.go).
 	noFloatToIntTrap map[ast.Expression]bool
+	// noNarrowTrap — `x.narrow()` whose receiver provably fits the target (drops the
+	// fit check; range_narrowing.go).
+	noNarrowTrap map[ast.Expression]bool
 }
 
 func newSafetyTable() *SafetyTable {
@@ -130,6 +133,7 @@ func newSafetyTable() *SafetyTable {
 		noShiftOverflow: map[ast.Expression]bool{},
 
 		noFloatToIntTrap: map[ast.Expression]bool{},
+		noNarrowTrap:     map[ast.Expression]bool{},
 	}
 }
 
@@ -157,6 +161,10 @@ func (t *SafetyTable) NoShiftOverflow(e ast.Expression) bool { return t.has(t.no
 // NoFloatToIntTrap reports whether e is a rounding call whose float→int conversion cannot
 // fail — so its range guard drops.
 func (t *SafetyTable) NoFloatToIntTrap(e ast.Expression) bool { return t.has(t.noFloatToIntTrap, e) }
+
+// NoNarrowTrap reports whether e is a `narrow` whose receiver provably fits its target — so
+// the fit check drops.
+func (t *SafetyTable) NoNarrowTrap(e ast.Expression) bool { return t.has(t.noNarrowTrap, e) }
 
 func (t *SafetyTable) has(m map[ast.Expression]bool, e ast.Expression) bool {
 	if t == nil || m == nil {
@@ -699,6 +707,9 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 	case *ast.FunctionCallExpr:
 		if c.isBuiltinRounding(v) {
 			return c.evalRounding(st, v)
+		}
+		if c.isBuiltinNarrowing(v) {
+			return c.evalNarrowing(st, v)
 		}
 	}
 

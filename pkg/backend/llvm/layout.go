@@ -26,6 +26,9 @@ const pointerSize = types.PointerSize
 // (string) or that shouldn't survive typechecking (untyped literals are mapped
 // to their defaults defensively). char is a Unicode scalar → i32.
 func LLVMPrimitive(name types.PrimitiveTypeName) (lltypes.Type, bool) {
+	if format, fixed := types.FixedFormatOf(name); fixed {
+		name = format.Storage()
+	}
 	switch name {
 	case types.Int8, types.UInt8:
 		return lltypes.I8, true
@@ -98,6 +101,9 @@ func conversionTargetName(callee string) (types.PrimitiveTypeName, bool) {
 // an integer (e.g. via LLVMPrimitive's ok result together with a concrete-int
 // check).
 func IsSignedInt(name types.PrimitiveTypeName) bool {
+	if _, fixed := types.FixedFormatOf(name); fixed {
+		return true
+	}
 	switch name {
 	case types.Int8, types.Int16, types.Int32, types.Int64, types.Int128,
 		types.UntypedInt, types.UntypedSignedInt,

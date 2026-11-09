@@ -186,6 +186,23 @@ func (tc *TypeChecker) checkLiteralRange(varName string, expr ast.Expression, ta
 	if !ok {
 		return
 	}
+	if format, fixed := types.FixedFormatOf(toP.Name); fixed {
+		value, isLiteral := fixedLiteralValue(expr)
+		if !isLiteral {
+			tc.checkBranchOperands(varName, expr, toP, false)
+			return
+		}
+		if _, fits := format.LiteralRaw(value); fits || tc.overflowReported[expr] {
+			return
+		}
+		if tc.overflowReported == nil {
+			tc.overflowReported = map[ast.Expression]bool{}
+		}
+		tc.overflowReported[expr] = true
+		tc.addError(expr.GetLocation(), SeverityError,
+			"%s: literal value %s overflows %s", varName, value.FloatString(4), toP.Name)
+		return
+	}
 	// A float target: the bound is the type's finite range, since what makes a float
 	// literal wrong is **overflowing to infinity** rather than truncating. Precision loss
 	// is not an error at any magnitude — `let x: f32 = 0.1` is what the type is for.

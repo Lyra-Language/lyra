@@ -724,13 +724,14 @@ func isAssignable(from, to types.Type) bool {
 	if !fromIsPrim || !toIsPrim {
 		return false
 	}
+	_, toFixed := types.FixedFormatOf(toP.Name)
 	switch fromP.Name {
 	case types.UntypedInt:
-		return isAnyConcreteInt(toP.Name) || isAnyConcreteFloat(toP.Name)
+		return isAnyConcreteInt(toP.Name) || isAnyConcreteFloat(toP.Name) || toFixed
 	case types.UntypedSignedInt:
-		return isAnyConcreteSignedInt(toP.Name) || isAnyConcreteFloat(toP.Name)
+		return isAnyConcreteSignedInt(toP.Name) || isAnyConcreteFloat(toP.Name) || toFixed
 	case types.UntypedFloat:
-		return isAnyConcreteFloat(toP.Name)
+		return isAnyConcreteFloat(toP.Name) || toFixed
 	}
 	return false
 }
@@ -1025,6 +1026,14 @@ func numericResultType(a, b types.Type) types.Type {
 	if !aIsPrim || !bIsPrim {
 		return nil
 	}
+	// A literal beside a fixed value is that fixed type, as one beside a float is a float.
+	// A typed value of any other numeric type is not: there is no implicit conversion.
+	if _, fixed := types.AsFixed(b); fixed && isUntypedNumericLiteral(ap.Name) {
+		return b
+	}
+	if _, fixed := types.AsFixed(a); fixed && isUntypedNumericLiteral(bp.Name) {
+		return a
+	}
 	if ap.Name == types.UntypedInt && (isAnyConcreteInt(bp.Name) || isFloatType(bp)) {
 		return b
 	}
@@ -1068,7 +1077,14 @@ func numericPrimitiveByName(name string) (types.Type, bool) {
 		types.Rune:
 		return types.PrimitiveType{Name: types.PrimitiveTypeName(name)}, true
 	}
+	if _, fixed := types.FixedFormatOf(types.PrimitiveTypeName(name)); fixed {
+		return types.PrimitiveType{Name: types.PrimitiveTypeName(name)}, true
+	}
 	return nil, false
+}
+
+func isUntypedNumericLiteral(name types.PrimitiveTypeName) bool {
+	return name == types.UntypedInt || name == types.UntypedSignedInt || name == types.UntypedFloat
 }
 
 func isIntType(t types.Type) bool {

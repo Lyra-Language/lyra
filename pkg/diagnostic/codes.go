@@ -597,32 +597,10 @@ const (
 	// other rule.
 	CodePatternValueNotProvable = "lyra-E054"
 
-	// CodeFixedPointNotImplemented: the `fixed<I, F>` type annotation. It parses, it
-	// collects into a real `types.FixedPointType`, and **no pass after the collector
-	// knows what it is** — so the type is *uninhabitable*: every literal and every
-	// conversion is refused, and no value of it can be constructed by any spelling.
-	//
-	// Refused since 08/14, on the lyra-E035/E052 reasoning: the state of affairs is
-	// "unimplemented", and saying so is better than letting the absence be inferred
-	// from a series of type errors. What an author got instead was
-	// *"cannot assign integer literal to `fixed<16,16>`"* — which reads as a fixable
-	// mistake and invites trying `1.5`, then `f64(1.5)`, then `i32(1)`, each
-	// answered by the same sentence with one noun changed. Three plausible attempts
-	// to learn what one diagnostic can say.
-	//
-	// **Not deleted, because the intent is to build it**, and the syntax is the part
-	// worth keeping — a value-parameterized `fixed<I, F>` commits to binary scaling,
-	// which is the design that serves *determinism* (lockstep simulation, replays).
-	// Decimal money wants a different type and already has a better answer here
-	// (`type Cents = i64` with a range constraint), so the grammar has already
-	// made the choice this diagnostic is holding open.
-	//
-	// The one design question it does not settle is what arithmetic does to the
-	// parameters: `fixed<16,16> * fixed<16,16>` naturally wants `fixed<32,32>`. A
-	// static array is already value-parameterized, so that much has precedent — but
-	// an array's size never changes under an operator, and this would be the first
-	// type whose parameters are themselves arithmetic.
-	CodeFixedPointNotImplemented = "lyra-E055"
+	// CodeFixedPointFormat: a `fixed<I, F>` that cannot exist. The bits must add up to a
+	// width with an integer to hold them, and both parts need a bit: a value with no sign
+	// bit, or no fraction, is an integer and has a spelling already.
+	CodeFixedPointFormat = "lyra-E055"
 
 	// CodeNonConstantArraySize: `[v; n]` with a runtime count, used where a **fixed**
 	// array is wanted — `let a: [3]u32 = [0; n]`.
@@ -1068,6 +1046,18 @@ const (
 	// (`g: (mut i64) -> void`). A call through a function value passes every argument by value,
 	// so no mode holds there; a trait method's or an `extern`'s signature keeps them.
 	CodeModeOnFunctionValue = "lyra-E094"
+
+	// CodeNarrowingTarget: a `truncate`, `saturate` or `narrow` that cannot be given a
+	// meaning. No target (no turbofish and no context), a target that is not a concrete
+	// integer, a target holding every value of the receiver (nothing is being narrowed, so
+	// the conversion is the honest spelling), or a float receiver, which rounds first.
+	CodeNarrowingTarget = "lyra-E095"
+
+	// CodeFixedNoWideArithmetic: a multiply or divide of a 64-bit `fixed<I, F>` on a console.
+	// Both work at twice the format's width to keep the bits a scale adds, and a target
+	// without 128-bit integers has nowhere to put them. The rest of what such a value
+	// does is its 64-bit integer's, and is only warned about as slow.
+	CodeFixedNoWideArithmetic = "lyra-E096"
 
 	// ── Warnings ──────────────────────────────────────────────────────────────
 

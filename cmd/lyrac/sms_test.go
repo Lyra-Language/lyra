@@ -433,6 +433,33 @@ let main = () -> void => {
   let e: u32 = 70000
   answer(a == -42 && b == 2468 && c == 9 && d == -4200000 && e / 7 == 10000 && e % 11 == 7)
 }`},
+		{"fixed point", `
+let identity = (v: fixed<8, 8>) -> fixed<8, 8> => v
+let main = () -> void => {
+  vdp.init()
+  let speed: fixed<8, 8> = identity(1.5)
+  let place: fixed<12, 4> = 100.25
+  let down: fixed<8, 8> = identity(-1.5)
+  answer((speed * 2.5).to_bits() == 960 &&
+    (down * 2).to_bits() == -768 &&
+    (speed / 0.5).to_bits() == 768 &&
+    (place + 0.5).to_bits() == 1612 &&
+    down.floor() == -2 &&
+    down.round() == -1 &&
+    speed.narrow::<fixed<4, 4>>().to_bits() == 24 &&
+    speed.max(0.5).to_bits() == 384)
+}`},
+		{"narrowing", `
+let identity = (v: i16) -> i16 => v
+let main = () -> void => {
+  vdp.init()
+  let x: i16 = identity(-300)
+  let t: u8 = x.truncate()
+  let s: u8 = x.saturate()
+  let n: i16 = identity(100)
+  let v: u8 = n.narrow()
+  answer(t == 212 && s == 0 && v == 100)
+}`},
 		{"structs", `
 struct Point { x: i16, y: i16 }
 struct Line { from: Point, to: Point, width: u8 }

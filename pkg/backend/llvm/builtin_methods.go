@@ -39,6 +39,9 @@ import (
 // lowerBuiltinMethodCall dispatches one builtin-method call to its lowering, in the order
 // above.
 func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr) (value.Value, *ir.Block, error) {
+	if v, b, handled, err := l.lowerFixedFromBits(block, call, member); handled {
+		return v, b, err
+	}
 	// `math.double(21)` is not a method call at all — the "receiver" is an imported
 	// module namespace. Checked first, because everything below assumes the object is
 	// a value and would try to lower a namespace as one.
@@ -61,11 +64,17 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 			return l.lowerSeqNext(block, call, member)
 		}
 	}
+	if v, b, handled, err := l.lowerFixedMethod(block, call, member); handled {
+		return v, b, err
+	}
 	if m, ok := intOverflowMethods[member.Property.Name]; ok {
 		return l.lowerIntOverflowMethod(block, call, member, m)
 	}
 	if op, ok := checkedIntOps[member.Property.Name]; ok {
 		return l.lowerCheckedIntMethod(block, call, member, op)
+	}
+	if isNarrowingMethod(member.Property.Name) {
+		return l.lowerNarrowingMethod(block, call, member)
 	}
 	// The rest dispatch on the method's **name**, which was an if-chain of
 	// `member.Property.Name == "…"` before — and five of the arms fetched the receiver's

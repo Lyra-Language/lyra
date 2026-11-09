@@ -368,6 +368,9 @@ func (l *lowerer) lowerMathBinaryOpExpr(block *ir.Block, e *ast.MathBinaryOpExpr
 		v, err := l.applyFloatMathOp(block, e.Operator, left, right)
 		return v, block, err
 	}
+	if format, ok := l.fixedOf(e.Left); ok && isFixedScaledOp(e.Operator) {
+		return l.fixedScaledOp(block, e.Operator, left, right, format)
+	}
 	signed, err := l.getIntSignedness(e.Left)
 	if err != nil {
 		return nil, nil, err
@@ -729,7 +732,11 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 		if signed, err = l.getIntSignedness(e.Left); err == nil {
 			// The checked int op may split the block (overflow/divide trap); keep
 			// lowering (the store) into the block it returns.
-			result, block, err = l.applyIntMathOp(block, binOp, cur, rhs, signed, e)
+			if format, ok := l.fixedOf(e.Left); ok && isFixedScaledOp(binOp) {
+				result, block, err = l.fixedScaledOp(block, binOp, cur, rhs, format)
+			} else {
+				result, block, err = l.applyIntMathOp(block, binOp, cur, rhs, signed, e)
+			}
 		}
 	}
 	if err != nil {
@@ -781,6 +788,11 @@ func (l *lowerer) writesNothing(e ast.Expression) bool {
 }
 
 func (l *lowerer) lowerNegationExpr(block *ir.Block, e *ast.NegationExpr) (value.Value, *ir.Block, error) {
+	// A negated fixed literal is one constant: its magnitude alone can be past the top, as
+	// the 128 of `-128.0` is for a `fixed<8,8>`.
+	if c, isFixed, err := l.fixedLiteral(e.Operand, true); isFixed {
+		return c, block, err
+	}
 	operand, block, err := l.lowerExpr(block, e.Operand)
 	if err != nil {
 		return nil, nil, err
@@ -853,6 +865,9 @@ func (l *lowerer) lowerNumericConversion(block *ir.Block, call *ast.FunctionCall
 	srcP, ok := srcT.(types.PrimitiveType)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: type not found for %T", call.Arguments[0])
+	}
+	if v, b, handled, err := l.lowerFixedConversion(block, arg, srcP.Name, targetName); handled {
+		return v, b, err
 	}
 	// An identity conversion is the operand, unchanged. This is what the newtype
 	// read-out lowers to — `i64(c)` on a `Cents = i64`, `string(e)` on an

@@ -1392,6 +1392,9 @@ func (tc *TypeChecker) inferDirectLambdaCall(lambda *ast.LambdaExpr, call *ast.F
 // error itself when the lookup misses, which would be wrong/duplicated for a
 // name that turns out to resolve via a trait instead.
 func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.FunctionCallExpr) types.Type {
+	if result, handled := tc.inferFixedFromBits(member, call); handled {
+		return result
+	}
 	// `math.double(21)` — a call through an imported namespace resolves to the
 	// module's function, then goes through the ordinary call path so arguments and
 	// generics are checked exactly as a direct call would be.
@@ -1585,7 +1588,14 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// A compiler-provided method on a primitive receiver (e.g. `x.wrapping_add(y)`
 	// on an integer). Checked last so a user type or trait impl of the same name
 	// always takes priority (see builtins.go).
-	if sig, ok := tc.builtinMethodSignature(objType, methodName, member.GetLocation()); ok {
+	sig, ok := tc.narrowingSignature(objType, methodName, call, member)
+	if ok && sig == nil {
+		return nil
+	}
+	if !ok {
+		sig, ok = tc.builtinMethodSignature(objType, methodName, member.GetLocation())
+	}
+	if ok {
 		// Pinned to its default width, which is what this rung has always needed:
 		// `1.wrapping_add(2)` is i64 arithmetic and `(1.5).floor()` is f64's. The
 		// promotion itself used to happen *here*, which is why only this path could see
@@ -1640,7 +1650,14 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 				tc.requireUnsafeCall(methodName, fn, call)
 				return tc.inferLambdaCall(methodName, fn, call)
 			}
-			if sig, ok := tc.builtinMethodSignature(base, methodName, member.GetLocation()); ok {
+			sig, ok := tc.narrowingSignature(base, methodName, call, member)
+			if ok && sig == nil {
+				return nil
+			}
+			if !ok {
+				sig, ok = tc.builtinMethodSignature(base, methodName, member.GetLocation())
+			}
+			if ok {
 				// The overflow-arithmetic family stops at the wrapper (lyra-E043).
 				// Arithmetic on a newtype is opt-in — `Cents + Cents` is refused until
 				// the type has an operator impl — and `wrapping_*`/`saturating_*`/
