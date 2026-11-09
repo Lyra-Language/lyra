@@ -147,6 +147,10 @@ pub struct Entity {
   /// a solid towards.
   was_x: f32 = 0.0,
   was_y: f32 = 0.0,
+  /// Crushed: after its scene's `block`, still inside a solid or the map's collision — a
+  /// solid's push ([blocked_by]) shoved it into a wall or another solid. The game decides
+  /// what that means (hurt it, stop the solid); `block` sets it each time it runs.
+  squeezed: bool = false,
 }
 
 /// The fastest an entity falls, in pixels an update: a tile, so a fall never steps over a
@@ -499,6 +503,49 @@ impl Entity {
       self.on_floor = true
     }
   }
+
+  /// Whether it is inside a map's collision where it stands: a tile, on a layer its
+  /// colliders look for, meeting it as it faces — a one-way collider not counted, as it stops
+  /// nothing not coming down onto it. The map as [move_in] takes it. A move never ends in
+  /// one; a solid's push ([blocked_by]) can, which a scene's `block` asks this about.
+  pub let in_map<const N: i64, const M: i64, const K: i64> = pure (
+    self: ref,
+    cells: ref [N]u32,
+    width: i64,
+    first_tile: u32,
+    starts: ref [M]u32,
+    shapes: ref [K]Collider,
+    tile_size: f32 = TILE
+  ) -> bool =>
+    self.in_map_with(cells, width, first_tile, starts, shapes, NO_BANDS, NO_MAP_SHAPES, tile_size)
+
+  /// [in_map], the map's own colliders counted too, as [move_in_with] takes them.
+  pub let in_map_with<const N: i64, const M: i64, const K: i64, const B: i64, const P: i64> = pure (
+    self: ref,
+    cells: ref [N]u32,
+    width: i64,
+    first_tile: u32,
+    starts: ref [M]u32,
+    shapes: ref [K]Collider,
+    bands: ref [B]u32,
+    map_shapes: ref [P]Collider,
+    tile_size: f32 = TILE
+  ) -> bool =>
+    self.kind.hits_tiles(
+      self.fx,
+      self.fy,
+      self.fy,
+      self.hit_mirrored,
+      self.hit_scale,
+      cells,
+      width,
+      first_tile,
+      starts,
+      shapes,
+      bands,
+      map_shapes,
+      tile_size
+    )
 
   /// Its colliders' shapes `table`'s row `row`.
   let use_shapes<const F: i64> = (self: mut, table: ref [F]Shape, row: i64) -> void => {

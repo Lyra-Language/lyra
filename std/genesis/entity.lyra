@@ -124,6 +124,10 @@ pub struct Entity {
   /// off a solid towards.
   was_x: i16 = 0,
   was_y: i16 = 0,
+  /// Crushed: after its scene's `block`, still inside a solid or the map's collision — a
+  /// solid's push ([blocked_by]) shoved it into a wall or another solid. The game decides
+  /// what that means (hurt it, stop the solid); `block` sets it each time it runs.
+  squeezed: bool = false,
 }
 
 /// The fastest an entity falls, in 256ths of a pixel a frame: 8 pixels, a tile, so a fall
@@ -430,6 +434,45 @@ impl Entity {
       self.on_floor = true
     }
   }
+
+  /// Whether it is inside a map's collision where it stands: a tile, on a layer its
+  /// colliders look for, meeting it as it faces — a one-way collider not counted, as it stops
+  /// nothing not coming down onto it. The map as [move_in] takes it. A move never ends in
+  /// one; a solid's push ([blocked_by]) can, which a scene's `block` asks this about.
+  pub let in_map<const N: i64, const M: i64, const K: i64> = pure (
+    self: ref,
+    cells: ref [N]u16,
+    width: u16,
+    first_tile: u16,
+    starts: ref [M]u16,
+    shapes: ref [K]Collider
+  ) -> bool =>
+    self.in_map_with(cells, width, first_tile, starts, shapes, NO_BANDS, NO_MAP_SHAPES)
+
+  /// [in_map], the map's own colliders counted too, as [move_in_with] takes them.
+  pub let in_map_with<const N: i64, const M: i64, const K: i64, const B: i64, const P: i64> = pure (
+    self: ref,
+    cells: ref [N]u16,
+    width: u16,
+    first_tile: u16,
+    starts: ref [M]u16,
+    shapes: ref [K]Collider,
+    bands: ref [B]u16,
+    map_shapes: ref [P]Collider
+  ) -> bool =>
+    self.kind.hits_tiles(
+      self.x(),
+      self.y(),
+      self.y(),
+      self.hit_mirrored,
+      cells,
+      width,
+      first_tile,
+      starts,
+      shapes,
+      bands,
+      map_shapes
+    )
 
   // ── Beneath ──────────────────────────────────────────────────────────────────────────
 

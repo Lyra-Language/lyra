@@ -639,6 +639,29 @@ let main = () -> u8 => {
   rider.move_kept_in(256, 256)
   rider.blocked_by(platform)
   if rider.x() != 130@D || rider.y() != 92@D || !rider.on_floor { return 23 }
+
+  // Squeezed: a solid moving left pushes an entity up to a wall the map draws (x 40..48),
+  // where it is not inside the map, then into it, where it is — what a scene's block asks.
+  let wall_map: [1]Collider = #[Collider { shape: Shape { x: 40@D, y: 16@D, width: 8@D, height: 16@D }, layers: 1, mask: 0 }]
+  var crusher = EntityKind { JUMPER | gravity: @ZERO, colliders: #[block_body, NONE, NONE, NONE] }.spawn(60@D, 20@D)
+  var caught = EntityKind { JUMPER | gravity: @ZERO }.spawn(50@D, 20@D)
+  for _ in 0..<4 {
+    crusher.vx = -@ONE
+    crusher.move()
+    caught.push(0@D, 0@D)
+    caught.move_in_with(empty, 32, 1, starts, tiles, one_band, wall_map)
+    caught.blocked_by(crusher)
+  }
+  if caught.x() != 48@D || caught.in_map_with(empty, 32, 1, starts, tiles, one_band, wall_map) { return 24 }
+  for _ in 0..<2 {
+    crusher.vx = -@ONE
+    crusher.move()
+    caught.push(0@D, 0@D)
+    caught.move_in_with(empty, 32, 1, starts, tiles, one_band, wall_map)
+    caught.blocked_by(crusher)
+  }
+  if caught.x() != 46@D || !caught.in_map_with(empty, 32, 1, starts, tiles, one_band, wall_map) { return 25 }
+  if caught.in_map(empty, 32, 1, starts, tiles) || caught.squeezed { return 26 }
   0
 }
 `
