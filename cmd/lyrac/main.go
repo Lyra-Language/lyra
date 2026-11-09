@@ -559,7 +559,7 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 			if code != 0 {
 				return "", code
 			}
-			return exePath(o), 0
+			return withResources(exePath(o), res)
 		}
 	}
 	ir, err := be.Emit(res, entry)
@@ -641,7 +641,7 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 	exe := exePath(o)
 	if app {
 		bundle, _ := bundlePaths(exe)
-		if err := buildApp(p, cc, o.opt, llFile, libs, bundle, bundleID(o, bundle)); err != nil {
+		if err := buildApp(p, cc, o.opt, llFile, libs, bundle, bundleID(o, bundle), res.Target.Resources); err != nil {
 			fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
 			return "", 1
 		}
@@ -652,14 +652,14 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 			fmt.Fprintf(os.Stderr, "lyrac: %v", err)
 			return "", 1
 		}
-		return exe, 0
+		return withResources(exe, res)
 	}
 	cmd := exec.Command(cc, append(append([]string{o.opt, llFile}, libs...), "-o", exe)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %s failed to compile the emitted IR: %v\n%s", cc, err, out)
 		return "", 1
 	}
-	return exe, 0
+	return withResources(exe, res)
 }
 
 // linkFlags is the library list this build hands the C compiler.

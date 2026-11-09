@@ -187,3 +187,9 @@ are `pkg/docgen`.
 - Impl methods are not counted as gaps.
 - Page files are `std-prelude.md`, not `std.prelude.md` (site generators strip dots from
   slugs); the title keeps the dotted path.
+
+## Resources
+
+`resources.go`: the folder `lyra.toml`'s `resources` names is copied beside whatever a build
+makes, and into an iOS app before `signApp`, which seals the bundle. A build into the project
+itself copies nothing.

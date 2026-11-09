@@ -68,6 +68,7 @@ import bindings.sdl3.{
   HINT_ORIENTATIONS,
   set_hint,
   pref_path,
+  base_path,
   PRESENT_DISABLED,
   BLEND_NONE,
   Renderer,
@@ -98,7 +99,8 @@ import bindings.sdl3.{
   KEY_ESCAPE,
   ticks_ns,
 }
-import std.io.{ write_bytes }
+import std.io.{ write_bytes, read_bytes }
+import std.png.{ read_png }
 import std.game.pad
 import std.game.planes
 import std.game.planes.{
@@ -276,10 +278,16 @@ pub let load_tiles<const N: i64> = (
 ) -> bool => {
   if palette < 0 || palette >= PALETTES || tile_size <= 0 { return false }
   let Some(t) = picture(columns * tile_size, pixels) else { return false }
-  tile_side = tile_size
-  if let Some(old) = tile_art[palette] { destroy_texture(old) }
-  tile_art[palette] = Some(t)
-  tile_columns = columns
+  use_tiles(t, columns, palette, tile_size)
+  true
+}
+
+/// [load_tiles], the art a PNG file the program ships ([load_sprites_file] says where): as many
+/// columns as its width holds. False, having said why, when it cannot be read.
+pub let load_tiles_file = (name: string, palette: i64 = 0, tile_size: i64 = 8) -> bool => {
+  if palette < 0 || palette >= PALETTES || tile_size <= 0 { return false }
+  let Some((t, wide)) = picture_file(name) else { return false }
+  use_tiles(t, wide / tile_size, palette, tile_size)
   true
 }
 
@@ -287,8 +295,17 @@ pub let load_tiles<const N: i64> = (
 /// `0xAARRGGBB`. A [Sprite] names a rectangle of it. Replaces any loaded before.
 pub let load_sprites<const N: i64> = (width: i64, pixels: ref [N]u32) -> bool => {
   let Some(t) = picture(width, pixels) else { return false }
-  if let Some(old) = sprite_art { destroy_texture(old) }
-  sprite_art = Some(t)
+  use_sprites(t)
+  true
+}
+
+/// [load_sprites], the art a PNG file the program ships: `name` is its path from the folder the
+/// program runs from (`SDL_GetBasePath`; `lyra.toml`'s `resources` puts a folder there). Read when
+/// the game runs, so a game's art takes no room in its source. False, having said why, when it
+/// cannot be read.
+pub let load_sprites_file = (name: string) -> bool => {
+  let Some((t, _)) = picture_file(name) else { return false }
+  use_sprites(t)
   true
 }
 
@@ -410,6 +427,48 @@ let picture<const N: i64> = (width: i64, pixels: ref [N]u32) -> Maybe<Texture> =
   let Some(r) = renderer else { return None }
   if width <= 0 || pixels.len() % width != 0 { return None }
   create_texture(r, width, pixels.len() / width, [p in pixels | p])
+}
+
+/// The PNG file `name` as a texture, and its width; or `None`, having said why.
+let picture_file = (name: string) -> Maybe<(Texture, i64)> => {
+  let Some(r) = renderer else { return None }
+  let path = "${base_path().unwrap_or("")}${name}"
+  let Some(bytes) = read_bytes(path) else {
+    println("cannot read ${path}")
+    return None
+  }
+  match read_png(bytes) {
+    Err(e) => {
+      println("${path}: ${e}")
+      None
+    },
+    Ok(png) => {
+      let rgba = png.rgba
+      let pixels = [i in 0..<png.width * png.height | argb_at(rgba, i * 4)]
+      match create_texture(r, png.width, png.height, pixels) {
+        Some(t) => Some((t, png.width)),
+        None => None,
+      }
+    },
+  }
+}
+
+/// The `0xAARRGGBB` of the RGBA pixel at byte `at`.
+let argb_at = pure (rgba: ref []u8, at: i64) -> u32 =>
+  u32(rgba[at + 3]) << 24 | u32(rgba[at]) << 16 | u32(rgba[at + 1]) << 8 | u32(rgba[at + 2])
+
+/// `t` the art of `palette`, in place of any before.
+let use_tiles = (t: own Texture, columns: i64, palette: i64, tile_size: i64) -> void => {
+  tile_side = tile_size
+  if let Some(old) = tile_art[palette] { destroy_texture(old) }
+  tile_art[palette] = Some(t)
+  tile_columns = columns
+}
+
+/// `t` the sprite art, in place of any before.
+let use_sprites = (t: own Texture) -> void => {
+  if let Some(old) = sprite_art { destroy_texture(old) }
+  sprite_art = Some(t)
 }
 
 /// Plane B, then plane A below the window's rows and the window in them — the cells in

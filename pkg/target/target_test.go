@@ -75,3 +75,16 @@ func write(t *testing.T, path, text string) {
 		t.Fatal(err)
 	}
 }
+
+// `resources` names a folder inside the project, resolved from the `lyra.toml` naming it.
+func TestParse_Resources(t *testing.T) {
+	got, problem := parse(filepath.Join("game", "lyra.toml"), []byte("resources = \"art\"\ntarget = \"host\"\n"))
+	if problem != nil || got.Resources != filepath.Join("game", "art") {
+		t.Errorf("got %q, %v", got.Resources, problem)
+	}
+	for _, bad := range []string{"", "..", "../art", "/art"} {
+		if _, problem := parse("lyra.toml", []byte("resources = \""+bad+"\"\n")); problem == nil {
+			t.Errorf("resources = %q was accepted", bad)
+		}
+	}
+}

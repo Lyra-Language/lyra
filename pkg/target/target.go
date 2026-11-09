@@ -40,6 +40,9 @@ type Target struct {
 	// Emulated are the types the CPU has no instructions for, so each operation on them
 	// is a sequence of instructions or a call: 64-bit integers and floats on a 68000.
 	Emulated []string
+	// Resources is the folder of files a built program reads at run time (`resources` in
+	// `lyra.toml`, absolute), which lyrac puts beside the program; empty for none.
+	Resources string
 }
 
 // HostTarget is the default: no `lyra.toml`, or one naming no target.
@@ -137,6 +140,7 @@ func ForFile(path string) (Target, *Problem) {
 // machine.
 func parse(path string, data []byte) (Target, *Problem) {
 	result := HostTarget
+	resources := ""
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for line := 1; scanner.Scan(); line++ {
 		text := strings.TrimSpace(stripComment(scanner.Text()))
@@ -160,10 +164,16 @@ func parse(path string, data []byte) (Target, *Problem) {
 					fmt.Sprintf("unknown target %q; the targets are %s", str, strings.Join(Names(), ", "))}
 			}
 			result = t
+		case "resources":
+			if str == "" || filepath.IsAbs(str) || str == ".." || strings.HasPrefix(str, "../") {
+				return HostTarget, &Problem{path, line, fmt.Sprintf("resources: expected a folder inside the project, found %q", str)}
+			}
+			resources = filepath.Join(filepath.Dir(path), str)
 		default:
-			return HostTarget, &Problem{path, line, fmt.Sprintf("unknown setting %q; the one there is is `target`", key)}
+			return HostTarget, &Problem{path, line, fmt.Sprintf("unknown setting %q; the settings are `target` and `resources`", key)}
 		}
 	}
+	result.Resources = resources
 	return result, nil
 }
 

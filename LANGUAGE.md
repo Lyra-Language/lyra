@@ -875,6 +875,10 @@ target = "genesis"
   operating system to choose. Every platform is 64-bit (LP64). **On iOS a program over SDL3
   is an app** (`<name>.app`, started through SDL so UIKit hosts it) — `std.game`'s games among
   them; it plays in the Simulator as it does on the Mac, frame for frame.
+- **`resources = "art"`** names a folder inside the project of files the program reads when
+  it runs. `lyrac` puts a copy where the program is — beside the executable, in `lyrac run`'s
+  temporary folder, inside an iOS app before it is signed — so a program finds it under its
+  own folder (`std.game.screen.load_sprites_file`) however it was built.
 - **The file is small and strict**: top-level `key = "string"` lines, `#` comments. An unknown
   target or setting, or any other line, is **`lyra-E086`** at the top of the entry file —
   refused, not ignored, since an ignored setting is a program checked for the wrong machine.

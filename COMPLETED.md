@@ -27684,3 +27684,7 @@ colliders: a negative float two structs deep lowers to `fneg`, `foldInsertValues
 It now folds `fneg` of a constant. `std.game.planes` gained `Layout` (isometric, staggered,
 hexagonal, blocks of tiles), layers past the two planes and `animate_tiles`; tile layouts live
 beside the planes so a game links only MIT code, and repeat Vega's `TileMap.cell_box` by hand.
+
+## 11/09 — A modern game's art is read when it runs
+
+`assets.lyra` held every pixel as hex text: 30 MB for Sticker Knight, most of a 70 s build. Vega now writes PNGs to `art/`, `std.game` decodes them at start-up, and `lyra.toml`'s `resources` has lyrac put the folder beside the program, which is one rule for `lyrac run`, a build elsewhere and an iOS app (inside it before signing, since signing seals the bundle). Files beside the program over an embedded blob: no language change, and a large game can later load art per level. Consoles keep their art in the ROM.

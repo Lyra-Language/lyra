@@ -65,8 +65,8 @@ func bundleID(o buildOptions, bundle string) string {
 }
 
 // buildApp compiles llFile with libs into the app at bundle for p: the program, the start-up
-// shim, the Info.plist, the signature.
-func buildApp(p target.Platform, cc, opt, llFile string, libs []string, bundle, id string) error {
+// shim, the Info.plist, the program's resources, the signature — last, since it seals them.
+func buildApp(p target.Platform, cc, opt, llFile string, libs []string, bundle, id, resources string) error {
 	shim := filepath.Join(modules.StdRoot(), "runtime", "ios", "main.c")
 	if _, err := os.Stat(shim); err != nil {
 		return fmt.Errorf("no iOS start-up at %s: %v", shim, err)
@@ -93,6 +93,9 @@ func buildApp(p target.Platform, cc, opt, llFile string, libs []string, bundle, 
 	}
 	name := filepath.Base(program)
 	if err := os.WriteFile(filepath.Join(bundle, "Info.plist"), []byte(infoPlist(p, name, id)), 0o644); err != nil {
+		return err
+	}
+	if err := carryResources(resources, bundle); err != nil {
 		return err
 	}
 	return signApp(p, bundle, id)
