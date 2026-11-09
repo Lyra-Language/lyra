@@ -102,6 +102,7 @@ import std.io.{ write_bytes }
 import std.game.pad
 import std.game.planes
 import std.game.planes.{
+  Layout,
   Plane,
   TILE_MASK,
   PALETTE_MASK,
@@ -299,6 +300,8 @@ pub let show = () -> void => {
   r.set_draw_color(backdrop)
   r.clear()
   let t = blend()
+  // Played headless by frames, the frames' own time, so a frame is the same every run.
+  planes.step_tiles(if limit > 0 { frame * 1000 / 60 } else { i64(ticks_ns()) / 1000000 })
   draw_planes(r, false, t)
   draw_sprites(r, false, t)
   draw_planes(r, true, t)
@@ -414,6 +417,9 @@ let picture<const N: i64> = (width: i64, pixels: ref [N]u32) -> Maybe<Texture> =
 let draw_planes = (r: Renderer, front: bool, t: f32) -> void => {
   let window_bottom = planes.rows_in_window() * tile_side
   draw_plane(r, scrolled(planes.plane(planes.PLANE_B), t), front, 0, screen_height)
+  for k in planes.FIRST_LAYER..<planes.plane_count() {
+    draw_plane(r, scrolled(planes.plane(k), t), front, 0, screen_height)
+  }
   draw_plane(
     r,
     scrolled(planes.plane(planes.PLANE_A), t),
@@ -437,6 +443,10 @@ let scrolled = (p: Plane, t: f32) -> Plane => {
 /// those behind.
 let draw_plane = (r: Renderer, p: Plane, front: bool, top: i64, bottom: i64) -> void => {
   if p.width <= 0 || top >= bottom { return }
+  if let Some(layout) = p.layout {
+    draw_laid_out(r, p, layout, front)
+    return
+  }
   let rows = p.cells.len() / p.width
   let sx = p.x.floor()
   let sy = p.y.floor()
@@ -447,7 +457,7 @@ let draw_plane = (r: Renderer, p: Plane, front: bool, top: i64, bottom: i64) -> 
   for row in first_row..<=last_row {
     for column in first_column..<=last_column {
       let word = p.cells[row * p.width + column]
-      let tile = i64(word & TILE_MASK)
+      let tile = planes.shown_tile(i64(word & TILE_MASK))
       if tile == 0 || ((word & FRONT) != 0) != front { continue }
       let Some(art) = tile_art[i64((word & PALETTE_MASK) >> PALETTE_SHIFT)] else { continue }
       // The part of the cell between `top` and `bottom` on the screen.
@@ -470,6 +480,49 @@ let draw_plane = (r: Renderer, p: Plane, front: bool, top: i64, bottom: i64) -> 
         h: f32(to - from)
       }
       draw_texture_flipped(r, art, source, place, flips((word & FLIP_X) != 0, flip_y))
+    }
+  }
+}
+
+/// A plane of another layout: its cells in row order, later ones over earlier, each its
+/// block of tiles standing on its box's bottom-left.
+let draw_laid_out = (r: Renderer, p: Plane, layout: Layout, front: bool) -> void => {
+  let rows = p.cells.len() / p.width
+  let sx = p.x.floor()
+  let sy = p.y.floor()
+  for row in 0..<rows {
+    for column in 0..<p.width {
+      let word = p.cells[row * p.width + column]
+      let first = i64(word & TILE_MASK)
+      if first == 0 || ((word & FRONT) != 0) != front { continue }
+      let (bx, by) = layout.box_of(column, row)
+      let left = bx - sx
+      let base = by + layout.cell_height - layout.block_height * tile_side - sy
+      if left >= screen_width || base >= screen_height { continue }
+      if left + layout.block_width * tile_side <= 0 || base + layout.block_height * tile_side <= 0 { continue }
+      let Some(art) = tile_art[i64((word & PALETTE_MASK) >> PALETTE_SHIFT)] else { continue }
+      let flip_x = (word & FLIP_X) != 0
+      let flip_y = (word & FLIP_Y) != 0
+      for ty in 0..<layout.block_height {
+        for tx in 0..<layout.block_width {
+          let across = if flip_x { layout.block_width - 1 - tx } else { tx }
+          let down = if flip_y { layout.block_height - 1 - ty } else { ty }
+          let tile = planes.shown_tile(first + across + down * layout.set_columns)
+          let source = Rect {
+            x: f32((tile % tile_columns) * tile_side),
+            y: f32((tile / tile_columns) * tile_side),
+            w: f32(tile_side),
+            h: f32(tile_side),
+          }
+          let place = Rect {
+            x: f32(left + tx * tile_side),
+            y: f32(base + ty * tile_side),
+            w: f32(tile_side),
+            h: f32(tile_side),
+          }
+          draw_texture_flipped(r, art, source, place, flips(flip_x, flip_y))
+        }
+      }
     }
   }
 }

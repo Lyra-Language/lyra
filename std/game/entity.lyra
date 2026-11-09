@@ -100,6 +100,9 @@ pub struct EntityKind {
 /// shows, and which way it faces.
 pub struct Entity {
   kind: EntityKind,
+  /// How fast it scrolls with the view: 1.0 with it, 0.0 fixed to the screen.
+  parallax_x: f32 = 1.0,
+  parallax_y: f32 = 1.0,
   /// Its top-left in the world, in pixels.
   fx: f32,
   fy: f32,

@@ -27675,3 +27675,12 @@ order the language became executable in.
   `pkg/analyzer/ownership/ownership_test.go` (pass decisions), `llvm_ownership_test.go`
   (behavioral + ASan + IR retain/release balance), `llvm_string_test.go`
   (`TestEmit_StringLiteralIsPinnedBox`).
+
+## 11/08 — Negative floats in static tables; `std.game` layouts (Vega's Tiled import)
+
+Importing Tiled's examples failed on `assignment to unbound identifier` for a table of
+colliders: a negative float two structs deep lowers to `fneg`, `foldInsertValues` took only
+`insertvalue`, so the table stayed inlined, and an inlined const has no slot to pass by `ref`.
+It now folds `fneg` of a constant. `std.game.planes` gained `Layout` (isometric, staggered,
+hexagonal, blocks of tiles), layers past the two planes and `animate_tiles`; tile layouts live
+beside the planes so a game links only MIT code, and repeat Vega's `TileMap.cell_box` by hand.

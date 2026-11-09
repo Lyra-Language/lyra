@@ -128,6 +128,17 @@ impl Camera {
     vdp.set_scroll(plane, self.x, self.y)
   }
 
+  /// The view as a plane scrolling at `fx`/256, `fy`/256 of its speed sees the world (256
+  /// with it, 0 fixed to the screen): for a parallax plane, whose columns come into view at
+  /// its own pace, so `last_x` and `last_y` are scaled as well.
+  pub let parallaxed = pure (self, fx: i16, fy: i16) -> Camera => Camera {
+    self |
+    x: i16((i32(self.x) * i32(fx)) >> 8),
+    y: i16((i32(self.y) * i32(fy)) >> 8),
+    last_x: i16((i32(self.last_x) * i32(fx)) >> 8),
+    last_y: i16((i32(self.last_y) * i32(fy)) >> 8),
+  }
+
   /// Keep a map in `plane` as the view moves: the columns and rows that came into view since
   /// the last [follow] written, and the plane scrolled to the view. Once a frame, in the
   /// vertical blank, with the map [show_map] wrote.

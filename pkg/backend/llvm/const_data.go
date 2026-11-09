@@ -1,6 +1,8 @@
 package llvm
 
 import (
+	"math/big"
+
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	"github.com/llir/llvm/ir"
@@ -121,6 +123,17 @@ func foldInsertValues(block *ir.Block, result value.Value) (constant.Constant, b
 		return c, ok
 	}
 	for _, inst := range block.Insts {
+		// A negative float literal lowers to a negation of its magnitude: the one other
+		// instruction a table of literals can hold (11/08: a `-32` field two structs deep
+		// left the table inlined, and an inlined table has no address to pass by `ref`).
+		if neg, isNeg := inst.(*ir.InstFNeg); isNeg {
+			f, isFloat := neg.X.(*constant.Float)
+			if !isFloat {
+				return nil, false
+			}
+			folded[neg] = &constant.Float{Typ: f.Typ, X: new(big.Float).Neg(f.X)}
+			continue
+		}
 		iv, ok := inst.(*ir.InstInsertValue)
 		if !ok {
 			return nil, false

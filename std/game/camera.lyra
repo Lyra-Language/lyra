@@ -89,6 +89,11 @@ impl Camera {
     )
   }
 
+  /// The view as a layer scrolling at `fx`, `fy` of its speed sees the world (1.0 with it,
+  /// 0.0 fixed to the screen): for a parallax plane or sprite.
+  pub let parallaxed = pure (self, fx: f32, fy: f32) -> Camera =>
+    Camera { self | x: whole(self.x * fx), y: whole(self.y * fy) }
+
   /// Where world position (`x`, `y`) is on the screen, for a sprite.
   pub let on_screen = pure (self, x: f32, y: f32) -> (f32, f32) =>
     (x - self.x, y - self.y)

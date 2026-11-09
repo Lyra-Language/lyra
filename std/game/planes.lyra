@@ -39,6 +39,34 @@ pub const PLANE_B: i64 = 1
 /// in plane A's place.
 pub const WINDOW: i64 = 2
 
+/// The first plane past the Genesis's: `FIRST_LAYER + n`, up to [MAX_LAYERS] of them, each
+/// drawn between plane B and plane A, in that order, as a scene's layers are.
+pub const FIRST_LAYER: i64 = 3
+pub const MAX_LAYERS: i64 = 16
+
+/// How a plane's cells are laid out.
+pub const SQUARE: i64 = 0
+pub const ISOMETRIC: i64 = 1
+pub const STAGGERED: i64 = 2
+pub const HEXAGONAL: i64 = 3
+
+/// A plane's layout where it is not the tile art's square grid: a cell's box in pixels, the
+/// stagger, and how many tiles a cell shows — a block `block_width` × `block_height` from the
+/// tile it names, `set_columns` tiles a row of its tile set, standing on the box's bottom-left.
+pub struct Layout {
+  grid: i64 = SQUARE,
+  cell_width: i64 = 0,
+  cell_height: i64 = 0,
+  stagger_x: bool = false,
+  stagger_odd: bool = true,
+  hex_side: i64 = 0,
+  block_width: i64 = 1,
+  block_height: i64 = 1,
+  set_columns: i64 = 1,
+  /// Rows of the map, which an isometric grid is shifted by.
+  rows: i64 = 0,
+}
+
 /// A cell's tile, its palette (0–15, [palette]), and its flags.
 pub const TILE_MASK: u32 = 0x000FFFFF
 pub const PALETTE_MASK: u32 = 0x0F000000
@@ -59,6 +87,8 @@ pub struct Plane {
   was_x: f32 = 0.0,
   was_y: f32 = 0.0,
   scrolled_in: i64 = -1,
+  /// `None` for the tile art's square grid.
+  layout: Maybe<Layout> = None,
 }
 
 /// A cell's bits for palette `p`: `FRONT | planes.palette(2) | tile`.
@@ -75,11 +105,12 @@ pub let write_plane<const N: i64> = (
   cells: ref [N]u32,
   width: i64
 ) -> void => {
-  if plane < 0 || plane >= 3 || width <= 0 { return }
+  if plane < 0 || plane >= all.len() || width <= 0 { return }
   all[plane] = Plane {
     all[plane] | cells: [c in cells | c],
     width: width,
-    scrolled_in: -1
+    scrolled_in: -1,
+    layout: None
   }
   sprites.snap()
 }
@@ -87,7 +118,7 @@ pub let write_plane<const N: i64> = (
 /// One cell of `plane`, at column `x` and row `y`. A cell past a map's edge is not kept;
 /// the [WINDOW] grows downwards to hold any row written.
 pub let write_cell = (plane: i64, x: i64, y: i64, word: u32) -> void => {
-  if plane < 0 || plane >= 3 || x < 0 || y < 0 { return }
+  if plane < 0 || plane >= all.len() || x < 0 || y < 0 { return }
   if plane == WINDOW {
     while all[WINDOW].cells.len() < (y + 1) * WINDOW_COLUMNS { all[WINDOW].cells.push(0) }
   }
@@ -98,7 +129,7 @@ pub let write_cell = (plane: i64, x: i64, y: i64, word: u32) -> void => {
 /// Scroll `plane` so world position (`x`, `y`) is at the screen's top-left. The window does
 /// not scroll.
 pub let set_scroll = (plane: i64, x: f32, y: f32) -> void => {
-  if plane == PLANE_A || plane == PLANE_B {
+  if plane == PLANE_A || plane == PLANE_B || (plane >= FIRST_LAYER && plane < all.len()) {
     let now = sprites.updates()
     if all[plane].scrolled_in != now {
       // The first scroll this update: where it was is where the last update left it — or,
@@ -113,17 +144,79 @@ pub let set_scroll = (plane: i64, x: f32, y: f32) -> void => {
   }
 }
 
+/// `plane` laid out as `layout` says, once its map is written.
+pub let set_layout = (plane: i64, layout: Layout) -> void => {
+  if plane >= 0 && plane < all.len() { all[plane].layout = Some(layout) }
+}
+
+/// Tiles that step through others as the game runs, replacing any before: `table` is runs of
+/// a tile, how many steps, then each step's tile and milliseconds.
+pub let animate_tiles<const N: i64> = (table: ref [N]i64) -> void => {
+  runs = []
+  shown = []
+  var i = 0
+  while i + 1 < N {
+    let count = table[i + 1]
+    runs.push(TileRun { tile: table[i], at: i + 2, count: count })
+    if table[i] >= shown.len() { shown = [...shown, ...[k in shown.len()..<=table[i] | 0]] }
+    i += 2 + count * 2
+  }
+  run_table = [v in table | v]
+}
+
+/// The animated tiles as they are `ms` milliseconds in — for `std.game.screen`, each frame.
+pub let step_tiles = (ms: i64) -> void => {
+  for r in runs {
+    var total = 0
+    for k in 0..<r.count { total += run_table[r.at + k * 2 + 1] }
+    if total <= 0 { continue }
+    var left = ms % total
+    for k in 0..<r.count {
+      let length = run_table[r.at + k * 2 + 1]
+      if left < length {
+        shown[r.tile] = run_table[r.at + k * 2]
+        break
+      }
+      left -= length
+    }
+  }
+}
+
+/// The tile shown for `tile` now, an animated one's current step.
+pub let shown_tile = (tile: i64) -> i64 =>
+  if tile < shown.len() && shown[tile] != 0 { shown[tile] } else { tile }
+
 /// How many rows of cells the [WINDOW] covers at the top of the screen: 0, the default,
 /// shows none.
 pub let window_rows = (rows: i64) -> void => { shown_rows = rows.max(0) }
 
 /// Empty `plane`: it shows nothing until written again.
 pub let clear = (plane: i64) -> void => {
-  if plane >= 0 && plane < 3 { all[plane] = empty(all[plane].width) }
+  if plane >= 0 && plane < all.len() { all[plane] = empty(all[plane].width) }
 }
+
+/// How many planes there are, the layers included.
+pub let plane_count = () -> i64 => all.len()
 
 /// What `plane` holds now — for `std.game.screen`, which draws it.
 pub let plane = (index: i64) -> Plane => all[index]
+
+impl Layout {
+  /// The top-left of cell (`x`, `y`)'s box, in the map's pixels.
+  pub let box_of = pure (self, x: i64, y: i64) -> (i64, i64) => {
+    let (cw, ch) = (self.cell_width, self.cell_height)
+    if self.grid == ISOMETRIC { return ((x - y + self.rows - 1) * cw / 2, (x + y) * ch / 2) }
+    if self.grid == SQUARE { return (x * cw, y * ch) }
+    let side = if self.grid == HEXAGONAL { self.hex_side } else { 0 }
+    if self.stagger_x {
+      let shifted = (x % 2 != 0) == self.stagger_odd
+      (x * (cw + side) / 2, y * ch + (if shifted { ch / 2 } else { 0 }))
+    } else {
+      let shifted = (y % 2 != 0) == self.stagger_odd
+      (x * cw + (if shifted { cw / 2 } else { 0 }), y * (ch + side) / 2)
+    }
+  }
+}
 
 impl Plane {
   /// Where it is scrolled to `t` of the way from the update before to this one (0 to 1):
@@ -144,5 +237,15 @@ pub let rows_in_window = () -> i64 => shown_rows
 /// A plane holding nothing, `width` cells a row. Above the planes: their initializer calls it.
 let empty = pure (width: i64) -> Plane => Plane { cells: [], width: width }
 
-var all: []Plane = [empty(0), empty(0), empty(WINDOW_COLUMNS)]
+/// A tile's animation, its steps at `at` in [run_table].
+struct TileRun {
+  tile: i64,
+  at: i64,
+  count: i64,
+}
+
+var all: []Plane = [empty(0), empty(0), empty(WINDOW_COLUMNS), ...[k in 0..<MAX_LAYERS | empty(0)]]
+var runs: []TileRun = []
+var run_table: []i64 = []
+var shown: []i64 = []
 var shown_rows: i64 = 0

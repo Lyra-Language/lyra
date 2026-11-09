@@ -161,6 +161,40 @@ pub let load_tiles<const N: i64> = (first: u16, tiles: ref [N]u32) -> void => {
   release_vblank(held)
 }
 
+/// Animated tiles as they are `tick` frames in: `runs` holds, for each, a tile (from `first`),
+/// how many steps, then each step's tile and frames. A tile is written only as its step
+/// changes, from `tiles` (as [load_tiles] takes them). In the vertical blank.
+pub let step_tiles<const N: i64, const M: i64> = (
+  first: u16,
+  tiles: ref [N]u32,
+  runs: ref [M]u16,
+  tick: u16
+) -> void => {
+  let held = hold_vblank()
+  var i: i64 = 0
+  while i + 1 < M {
+    let count = i64(runs[i + 1])
+    var total: u16 = 0
+    for k in 0..<count { total += runs[i + 3 + k * 2] }
+    if total > 0 {
+      var left = tick % total
+      for k in 0..<count {
+        let length = runs[i + 3 + k * 2]
+        if left == 0 {
+          set_address(VRAM_WRITE, (first + runs[i]) * 32)
+          let from = i64(runs[i + 2 + k * 2]) * 8
+          for w in 0..<8 { write_long(tiles[from + w]) }
+          break
+        }
+        if left < length { break }
+        left -= length
+      }
+    }
+    i += 2 + count * 2
+  }
+  release_vblank(held)
+}
+
 /// A table of words into VRAM at byte `address`.
 pub let write_vram<const N: i64> = (address: u16, words: ref [N]u16) -> void => {
   let held = hold_vblank()

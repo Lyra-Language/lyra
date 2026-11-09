@@ -36,6 +36,28 @@ let main = () -> void => {
 	}
 }
 
+// A negative float two structs deep lowers to a negation, which must fold: left inlined, the
+// table has no address to pass by `ref` (11/08, Vega's collider tables).
+func TestExec_ConstTableNegativeFloatByRef(t *testing.T) {
+	t.Parallel()
+	got := strings.TrimSpace(buildAndRunWithPrelude(t, `module main
+struct Inner { x: f32, y: f32 }
+struct Outer { inner: Inner, n: u16 }
+const TAB: [2]Outer = #[
+  Outer { inner: Inner { x: -32, y: -64.5 }, n: 1 },
+  Outer { inner: Inner { x: 2, y: 3 }, n: 2 },
+]
+let first<const N: i64> = (t: ref [N]Outer) -> f32 => t[0].inner.y
+
+let main = () -> void => {
+  println("${first(TAB)} ${TAB[0].inner.x}")
+}
+`, ""))
+	if want := "-64.5 -32"; got != want {
+		t.Errorf("got %q; want %q", got, want)
+	}
+}
+
 // The table is emitted once as constant data, and a loop over it indexes the global — no
 // whole-array load, which is what became a stack copy.
 func TestEmit_AConstTableIsConstantData(t *testing.T) {
