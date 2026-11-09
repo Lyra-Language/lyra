@@ -84,6 +84,8 @@ build flags:
                 Under --emit-llvm, which links no executable, it names the .ll
   --emit-llvm   stop after emitting the .ll; do not link an executable
   --keep-ll     keep the emitted .ll beside the executable
+  --standalone  package for this machine with its libraries and resources inside:
+                OUT.app on macOS, the folder OUT on Linux
   -O<level>     optimization level passed to the C compiler (default: -O2).
                 -O0 for the fastest build; -Os for size. No debug info is emitted
                 at any level, so -O0 buys build time rather than debuggability.
@@ -145,6 +147,8 @@ type buildOptions struct {
 	// `dev.lyra.<name>`.
 	bundleID string
 	progress bool // --progress: a "progress: N% stage" line on stderr as each starts
+	// standalone is `--standalone`: a package that runs without what built it (standalone.go).
+	standalone bool
 
 	// opt is the optimization level handed to the C compiler, as clang spells it
 	// ("-O2"). It defaults to -O2 rather than to clang's own -O0 default: this
@@ -229,6 +233,8 @@ func parseBuildArgs(cmd string, args []string) (buildOptions, bool) {
 			o.emitOnly = true
 		case arg == "--keep-ll":
 			o.keepLL = true
+		case arg == "--standalone" && cmd == "build":
+			o.standalone = true
 		case arg == "--progress":
 			o.progress = true
 		case arg == "--watch":
@@ -323,6 +329,9 @@ func build(o buildOptions) int {
 		return code
 	}
 	o.report(30, "compiling")
+	if o.standalone {
+		return buildStandalone(o, res, entry)
+	}
 	exe, code := lowerAndEmit(o, res, entry)
 	if code != 0 {
 		return code
@@ -552,6 +561,9 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 		be.Live(0, nil)
 	}
 	libs := linkFlags(res, p)
+	if o.standalone {
+		libs = append(libs, standaloneLinkFlags(p)...)
+	}
 	// In parts, each kept for the next build, where the build is one that serves
 	// (objects.go); otherwise whole, as below.
 	if !app {

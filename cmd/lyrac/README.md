@@ -188,6 +188,14 @@ are `pkg/docgen`.
 - Page files are `std-prelude.md`, not `std.prelude.md` (site generators strip dots from
   slugs); the title keeps the dotted path.
 
+## Standalone
+
+`standalone.go`, `lyrac build --standalone`, for the machine it runs on. **macOS**: `OUT.app`, every
+non-system library followed transitively into `Contents/Frameworks`, load commands rewritten,
+build-machine rpaths deleted, resources in `Contents/Resources`, each piece then signed ad hoc.
+**Linux**: the folder `OUT`, direct non-base libraries in `lib/` found by `$ORIGIN/lib`. An output
+already there that it did not make is refused.
+
 ## Resources
 
 `resources.go`: the folder `lyra.toml`'s `resources` names is copied beside whatever a build
