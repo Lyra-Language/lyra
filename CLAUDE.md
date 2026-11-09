@@ -833,9 +833,12 @@ of Markdown.
   `dac_byte`'s level tables, so it is the same sound on each; `std.game.sound` mixes the
   chips at Furnace's levels, checked against its renders; `i32`/`i16` and in place, for
   the 68000's frame; tested in `cmd/lyrac/sound_test.go`, on both runtimes), `std/ffi.lyra`, `std/io.lyra`, `std/compress.lyra`
-  (inflate, gunzip, LZMA, LZMA2, CRC-32; tested against Go's `compress/flate` and `compress/gzip`), `std/png.lyra` (read, and written as 8-bit RGBA in stored
-  deflate blocks — no compressor; both tested against Go's `image/png` in
-  `cmd/lyrac/png_test.go`), `std/base64.lyra` (standard alphabet, padded, strict; tested
+  (inflate, gunzip, LZMA, LZMA2, CRC-32, and `deflate`/`zlib_deflate`/Adler-32 —
+  zlib level 6's hash chains and lazy matching, each block dynamic, fixed or stored, whichever
+  is smallest; tested against Go's `compress/flate`, `compress/zlib` and `compress/gzip`),
+  `std/png.lyra` (read, and written as 8-bit RGBA, each row's filter the one whose bytes sum
+  smallest, deflated; both tested against Go's `image/png` in `cmd/lyrac/png_test.go`, which
+  holds the size written within a quarter of Go's encoder), `std/base64.lyra` (standard alphabet, padded, strict; tested
   against Go's `encoding/base64`), `std/xml.lyra` (read only; tested against Go's
   `encoding/xml` in `cmd/lyrac/xml_test.go`), `std/zip.lyra`, `std/sevenzip.lyra` (its test archives
   are `pkg/backend/llvm/testdata/sevenzip/`, made by the `make.sh` beside them),

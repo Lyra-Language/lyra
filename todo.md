@@ -581,10 +581,8 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[OPEN] `parse_args` cannot stop at a command.** Every `-`-argument is a flag, so a
   program running a command after its own flags (`termina-ui --print ls -la`, xterm's `-e`)
   hand-rolls the loop. A stop at the first positional, or at `--`, would do.
-- **[OPEN] A deflate compressor.** `std.compress` inflates only, so `std.png.write_png` stores
-  its pixels uncompressed: an MCP image from Vega is ~1.8 MB of base64 for a 768×432 frame
-  that compresses to a tenth of it. Fixed-Huffman deflate with a small hash-chain matcher
-  would do.
+- **[DONE 11/09] A deflate compressor** — `std.compress.deflate`/`zlib_deflate`, and
+  `write_png` filters and deflates its rows (COMPLETED.md, 11/09).
 - **[DONE 10/19] Markup for `bindings.imgui.ui`** — `.lui` files generated into Lyra by
   `tools/lui`, not a Lyra grammar change (COMPLETED.md, 10/19).
 - **[DONE 10/21] `.lui`: components called across files** — `<import src="other.lui"/>`

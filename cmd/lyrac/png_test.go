@@ -321,8 +321,8 @@ func abs(v int) int {
 }
 
 // std.png writes what Go's decoder reads, pixel for pixel: a 1×1, an odd size, and one whose
-// rows run past a stored deflate block's 65,535 bytes, so the stream is several blocks; and
-// it refuses pixels that are not the size it is told.
+// rows are 80,000 bytes, each row's filter chosen from all five; and it refuses pixels that
+// are not the size it is told.
 func TestRun_PngWritesWhatGoReads(t *testing.T) {
 	t.Parallel()
 	setenv(t, "LYRA_STD", repoRoot(t))
@@ -392,6 +392,108 @@ let save = (w: i64, h: i64, path: string) -> void => {
 					t.Fatalf("%dx%d at %d,%d: %v, want %v", size[0], size[1], x, y, c, want)
 				}
 			}
+		}
+	}
+}
+
+// std.png compresses what it writes: real images — the repository's own sprite sheets and
+// scenes, and a 768×432 frame of sky, blocks and speckled ground, the size of the screen an
+// agent is shown — read by std.png and written again come back from Go's decoder pixel for
+// pixel, at a quarter of the stored size or less and within a quarter of what Go's own
+// encoder makes from the same pixels.
+func TestRun_PngWritesRealImagesCompressed(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	dir := t.TempDir()
+	frame := image.NewNRGBA(image.Rect(0, 0, 768, 432))
+	for y := 0; y < 432; y++ {
+		for x := 0; x < 768; x++ {
+			c := color.NRGBA{uint8(40 + y/3), uint8(90 + y/5), 210, 255}
+			if (x/32+y/32)%6 == 0 {
+				c = color.NRGBA{190, 70, 40, 255}
+			}
+			if y > 320 {
+				c = color.NRGBA{uint8(60 + (x*7+y*13)%9), uint8(130 + (x*5+y*3)%7), 50, 255}
+			}
+			frame.SetNRGBA(x, y, c)
+		}
+	}
+	var framePNG bytes.Buffer
+	if err := png.Encode(&framePNG, frame); err != nil {
+		t.Fatal(err)
+	}
+	inputs := []string{filepath.Join(dir, "frame.png")}
+	os.WriteFile(inputs[0], framePNG.Bytes(), 0o644)
+	for _, asset := range []string{"examples/raylib/assets/scene.png", "examples/raylib/assets/sprites.png", "examples/SDL3/nes/assets/sprites.png"} {
+		inputs = append(inputs, filepath.Join(root, asset))
+	}
+	var calls []string
+	for i, in := range inputs {
+		calls = append(calls, fmt.Sprintf("  again(%q, %q)", in, filepath.Join(dir, fmt.Sprintf("out%d.png", i))))
+	}
+	src := filepath.Join(dir, "repng.lyra")
+	if err := os.WriteFile(src, []byte(`import std.io.{ read_bytes, write_bytes }
+import std.png.{ read_png, write_png }
+
+let main = () -> void => {
+`+strings.Join(calls, "\n")+`
+}
+
+let again = (from: string, to: string) -> void => {
+  let Some(bytes) = read_bytes(from) else { return println("${from}: unreadable") }
+  match read_png(bytes) {
+    Err(why) => println("${from}: ${why}"),
+    Ok(png) => match write_png(png.width, png.height, png.rgba) {
+      Ok(out) => { let _ = write_bytes(to, out) },
+      Err(why) => println("${from}: ${why}"),
+    },
+  }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := captureRun(t, "run", src)
+	if code != 0 || stdout != "" {
+		t.Fatalf("exit %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	for i, in := range inputs {
+		original, err := os.ReadFile(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := png.Decode(bytes.NewReader(original))
+		if err != nil {
+			t.Fatal(err)
+		}
+		written, err := os.ReadFile(filepath.Join(dir, fmt.Sprintf("out%d.png", i)))
+		if err != nil {
+			t.Fatalf("%s was not written: %v", in, err)
+		}
+		got, err := png.Decode(bytes.NewReader(written))
+		if err != nil {
+			t.Fatalf("%s: Go cannot read what std.png wrote: %v", in, err)
+		}
+		b := want.Bounds()
+		if got.Bounds() != b {
+			t.Fatalf("%s: written %v, read %v", in, got.Bounds(), b)
+		}
+		nrgba := image.NewNRGBA(b)
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				w := color.NRGBAModel.Convert(want.At(x, y)).(color.NRGBA)
+				if g := color.NRGBAModel.Convert(got.At(x, y)).(color.NRGBA); g != w {
+					t.Fatalf("%s at %d,%d: %v, want %v", in, x, y, g, w)
+				}
+				nrgba.SetNRGBA(x, y, w)
+			}
+		}
+		var goPNG bytes.Buffer
+		png.Encode(&goPNG, nrgba)
+		stored := b.Dy() * (b.Dx()*4 + 1)
+		t.Logf("%s: %d bytes; stored %d, Go's encoder %d", filepath.Base(in), len(written), stored, goPNG.Len())
+		if len(written) > stored/4 || len(written) > goPNG.Len()+goPNG.Len()/4 {
+			t.Errorf("%s: %d bytes written; stored would be %d, Go's encoder makes %d", in, len(written), stored, goPNG.Len())
 		}
 	}
 }

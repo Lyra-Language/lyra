@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
+	"compress/zlib"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -121,6 +123,146 @@ let main = () -> void => {
 		if !strings.HasSuffix(line, ": ok") {
 			t.Errorf("%s", line)
 		}
+	}
+}
+
+// std.compress's deflate and zlib_deflate are read back by Go's compress/flate and
+// compress/zlib — which checks the Adler-32 — and by std's own inflate, over the inflate
+// corpus and an image's filtered rows. The streams must reach all three block types (one
+// byte is fixed codes, text dynamic, random bytes stored), and come within a tenth of Go's
+// default level, so a matcher that stops finding matches fails here too.
+func TestExec_DeflateRoundTrips(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	corpus := inflateCorpus()
+	corpus["pixels"] = imageRows(320, 180)
+	var input strings.Builder
+	input.WriteString(dir + "\n")
+	for name, data := range corpus {
+		os.WriteFile(filepath.Join(dir, name+".raw"), data, 0o644)
+		input.WriteString(name + "\n")
+	}
+	out := buildAndRunWithPrelude(t, `module main
+import std.compress.{ deflate, inflate, zlib_deflate }
+import std.io.{ read_bytes, write_bytes }
+let main = () -> void => {
+  let Some(dir) = read_line() else { return }
+  loop {
+    let Some(name) = read_line() else { break }
+    let Some(data) = read_bytes("${dir}/${name}.raw") else {
+      println("${name}: unreadable")
+      continue
+    }
+    let stream = deflate(data)
+    let _ = write_bytes("${dir}/${name}.deflate", stream)
+    let _ = write_bytes("${dir}/${name}.zlib", zlib_deflate(data))
+    match inflate(stream) {
+      Ok(back) => if back == data { println("${name}: ok") } else { println("${name}: inflates to other bytes") },
+      Err(why) => println("${name}: ${why}"),
+    }
+  }
+}
+`, input.String())
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != len(corpus) {
+		t.Fatalf("%d results for %d inputs:\n%s", len(lines), len(corpus), out)
+	}
+	for _, line := range lines {
+		if !strings.HasSuffix(line, ": ok") {
+			t.Errorf("std inflate: %s", line)
+		}
+	}
+	firstBlock := map[string]int{}
+	for name, data := range corpus {
+		stream, err := os.ReadFile(filepath.Join(dir, name+".deflate"))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got, err := io.ReadAll(flate.NewReader(bytes.NewReader(stream))); err != nil || !bytes.Equal(got, data) {
+			t.Errorf("%s: Go's flate reads %d bytes (%v), want %d", name, len(got), err, len(data))
+		}
+		wrapped, _ := os.ReadFile(filepath.Join(dir, name+".zlib"))
+		zr, err := zlib.NewReader(bytes.NewReader(wrapped))
+		if err != nil {
+			t.Errorf("%s: Go's zlib refuses the header: %v", name, err)
+		} else if got, err := io.ReadAll(zr); err != nil || !bytes.Equal(got, data) {
+			t.Errorf("%s: Go's zlib reads %d bytes (%v), want %d", name, len(got), err, len(data))
+		}
+		if len(stream) > 0 {
+			firstBlock[name] = int(stream[0]>>1) & 3
+		}
+		var gz bytes.Buffer
+		w, _ := flate.NewWriter(&gz, flate.DefaultCompression)
+		w.Write(data)
+		w.Close()
+		if limit := gz.Len() + gz.Len()/10 + 8; len(stream) > limit {
+			t.Errorf("%s: %d bytes deflated to %d; Go's default level makes %d", name, len(data), len(stream), gz.Len())
+		}
+	}
+	for name, kind := range map[string]int{"one": 1, "text": 2, "random": 0, "pixels": 2} {
+		if firstBlock[name] != kind {
+			t.Errorf("%s: first block of type %d, want %d", name, firstBlock[name], kind)
+		}
+	}
+}
+
+// imageRows is what a PNG writer hands deflate: rows of a w×h RGBA picture — a gradient
+// sky, flat-coloured blocks and a speckled ground — each behind a filter byte of 1 (the
+// left pixel subtracted), so the data has the runs and near-repeats of a real frame.
+func imageRows(w, h int) []byte {
+	r := rand.New(rand.NewSource(2))
+	var out []byte
+	for y := 0; y < h; y++ {
+		out = append(out, 1)
+		var left [4]byte
+		for x := 0; x < w; x++ {
+			px := [4]byte{byte(40 + y/2), byte(80 + y/3), 200, 255}
+			if (x/24+y/24)%5 == 0 {
+				px = [4]byte{180, 60, 30, 255}
+			}
+			if y > h*3/4 {
+				px = [4]byte{60 + byte(r.Intn(8)), 120 + byte(r.Intn(8)), 40, 255}
+			}
+			for k := range 4 {
+				out = append(out, px[k]-left[k])
+			}
+			left = px
+		}
+	}
+	return out
+}
+
+// deflate under AddressSanitizer: the matcher indexes its window and chains by position,
+// and a block's codes are built in arrays sized by its symbols — an index one past either
+// shows here. Text gives dynamic blocks, a run overlapping copies, noise a stored block.
+func TestExec_DeflateASan(t *testing.T) {
+	t.Parallel()
+	clang := lookClang(t)
+	if !asanAvailable(t, clang) {
+		t.Skip("ASan runtime not available; skipping")
+	}
+	var data bytes.Buffer
+	for i := range 300 {
+		fmt.Fprintf(&data, "line %d of a text with repeats %d\n", i, i%13)
+	}
+	data.Write(bytes.Repeat([]byte("z"), 700))
+	noise := make([]byte, 3000)
+	rand.New(rand.NewSource(3)).Read(noise)
+	data.Write(noise)
+	src := fmt.Sprintf(`module main
+import std.compress.{ deflate, inflate, zlib_deflate }
+let main = () -> u8 => {
+  let data: []u8 = %s
+  let Ok(back) = inflate(deflate(data)) else { return 1 }
+  if back != data { return 2 }
+  let Ok(none) = inflate(deflate([])) else { return 3 }
+  if none.len() != 0 { return 4 }
+  if zlib_deflate(data).len() >= data.len() { return 5 }
+  0
+}
+`, lyraBytes(data.Bytes()))
+	if got := buildAndRunASanWithPrelude(t, src); got != 0 {
+		t.Errorf("under ASan: exited %d; want 0", got)
 	}
 }
 

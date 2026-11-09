@@ -1,16 +1,18 @@
 module std.compress
-//! Decompression: [inflate] undoes DEFLATE (RFC 1951) — the compression inside zip, gzip
-//! and PNG — [gunzip] a gzip file (RFC 1952: its header, DEFLATE, its checksum),
-//! [lzma_decode] and [lzma2_decode] undo LZMA and LZMA2 — 7z's and xz's — and [crc32] is the
-//! checksum all of them are checked with.
+//! Compression and decompression: [inflate] undoes DEFLATE (RFC 1951) — the compression
+//! inside zip, gzip and PNG — and [deflate] does it, [zlib_deflate] wrapped as zlib (RFC
+//! 1950) with its [adler32]; [gunzip] reads a gzip file (RFC 1952: its header, DEFLATE, its
+//! checksum), [lzma_decode] and [lzma2_decode] undo LZMA and LZMA2 — 7z's and xz's — and
+//! [crc32] is the checksum zip, gzip and PNG are checked with.
 //!
 //! ```
-//! import std.compress.{ inflate, crc32 }
+//! import std.compress.{ deflate, inflate, crc32 }
 //!
 //! match inflate(deflated) {
 //!   Ok(bytes) => if crc32(bytes) == expected { use(bytes) },
 //!   Err(why) => println("corrupt: ${why}"),
 //! }
+//! let smaller = deflate(bytes)
 //! ```
 //!
 //! **A raw DEFLATE stream, not a container.** `inflate` reads the blocks and stops after the
@@ -33,6 +35,13 @@ module std.compress
 //! number of codes of each length and the symbols in code order, and a code is found by
 //! walking the lengths — no lookup table to build for each block, at up to fifteen steps a
 //! symbol.
+//!
+//! **The compressor is zlib's level 6** — hash chains over the 32 KB window followed 128
+//! links, a match of 128 bytes taken at once, one under 16 held a byte to see whether a
+//! longer one starts next — within a few bytes of zlib's output on text. Its blocks are 16,384
+//! literals and matches, each written whichever way is smallest: codes made for it (lengths
+//! limited to 15 bits the way miniz does), the fixed codes, or stored. It writes through a
+//! bit buffer passed `mut`, as LZMA's decoder reads, so [deflate] is `pure` too.
 
 /// The bytes a raw DEFLATE stream decompresses to, or what is wrong with it: a block type
 /// that does not exist, a code table that cannot be one, a code or distance out of range,
@@ -99,6 +108,93 @@ pub let inflate = pure (data: []u8) -> Result<[]u8, string> => {
     if last { break }
   }
   Ok(out)
+}
+
+/// `data` as a raw DEFLATE stream, which [inflate] undoes. Repeats are found by hash
+/// chains over the 32 KB window, a match put off by a byte when the next one is longer
+/// (zlib's lazy matching), and each block is written whichever of three ways is smallest:
+/// with Huffman codes made for it, with the fixed codes, or stored.
+pub let deflate = pure (data: []u8) -> []u8 => {
+  let n = data.len()
+  let tables = deflate_tables()
+  var w = Bits { out: [], acc: 0, count: 0 }
+  var m = Matcher { head: [-1; HASH_SIZE], prev: [-1; WINDOW] }
+  var tokens: []i64 = []
+  var block_start: i64 = 0
+  // A match found at `i - 1` is held while `i` is tried — a byte at `i - 1` is held, as a
+  // literal when `held_length` is under three.
+  var held = false
+  var held_length: i64 = 0
+  var held_distance: i64 = 0
+  var i: i64 = 0
+  while i < n {
+    let (length, distance) = if held_length < LAZY && i + MIN_MATCH <= n {
+      m.longest(data, i, held_length)
+    } else {
+      (0, 0)
+    }
+    m.insert(data, i)
+    if held_length >= MIN_MATCH && length <= held_length {
+      tokens.push((held_length << 16) | held_distance)
+      let end = i - 1 + held_length
+      for k in i + 1..<end { m.insert(data, k) }
+      i = end
+      held = false
+      held_length = 0
+    } else {
+      if held { tokens.push(i64(data[i - 1])) }
+      held = true
+      held_length = length
+      held_distance = distance
+      i += 1
+    }
+    if tokens.len() >= BLOCK_TOKENS {
+      let covered = if held { i - 1 } else { i }
+      write_block(w, tables, tokens, data, block_start, covered, false)
+      tokens = []
+      block_start = covered
+    }
+  }
+  // What is held at the end is a literal: a match needs three bytes from where it starts.
+  if held { tokens.push(i64(data[n - 1])) }
+  write_block(w, tables, tokens, data, block_start, n, true)
+  w.align()
+  w.out
+}
+
+/// `data` as a zlib stream (RFC 1950) — what PNG keeps its pixels in: a two-byte header
+/// (DEFLATE, a 32 KB window, no preset dictionary), [deflate]'s stream, and the Adler-32
+/// of `data`, big-endian.
+pub let zlib_deflate = pure (data: []u8) -> []u8 => {
+  let sum = adler32(data)
+  [
+    0x78,
+    0x9C,
+    ...deflate(data),
+    u8(sum >> 24),
+    u8((sum >> 16) & 0xFF),
+    u8((sum >> 8) & 0xFF),
+    u8(sum & 0xFF)
+  ]
+}
+
+/// The Adler-32 checksum a zlib stream ends with.
+pub let adler32 = pure (data: []u8) -> u32 => {
+  var a: i64 = 1
+  var b: i64 = 0
+  var at: i64 = 0
+  while at < data.len() {
+    // Sums of 65,536 bytes stay well inside an i64; reduce between them.
+    let end = (at + 65536).min(data.len())
+    for k in at..<end {
+      a += i64(data[k])
+      b += a
+    }
+    a = a % 65521
+    b = b % 65521
+    at = end
+  }
+  u32((b << 16) | a)
 }
 
 /// The bytes a gzip file holds — its first member: past its header's optional fields (the
@@ -390,6 +486,472 @@ const DISTANCE_EXTRA: [30]i64 = #[
   0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
   7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13,
 ]
+
+// ── Deflate ──────────────────────────────────────────────────────────────────
+
+/// The shortest and longest match DEFLATE codes, the window a distance reaches back over.
+const MIN_MATCH: i64 = 3
+const MAX_MATCH: i64 = 258
+const WINDOW: i64 = 32768
+
+/// The matcher's settings, zlib's level 6: a chain followed at most `MAX_CHAIN` links, a
+/// match of `NICE` bytes taken without looking for longer, and one of `LAZY` or more not
+/// held to see whether the next byte starts a longer one.
+const MAX_CHAIN: i64 = 128
+const NICE: i64 = 128
+const LAZY: i64 = 16
+
+/// Slots in the hash table of three-byte prefixes.
+const HASH_SIZE: i64 = 65536
+
+/// Literals and matches a block holds before its codes are made: enough for a code to
+/// pay for its header, few enough to follow the data's changes.
+const BLOCK_TOKENS: i64 = 16384
+
+/// The bits written so far: whole bytes in `out`, and `count` more in `acc`, the first
+/// lowest — DEFLATE's order.
+struct Bits {
+  out: []u8,
+  acc: i64,
+  count: i64,
+}
+
+impl Bits {
+  /// The low `n` bits of `value` (up to 24), the lowest first.
+  let put = (self: mut, value: i64, n: i64) -> void => {
+    self.acc = self.acc | (value << self.count)
+    self.count += n
+    while self.count >= 8 {
+      self.out.push(u8(self.acc & 0xFF))
+      self.acc = self.acc >> 8
+      self.count -= 8
+    }
+  }
+
+  /// Zero bits to the next byte's start.
+  let align = (self: mut) -> void => {
+    if self.count > 0 { self.out.push(u8(self.acc & 0xFF)) }
+    self.acc = 0
+    self.count = 0
+  }
+}
+
+/// The hash chains: for each hash of three bytes, the latest position with it (`head`),
+/// and for each position in the window, the one before it with the same hash (`prev`,
+/// indexed by the position modulo the window) — `-1` for none.
+struct Matcher {
+  head: []i64,
+  prev: []i64,
+}
+
+impl Matcher {
+  /// Position `at` entered in its chain, if three bytes start there.
+  let insert = (self: mut, data: []u8, at: i64) -> void => {
+    if at + MIN_MATCH > data.len() { return }
+    let h = prefix_hash(data, at)
+    self.prev[at & (WINDOW - 1)] = self.head[h]
+    self.head[h] = at
+  }
+
+  /// The longest match for the bytes at `at` longer than `beat` bytes, as its length and
+  /// distance — `(0, 0)` if there is none.
+  let longest = pure (self, data: []u8, at: i64, beat: i64) -> (i64, i64) => {
+    let limit = (data.len() - at).min(MAX_MATCH)
+    var best = beat.max(MIN_MATCH - 1)
+    if best >= limit { return (0, 0) }
+    var best_distance: i64 = 0
+    var candidate = self.head[prefix_hash(data, at)]
+    var chain = MAX_CHAIN
+    // Each link is an earlier position, and the chain is cut where the window ends.
+    while candidate >= 0 && at - candidate <= WINDOW && chain > 0 {
+      if data[candidate + best] == data[at + best] && data[candidate] == data[at] {
+        var k: i64 = 0
+        while k < limit && data[candidate + k] == data[at + k] { k += 1 }
+        if k > best {
+          best = k
+          best_distance = at - candidate
+          if k >= NICE || k == limit { break }
+        }
+      }
+      candidate = self.prev[candidate & (WINDOW - 1)]
+      chain -= 1
+    }
+    if best_distance == 0 { (0, 0) } else { (best, best_distance) }
+  }
+}
+
+/// The hash table slot of the three bytes at `at`.
+let prefix_hash = pure (data: []u8, at: i64) -> i64 => {
+  let key = (i64(data[at]) << 16) | (i64(data[at + 1]) << 8) | i64(data[at + 2])
+  ((key * 2654435761) >> 16) & (HASH_SIZE - 1)
+}
+
+/// What every block is written with: each match length's code (less 257), a distance's
+/// code by [DeflateTables.distance_code]'s two-part table, and the fixed codes.
+struct DeflateTables {
+  length_codes: []i64,
+  distance_codes: []i64,
+  fixed_literal_lengths: []i64,
+  fixed_literal_codes: []i64,
+  fixed_distance_lengths: []i64,
+  fixed_distance_codes: []i64,
+}
+
+let deflate_tables = pure () -> DeflateTables => {
+  var length_codes: []i64 = [0; MAX_MATCH + 1]
+  for c in 0..<29 {
+    // In code order, so 258 — in reach of code 284's extra bits too — ends as 285's.
+    for k in 0..<(1 << LENGTH_EXTRA[c]) {
+      if LENGTH_BASE[c] + k <= MAX_MATCH { length_codes[LENGTH_BASE[c] + k] = c }
+    }
+  }
+  var distance_codes: []i64 = [0; 512]
+  for c in 0..<30 {
+    for k in 0..<(1 << DISTANCE_EXTRA[c]) {
+      let v = DISTANCE_BASE[c] - 1 + k
+      if v < 256 { distance_codes[v] = c } else { distance_codes[256 + (v >> 7)] = c }
+    }
+  }
+  let literal_lengths = [s in 0..<288 | if s < 144 { 8 } else if s < 256 { 9 } else if s < 280 { 7 } else { 8 }]
+  let distance_lengths = [5; 30]
+  DeflateTables {
+    length_codes: length_codes,
+    distance_codes: distance_codes,
+    fixed_literal_lengths: literal_lengths,
+    fixed_literal_codes: canonical_codes(literal_lengths),
+    fixed_distance_lengths: distance_lengths,
+    fixed_distance_codes: canonical_codes(distance_lengths),
+  }
+}
+
+impl DeflateTables {
+  /// Distance `d`'s code: up to 256 looked up by `d - 1`, beyond by `(d - 1) >> 7`, as
+  /// every code from 16 on starts one past a multiple of 128.
+  let distance_code = pure (self, d: i64) -> i64 =>
+    if d <= 256 { self.distance_codes[d - 1] } else { self.distance_codes[256 + ((d - 1) >> 7)] }
+}
+
+/// One block of `tokens` — a literal byte below 256, else a match's length `<< 16` and
+/// distance — which stand for `data[from..<to]`: with codes made for it, the fixed codes,
+/// or stored, whichever takes fewest bits.
+let write_block = (
+  w: mut Bits,
+  t: ref DeflateTables,
+  tokens: ref []i64,
+  data: []u8,
+  from: i64,
+  to: i64,
+  last: bool
+) -> void => {
+  var literal_freqs: []i64 = [0; 286]
+  var distance_freqs: []i64 = [0; 30]
+  literal_freqs[256] = 1
+  for token in tokens {
+    if token < 256 {
+      literal_freqs[token] += 1
+    } else {
+      literal_freqs[257 + t.length_codes[token >> 16]] += 1
+      distance_freqs[t.distance_code(token & 0xFFFF)] += 1
+    }
+  }
+  let literal_lengths = huffman_lengths(literal_freqs, 15)
+  let distance_lengths = huffman_lengths(distance_freqs, 15)
+  let header = dynamic_header(literal_lengths, distance_lengths)
+  let dynamic_bits = 3 +
+    header.bits +
+    data_bits(literal_freqs, distance_freqs, literal_lengths, distance_lengths)
+  let fixed_bits = 3 +
+    data_bits(
+      literal_freqs,
+      distance_freqs,
+      t.fixed_literal_lengths,
+      t.fixed_distance_lengths
+    )
+  let raw = to - from
+  let stored_blocks = ((raw + 65534) / 65535).max(1)
+  let stored_bits = raw * 8 + stored_blocks * 42
+  let first = if last { 1 } else { 0 }
+  if stored_bits < dynamic_bits && stored_bits < fixed_bits {
+    write_stored(w, data, from, to, last)
+  } else if dynamic_bits < fixed_bits {
+    w.put(first, 1)
+    w.put(2, 2)
+    w.put(header.literals - 257, 5)
+    w.put(header.distances - 1, 5)
+    w.put(header.order_count - 4, 4)
+    for i in 0..<header.order_count { w.put(header.run_lengths[LENGTH_ORDER[i]], 3) }
+    let run_codes = canonical_codes(header.run_lengths)
+    for run in header.runs {
+      let s = run & 31
+      w.put(run_codes[s], header.run_lengths[s])
+      w.put(run >> 5, run_extra(s))
+    }
+    write_tokens(
+      w,
+      t,
+      tokens,
+      canonical_codes(literal_lengths),
+      literal_lengths,
+      canonical_codes(distance_lengths),
+      distance_lengths
+    )
+  } else {
+    w.put(first, 1)
+    w.put(1, 2)
+    write_tokens(
+      w,
+      t,
+      tokens,
+      t.fixed_literal_codes,
+      t.fixed_literal_lengths,
+      t.fixed_distance_codes,
+      t.fixed_distance_lengths
+    )
+  }
+}
+
+/// The bits a block's tokens take in codes of these lengths, extra bits and the end of
+/// block included.
+let data_bits = pure (
+  literal_freqs: []i64,
+  distance_freqs: []i64,
+  literal_lengths: []i64,
+  distance_lengths: []i64
+) -> i64 => {
+  var total: i64 = 0
+  for s, f in literal_freqs {
+    total += f * literal_lengths[s]
+    if s >= 257 { total += f * LENGTH_EXTRA[s - 257] }
+  }
+  for d, f in distance_freqs { total += f * (distance_lengths[d] + DISTANCE_EXTRA[d]) }
+  total
+}
+
+/// Tokens in these codes, then the end of the block.
+let write_tokens = (
+  w: mut Bits,
+  t: ref DeflateTables,
+  tokens: ref []i64,
+  literal_codes: []i64,
+  literal_lengths: []i64,
+  distance_codes: []i64,
+  distance_lengths: []i64
+) -> void => {
+  for token in tokens {
+    if token < 256 {
+      w.put(literal_codes[token], literal_lengths[token])
+    } else {
+      let length = token >> 16
+      let distance = token & 0xFFFF
+      let c = t.length_codes[length]
+      w.put(literal_codes[257 + c], literal_lengths[257 + c])
+      w.put(length - LENGTH_BASE[c], LENGTH_EXTRA[c])
+      let d = t.distance_code(distance)
+      w.put(distance_codes[d], distance_lengths[d])
+      w.put(distance - DISTANCE_BASE[d], DISTANCE_EXTRA[d])
+    }
+  }
+  w.put(literal_codes[256], literal_lengths[256])
+}
+
+/// `data[from..<to]` as stored blocks, 65,535 bytes at most each — at least one, even of
+/// nothing — the last marked final when `last` is.
+let write_stored = (w: mut Bits, data: []u8, from: i64, to: i64, last: bool) -> void => {
+  var at = from
+  loop {
+    let n = (to - at).min(65535)
+    let ends = last && at + n >= to
+    w.put(if ends { 1 } else { 0 }, 1)
+    w.put(0, 2)
+    w.align()
+    w.put(n, 16)
+    w.put(0xFFFF - n, 16)
+    for k in 0..<n { w.out.push(data[at + k]) }
+    at += n
+    if at >= to { break }
+  }
+}
+
+/// A dynamic block's header, ready to write: how many literal/length and distance code
+/// lengths it lists, those lengths run-length coded (a symbol of the code-length code in
+/// the low five bits, its extra bits above), the code-length code's lengths, how many of
+/// them are listed in `LENGTH_ORDER`, and the bits the header takes after the block type.
+struct DynamicHeader {
+  literals: i64,
+  distances: i64,
+  runs: []i64,
+  run_lengths: []i64,
+  order_count: i64,
+  bits: i64,
+}
+
+let dynamic_header = pure (
+  literal_lengths: []i64,
+  distance_lengths: []i64
+) -> DynamicHeader => {
+  var literals: i64 = 286
+  while literals > 257 && literal_lengths[literals - 1] == 0 { literals -= 1 }
+  var distances: i64 = 30
+  while distances > 1 && distance_lengths[distances - 1] == 0 { distances -= 1 }
+  // The two lists are one sequence: a run may cross from one into the other.
+  let runs = length_runs([
+    ...literal_lengths.slice(0, literals),
+    ...distance_lengths.slice(0, distances)
+  ])
+  var freqs: []i64 = [0; 19]
+  for run in runs { freqs[run & 31] += 1 }
+  let run_lengths = huffman_lengths(freqs, 7)
+  var order_count: i64 = 19
+  while order_count > 4 && run_lengths[LENGTH_ORDER[order_count - 1]] == 0 { order_count -= 1 }
+  var size = 14 + 3 * order_count
+  for run in runs { size += run_lengths[run & 31] + run_extra(run & 31) }
+  DynamicHeader {
+    literals: literals,
+    distances: distances,
+    runs: runs,
+    run_lengths: run_lengths,
+    order_count: order_count,
+    bits: size,
+  }
+}
+
+/// Code lengths run-length coded as RFC 1951 3.2.7 allows: 16 repeats the previous length
+/// 3–6 times, 17 a zero 3–10 times and 18 a zero 11–138 times.
+let length_runs = pure (lengths: []i64) -> []i64 => {
+  var runs: []i64 = []
+  var i: i64 = 0
+  while i < lengths.len() {
+    let length = lengths[i]
+    var run: i64 = 1
+    while i + run < lengths.len() && lengths[i + run] == length { run += 1 }
+    var left = run
+    if length == 0 {
+      while left >= 11 {
+        let r = left.min(138)
+        runs.push(18 | ((r - 11) << 5))
+        left -= r
+      }
+      if left >= 3 {
+        runs.push(17 | ((left - 3) << 5))
+        left = 0
+      }
+    } else {
+      runs.push(length)
+      left -= 1
+      while left >= 3 {
+        let r = left.min(6)
+        runs.push(16 | ((r - 3) << 5))
+        left -= r
+      }
+    }
+    for _ in 0..<left { runs.push(length) }
+    i += run
+  }
+  runs
+}
+
+/// The extra bits after a code-length symbol.
+let run_extra = pure (symbol: i64) -> i64 => match symbol {
+  16 => 2,
+  17 => 3,
+  18 => 7,
+  _ => 0,
+}
+
+/// Huffman code lengths for symbols seen `freqs[s]` times, none over `limit` bits — a
+/// symbol not seen has none. Fewer than two symbols seen still makes two codes of one bit,
+/// a complete code, which every inflater takes.
+let huffman_lengths = pure (freqs: []i64, limit: i64) -> []i64 => {
+  var lengths: []i64 = [0; freqs.len()]
+  // A leaf is its count above its symbol, so sorting orders by count, then symbol.
+  var keys: []i64 = []
+  for s, f in freqs {
+    if f > 0 { keys.push((f << 9) | s) }
+  }
+  if keys.len() < 2 {
+    let s = if keys.len() == 1 { keys[0] & 511 } else { 0 }
+    lengths[s] = 1
+    lengths[if s == 0 { 1 } else { 0 }] = 1
+    return lengths
+  }
+  let leaves = keys.sorted()
+  let n = leaves.len()
+  // Huffman's construction by two queues: the leaves in order of count, and the nodes made
+  // from them, which come out in order of weight too. Nodes `n` on are made ones.
+  var weight: []i64 = [0; 2 * n - 1]
+  var parent: []i64 = [0; 2 * n - 1]
+  for i in 0..<n { weight[i] = leaves[i] >> 9 }
+  var next_leaf: i64 = 0
+  var next_node = n
+  for made in n..<2 * n - 1 {
+    var sum: i64 = 0
+    for _ in 0..<2 {
+      let leaf = next_leaf < n && (next_node >= made || weight[next_leaf] <= weight[next_node])
+      let node = if leaf { next_leaf } else { next_node }
+      if leaf { next_leaf += 1 } else { next_node += 1 }
+      parent[node] = made
+      sum += weight[node]
+    }
+    weight[made] = sum
+  }
+  // A node's depth is one under its parent's, and a parent is made after its children.
+  var depth: []i64 = [0; 2 * n - 1]
+  var node = 2 * n - 3
+  while node >= 0 {
+    depth[node] = depth[parent[node]] + 1
+    node -= 1
+  }
+  // How many leaves have each length, those over the limit cut to it, and the code then
+  // made whole again (miniz's way): while it over-fills, a leaf at the limit is moved to
+  // hang beside one a level up, which moves down with it.
+  var count: []i64 = [0; limit + 1]
+  for i in 0..<n { count[depth[i].min(limit)] += 1 }
+  var total: i64 = 0
+  for length in 1..<=limit { total += count[length] << (limit - length) }
+  while total > (1 << limit) {
+    count[limit] -= 1
+    var length = limit - 1
+    while count[length] == 0 { length -= 1 }
+    count[length] -= 1
+    count[length + 1] += 2
+    total -= 1
+  }
+  // The longest codes to the rarest symbols.
+  var at: i64 = 0
+  var length = limit
+  while length >= 1 {
+    for _ in 0..<count[length] {
+      lengths[leaves[at] & 511] = length
+      at += 1
+    }
+    length -= 1
+  }
+  lengths
+}
+
+/// The canonical code for each symbol with these lengths, its bits reversed to be written
+/// lowest first — DEFLATE writes a Huffman code from its most significant bit.
+let canonical_codes = pure (lengths: []i64) -> []i64 => {
+  var count: []i64 = [0; 16]
+  for length in lengths { count[length] += 1 }
+  count[0] = 0
+  var next: []i64 = [0; 16]
+  var code: i64 = 0
+  for length in 1..<=15 {
+    code = (code + count[length - 1]) << 1
+    next[length] = code
+  }
+  var codes: []i64 = [0; lengths.len()]
+  for s, length in lengths {
+    if length != 0 {
+      var reversed: i64 = 0
+      for b in 0..<length { reversed = reversed | (((next[length] >> b) & 1) << (length - 1 - b)) }
+      codes[s] = reversed
+      next[length] += 1
+    }
+  }
+  codes
+}
 
 // ── LZMA ─────────────────────────────────────────────────────────────────────
 

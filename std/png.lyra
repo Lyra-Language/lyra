@@ -20,12 +20,12 @@ module std.png
 //! anything malformed — a bad signature, a chunk past the end, data that does not inflate to
 //! the rows the header promises.
 //!
-//! **What is written**: 8-bit RGBA, not interlaced, every row unfiltered and the image data
-//! *stored* — deflate's uncompressed blocks inside the zlib stream — so writing needs no
-//! compressor and any reader reads it. A file is the pixels' size and a little more: right for
-//! a sprite, a screen or a picture an agent is shown, not for an archive.
+//! **What is written**: 8-bit RGBA, not interlaced, each row given the filter whose bytes
+//! sum smallest as signed values (libpng's heuristic: all five tried), and the rows
+//! compressed by [std.compress.zlib_deflate] — LZ77 over hash chains, and Huffman codes made
+//! for each block.
 
-import std.compress.{ inflate, crc32 }
+import std.compress.{ inflate, crc32, zlib_deflate }
 
 /// A decoded image.
 pub struct Png {
@@ -110,12 +110,25 @@ pub let write_png = pure (
   if rgba.len() != width * height * 4 {
     return Err("${rgba.len()} bytes are not ${width}×${height} RGBA pixels (${width * height * 4})")
   }
-  // Each row is its filter, 0 (none), then its pixels.
+  // Each row is its filter, then its pixels filtered so.
+  let stride = width * 4
   var raw: []u8 = []
   for y in 0..<height {
-    raw.push(0)
-    let row = y * width * 4
-    for k in 0..<width * 4 { raw.push(rgba[row + k]) }
+    var best: i64 = 0
+    var best_sum: i64 = -1
+    for method in 0..<5 {
+      var sum: i64 = 0
+      for x in 0..<stride {
+        let v = i64(filtered(rgba, stride, y, x, method))
+        sum += if v < 128 { v } else { 256 - v }
+      }
+      if best_sum < 0 || sum < best_sum {
+        best = method
+        best_sum = sum
+      }
+    }
+    raw.push(u8(best))
+    for x in 0..<stride { raw.push(filtered(rgba, stride, y, x, best)) }
   }
   // 8 bits a sample, colour type 6 (RGBA), deflate, the one filter method, no interlace.
   let header: []u8 = [
@@ -130,13 +143,30 @@ pub let write_png = pure (
   Ok([
     ...SIGNATURE,
     ...chunk("IHDR", header),
-    ...chunk("IDAT", zlib_stored(raw)),
+    ...chunk("IDAT", zlib_deflate(raw)),
     ...chunk("IEND", [])
   ])
 }
 
 /// The eight bytes every PNG file starts with.
 const SIGNATURE: []u8 = [137, 80, 78, 71, 13, 10, 26, 10]
+
+/// Byte `x` of row `y` of 4-byte pixels `stride` bytes a row, as filter `method` writes it:
+/// less its prediction from the pixel left, the one above, both, or the Paeth predictor.
+let filtered = pure (rgba: []u8, stride: i64, y: i64, x: i64, method: i64) -> u8 => {
+  let at = y * stride + x
+  let a = if x >= 4 { i64(rgba[at - 4]) } else { 0 }
+  let b = if y > 0 { i64(rgba[at - stride]) } else { 0 }
+  let c = if y > 0 && x >= 4 { i64(rgba[at - stride - 4]) } else { 0 }
+  let predicted = match method {
+    0 => 0,
+    1 => a,
+    2 => b,
+    3 => (a + b) / 2,
+    _ => paeth(a, b, c),
+  }
+  u8((i64(rgba[at]) - predicted) & 0xFF)
+}
 
 let read_header = pure (body: []u8) -> Result<Header, string> => {
   if body.len() != 13 { return Err("IHDR is ${body.len()} bytes, not 13") }
@@ -326,39 +356,6 @@ impl Header {
 let chunk = pure (kind: string, body: []u8) -> []u8 => {
   let named = [...kind.encode_utf8(), ...body]
   [...be32_bytes(u32(body.len())), ...named, ...be32_bytes(crc32(named))]
-}
-
-/// `data` as a zlib stream of stored deflate blocks: the header (deflate, a 32 KB window,
-/// no dictionary), blocks of at most 65,535 bytes — the last one marked so, an empty stream
-/// one empty block — and the Adler-32 of `data`.
-let zlib_stored = pure (data: []u8) -> []u8 => {
-  var out: []u8 = [0x78, 0x01]
-  var at = 0
-  loop {
-    let n = (data.len() - at).min(65535)
-    let last = at + n >= data.len()
-    out.push(if last { 1 } else { 0 })
-    out.push(u8(n & 0xFF))
-    out.push(u8(n >> 8))
-    out.push(u8(~n & 0xFF))
-    out.push(u8((~n >> 8) & 0xFF))
-    for k in 0..<n { out.push(data[at + k]) }
-    at += n
-    if last { break }
-  }
-  for b in be32_bytes(adler32(data)) { out.push(b) }
-  out
-}
-
-/// The Adler-32 checksum zlib ends a stream with.
-let adler32 = pure (data: []u8) -> u32 => {
-  var a: u32 = 1
-  var b: u32 = 0
-  for x in data {
-    a = (a + u32(x)) % 65521
-    b = (b + a) % 65521
-  }
-  (b << 16) | a
 }
 
 /// `v`'s four bytes, big-endian.

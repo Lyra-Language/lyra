@@ -9,6 +9,46 @@ Newest first.
 
 ## Dated log
 
+### 11/09/26 — A deflate compressor; PNGs written compressed
+
+`std.compress` inflated only, so `write_png` stored its rows: Vega's sprite sheets and MCP
+frames were their pixels' size. Now `deflate`, `zlib_deflate` and a public `adler32` sit
+beside `inflate`, and `write_png` filters and deflates.
+
+- **zlib's level 6, not the fixed-Huffman minimum todo.md asked for.** Hash chains over the
+  window (128 links, a 128-byte match taken at once), lazy matching under 16, and every block
+  of 16,384 tokens written whichever way is smallest — dynamic, fixed or stored. Dynamic
+  codes were most of the win and cost one function more, `huffman_lengths`: two-queue
+  Huffman, lengths over the limit made whole again as miniz does. Text comes within 3 bytes
+  of zlib -6 (17,914 against 17,911); a run of 100,000 bytes is 121.
+- **Fewer than two symbols still make two one-bit codes.** Go's inflater takes an incomplete
+  code only as one code of one bit, so an unused distance alphabet gets two, as zlib's does.
+- **A row's filter is the one whose bytes sum smallest as signed values** (libpng's), all
+  five tried. On the images below the result is within 1–10% of Go's encoder, which does
+  the same, in 1.4 s for all eight read and written again.
+
+Each read by `read_png`, written again, decoded by Go pixel for pixel; "before" is what the
+stored writer made (Vega wrote the first five so; its `--check` holds checked-in art to
+what it writes now, so hero-modern's, forest's and sticker-knight's `art/` were written
+again, pixel for pixel the same):
+
+| image | size | stored | now | Go's encoder |
+|---|---|---|---|---|
+| vega sticker-knight `sprites.png` | 460×5187 | 9,550,060 | 111,971 | 110,892 |
+| vega forest `sprites.png` | 160×457 | 293,025 | 11,687 | 11,688 |
+| vega vertical-shooter `sprites.png` | 576×40 | 92,273 | 2,145 | 2,177 |
+| vega hero-modern `sprites.png` | 112×52 | 23,416 | 1,231 | 1,211 |
+| vega vertical-shooter `tiles-0.png` | 512×16 | 32,852 | 639 | 656 |
+| tiled sticker-knight `preview.png` | 2200×1700 | 14,962,908 | 1,191,032 | 1,092,504 |
+| platformer `COUPON.png` | 1840×2445 | 17,999,083 | 686,912 | 679,069 |
+| tiled `isometric_grass_and_water.png` | 256×384 | 393,698 | 111,055 | 106,882 |
+
+Tests: `TestExec_DeflateRoundTrips` (Go's `compress/flate` and `compress/zlib`, which checks
+the Adler-32, and std's `inflate`, over the inflate corpus and filtered image rows; all three
+block types reached; within a tenth of Go's default level), `TestExec_DeflateASan`, and
+`TestRun_PngWritesRealImagesCompressed` (the repository's PNGs and a 768×432 frame, pixel for
+pixel, at most a quarter of stored and a quarter over Go's encoder).
+
 ### 11/03/26 — Z80 spills: half of a frame's work, down by a quarter
 
 A profile by T-state, not instruction, said spills were 49% of a frame's work. Two changes, and neither is the obvious one of allocating better, since three pairs cannot hold eight values:
