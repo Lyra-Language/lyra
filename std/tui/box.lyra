@@ -24,9 +24,11 @@ module std.tui
 /// improved by silently drawing something else. Nearly every real width here is a constant
 /// or comes from `terminal_size()`, which answers 80x24 rather than something degenerate
 /// when there is no window.
+@track_caller
 pub let box_top = pure (width: i64) -> string => "┌" ++ (rule(interior(width)) ++ "┐")
 
 /// The bottom edge: `└───────┘`. Traps on a width under 2, as `box_top` does.
+@track_caller
 pub let box_bottom = pure (width: i64) -> string => "└" ++ (rule(interior(width)) ++ "┘")
 
 /// A content row: `│ text  │`, the text fitted to the space between the borders.
@@ -38,6 +40,7 @@ pub let box_bottom = pure (width: i64) -> string => "└" ++ (rule(interior(widt
 ///
 /// # Panics
 /// Traps on a width under 2, as `box_top` does.
+@track_caller
 pub let box_row = pure (text: string, width: i64) -> string =>
   "│" ++ (fit(text, interior(width)) ++ "│")
 
@@ -50,6 +53,7 @@ pub let box_row = pure (text: string, width: i64) -> string =>
 ///
 /// # Panics
 /// Traps on a width under 2, as `box_top` does.
+@track_caller
 pub let box_top_titled = pure (title: string, width: i64) -> string => {
   // Called for the trap; the interior is not the arithmetic this form needs.
   let _ = interior(width)
@@ -85,6 +89,7 @@ let rule = pure (n: i64) -> string => repeat("─", n)
 /// # Panics
 /// Traps if `width` is less than 2. The message is a constant, so nothing here allocates
 /// beyond the string it is building.
+@track_caller
 let interior = pure (width: i64) -> i64 => {
   if width < 2 { panic("std.tui: a box needs at least 2 columns for its borders") }
   width - 2

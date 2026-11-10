@@ -604,13 +604,23 @@ func (l *lowerer) emptyEnv() value.Value {
 // actually used as values, and only under -O0 (the inliner removes it).
 // name is the *key* into l.funcs (module-qualified for a private function), not
 // necessarily the source name.
+//
+// **A `@track_caller` function has a thunk per place it is made a value** (`opts.map(unwrap)`),
+// passing that place: whoever calls the value has no place to give, and the line that chose the
+// function is the one a reader of the trap wants. Its key is the name, a NUL, and the place.
 func (l *lowerer) closureThunk(name string) (*ir.Func, error) {
-	if fn, ok := l.closureThunks[name]; ok {
-		return fn, nil
-	}
 	target, ok := l.funcs[name]
 	if !ok {
 		return nil, fmt.Errorf("llvm: no such function %q to use as a value", name)
+	}
+	key, symbol, place := name, strings.TrimPrefix(name, "::")+".closure", value.Value(nil)
+	if l.tracksCaller[target] {
+		place = l.placeRecord(l.here)
+		key = fmt.Sprintf("%s\x00%d:%d:%s", name, l.here.StartLine, l.here.StartCol, l.here.File)
+		symbol = fmt.Sprintf("%s.%d", symbol, len(l.closureThunks))
+	}
+	if fn, ok := l.closureThunks[key]; ok {
+		return fn, nil
 	}
 	params := []*ir.Param{ir.NewParam("env", lltypes.NewPointer(lltypes.I8))}
 	for i, p := range l.lyraParams(target) {
@@ -621,19 +631,19 @@ func (l *lowerer) closureThunk(name string) (*ir.Func, error) {
 	// module-qualified, as a private function's always was. A closure returns by value, so
 	// a target returning through memory is called with a slot of the thunk's (sret.go).
 	result := l.resultType(target)
-	thunk := l.module.NewFunc(strings.TrimPrefix(name, "::")+".closure", result, params...)
+	thunk := l.module.NewFunc(symbol, result, params...)
 	entry := thunk.NewBlock("entry")
 	args := make([]value.Value, 0, len(params)-1)
 	for _, p := range params[1:] {
 		args = append(args, p)
 	}
-	call := l.callLyra(entry, target, args)
+	call := l.callLyraAt(entry, target, args, place)
 	if _, isVoid := result.(*lltypes.VoidType); isVoid {
 		entry.NewRet(nil)
 	} else {
 		entry.NewRet(call)
 	}
-	l.closureThunks[name] = thunk
+	l.closureThunks[key] = thunk
 	return thunk, nil
 }
 

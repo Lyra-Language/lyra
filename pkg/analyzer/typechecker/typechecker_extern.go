@@ -342,6 +342,15 @@ func (tc *TypeChecker) checkCallbackArguments(calleeName string, lambda *ast.Lam
 		}
 		arg := call.Arguments[i]
 		if tc.isTopLevelFunctionRef(arg) {
+			// A `@track_caller` function takes its caller's place as one more argument,
+			// which C does not pass.
+			fn, _ := tc.symTable.LookupFunctionFrom(arg.(*ast.IdentifierExpr).Name, arg.GetLocation())
+			if fn.TrackCaller {
+				tc.addErrorCode(arg.GetLocation(), SeverityError, diag.CodeCallbackMustBeTopLevel,
+					"%s: argument %d is a C callback, and `@track_caller` gives a function a "+
+						"hidden parameter, its caller's place, which C does not pass. Pass a "+
+						"top-level function without it", calleeName, i+1)
+			}
 			continue
 		}
 		tc.addErrorCode(arg.GetLocation(), SeverityError, diag.CodeCallbackMustBeTopLevel,

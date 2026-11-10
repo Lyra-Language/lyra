@@ -252,6 +252,8 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		closures:           map[closureKey]*ir.Func{},
 		closureThunks:      map[string]*ir.Func{},
 		sretResults:        map[*ir.Func]lltypes.Type{},
+		tracksCaller:       map[*ir.Func]bool{},
+		placeRecords:       map[string]*ir.Global{},
 		byCopyParams:       map[*ir.Param]bool{},
 		envDropFns:         map[string]*ir.Func{},
 		externs:            map[string]externDecl{},
@@ -522,6 +524,13 @@ type lowerer struct {
 	// with a location — and so where a trap emitted now says it was (whereArgs).
 	// Set and restored by lowerExpr and lowerBlockStmts (at).
 	here ast.Location
+	// callerPlace is, while a `@track_caller` function's body is lowered, its hidden
+	// parameter — the place its caller passed — which whereArgs reads in place of here, and
+	// callerPlaceFn that function. nil in any other function (beginFunction clears it).
+	callerPlace   value.Value
+	callerPlaceFn *ir.Func
+	// placeRecords are the places passed to `@track_caller` functions, by text (trap.go).
+	placeRecords map[string]*ir.Global
 
 	// The ref-counted heap runtime (runtime.go), emitted lazily into the module
 	// the first time a value needs the heap (today: string concatenation). nil
@@ -657,6 +666,9 @@ type lowerer struct {
 	// sretResults maps a function returning a large aggregate through memory to that
 	// aggregate's type (sret.go).
 	sretResults map[*ir.Func]lltypes.Type
+	// tracksCaller are the `@track_caller` functions, each taking a pointer to its caller's
+	// place as a hidden parameter after its own (trap.go, trackCaller).
+	tracksCaller map[*ir.Func]bool
 	// byCopyParams are parameters of Lyra functions taking a large aggregate by value, passed
 	// as a pointer to a copy the caller made (sret.go).
 	byCopyParams map[*ir.Param]bool

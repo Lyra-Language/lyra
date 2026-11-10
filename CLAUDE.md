@@ -193,7 +193,7 @@ Each of these produces something that looks like it works. Other docs cite them 
    | does storing this value here cross the flavor boundary? | `checkAllocationCompat` (both sides written) **and** `checkStoredFlavor` (one side unwritten) — a new storing position needs both, and the second walks the expression |
    | infer an expression quietly, its errors thrown away, to infer it again later | `TypeTable.Journal` / `EndJournal(mark, forget)`: forget what the quiet attempt cached when it said anything, or the second finds it cached and reports nothing |
    | did this operand diverge? | `diverged(v, block)` (`backend/llvm/trap.go`) |
-   | where a trap says it was | `l.here`, set through `l.at(loc)` and passed by `whereArgs` (`backend/llvm/trap.go`) |
+   | where a trap says it was | `whereArgs(block)` (`backend/llvm/trap.go`): `l.here`, set through `l.at(loc)` — or, in a `@track_caller` function, the place its caller passed (`callerPlace`). A call to one passes `callerPlaceArg` (`callLyra` does it; a hand-built call to a Lyra function goes through `callLyra`/`callLyraAt`, never `NewCall`) |
    | is this CST node a comment? | `cst.IsComment` |
    | spell a type for a person (a diagnostic, a hover, a doc page) | `types.Source` (`types.SourceSettled` for a signature, `types.SourceAnnotation` for an annotation the editor shows or inserts) — **never `String()`**, which is mangled into symbols and spells `DynamicArray<u8>`. The typechecker's sink (`addErrorCode`) renders any `types.Type` argument itself, so pass the type, not a string made from it |
    | a constructor's payload fields (a lone `void` is none — `Ok()`) | `DataTypeConstructor.FieldTypes` |

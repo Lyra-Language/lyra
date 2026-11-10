@@ -138,6 +138,7 @@ func (l *lowerer) declareSpecialization(inst typetable.Instantiation) error {
 	}
 	l.sourceFuncs[l.specialized[inst.Key()]] = true
 	noInline(l.specialized[inst.Key()], inst.Func)
+	l.trackCaller(l.specialized[inst.Key()], inst.Func)
 	l.specializedParams[inst.Key()] = inst.Func.Parameters
 	// A lambda written inside this body is lifted to a function of its own, and its
 	// signature mentions the type variables this instantiation binds — so it is declared

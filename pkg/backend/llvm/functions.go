@@ -41,6 +41,7 @@ func (l *lowerer) beginFunction(retType lltypes.Type, retLyra types.Type, retSig
 	l.yield = nil
 	l.inlineRet = nil
 	l.sretSlot = nil
+	l.callerPlace, l.callerPlaceFn = nil, nil
 }
 
 // paramIsByRef reports whether a parameter is passed as a **pointer to the caller's
@@ -414,6 +415,7 @@ func (l *lowerer) declareFunctionAs(name string, fn *ast.LambdaExpr) (*ir.Func, 
 	l.sourceFuncs[irFn] = true
 	l.funcModule[irFn] = l.moduleOfFile(fn.GetLocation().File)
 	noInline(irFn, fn)
+	l.trackCaller(irFn, fn)
 	return irFn, nil
 }
 
@@ -466,6 +468,9 @@ func (l *lowerer) defineFunctionInto(irFn *ir.Func, fn *ast.LambdaExpr, name str
 	}
 	if err := l.bindParameters(entry, irFn, fn.Parameters, offset); err != nil {
 		return fmt.Errorf("%w (in %q)", err, name)
+	}
+	if p := l.callerPlaceParam(irFn); p != nil {
+		l.callerPlace, l.callerPlaceFn = p, irFn
 	}
 
 	if l.isVoidType(fn.ReturnType.Type) {
@@ -704,7 +709,7 @@ func (l *lowerer) lowerDirectCall(block *ir.Block, e *ast.FunctionCallExpr, fn *
 	if plan := l.externPlans[fn]; plan != nil {
 		return l.lowerExternCall(block, e, fn, plan)
 	}
-	placed := len(fn.Params) - len(l.lyraParams(fn))
+	placed := l.leadingHidden(fn)
 	args, block, ok, err := l.lowerCallArgs(block, make([]value.Value, 0, len(e.Arguments)), e.Arguments, params, calleeParamTypes(fn, placed), fn)
 	if err != nil {
 		return nil, nil, err
@@ -1046,6 +1051,10 @@ func (l *lowerer) lowerCFunctionArgument(block *ir.Block, arg ast.Expression, wa
 		if l.byCopyParams[p] {
 			return nil, nil, fmt.Errorf("llvm: %q takes a large aggregate by value, which a C callback cannot", id.Name)
 		}
+	}
+	// A C caller passes no place (trap.go, trackCaller); the front end refuses it first.
+	if l.tracksCaller[fn] {
+		return nil, nil, fmt.Errorf("llvm: %q is `@track_caller`, which a C callback cannot be", id.Name)
 	}
 	// The signatures agree by construction — the front end checked every type in the
 	// callback against the same FFI-safe predicate the extern's own parameters take — so

@@ -96,12 +96,22 @@ func (l *lowerer) resultType(fn *ir.Func) lltypes.Type {
 }
 
 // lyraParams is fn's parameters as its Lyra declaration has them — without the hidden
-// `sret` slot of a function returning through memory.
+// `sret` slot of a function returning through memory, or a `@track_caller` one's place.
 func (l *lowerer) lyraParams(fn *ir.Func) []*ir.Param {
-	if _, ok := l.sretResults[fn]; ok {
-		return fn.Params[1:]
+	params := fn.Params
+	if l.tracksCaller[fn] {
+		params = params[:len(params)-1] // the caller's place (trap.go, trackCaller)
 	}
-	return fn.Params
+	return params[l.leadingHidden(fn):]
+}
+
+// leadingHidden is how many of fn's parameters come before its Lyra ones: the `sret` slot of
+// a function returning through memory, or none.
+func (l *lowerer) leadingHidden(fn *ir.Func) int {
+	if _, ok := l.sretResults[fn]; ok {
+		return 1
+	}
+	return 0
 }
 
 // passByCopy makes irParam, a by-value parameter of a large aggregate, a pointer to the
@@ -140,13 +150,28 @@ func (l *lowerer) copyForParam(block *ir.Block, a value.Value, p *ir.Param) valu
 
 // callLyra calls a Lyra function and produces its result. Each argument for a parameter passed
 // by copy is copied into a slot of the caller's entry block and the slot passed; for a function
-// returning through memory, a slot is passed first and loaded after.
+// returning through memory, a slot is passed first and loaded after. A `@track_caller` function
+// is passed a place last (callerPlaceArg): this call's, or in a function that tracks its caller
+// too, the place it was given.
 func (l *lowerer) callLyra(block *ir.Block, fn *ir.Func, args []value.Value) value.Value {
+	var place value.Value
+	if l.tracksCaller[fn] {
+		place = l.callerPlaceArg(block) // only then: each place is a record in the module
+	}
+	return l.callLyraAt(block, fn, args, place)
+}
+
+// callLyraAt is callLyra with the place a `@track_caller` callee is given said outright; any
+// other callee ignores it.
+func (l *lowerer) callLyraAt(block *ir.Block, fn *ir.Func, args []value.Value, place value.Value) value.Value {
 	params := l.lyraParams(fn)
 	for i, a := range args {
 		if i < len(params) {
 			args[i] = l.copyForParam(block, a, params[i])
 		}
+	}
+	if l.tracksCaller[fn] {
+		args = append(args, place)
 	}
 	ty, ok := l.sretResults[fn]
 	if !ok {

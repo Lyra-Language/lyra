@@ -64,6 +64,7 @@ impl f64 {
   /// as of 08/14, so removing it would still refuse them, just less specifically. It was
   /// safety until that landed — an unguarded draft rendered `1.0e20` as
   /// `9223372036854775807.9223372036854775807`.
+  @track_caller
   pub let to_fixed = pure (self, places: i64) -> string => {
     if places < 0 {
       panic("to_fixed: places must not be negative")

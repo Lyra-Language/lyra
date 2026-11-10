@@ -771,6 +771,7 @@ impl string {
   /// let fields = "a::b::c".split("::")   // ["a", "b", "c"]
   /// let chars  = "abc".to_runes()        // not split("")
   /// ```
+  @track_caller
   pub let split<t> where t: Needle = pure (self, sep: t = " ") -> []string => {
     var parts: []string = []
     // The bytes once, so a part costs what it copies rather than where it starts: slicing
@@ -842,6 +843,7 @@ impl string {
   /// let path = "a/b/c".replace("/", "::")    // "a::b::c"
   /// let tidy = "x  y".replace("  ", " ")     // "x y"
   /// ```
+  @track_caller
   pub let replace = pure (self, from: string, to: string) -> string => {
     if from == "" { panic("replace: empty pattern; to insert between runes, build from to_runes()") }
     self.split(from).join(to)

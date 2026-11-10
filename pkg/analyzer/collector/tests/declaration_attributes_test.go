@@ -6,8 +6,8 @@ import (
 )
 
 // An attribute on a declaration was parsed and silently dropped until 09/13, so a
-// misspelled `@borrowed` changed nothing and said nothing. `@borrowed` and `@noinline` need a
-// function.
+// misspelled `@borrowed` changed nothing and said nothing. `@borrowed`, `@noinline` and
+// `@track_caller` need a function, and `@track_caller` one that is called.
 func TestDeclarationAttributes(t *testing.T) {
 	for _, c := range []struct{ name, src, want string }{
 		{"unknown", "@borowed\nlet f = () -> i64 => 1", "unknown attribute `@borowed` on a declaration"},
@@ -16,6 +16,10 @@ func TestDeclarationAttributes(t *testing.T) {
 		{"on a destructuring", "@borrowed\nlet (a, b) = t", "goes on a function declaration"},
 		{"noinline on a value", "@noinline\nlet n = 5", "`@noinline` keeps a function from being inlined, so it goes on a function declaration"},
 		{"noinline with arguments", "@noinline(x)\nlet f = () -> i64 => 1", "`@noinline` takes no arguments"},
+		{"track_caller on a value", "@track_caller\nlet n = 5", "`@track_caller` makes a function's traps name its caller, so it goes on a function declaration"},
+		{"track_caller with arguments", "@track_caller(x)\nlet f = () -> i64 => 1", "`@track_caller` takes no arguments"},
+		{"track_caller on a gen function", "@track_caller\nlet gen f = () -> Seq<i64> => { yield 1 }", "`@track_caller` cannot go on a `gen` function"},
+		{"track_caller on an interrupt", "@track_caller\n@interrupt(vblank)\nlet f = () -> void => {}", "`@track_caller` cannot go on an interrupt handler"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			errs := parseAndCollectErrors(t, c.src)
@@ -28,7 +32,7 @@ func TestDeclarationAttributes(t *testing.T) {
 			}
 		})
 	}
-	for _, src := range []string{"@borrowed\npub let f = () -> i64 => 1", "@noinline\nlet f = () -> i64 => 1"} {
+	for _, src := range []string{"@borrowed\npub let f = () -> i64 => 1", "@noinline\nlet f = () -> i64 => 1", "@track_caller\nlet f = () -> i64 => 1"} {
 		for _, e := range parseAndCollectErrors(t, src) {
 			t.Errorf("unexpected %v", e)
 		}

@@ -342,7 +342,7 @@ func destructuringPatternBoundNames(pat ast.Pattern) []string {
 
 // collectDeclarationAttributes reads the attributes on a `let`/`var`/`const` declaration.
 // Each goes on a function and is lifted onto its lambda: `@borrowed` (ReturnsBorrowed),
-// `@interrupt(…)` (Interrupt) and `@noinline` (NoInline).
+// `@interrupt(…)` (Interrupt), `@noinline` (NoInline) and `@track_caller` (TrackCaller).
 // value is the declaration's initializer, or nil for a destructuring declaration, which
 // can carry none.
 //
@@ -371,13 +371,17 @@ func collectDeclarationAttributes(node *sitter.Node, value ast.Expression, ctx *
 				collectNoInlineAttribute(attr, value, ctx)
 				continue
 			}
+			if name == "track_caller" {
+				collectTrackCallerAttribute(attr, value, ctx)
+				continue
+			}
 			if name == "banked" {
 				collectBankedAttribute(attr, value, ctx)
 				continue
 			}
 			if name != "borrowed" {
 				ctx.AddError(attr, diag.SeverityError,
-					"unknown attribute `@%s` on a declaration; a table takes `@banked`, and a function `@borrowed`, `@noinline` or `@interrupt(vblank)`", name)
+					"unknown attribute `@%s` on a declaration; a table takes `@banked`, and a function `@borrowed`, `@noinline`, `@track_caller` or `@interrupt(vblank)`", name)
 				continue
 			}
 			if cst.Field(attr, "args") != nil {
@@ -391,6 +395,9 @@ func collectDeclarationAttributes(node *sitter.Node, value ast.Expression, ctx *
 			}
 			lambda.ReturnsBorrowed = true
 		}
+	}
+	if lambda, ok := value.(*ast.LambdaExpr); ok && lambda.TrackCaller && lambda.Interrupt != "" {
+		ctx.AddError(node, diag.SeverityError, "`@track_caller` cannot go on an interrupt handler: the hardware runs it, so there is no caller to name")
 	}
 }
 
@@ -426,6 +433,25 @@ func collectNoInlineAttribute(attr *sitter.Node, value ast.Expression, ctx *coll
 		return
 	}
 	lambda.NoInline = true
+}
+
+// collectTrackCallerAttribute reads `@track_caller`: a trap inside the function names its
+// caller's place. A function nothing calls has no place to name: an interrupt handler,
+// which the hardware runs, and a `gen` function, whose body runs after the call returns.
+func collectTrackCallerAttribute(attr *sitter.Node, value ast.Expression, ctx *collector_ctx.Ctx) {
+	if cst.Field(attr, "args") != nil {
+		ctx.AddError(attr, diag.SeverityError, "`@track_caller` takes no arguments")
+	}
+	lambda, ok := value.(*ast.LambdaExpr)
+	if !ok {
+		ctx.AddError(attr, diag.SeverityError, "`@track_caller` makes a function's traps name its caller, so it goes on a function declaration")
+		return
+	}
+	if lambda.IsGenerator {
+		ctx.AddError(attr, diag.SeverityError, "`@track_caller` cannot go on a `gen` function: its body runs as the sequence is read, after the call has returned")
+		return
+	}
+	lambda.TrackCaller = true
 }
 
 // collectInterruptAttribute reads `@interrupt(vblank)` / `@interrupt(hblank)`: the function a

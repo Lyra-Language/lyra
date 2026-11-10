@@ -59,6 +59,7 @@ impl CBuffer {
   /// Traps if `i` is outside the buffer, which is the same answer `xs[i]` gives and the
   /// reason this type exists. The message is a constant rather than an interpolation, so
   /// `get` allocates nothing and stays callable from `noalloc` code.
+  @track_caller
   pub let get = pure noalloc (self, i: i64) -> u8 => {
     if i < 0 || i >= self.len {
       panic("std.ffi: CBuffer index out of bounds")
@@ -161,6 +162,7 @@ impl string {
   /// for everywhere else. Rust returns an error here instead; a trap is the same call
   /// `split("")` makes, an argument with no meaningful answer rather than input a program
   /// did not choose.
+  @track_caller
   pub let cstring = pure (self) -> []u8 => {
     var bytes = self.encode_utf8()
     for i in 0..<bytes.len() {
@@ -218,6 +220,7 @@ impl string {
   /// # Panics
   /// Traps if `self` contains a NUL byte, for the reason `cstring` does: C cannot represent
   /// one, so the string would arrive truncated at that byte.
+  @track_caller
   pub let with_cstring = pure noalloc (self, f: (^u8) -> t) -> t =>
     f(unsafe { self.cstring_ptr() })
 }
@@ -243,6 +246,7 @@ impl string {
 ///
 /// # Panics
 /// Traps if either string contains a NUL byte.
+@track_caller
 pub let with_cstrings = pure noalloc (a: string, b: string, f: (^u8, ^u8) -> t) -> t =>
   f(unsafe { a.cstring_ptr() }, unsafe { b.cstring_ptr() })
 
@@ -281,6 +285,7 @@ impl []t {
   /// Traps on an empty array, which has no first element to point at. The alternative is
   /// handing back the address of nothing, and the alternative to trapping *here* is the
   /// index check's own message — which names a `[0]` the caller did not write.
+  @track_caller
   pub let data = unsafe pure noalloc (self) -> ^t => {
     if self.len() == 0 { panic("std.ffi: data() on an empty array") }
     &self[0]
@@ -297,6 +302,7 @@ impl []t {
   ///
   /// # Panics
   /// Traps on an empty array, exactly as `data` does.
+  @track_caller
   pub let data_mut = unsafe pure noalloc (self: mut) -> ^mut t => {
     if self.len() == 0 { panic("std.ffi: data_mut() on an empty array") }
     &mut self[0]

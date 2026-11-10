@@ -110,6 +110,7 @@ impl HashMap<k, v> {
   /// # Panics
   ///
   /// Traps when `capacity` is negative.
+  @track_caller
   pub let with_capacity = pure (capacity: i64) -> HashMap<k, v> => {
     if capacity < 0 { panic("HashMap.with_capacity: capacity must not be negative") }
     var slots = 8

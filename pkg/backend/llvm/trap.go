@@ -123,19 +123,104 @@ func (l *lowerer) at(loc ast.Location) func() {
 	return func() { l.here = saved }
 }
 
-// whereArgs is a trap call's place: " at file:line:col" for the source lowered now
-// (" at line:col" when it has no file, as a test's source does), or nothing for code
-// with no source location. A trap without it sent the reader
-// looking — an index out of bounds in Vega took a scripted reproduction to place.
-func (l *lowerer) whereArgs() []value.Value {
-	text := ""
-	if l.here.StartLine > 0 {
-		text = fmt.Sprintf(" at %d:%d", l.here.StartLine, l.here.StartCol)
-		if l.here.File != "" {
-			text = fmt.Sprintf(" at %s:%d:%d", l.here.File, l.here.StartLine, l.here.StartCol)
-		}
+// whereArgs is the place a trap call in block names: " at file:line:col" for the source
+// lowered now (" at line:col" when it has no file, as a test's source does), or nothing for
+// code with no source location. A trap without it sent the reader looking — an index out of
+// bounds in Vega took a scripted reproduction to place.
+//
+// **Inside a `@track_caller` function it is the place the caller passed** (callerPlace), read
+// from the record its parameter points to, so every trap in the body names the call.
+func (l *lowerer) whereArgs(block *ir.Block) []value.Value {
+	if p := l.callerPlaceIn(block); p != nil {
+		rec := placeRecordType()
+		where := block.NewLoad(rec.Fields[0], block.NewGetElementPtr(rec, p, i32c(0), i32c(0)))
+		whereLen := block.NewLoad(rec.Fields[1], block.NewGetElementPtr(rec, p, i32c(0), i32c(1)))
+		return []value.Value{where, whereLen}
 	}
+	return l.placeArgs(l.here)
+}
+
+// placeArgs is loc as a trap call's place, a constant.
+func (l *lowerer) placeArgs(loc ast.Location) []value.Value {
+	text := placeText(loc)
 	return []value.Value{l.cString(text), i64c(int64(len(text)))}
+}
+
+func placeText(loc ast.Location) string {
+	switch {
+	case loc.StartLine <= 0:
+		return ""
+	case loc.File == "":
+		return fmt.Sprintf(" at %d:%d", loc.StartLine, loc.StartCol)
+	}
+	return fmt.Sprintf(" at %s:%d:%d", loc.File, loc.StartLine, loc.StartCol)
+}
+
+// trackCaller gives irFn, if its source is `@track_caller`, one hidden parameter after its
+// own: a pointer to its caller's place, a constant `{ i8* where, i64 where_len }` record — the
+// two arguments a trap function takes (trapFunc). So a trap in the body names the call rather
+// than its own line: `m.unwrap()` on a `None` names the program's line, not the prelude's. A
+// declared function or trait method here, each specialization of a generic one in
+// monomorphize.go, as noInline.
+//
+// **A parameter rather than a rule about inlining**, so it holds however the optimizer
+// arranges the code. It costs a call one pointer — the record is read only on the way to a
+// trap — and nothing once the callee is inlined. Every call passes it (callLyra, callerPlaceArg);
+// a function value is a thunk per place it was made a value (closureThunk).
+func (l *lowerer) trackCaller(irFn *ir.Func, fn *ast.LambdaExpr) {
+	if !fn.TrackCaller {
+		return
+	}
+	place := ir.NewParam("caller.place", lltypes.NewPointer(placeRecordType()))
+	irFn.Params = append(irFn.Params, place)
+	irFn.Sig.Params = append(irFn.Sig.Params, place.Typ)
+	l.tracksCaller[irFn] = true
+}
+
+// placeRecordType is the record a `@track_caller` function's hidden parameter points to.
+func placeRecordType() *lltypes.StructType {
+	return lltypes.NewStruct(lltypes.NewPointer(lltypes.I8), lltypes.I64)
+}
+
+// callerPlaceParam is a `@track_caller` function's hidden parameter, or nil for any other.
+func (l *lowerer) callerPlaceParam(irFn *ir.Func) *ir.Param {
+	if !l.tracksCaller[irFn] {
+		return nil
+	}
+	return irFn.Params[len(irFn.Params)-1]
+}
+
+// callerPlaceIn is the place the function being lowered was given, when block is in it — not
+// in a runtime helper being built on the way (whose trap names the place lowered now, as it
+// always did).
+func (l *lowerer) callerPlaceIn(block *ir.Block) value.Value {
+	if l.callerPlace == nil || block.Parent != l.callerPlaceFn {
+		return nil
+	}
+	return l.callerPlace
+}
+
+// callerPlaceArg is what a call in block passes a `@track_caller` callee: the place given to
+// the function being lowered, if it tracks its caller too, so a chain of them names the first
+// call outside it (`unwrap` calls `expect`); otherwise the place lowered now.
+func (l *lowerer) callerPlaceArg(block *ir.Block) value.Value {
+	if p := l.callerPlaceIn(block); p != nil {
+		return p
+	}
+	return l.placeRecord(l.here)
+}
+
+// placeRecord is loc's record, one per place.
+func (l *lowerer) placeRecord(loc ast.Location) value.Value {
+	text := placeText(loc)
+	g, ok := l.placeRecords[text]
+	if !ok {
+		args := l.placeArgs(loc)
+		init := constant.NewStruct(placeRecordType(), args[0].(constant.Constant), args[1].(constant.Constant))
+		g = l.privateConst(fmt.Sprintf(".place.%d", len(l.placeRecords)), init)
+		l.placeRecords[text] = g
+	}
+	return g
 }
 
 func (l *lowerer) panicOverflowFunc() *ir.Func {
@@ -381,7 +466,7 @@ func (l *lowerer) lowerPanicCall(block *ir.Block, e *ast.FunctionCallExpr) (valu
 	if err != nil {
 		return nil, nil, err
 	}
-	block.NewCall(l.panicMessageFunc(), append(l.whereArgs(), dataPtr, length)...)
+	block.NewCall(l.panicMessageFunc(), append(l.whereArgs(block), dataPtr, length)...)
 	block.NewUnreachable()
 	return nil, block, nil
 }
@@ -414,7 +499,7 @@ func diverged(v value.Value, block *ir.Block) bool {
 // enforced (a bool ladder, a `data` tag switch) this is defense in depth: the call
 // is unreachable in a well-typed program and costs one basic block.
 func (l *lowerer) sealMatchFallthrough(block *ir.Block) {
-	block.NewCall(l.panicMatchFailedFunc(), l.whereArgs()...)
+	block.NewCall(l.panicMatchFailedFunc(), l.whereArgs(block)...)
 	block.NewUnreachable()
 }
 
@@ -428,7 +513,7 @@ func (l *lowerer) emitTrapIf(block *ir.Block, cond value.Value, trapFn *ir.Func,
 	trap := fn.NewBlock("")
 	cont := fn.NewBlock("")
 	block.NewCondBr(cond, trap, cont)
-	trap.NewCall(trapFn, append(l.whereArgs(), extra...)...)
+	trap.NewCall(trapFn, append(l.whereArgs(trap), extra...)...)
 	trap.NewUnreachable()
 	return cont
 }

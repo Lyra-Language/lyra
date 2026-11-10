@@ -54,7 +54,10 @@ type LambdaExpr struct {
 	ImplConstParams []GenericParam `print:"-"`
 	// NoInline is `@noinline` on the declaration: the function is never inlined into its
 	// callers (the backend's noInline, on the declaration and each specialization).
-	NoInline    bool
+	NoInline bool
+	// TrackCaller is `@track_caller` on the declaration: a trap inside the function names
+	// the place it was called from rather than its own line (the backend's trackCaller).
+	TrackCaller bool
 	IsUnsafe    bool
 	IsPure      bool
 	IsDet       bool

@@ -66,6 +66,7 @@ impl Result<t, e> {
   ///
   /// Traps with `msg` when `self` is an `Err`. The error value itself is not shown, so say
   /// in `msg` what you expected to succeed.
+  @track_caller
   pub let expect<t, e> = pure noalloc (self, msg: string) -> t {
     (Ok v, _) => v,
     (Err _, msg) => panic(msg),
@@ -77,6 +78,7 @@ impl Result<t, e> {
   ///
   /// Traps with `unwrap on an Err` when `self` is an `Err`. `expect` takes a message
   /// naming what was expected, which is all a crash report will have.
+  @track_caller
   pub let unwrap<t, e> = pure noalloc (self) -> t => expect(self, "unwrap on an Err")
 
   /// The success value as a `Maybe`, discarding the error.

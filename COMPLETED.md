@@ -9,6 +9,50 @@ Newest first.
 
 ## Dated log
 
+### 11/09/26 — A std panic names its caller (`@track_caller`)
+
+`m.unwrap()` on a `None` trapped `at …/std/prelude/maybe.lyra:71:16`, the `panic` inside
+`expect`, which says nothing about which `unwrap` (left open 10/14). **`@track_caller` on a
+function makes a trap inside it name where it was called**: its `panic`s and every runtime
+check in its body. The prelude's `unwrap`/`expect`, `take`, `split`, `replace`, `to_fixed`,
+`clamp`, the float `min`/`max`/`clamp`, `Rng.below`/`between`, `random_below`/`between`,
+`std.ffi`'s checks, `std.tui`'s boxes (and their private `interior`) and
+`HashMap.with_capacity` carry it — every std function whose doc says it traps on what the
+caller passed.
+
+**An attribute, not a rule for all of std.** Every std call paying for a place, the hot
+float `min`s on a console included, to name a caller for the few that check their
+arguments, was the wrong trade; and a user's library has the same need.
+
+**A hidden parameter, as Rust's `#[track_caller]`**, not a rule about inlining, so it holds
+however the optimizer arranges the code. It is one pointer, last, to a constant
+`{ i8* where, i64 where_len }` record: the two arguments a trap function already takes. Two
+arguments outright would cost every call ten bytes of stack on the Z80; the record is read
+only on the way to a trap, and once the callee is inlined it is a constant and costs
+nothing.
+- `whereArgs(block)` loads the record inside such a function, and `callLyra` passes
+  `callerPlaceArg`: the place given, in a function that tracks its caller too, so `unwrap`
+  calling `expect` names the call of `unwrap`. A function without the mark stops the chain.
+- `whereArgs` takes its block so a runtime helper built on the way (a function of its own)
+  never reads the enclosing function's parameter; it names the place lowered now, as before.
+- Each specialization gets it from its template, as `@noinline` does.
+- **A function value is a thunk per place it was made one** (`let g = check` names that
+  line): whoever calls the value has no place to give. `--live` finds those thunks' targets
+  through the key's prefix.
+- Refused: a non-function, a `gen` function (it runs after its call returns), beside
+  `@interrupt`, and as a C callback (`lyra-E066`; C passes no place).
+
+The Genesis and SMS runtimes discard a trap's text and turn the screen red, so they print
+nothing different; `TestGenesis_AnIndexOutOfBoundsTurnsTheScreenRed` still passes.
+`TestExec_ATrackCallerTrapNamesTheCall`, `TestExec_AStdTrapNamesItsCaller` (generic `take`,
+trait-bounded `split`, `clamp`, an overloaded `min`, `Rng.between`, `box_top` through
+`interior`) and `TestEmit_ATrackCallerFunctionTakesOnePlace` fail without it;
+`TestExec_AnUntrackedTrapNamesItsOwnLine` pins the other side.
+
+**Left:** a trait impl's method (`show = (self) => …`) takes no attribute, so cannot carry
+it. A trap in a std function the caller didn't misuse still names std's line, which is
+right: there the bug is std's.
+
 ### 11/09/26 — `std.io.walk_dir`: a directory tree's files
 
 lyrafmt, lui and lyra-md's site builder each walked a tree by hand, the same way:

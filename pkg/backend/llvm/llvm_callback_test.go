@@ -170,3 +170,23 @@ let main = () -> void => {
 		t.Errorf("output = %q; want \"10 50 50 10 1 3\"", got)
 	}
 }
+
+// A `@track_caller` function takes its caller's place as a hidden parameter, which C does not
+// pass, so it is refused as a callback by its mark rather than called with a missing argument.
+func TestCheck_CallbackRefusesATrackCallerFunction(t *testing.T) {
+	t.Parallel()
+	diags := analyzeWithPreludeErrors(t, `
+module main
+import std.ffi.{ data_mut }
+unsafe extern qsort: (out: ^mut u8, len: u64, len2: u64, fn: (^u8, ^u8) -> i32) -> void
+@track_caller
+let cmp = pure (a: ^u8, b: ^u8) -> i32 => 0
+let main = () -> void => {
+  var xs: []u8 = [3, 1, 2]
+  unsafe { qsort(xs.data_mut(), 3, 1, cmp) }
+}
+`)
+	if !strings.Contains(diags, "`@track_caller` gives a function a hidden parameter") {
+		t.Errorf("diagnostics = %q; want lyra-E066 for `@track_caller`", diags)
+	}
+}

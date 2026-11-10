@@ -71,6 +71,7 @@ impl []t {
   ///
   /// Traps when `n` is negative: there is no such prefix, and clamping it to zero would
   /// turn a sign mistake into a silently empty result.
+  @track_caller
   pub let take<t> = pure (self, n: i64) -> []t => {
     if n < 0 { panic("take: count must not be negative") }
     self.slice(0, min(n, self.len()))

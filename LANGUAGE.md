@@ -31,7 +31,7 @@ The reference for Lyra's semantics as implemented. Compiler internals live in `l
 | Internal | `never`, `untyped_int`, `untyped_signed_int`, `untyped_float` | no syntax |
 
 - **`never`** is the bottom type, the result of `panic(msg)`: assignable to every type, so `match m { Some(v) => v, None => panic("…") }` works. `panic` is EffectNone (legal in `pure`/`det`/`noalloc`). **A function that never returns fits any return type**, its parameters the same: `(_: string) => panic("…")` is a `(string) -> never` and stands wherever a `(string) -> Ev` is wanted — a callback that must not be called.
-- **A trap** — `panic`, or a failed runtime check (overflow, an index, a constraint…) — writes one line to stderr and exits 101. The line ends with where it happened, the innermost expression's `file:line:col`, and an index out of bounds also names the index and the length: `lyra: array index out of bounds (index 5, length 3) at app.lyra:4:14`. The file is as the compiler was given it. A `panic` inside a function names the `panic`, so `unwrap` on a `None` names the prelude's line, not its caller's.
+- **A trap** — `panic`, or a failed runtime check (overflow, an index, a constraint…) — writes one line to stderr and exits 101. The line ends with where it happened, the innermost expression's `file:line:col`, and an index out of bounds also names the index and the length: `lyra: array index out of bounds (index 5, length 3) at app.lyra:4:14`. The file is as the compiler was given it. **Inside a `@track_caller` function a trap names where that function was called** (§ `@track_caller`), so `m.unwrap()` on a `None`, `xs.take(-1)` or `x.clamp(9, 1)` names the program's line, not the standard library's; in any other function, the trap's own line.
 - **`i128`/`u128`** lower natively (LLVM `i128`): checked arithmetic, `match`, comparisons, conversions; division and `%%` via compiler-rt; `print` via `lyra_i128_to_str`. A literal's magnitude lives in a `big.Int` on the node (nil if it fits 64 bits) and stays untyped where both could hold it. Folding is arbitrary-precision (`ast.FoldBigExpr`; `FoldIntExpr` returns ok=false rather than wrapping). Value-range analysis leaves 128-bit (and `u64`) values untracked.
 - **Literals of both signs share a type** wherever values must agree — an array's elements,
   `if`/`match` branches — at the signed kind: `[-1, 2]`, `if c { -1 } else { 2 }`. **Inside
@@ -1184,12 +1184,22 @@ On a `struct`: the value names a foreign resource released by `fn`. A binding le
 - Field reads are borrows, and so is **a value chosen from what is already held** (11/02): an `if`, `match`, `??` or block with some path ending in an outer binding or a stored place, as a `match` scrutinee or a `let`'s value (`match if c { a } else { b } { Some(x) => draw(x), … }`, `let t = if c { h.a } else { h.b }`). A release there could be a double free. A name bound inside is judged by what bound it, so `match load(1) { Some(v) => v, … }` still acquires.
 - Warning, not error (under-reports: a release on any branch counts; no `#[allow]`).
 - `struct` only (`type Fd = i32` waits on the grammar). `bindings/raylib`'s `Sound` and `Wave` use it.
-- **`@borrowed` on a function** says the resource it answers is someone else's: a binding of its result carries no obligation. raylib's `default_font()` is the case — its `Font` is raylib's static data. On a function whose declared result is not a `@must_release` type (or a wrapper of one) it is an error. It, `@noinline` and `@interrupt` are the attributes a top-level `let` takes; any other is an error.
+- **`@borrowed` on a function** says the resource it answers is someone else's: a binding of its result carries no obligation. raylib's `default_font()` is the case — its `Font` is raylib's static data. On a function whose declared result is not a `@must_release` type (or a wrapper of one) it is an error. It, `@noinline`, `@track_caller` and `@interrupt` are the attributes a top-level `let` takes; any other is an error.
 - **Releasing a borrowed resource is `lyra-W025`** — `unload_font(default_font())`, directly or through a binding or an unwrap: it frees what the lender still uses.
 
 ### `@noinline`
 
 **On a function, it is never inlined into a caller** — every specialization of a generic one too. It takes no arguments and goes only on a function. The optimizer inlines a function called once wherever it can, which is usually right; this keeps one apart — to read it in a profile or a backtrace, or to keep a caller of many small, cold ones small. It changes no behaviour, only the code.
+
+### `@track_caller`
+
+**On a function, a trap inside it names the place it was called from**, not its own line — a `panic`, and every runtime check in the body too (an index, overflow, a constraint…). It is how the standard library says the mistake was the caller's: `unwrap` and `expect` on `Maybe` and `Result`, `take`, `split`, `replace`, `to_fixed`, `clamp`, a float's `min`/`max`/`clamp`, `Rng.below`/`between`, `random_below`/`random_between`, `std.ffi`'s checks, `std.tui`'s boxes and `HashMap.with_capacity` carry it. It takes no arguments and goes only on a function.
+
+- **A chain names the first call outside it.** A `@track_caller` function calling another passes on the place it was given, so `unwrap`, which calls `expect`, names the call of `unwrap`. A function without the mark stops the chain: a trap reached through it names the call inside it.
+- **Every specialization of a generic one**, an `impl` block's member and a receiver overload alike (the float `min`s). A trait impl's method (`show = (self) => …`) takes no attribute, so has no way to carry it.
+- **Made a value, it names where it was made one** (`apply(check, n)`, `let f = check`): the call through the value has no place to give.
+- **Refused:** on a non-function, on a `gen` function (its body runs as the sequence is read, after the call has returned), beside `@interrupt` (the hardware calls it), and as a C callback (`lyra-E066`: C passes no place).
+- It costs a call one pointer, to a constant record of the place, read only on the way to a trap; nothing once the callee is inlined. The output is the trap's one line, unchanged in form; a console's red screen shows no line either way.
 
 ### `@symbol("Name")`
 

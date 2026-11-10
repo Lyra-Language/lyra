@@ -575,9 +575,10 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Standard library and bindings
 
-- **[OPEN] A panic in the standard library names its caller.** `m.unwrap()` on a `None`
-  traps `at …/std/prelude/…`, the `panic`'s own line, which says nothing about which
-  `unwrap`. A function marked to take its caller's place (Rust's `#[track_caller]`) would fix it.
+- **[DONE 11/09] A panic in the standard library names its caller** — `@track_caller`, on
+  every std function that traps on what its caller passed (COMPLETED.md, 11/09).
+- **[IDEA] `@track_caller` on a trait impl's method.** Its members (`show = (self) => …`)
+  take no attributes; the mark would need the grammar to admit them there.
 - **[OPEN] `parse_args` cannot stop at a command.** Every `-`-argument is a flag, so a
   program running a command after its own flags (`termina-ui --print ls -la`, xterm's `-e`)
   hand-rolls the loop. A stop at the first positional, or at `--`, would do.

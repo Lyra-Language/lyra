@@ -756,7 +756,7 @@ const (
 
 	// CodeCallbackMustBeTopLevel: the argument in a C callback slot is not a top-level
 	// function — a lambda literal, a closure, a parameter of function type, or a local
-	// binding shadowing one.
+	// binding shadowing one — or is a `@track_caller` one, whose caller's place C cannot pass.
 	//
 	// **The restriction is representational, not a policy.** C takes one word for a
 	// callback, and only a Lyra *top-level* function is one: `declareFunctionAs` lowers its

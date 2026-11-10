@@ -66,6 +66,7 @@ impl Maybe<t> {
   /// # Panics
   ///
   /// Traps with `msg` when `self` is `None`.
+  @track_caller
   pub let expect<t> = pure noalloc (self, msg: string) -> t {
     (Some v, _) => v,
     (None, msg) => panic(msg),
@@ -77,6 +78,7 @@ impl Maybe<t> {
   ///
   /// Traps with `unwrap on a None` when `self` is `None`. `expect` takes a message that
   /// says what was expected, which is worth the few extra characters.
+  @track_caller
   pub let unwrap<t> = pure noalloc (self) -> t => expect(self, "unwrap on a None")
 
   /// Whether a value is present.

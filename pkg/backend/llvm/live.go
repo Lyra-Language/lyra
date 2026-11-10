@@ -235,7 +235,8 @@ type liveThunk struct {
 // liveThunks are the thunks of the Lyra functions used as values, in module order.
 func (l *lowerer) liveThunks(m *ir.Module) []liveThunk {
 	targets := map[*ir.Func]*ir.Func{}
-	for name, thunk := range l.closureThunks {
+	for key, thunk := range l.closureThunks {
+		name, _, _ := strings.Cut(key, "\x00") // a `@track_caller` target's place (closureThunk)
 		if fn, ok := l.funcs[name]; ok && l.isSlottable(fn) {
 			targets[thunk] = fn
 		}

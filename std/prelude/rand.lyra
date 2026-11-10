@@ -109,6 +109,7 @@ impl Rng {
   /// var rng = Rng.seeded(42);
   /// let index = rng.below(xs.len())    // always a valid index into a non-empty xs
   /// ```
+  @track_caller
   pub let below = det noalloc (self: mut, bound: i64) -> i64 => {
     if bound <= 0 { panic("Rng.below: bound must be positive") }
     let b = u64(bound);
@@ -127,6 +128,7 @@ impl Rng {
   /// # Panics
   ///
   /// Traps when `hi` is below `lo`.
+  @track_caller
   pub let between = det noalloc (self: mut, lo: i64, hi: i64) -> i64 => {
     if hi < lo { panic("Rng.between: the high bound is below the low one") }
     lo + self.below(hi - lo + 1)
@@ -146,6 +148,7 @@ impl Rng {
 /// # Panics
 ///
 /// Traps when `bound` is zero or negative, as `below` does.
+@track_caller
 pub let random_below = (bound: i64) -> i64 => {
   var rng = Rng.from_entropy();
   rng.below(bound)
@@ -158,6 +161,7 @@ pub let random_below = (bound: i64) -> i64 => {
 /// # Panics
 ///
 /// Traps when `hi` is below `lo`.
+@track_caller
 pub let random_between = (lo: i64, hi: i64) -> i64 => {
   var rng = Rng.from_entropy();
   rng.between(lo, hi)
