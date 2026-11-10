@@ -579,9 +579,11 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   every std function that traps on what its caller passed (COMPLETED.md, 11/09).
 - **[IDEA] `@track_caller` on a trait impl's method.** Its members (`show = (self) => …`)
   take no attributes; the mark would need the grammar to admit them there.
-- **[OPEN] `parse_args` cannot stop at a command.** Every `-`-argument is a flag, so a
-  program running a command after its own flags (`termina-ui --print ls -la`, xterm's `-e`)
-  hand-rolls the loop. A stop at the first positional, or at `--`, would do.
+- **[DONE 11/09] `parse_args` cannot stop at a command** — `parse_command(args, switches,
+  valued)` stops at the first operand or `--`; Termina moved onto it (COMPLETED.md, 11/09).
+- **[OPEN] A strict whole-line argument parse.** Sheliak's `sheliak` hand-rolls a loop taking
+  flags between operands and refusing unknown ones, which `parse_args` (lenient) and
+  `parse_command` (stops at the first operand) do not cover; `smscheck` and `statetest` too.
 - **[DONE 11/09] A deflate compressor** — `std.compress.deflate`/`zlib_deflate`, and
   `write_png` filters and deflates its rows (COMPLETED.md, 11/09).
 - **[DONE 10/19] Markup for `bindings.imgui.ui`** — `.lui` files generated into Lyra by

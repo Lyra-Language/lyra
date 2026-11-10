@@ -9,6 +9,40 @@ Newest first.
 
 ## Dated log
 
+### 11/09/26 — `parse_command`: the flags in front of a command
+
+`parse_args` reads every `-`-argument as a flag wherever it stands, so a program running
+another after its own flags — `termina --print ls -la` — could not use it: `-la` became
+Termina's switch. Termina hand-rolled the loop. **`std.collections.parse_command(args,
+switches, valued) -> Result<ProgramArgs, string>`** parses flags until the first operand or
+a `--`, and leaves that operand and everything after it in `positional` untouched.
+
+- **It takes the list, `args[0]` the name**, rather than reading `program_args()` as
+  `parse_args` does: a program dispatching on a subcommand passes its `positional` back in,
+  whose first element is the subcommand's name, and parses the subcommand's flags the same
+  way. It is `pure` for the same reason.
+- **Strict, unlike `parse_args`**: every flag is declared, and an undeclared one, or a
+  valued one with nothing after it, is an `Err` naming it. A lenient parser cannot know
+  where its flags end when an unknown one might take a value, and both hand-rolled callers
+  (Termina and Sheliak) already refused unknown flags.
+- **`--` is consumed; one after the command is the command's.** A bare `-` is an operand,
+  so it is the command, as `parse_args` reads it.
+- **Termina moved onto it**: every command line it accepted means the same and
+  `tools/check.sh` passes. Three it refused or misread changed: `termina -- CMD` now runs
+  `CMD` (it said `--?`), a single-dash first argument is an unknown option rather than a
+  program named `-x`, and the refusals read `unknown option --x` and `--script needs a
+  value`.
+- **Not moved**: Sheliak's hand-rolled loops are not this gap. `sheliak` and `smscheck` take
+  flags after operands (`sheliak rom.bin --frames 60`), which a stop at the first operand
+  would break, and `sheliak` refuses unknown ones — a strict whole-line parse (todo.md);
+  `statetest` and `cputest` fit `parse_args` as it is. Vega, lui, lyrafmt and lyra-md
+  already use `parse_args` and run no command.
+- Tests: `TestExec_ParseCommandStopsAtTheCommand` (a subcommand re-parsed, `--`, options
+  before the subcommand, an unknown option in either, no positional at all) and
+  `TestExec_ParseArgsReadsTheWholeLine`, the first direct test of `parse_args`, in
+  `pkg/backend/llvm/llvm_args_test.go`. `parse_args`' doc, which still said there was no
+  `--`, was corrected.
+
 ### 11/09/26 — A std panic names its caller (`@track_caller`)
 
 `m.unwrap()` on a `None` trapped `at …/std/prelude/maybe.lyra:71:16`, the `panic` inside

@@ -1,5 +1,6 @@
 module std.collections
-//! The program's arguments, parsed: `ProgramArgs` over the prelude's `program_args`.
+//! The program's arguments, parsed: `ProgramArgs` over the prelude's `program_args`, by
+//! `parse_args` for a whole line or `parse_command` for the flags before a command.
 
 /// The program's arguments, sorted into the three kinds a command line carries.
 ///
@@ -25,7 +26,8 @@ pub struct ProgramArgs {
   switches: []string,
   /// Flags that take the argument after them: `-o out.bin` maps `-o` to `out.bin`.
   options: HashMap<string, string>,
-  /// Everything else, in order: `input.txt`.
+  /// Everything else, in order: `input.txt`. From `parse_command`, the command and every
+  /// argument after it, untouched.
   positional: []string,
 }
 
@@ -34,7 +36,8 @@ pub struct ProgramArgs {
 ///
 /// Every argument starting with `-` is a flag: one named in `valued` takes the next
 /// argument as its value, whatever it looks like; any other is a switch. Everything
-/// else is positional. There is no `--flag=value` form and no `--` terminator yet.
+/// else is positional, as is everything after a `--`, and a bare `-` (standard input).
+/// There is no `--flag=value` form.
 ///
 /// A flag written twice keeps the last value; a switch written twice is listed twice.
 pub let parse_args = (valued: []string) -> ProgramArgs => {
@@ -80,6 +83,74 @@ pub let parse_args = (valued: []string) -> ProgramArgs => {
     }
   }
   parsed
+}
+
+/// Parses the flags in front of a command, and stops there: the first operand and every
+/// argument after it land in `positional` untouched, however they begin — `tool -v ls -la`
+/// is `-v` and then `ls -la`, a subcommand's own flags included. A `--` stops it too, and
+/// is not kept, so `tool -- -x` runs a command named `-x`.
+///
+/// `args[0]` is the name the rest belong to, so the program passes `program_args()` and a
+/// subcommand passes the `positional` it was given — `positional[0]` is its own name — to
+/// parse its flags in turn, those too in front of its operands.
+///
+/// Every flag must be declared: `switches` take no value, `valued` the argument after them
+/// whatever it looks like. An undeclared flag, or a valued one with nothing after it, is an
+/// `Err` naming it, since the program cannot know where its own flags end and the command
+/// begins without knowing them all.
+///
+/// ```
+/// import std.collections.{ parse_command }
+///
+/// let main = () -> u8 => {
+///   let args = match parse_command(program_args(), ["-v"], ["-C"]) {
+///     Ok(a) => a,
+///     Err(why) => {
+///       println(why)
+///       return 2
+///     },
+///   }
+///   if args.positional.len() == 0 {
+///     println("usage: tool [-v] [-C DIR] COMMAND ...")
+///     return 2
+///   }
+///   println("running ${args.positional[0]} with ${args.positional.len() - 1} arguments")
+///   0
+/// }
+/// ```
+pub let parse_command = pure (
+  args: []string,
+  switches: []string,
+  valued: []string
+) -> Result<ProgramArgs, string> => {
+  var parsed = ProgramArgs {
+    program: if args.len() > 0 { args[0] } else { "" },
+    switches: [],
+    options: HashMap.new::<string, string>(),
+    positional: [],
+  }
+  var i = 1
+  while i < args.len() {
+    let arg = args[i]
+    if arg == "--" {
+      i += 1
+      break
+    }
+    // The first operand is the command; a bare `-` is one, as `parse_args` reads it.
+    if !arg.starts_with("-") || arg == "-" { break }
+    if valued.holds(arg) {
+      if i + 1 >= args.len() { return Err("${arg} needs a value") }
+      parsed.options.insert(arg, args[i + 1])
+      i += 2
+    } else if switches.holds(arg) {
+      parsed.switches.push(arg)
+      i += 1
+    } else {
+      return Err("unknown option ${arg}")
+    }
+  }
+  parsed.positional = args.slice(i, args.len())
+  Ok(parsed)
 }
 
 impl ProgramArgs {
