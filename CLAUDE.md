@@ -832,7 +832,10 @@ of Markdown.
   it, `std.game.sound` in its chip, the Genesis's Z80 from the cartridge — both through
   `dac_byte`'s level tables, so it is the same sound on each; `std.game.sound` mixes the
   chips at Furnace's levels, checked against its renders; `i32`/`i16` and in place, for
-  the 68000's frame; tested in `cmd/lyrac/sound_test.go`, on both runtimes), `std/ffi.lyra`, `std/io.lyra`, `std/compress.lyra`
+  the 68000's frame; tested in `cmd/lyrac/sound_test.go`, on both runtimes), `std/ffi.lyra`, `std/io.lyra`
+  (files and directories over libc; `walk_dir` is a tree's files, sorted, depth first, the
+  caller's `keep` pruning, a symlinked directory never followed — what lyrafmt, lui and
+  lyra-md walk with; tested against Go's `filepath.WalkDir`), `std/compress.lyra`
   (inflate, gunzip, LZMA, LZMA2, CRC-32, and `deflate`/`zlib_deflate`/Adler-32 —
   zlib level 6's hash chains and lazy matching, each block dynamic, fixed or stored, whichever
   is smallest; tested against Go's `compress/flate`, `compress/zlib` and `compress/gzip`),

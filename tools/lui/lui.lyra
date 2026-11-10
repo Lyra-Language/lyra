@@ -75,7 +75,7 @@
 //   without `.lui`, or `module="…"`).
 
 import std.collections.{ parse_args }
-import std.io.{ read_file, write_file, read_stdin, sleep_ms, read_dir, is_symlink }
+import std.io.{ read_file, write_file, read_stdin, sleep_ms, walk_dir }
 import std.path
 import ui.color.{ parse_color, color_text }
 
@@ -121,32 +121,20 @@ let main = () -> u8 => {
   u8(failures.min(255))
 }
 
-/// `paths` with each directory among them the `.lui` files beneath it, in `read_dir`'s
+/// `paths` with each directory among them the `.lui` files beneath it, in `walk_dir`'s
 /// sorted order; any other path as written, for `run` to judge. **A directory is a path
-/// `read_dir` can read.** A name beginning with `.` is skipped and a symlinked directory
-/// never followed, while walking only — as lyrafmt walks for `.lyra` files: `.git` holds no
-/// markup, and a link back up the tree would not end.
+/// `walk_dir` can read.** A name beginning with `.` is skipped while walking only — as
+/// lyrafmt walks for `.lyra` files: `.git` holds no markup — and `walk_dir` never follows
+/// a symlinked directory, so a link back up the tree ends.
 let lui_files = (paths: []string) -> []string => {
   var out: []string = []
   for path in paths {
-    match read_dir(path) {
-      Some(names) => gather(path, names, out),
+    match walk_dir(path, (entry) => !entry.base().starts_with(".")) {
+      Some(files) => for file in files { if file.ends_with(".lui") { out.push(file) } },
       None => out.push(path),
     }
   }
   out
-}
-
-/// Appends every `.lui` file at or below `dir`, whose entries are `names`, to `out`.
-let gather = (dir: string, names: []string, out: mut []string) -> void => {
-  for name in names {
-    if name.starts_with(".") { continue }
-    let entry = "${dir}/${name}"
-    match read_dir(entry) {
-      Some(below) => if !is_symlink(entry) { gather(entry, below, out) },
-      None => if entry.ends_with(".lui") { out.push(entry) },
-    }
-  }
 }
 
 /// `path` (its text `source`, `None` when it could not be read) generated into the module

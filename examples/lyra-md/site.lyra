@@ -14,7 +14,7 @@
 // Exit 0 when every page rendered, 1 when any could not be read or written, 2 for usage.
 
 import std.collections.{ parse_args, Set, contains }
-import std.io.{ read_file, write_file, read_dir, is_symlink, create_dir_all, copy_file }
+import std.io.{ read_file, write_file, walk_dir, create_dir_all, copy_file }
 import std.path.{ join }
 import markdown.{ render }
 
@@ -27,13 +27,19 @@ let main = () -> u8 => {
   let source = args.positional[0]
   let out = args.positional[1]
   let title = args.value("--title").unwrap_or("Site")
-  let Some(names) = read_dir(source) else {
+  // **Everything that is not a page is an asset**, rather than a list of blessed
+  // extensions: a site's `.css`, its images, its fonts, the `.txt` somebody linked — the
+  // author put the file in the tree, and a builder that silently drops what it does not
+  // recognize is one you find out about from a reader. `walk_dir`'s order is sorted, so a
+  // run renders the same pages in the same order everywhere and the index is
+  // reproducible; a name beginning with `.` is skipped, as lyrafmt skips one: a repo's
+  // `.git` holds no pages.
+  let Some(files) = walk_dir(source, (entry) => !entry.base().starts_with(".")) else {
     println("site: cannot read ${source}")
     return 1
   }
-  var pages: []string = []
-  var assets: []string = []
-  collect(source, names, pages, assets)
+  let pages = [f in files | f.extension() == Some("md") | f]
+  let assets = [f in files | f.extension() != Some("md") | f]
   if !create_dir_all(out) {
     println("site: cannot make ${out}")
     return 1
@@ -61,38 +67,6 @@ let main = () -> u8 => {
   println("site: ${pages.len()} page(s), ${assets.len()} asset(s) into ${out}, " ++
       "${broken.len()} broken link(s)")
   if failures == 0 && broken.len() == 0 { 0 } else { 1 }
-}
-
-/// Sorts every file at or below `dir` into the pages to render and the assets to copy, in
-/// `read_dir`'s order, which is sorted — so a run over a tree renders the same pages in
-/// the same order everywhere and the index below is reproducible.
-///
-/// **Everything that is not a page is an asset**, rather than a list of blessed
-/// extensions: a site's `.css`, its images, its fonts, the `.txt` somebody linked — the
-/// author put the file in the tree, and a builder that silently drops what it does not
-/// recognize is one you find out about from a reader.
-///
-/// A name beginning with `.` is skipped and a symlinked directory is not descended, for
-/// the reasons `lyrafmt`'s walk gives: a repo's `.git` holds no pages, and a link into an
-/// ancestor never terminates.
-let collect = (
-  dir: string,
-  names: []string,
-  pages: mut []string,
-  assets: mut []string
-) -> void => {
-  for name in names {
-    if name.starts_with(".") { continue }
-    let entry = dir.join(name)
-    match read_dir(entry) {
-      Some(below) => if !is_symlink(entry) { collect(entry, below, pages, assets) },
-      None => if entry.extension() == Some("md") {
-        pages.push(entry)
-      } else {
-        assets.push(entry)
-      },
-    }
-  }
 }
 
 /// Renders one page and writes it under `out`, answering whether it got there.

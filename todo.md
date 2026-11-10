@@ -595,9 +595,14 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   1.0]`, the literals now settle at `f32` (COMPLETED.md, 10/27).
 - **[DONE 10/27] A tuple index as a comprehension's source** — `[c in g.1 | c]` (COMPLETED.md,
   10/27).
-- **[OPEN] `std.io`: walking a directory tree.** lyrafmt and lui each walk one by hand
-  (`read_dir`, skipping `.` names and symlinked directories). A `std.io` walk, sorted,
-  with the caller's filter, would serve both.
+- **[DONE 11/09] `std.io`: walking a directory tree** — `walk_dir(root, keep)`; lyrafmt, lui
+  and lyra-md's site moved onto it (COMPLETED.md, 11/09).
+- **[OPEN] Termina's `font_files` walks by hand** (`settings.lyra`): depth-limited, a
+  directory told by a name without a `.`, links followed. `walk_dir` with a depth-counting
+  `keep` would serve it once fonts' symlinked folders are known not to matter.
+- **[OPEN] `std.io`: whether a file exists.** Termina's `exists` lists the parent
+  directory to ask; Vega's `game_code.lyra` calls the `dir_names` builtin directly where
+  `read_dir` would do. A struct-free `access(path, F_OK)` would answer the first.
 - **[OPEN] `bindings.imgui.ui`: install a tree in the Mac's bar.** Vega's `menus.lyra` and
   Termina's `menus/menus.lyra` each walk a menus tree into `bindings.menubar` (items by tag,
   greying synced each frame). One shared function could serve both, and Vega's would then

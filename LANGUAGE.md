@@ -1057,6 +1057,7 @@ lyrac doc std/prelude/prelude.lyra -o ../lyra-website/src/content/docs/reference
 | `read_dir(path) -> Maybe<[]string>` | `std.io`, over the `dir_names` builtin | names only, sorted, without `.`/`..`; dotfiles kept; `None` if unopenable, `Some([])` when empty |
 | `dir_names(path) -> Maybe<[]string>` | builtin | what libc reported, in its order, `.`/`..` included. A builtin because `struct dirent`'s name offset and `readdir`'s symbol both differ by platform, and Lyra cannot ask which it is on; EffectInput |
 | `is_symlink(path) -> bool` | `std.io`, over `readlink` | the link itself, not its target (`opendir` follows one); `false` for a missing path, `true` for a broken link |
+| `walk_dir(root, keep: (string) -> bool) -> Maybe<[]string>` | `std.io`, over `read_dir` + `is_symlink` | every file beneath `root`, paths `root.join(…)`, sorted depth first (`filepath.WalkDir`'s order); `keep` asked of each entry's path before it is read — `false` skips a file, prunes a directory; never asked of `root`; dotfiles kept unless `keep` drops them; a symlinked directory neither walked nor listed, any other link listed; an unreadable directory beneath `root` listed as a file; `None` when `root` is not a readable directory |
 
 - **Never `open` with flags beyond `O_RDONLY`**: `O_CREAT`/`O_TRUNC`/`O_APPEND` differ between macOS and Linux (only `O_RDONLY` = 0 is portable). Spell the combination with something portable instead — `creat` for overwrite, an `fopen` mode string for append. `examples/todo.lyra`, `examples/word_freq` show the shapes.
 

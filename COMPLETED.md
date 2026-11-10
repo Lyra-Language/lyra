@@ -9,6 +9,43 @@ Newest first.
 
 ## Dated log
 
+### 11/09/26 — `std.io.walk_dir`: a directory tree's files
+
+lyrafmt, lui and lyra-md's site builder each walked a tree by hand, the same way:
+`read_dir`, names beginning with `.` skipped, a symlinked directory not descended, paths
+joined as they went. Now `walk_dir(root, keep) -> Maybe<[]string>` in `std.io` does it, and
+all three call it.
+
+- **One predicate, asked of every entry's path, file or directory**, before the entry is
+  read. Every filter the callers had fits it: the dotfile skip, and lyrafmt's
+  `.lyrafmtignore` prefixes, which were tested on directories and files alike. A separate
+  directory filter and file filter would have been two arguments every caller passes the
+  same function to; the file-extension tests stay with the callers, as a loop over the
+  answer. Dotfiles are kept unless `keep` drops them, `read_dir`'s rule — though every
+  caller drops them.
+- **`Maybe`, as `read_dir`**: `None` when the root cannot be read as a directory, which is
+  the branch each caller already had (a path that is not a directory is passed through as
+  written, for the read that follows to report).
+- **Symlinks: a link to a directory is neither walked nor listed; any other link is
+  listed.** That was what all three did, for `build/std` and links into an ancestor.
+- **An unreadable directory beneath the root is listed as a file**, also what the callers
+  did — and kept on purpose: without `stat`, `std.io` cannot tell it from an unreadable file,
+  and listing it means the caller's read fails against its name rather than the walk hiding
+  it. Documented rather than fixed.
+- **Paths are joined with `std.path`'s `join`**, where lyrafmt and lui wrote `dir ++ "/" ++
+  name`. The two differ only for a root written with a trailing slash (`src//x.lyra` before,
+  `src/x.lyra` now); lyrafmt's ignore test strips a root's slash-terminated form to match.
+- **Checked against the old walks on the real trees**: a scratch program holding the old
+  lyrafmt and lui walks beside `walk_dir` found the same lists, in the same order, over
+  `lyra/` (245 `.lyra`, 12 `.lui`), `vega/` (208, 0), `termina/` (24, 1) and the workspace
+  (579, 13); `lyrafmt --check .` and `lui --check` print what they printed before.
+  `TestExec_WalkDir` (`pkg/backend/llvm/llvm_read_dir_test.go`) holds it to Go's
+  `filepath.WalkDir` over nested and empty directories, dotfiles, byte-order names, a link
+  to a file, a directory, nothing and an ancestor, and a locked directory — and again under
+  ASan, LeakSanitizer on Linux.
+- **Not moved**: Termina's `font_files` walks to a depth, tells a directory by a name
+  without a dot and follows links — not the same walk (todo.md).
+
 ### 11/09/26 — A deflate compressor; PNGs written compressed
 
 `std.compress` inflated only, so `write_png` stored its rows: Vega's sprite sheets and MCP
