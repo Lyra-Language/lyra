@@ -517,7 +517,16 @@ impl Entity {
     shapes: ref [K]Collider,
     tile_size: f32 = TILE
   ) -> bool =>
-    self.in_map_with(cells, width, first_tile, starts, shapes, NO_BANDS, NO_MAP_SHAPES, tile_size)
+    self.in_map_with(
+      cells,
+      width,
+      first_tile,
+      starts,
+      shapes,
+      NO_BANDS,
+      NO_MAP_SHAPES,
+      tile_size
+    )
 
   /// [in_map], the map's own colliders counted too, as [move_in_with] takes them.
   pub let in_map_with<const N: i64, const M: i64, const K: i64, const B: i64, const P: i64> = pure (
