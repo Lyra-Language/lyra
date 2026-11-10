@@ -368,6 +368,7 @@ Prelude, `where t: Ord`, `self` receiver (`a.min(b)` = `min(a, b)`). `min` keeps
 - Elements: any type but `void` (tuples, raw pointers, anonymous structs), optionally with one allocation or `weak` modifier (`[]shared Node`).
 - Layout `{rc, weak, len, cap, T*}`: elements behind a pointer so growth cannot move the box (one extra load per access).
 - `xs.push(v)`: amortized doubling, `mut` receiver (same diagnostic as `xs[i] = v`), `noalloc` refuses.
+- `xs.push_from(p, n)`: `n` elements read through `p: ^T` appended in one copy — a C buffer into a `[]T` (§ Raw pointers). `unsafe`; `mut` receiver; `noalloc` refuses.
 - `xs.slice(start, end)`: half-open, **always `[]T`** even from `[N]T`, **copies** (`noalloc` refuses). `end == len` legal, `start == end` empty; negative, past-length or inverted bounds trap.
 
 **Spread `[...xs, v]`**
@@ -839,7 +840,7 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
   09/23 the crossing was neither coerced nor reported: a `shared` argument in a plain
   parameter trapped, and a plain one in a `shared` parameter segfaulted.
 - Effect classes referenced elsewhere: `EffectInput` (stdin, `program_arg*`, `read_key`, `wait_for_key_ms`, `terminal_size`), `EffectOutput` (`set_raw_mode`; `det`-legal), `EffectRand` (`random_seed`), `EffectTime` (`wall_clock_nanos`), `EffectMut` (a write the caller sees; `det`-legal). `det` permits output.
-- **`EffectMut` is charged the same way whichever spelling writes**: `xs[0] = v`, `p.x = v`, and the mutating builtins `push`/`push_utf8`/`reserve`/`clear`. Through a `mut` parameter or a capture the write escapes and `pure` refuses it; on a local it does not and `pure` is fine. The builtins were exempt until 09/22, so `xs[0] = v` was refused from a `pure` function while `xs.push(v)` was accepted — and W018 *suggested* `pure` for a function whose only effect was the push.
+- **`EffectMut` is charged the same way whichever spelling writes**: `xs[0] = v`, `p.x = v`, and the mutating builtins `push`/`push_utf8`/`push_from`/`reserve`/`clear`. Through a `mut` parameter or a capture the write escapes and `pure` refuses it; on a local it does not and `pure` is fine. The builtins were exempt until 09/22, so `xs[0] = v` was refused from a `pure` function while `xs.push(v)` was accepted — and W018 *suggested* `pure` for a function whose only effect was the push.
 - **A call to a function that writes through its `mut` parameters is charged by the arguments**, as if the caller wrote to each itself: `bump(c)` on a `var c` the caller declared (or a field or element of one) is free, so a `pure` function may call it; on a capture it is the captured write it always was; and on the caller's own `mut` parameter it passes the write on, to be charged at the caller's call sites in turn. The `mut` receiver of a trait method (`mut Self`) or an `impl` block's member (`self: mut`) is such a parameter. The function that writes is still not `pure` itself — its write reaches its caller — so helpers that advance a decoder stay unmarked under a `pure` entry point. Until 10/16 every such call was an effect, which kept `pure` off LZMA and `std.rar`.
 - **A local that shares a binding's buffer is that binding, for a write.** `var all = xs` shares `xs`'s buffer, as does a local set to a struct or tuple holding an array (`var c = Cursor { data: data, … }`), a field of one (`var items = b.items`), or a `for` element over an array of arrays; so `all.push(99)` is a write to `xs`, and a `pure` function may not make it. Like a `mut` parameter's write it is charged **where the call is**: a caller passing its own fresh value — a clone, a literal, a local array — stays pure; one passing its own parameter passes the write on. Only a write landing **inside the buffer** escapes: `c.at += 1` writes the local's own copy of the struct, where `c.data[0] = 9` or a callee pushing onto `c.data` does not; and only a literal's parts that themselves share a buffer alias — `var kept = [path]` is a new array, sharing only what its elements hold. A copy (`[...xs]`) shares nothing. A call returning its argument is not followed.
 
@@ -1129,6 +1130,14 @@ compiler checks each type crosses (`pkg/backend/FFI.md` has the table and the ba
 - **`p.address() -> u64`** is the pointer as a number, in bytes — what hardware is told about
   memory (the Genesis's Z80 plays a sample from the cartridge at its address); `pointer_at`
   takes it back. It reaches nothing through the pointer, so it needs no `unsafe`.
+- **`xs.push_from(p, n)`** appends `n` elements read through `p: ^T` to the `[]T` `xs`, growing
+  once and copying once — the C buffer a library hands back (pixels, samples, file bytes) into an
+  array Lyra owns. `unsafe` (`lyra-E011`): nothing checks that `n` elements are readable. `T` must
+  have a C layout (`lyra-E063`: a number, `rune`, a pointer, or a struct, tuple or fixed array of
+  those), since the copy is of bytes — a reference would be duplicated without a retain, and
+  `bool`'s bit is not C's byte. `n` is an `i64`; `0` does nothing whatever `p` is (C's `(NULL, 0)`);
+  a negative `n`, or a null `p` with a positive `n`, traps. `p` may point into `xs` itself. The
+  copy is the array's: C rewriting or freeing its buffer afterwards does not reach it.
 - **`nullptr`**: safe (no `unsafe`) along with `==`/`!=` on pointers. Untyped with **no default** — context must pin the pointee (annotation, parameter, return, other side of `==`), else **`lyra-E069`**. Fills `^T` and `^mut T`; a mismatched pair pins to immutable. No `<` on pointers. `let nullptr = 5` is **`lyra-E070`** (collector).
 - **`port_read(port) -> u8` and `port_write(port, value)`** are a Z80 console's `in` and `out`, as
   the 68000 has none and reaches its hardware through `pointer_at`. Both are `unsafe`, every operand a

@@ -37,12 +37,7 @@ pub let read_file_bytes = (path: string) -> Maybe<[]u8> => {
   let raw = unsafe { rl_load_file_data(cpath.data(), &mut size) }
   if raw == nullptr { return None }
   var out: []u8 = []
-  var i = 0
-  let total = i64(size)
-  while i < total {
-    out.push(unsafe { raw.offset(i)^ })
-    i += 1
-  }
+  unsafe { out.push_from(raw, i64(size).max(0)) }
   unsafe { rl_unload_file_data(raw) }
   Some(out)
 }
@@ -391,11 +386,7 @@ const HEX_DIGITS: string = "0123456789abcdef"
 let take_bytes = (raw: ^u8, size: i64) -> Maybe<[]u8> => {
   if raw == nullptr { return None }
   var out: []u8 = []
-  var i = 0
-  while i < size {
-    out.push(unsafe { raw.offset(i)^ })
-    i += 1
-  }
+  unsafe { out.push_from(raw, size.max(0)) }
   unsafe { rl_mem_free(raw) }
   Some(out)
 }

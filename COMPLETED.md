@@ -9,6 +9,46 @@ Newest first.
 
 ## Dated log
 
+### 11/10/26 — `xs.push_from(p, n)`: a C buffer into an array in one copy
+
+The mirror of 08/26's `p.decode_utf8(n)`, which that entry left unbuilt because nothing
+needed it. Eight binding loops did: raylib's `image_colors`, `image_palette`,
+`wave_samples`, `load_file_data` and `take_bytes`, FreeType's two glyph renderers, and
+SDL3_image's surface rows. Each copied a C buffer into a `[]T` with
+`out.push(unsafe { raw.offset(i)^ })`, which costs a capacity compare, a possible growth and
+a store per element. Over 16 MiB from a malloc'd buffer that loop takes **7.5 ms at -O2
+(41 ms at -O0), and `push_from` takes 0.56 ms (0.31 ms)**.
+
+**Three decisions came from the callers.** First, it **appends** rather than making a new
+array: every caller starts from an empty or growing array, and the glyph renderers append a
+row at a time (pitch is not width), so one builtin covers both shapes and no caller
+concatenates. Second, it takes **any element type with a C layout**, not only `u8`, because
+the callers copy `Color`, `f32` and `u32`. The rule is `hasCLayout`, the predicate that
+admits an aggregate to a foreign signature, reported as lyra-E063. A `[]string` would get
+references duplicated without a retain, and a `[]bool` would get bytes where Lyra has a
+bit. Third, **a zero count does nothing whatever the pointer**: C answers `(NULL, 0)` for an
+empty buffer often enough that a trap there would mean a guard at every call. A negative
+count traps, and so does a null pointer with a positive count, which is how a failed C call
+usually answers. A count that is merely too large cannot be caught, which is why the call
+needs `unsafe`.
+
+**It is a builtin because a copy cannot be written in Lyra**, the `push_utf8` argument
+again. It is lowered with `copyBytes` rather than the libc `memcpy` that `push_utf8` and
+`decode_utf8` still declare, so its `i64` length is the target's own `size_t` (a test checks
+the IR). **Growth mallocs, copies the old elements and then the source, and frees the old
+buffer last.** `realloc` would have freed the memory a pointer into the array itself points
+at, so `xs.push_from(xs.data(), xs.len())` would have read freed memory. An ASan test now
+does exactly that. Nothing managed crosses (a pointer and an `i64` in, nothing out), so
+neither `calleeIsBorrowingBuiltin` nor `calleeIsOwningBuiltin` needed it, and an LSan test
+holds that on Linux.
+
+The moved callers keep their behaviour exactly. The three counts that come straight from C
+(`image_palette`'s `found`, both file sizes) are clamped with `.max(0)`, where the old loop
+ran zero times on a negative count. SDL3_image's buffer is `reserve`d once rather than
+zero-filled and indexed. Left alone: HarfBuzz's glyph loop, which reads two arrays into
+structs, and Genesis's Z80 RAM writes, which must stay volatile byte writes. No `CBuffer`
+method was added, since no caller copies bytes out of a `CBuffer`.
+
 ### 11/09/26 — `parse_command`: the flags in front of a command
 
 `parse_args` reads every `-`-argument as a flag wherever it stands, so a program running

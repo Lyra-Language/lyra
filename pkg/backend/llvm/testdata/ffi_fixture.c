@@ -111,6 +111,29 @@ void lyra_fixture_fill_bytes(uint8_t *p, int64_t n, uint8_t v) {
   for (int64_t i = 0; i < n; i++) p[i] = (uint8_t)(v + (uint8_t)i);
 }
 
+/* A non-periodic fill and a positional checksum, for copying a C buffer out in bulk
+ * (`xs.push_from(p, n)`). `fill_bytes` repeats every 256 bytes, so a copy off by a multiple
+ * of that would read back the same; this pattern does not repeat, and FNV-1a changes with
+ * any byte moved, dropped or added. */
+void lyra_fixture_fill_pattern(uint8_t *p, int64_t n) {
+  uint32_t x = 2463534242u;
+  for (int64_t i = 0; i < n; i++) {
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    p[i] = (uint8_t)x;
+  }
+}
+
+uint64_t lyra_fixture_checksum(const uint8_t *p, int64_t n) {
+  uint64_t h = 1469598103934665603ull;
+  for (int64_t i = 0; i < n; i++) {
+    h ^= p[i];
+    h *= 1099511628211ull;
+  }
+  return h;
+}
+
 /* A NUL-terminated string coming *back*, for std.ffi's cstring_len/decode_utf8 to read.
  * Static storage: ownership does not cross, so the caller must not free it. */
 const char *lyra_fixture_greeting(void) { return "héllo, ffi"; }

@@ -111,6 +111,14 @@ A type kind on `TypeDeclStmt` (`types.UnionType`, `typechecker/union.go`,
   pointer (strings carry a trailing NUL — `llvm/STRING_LAYOUT.md`). A literal's bytes are
   read-only; a C write faults.
 - `p.decode_utf8(len)` copies C memory into a string; negative length traps.
+- `xs.push_from(p, n)` appends `n` elements through a `^T` to a `[]T` (`lowerDynArrayPushFrom`,
+  `dynarray.go`): grown once to at least `len + n` and at least double, copied with
+  `copyBytes`. **Growth mallocs, copies the old elements and then the source, and frees the
+  old buffer last** — `realloc` would free what a pointer into `xs` itself reads. The
+  element's C layout is the typechecker's (`hasCLayout`, in `requireUnsafeBuiltin`), so
+  nothing is retained; no managed value is taken or returned, so neither
+  `calleeIsBorrowingBuiltin` nor `calleeIsOwningBuiltin` lists it. Traps: a negative count,
+  a null pointer with a positive one (`lyra_panic_negative_count`, `_null_source`).
 - `xs.data()`/`data_mut()` copy nothing, trap on empty, dynamic arrays only.
 - **A libc function expressible in Lyra is written in Lyra** (`cstring_len`). There is no
   `std.libc`.
@@ -119,7 +127,8 @@ A type kind on `TypeDeclStmt` (`types.UnionType`, `typechecker/union.go`,
 
 - `llvm_extern_test.go` calls **libc and libm**.
 - `llvm/testdata/ffi_fixture.c` covers narrow widths, `float`, mixed register classes,
-  spilling argument lists, `CLong`/`CULong`, out-parameters, struct by pointer, `data()`.
+  spilling argument lists, `CLong`/`CULong`, out-parameters, struct by pointer, `data()`, and
+  a non-repeating fill with a positional checksum for bulk copies (`push_from`).
   Expected values must come from **`testdata/ffi_oracle.c`** (a pure-C caller), and the
   compile cache must stay salted with the fixture's bytes.
 - `pkg/abi`'s `abi_diff_test.go` checks the classifier against clang (19 shapes × 3 targets,

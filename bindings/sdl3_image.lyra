@@ -93,10 +93,11 @@ let pixels_of = (loaded: ^u8) -> Maybe<Pixels> => {
   let pitch = i64(unsafe { head^.pitch })
   let first: ^u8 = unsafe { head^.pixels }
   let base = first.address()
-  var argb: []u32 = [0; w * h]
+  var argb: []u32 = []
+  argb.reserve(w * h)
   for y in 0..<h {
     let row: ^u32 = unsafe { pointer_at(base + u64(y * pitch)) }
-    for x in 0..<w { argb[y * w + x] = unsafe { row.offset(x)^ } }
+    unsafe { argb.push_from(row, w) }
   }
   unsafe { sdl_destroy_surface(surface) }
   Some(Pixels { width: w, height: h, argb: argb })

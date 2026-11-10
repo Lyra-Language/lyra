@@ -286,11 +286,7 @@ pub let image_colors = (image: Image) -> []Color => {
   if total > 0 {
     let raw = unsafe { rl_image_colors(image) }
     if raw != nullptr {
-      var i = 0
-      while i < total {
-        out.push(unsafe { raw.offset(i)^ })
-        i += 1
-      }
+      unsafe { out.push_from(raw, total) }
       unsafe { rl_unload_image_colors(raw) }
     }
   }

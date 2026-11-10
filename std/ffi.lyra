@@ -28,6 +28,25 @@ module std.ffi
 //! A buffer Lyra owns works too — `CBuffer { ptr: unsafe { &mut xs[0] }, len: xs.len() }`
 //! — since a `^mut T` is assignable to a `^T`. Reading one that way buys nothing `xs[i]`
 //! does not already give you; it is for handing the same bytes to C and back.
+//!
+//! **Copying a C buffer into an array Lyra owns is one call**, `xs.push_from(p, n)`, a
+//! builtin rather than a function here: nothing written in Lyra can copy a run of memory,
+//! and the loop it replaced pushed an element at a time. It appends `n` elements read
+//! through a `^T` to a `[]T` — any element type with a C layout, so pixels, samples and
+//! structs as well as bytes — growing once and copying once. It is `unsafe` for the reason
+//! `p.decode_utf8(n)` is: a pointer carries no length. A zero count does nothing whatever
+//! the pointer, and a negative count or a null pointer with a positive one traps.
+//!
+//! ```
+//! import std.ffi.{ is_null }
+//!
+//! let raw = unsafe { rl_image_colors(image) }
+//! var colors: []Color = []
+//! if !raw.is_null() {
+//!   unsafe { colors.push_from(raw, count) }
+//!   unsafe { rl_unload_image_colors(raw) }
+//! }
+//! ```
 
 /// A foreign buffer: a pointer, and the number of bytes it is valid for.
 ///

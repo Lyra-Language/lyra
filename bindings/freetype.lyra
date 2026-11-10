@@ -102,7 +102,7 @@ pub let render_glyph = (
   for y in 0..<rows {
     // `pitch` is the bytes from one row to the next: negative for a bitmap stored bottom up.
     let row = unsafe { bitmap.buffer.offset(y * i64(bitmap.pitch)) }
-    for x in 0..<width { coverage.push(unsafe { row.offset(x)^ }) }
+    unsafe { coverage.push_from(row, width) }
   }
   Some(GlyphBitmap {
     width: width,
@@ -170,7 +170,7 @@ pub let render_color_glyph = (
   var bgra: []u8 = []
   for y in 0..<rows {
     let row = unsafe { bitmap.buffer.offset(y * i64(bitmap.pitch)) }
-    for x in 0..<(width * 4) { bgra.push(unsafe { row.offset(x)^ }) }
+    unsafe { bgra.push_from(row, width * 4) }
   }
   let ratio = f32(pixels) / strike
   let to_width = i64((f32(width) * ratio).round()).max(if width > 0 { 1 } else { 0 })

@@ -363,11 +363,7 @@ pub let wave_samples = (wave: Wave) -> []f32 => {
   if total > 0 {
     let raw = unsafe { rl_wave_samples(wave) }
     if raw != nullptr {
-      var i = 0
-      while i < total {
-        out.push(unsafe { raw.offset(i)^ })
-        i += 1
-      }
+      unsafe { out.push_from(raw, total) }
       unsafe { rl_unload_wave_samples(raw) }
     }
   }

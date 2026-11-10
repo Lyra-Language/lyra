@@ -291,6 +291,32 @@ func (l *lowerer) findDeferredPlaces(block *ir.Block, args []value.Value, deferr
 // after the argument has run. A receiver with no storage of its own has no place to find again
 // and is lowered first, in its turn. It answers two nils when either one doesn't come back.
 func (l *lowerer) lowerReceiverAndArgument(block *ir.Block, receiver, arg ast.Expression) (value.Value, value.Value, *ir.Block, error) {
+	box, vs, block, err := l.lowerReceiverAndArguments(block, receiver, []ast.Expression{arg})
+	if err != nil || box == nil {
+		return nil, nil, block, err
+	}
+	return box, vs[0], block, nil
+}
+
+// lowerReceiverAndArguments is lowerReceiverAndArgument for a builtin taking several
+// (`xs.push_from(p, n)`): every argument runs, in order, before the box is loaded. It answers
+// a nil box when the receiver or any argument doesn't come back.
+func (l *lowerer) lowerReceiverAndArguments(block *ir.Block, receiver ast.Expression, args []ast.Expression) (value.Value, []value.Value, *ir.Block, error) {
+	lowerArgs := func(block *ir.Block) ([]value.Value, *ir.Block, error) {
+		vs := make([]value.Value, len(args))
+		for i, arg := range args {
+			v, end, err := l.lowerExpr(block, arg)
+			if err != nil {
+				return nil, nil, err
+			}
+			block = end
+			if diverged(v, block) {
+				return nil, block, nil
+			}
+			vs[i] = v
+		}
+		return vs, block, nil
+	}
 	if !l.namesStorage(receiver) {
 		box, block, err := l.lowerExpr(block, receiver)
 		if err != nil {
@@ -299,14 +325,11 @@ func (l *lowerer) lowerReceiverAndArgument(block *ir.Block, receiver, arg ast.Ex
 		if diverged(box, block) {
 			return nil, nil, block, nil
 		}
-		v, block, err := l.lowerExpr(block, arg)
-		if err != nil {
-			return nil, nil, nil, err
+		vs, block, err := lowerArgs(block)
+		if err != nil || vs == nil {
+			return nil, nil, block, err
 		}
-		if diverged(v, block) {
-			return nil, nil, block, nil
-		}
-		return box, v, block, nil
+		return box, vs, block, nil
 	}
 	operands, block, err := l.lowerPlaceOperands(block, receiver)
 	if err != nil {
@@ -315,12 +338,9 @@ func (l *lowerer) lowerReceiverAndArgument(block *ir.Block, receiver, arg ast.Ex
 	if operands == nil {
 		return nil, nil, block, nil
 	}
-	v, block, err := l.lowerExpr(block, arg)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if diverged(v, block) {
-		return nil, nil, block, nil
+	vs, block, err := lowerArgs(block)
+	if err != nil || vs == nil {
+		return nil, nil, block, err
 	}
 	loc, block, err := l.placeAddress(block, receiver, operands)
 	if err != nil {
@@ -330,7 +350,7 @@ func (l *lowerer) lowerReceiverAndArgument(block *ir.Block, receiver, arg ast.Ex
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return block.NewLoad(boxTy, loc.ptr), v, block, nil
+	return block.NewLoad(boxTy, loc.ptr), vs, block, nil
 }
 
 // namesStorage reports whether the path e ends at a slot this function can address, or at a

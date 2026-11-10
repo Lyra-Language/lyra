@@ -825,6 +825,108 @@ func (l *lowerer) lowerDynArrayPushUTF8(block *ir.Block, call *ast.FunctionCallE
 	return nil, done, nil
 }
 
+// lowerDynArrayPushFrom lowers `xs.push_from(p, n)`: n elements read through the `^T` p,
+// appended to the `[]T` xs with one copy.
+//
+// **`push_utf8` for foreign memory.** The bindings that copy a C buffer into an array Lyra
+// owns pushed it an element at a time, `out.push(unsafe { raw.offset(i)^ })`, which is a
+// capacity compare, a possible growth branch and a store per element; this grows once, to
+// the size it knows is arriving, and copies once. The growth is `push_utf8`'s: at least
+// `len + n`, and at least double, so a row-by-row read in a loop stays amortized.
+//
+// Three things it gets right that a plain memcpy would not:
+//
+//   - **The copy is `copyBytes`**, LLVM's `llvm.memcpy`, never libc's declared here: its
+//     `i64` length is lowered with the target's own `size_t`.
+//   - **A pointer into `xs` itself still works.** Growth allocates the new buffer, copies
+//     the old elements *and then the source* into it, and only then frees the old one — a
+//     `realloc` would have freed what `p` points at before it was read.
+//   - **Nothing is retained**, because there is nothing to retain: the typechecker admits
+//     only an element type with a C layout, which holds no reference.
+//
+// A zero count does nothing, whatever `p` is — the C convention of `(NULL, 0)` for an
+// empty buffer is common enough that trapping on it would put a guard at every call. A
+// negative count traps, since it would reach the copy as a huge size, and so does a null
+// `p` with a positive one, which is how a C function that failed usually answers. A count
+// merely too large cannot be caught: a pointer carries no extent, which is why the caller
+// wrote `unsafe`.
+func (l *lowerer) lowerDynArrayPushFrom(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr, dyn types.DynamicArrayType) (value.Value, *ir.Block, error) {
+	if len(call.Arguments) != 2 {
+		return nil, nil, fmt.Errorf("llvm: push_from() expects 2 arguments, got %d", len(call.Arguments))
+	}
+	elemLL, err := l.lowerType(dyn.ElementType)
+	if err != nil {
+		return nil, nil, err
+	}
+	elemSize, elemAlign, ok := SizeAndAlign(l.resolveForLayout(dyn.ElementType))
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: cannot size dynamic array element type %s", dyn.ElementType)
+	}
+	stride := i64c(int64(bufferStride(elemSize, elemAlign)))
+
+	l.ensureRCRuntime() // l.malloc and l.free
+	box, args, block, err := l.lowerReceiverAndArguments(block, member.Object, call.Arguments)
+	if err != nil {
+		return nil, nil, err
+	}
+	if box == nil {
+		return nil, block, nil
+	}
+	if _, isPtr := args[0].Type().(*lltypes.PointerType); !isPtr {
+		return nil, nil, fmt.Errorf("llvm: push_from() source did not lower to a pointer (%s)", args[0].Type())
+	}
+	signed, _ := l.getIntSignedness(call.Arguments[1])
+	n := coerceIntWidth(block, args[1], signed, lltypes.I64)
+
+	boxTy := DynArrayBoxType(elemLL)
+	elemPtrTy := lltypes.NewPointer(elemLL)
+	i8ptr := lltypes.NewPointer(lltypes.I8)
+	src := block.NewBitCast(args[0], i8ptr)
+
+	block = l.emitTrapIf(block, block.NewICmp(enum.IPredSLT, n, i64c(0)), l.panicNegativeCountFunc())
+	nonEmpty := block.NewICmp(enum.IPredSGT, n, i64c(0))
+	isNull := block.NewICmp(enum.IPredEQ, src, constant.NewNull(i8ptr))
+	block = l.emitTrapIf(block, block.NewAnd(nonEmpty, isNull), l.panicNullSourceFunc())
+
+	fn := block.Parent
+	work := fn.NewBlock("")
+	growBlock := fn.NewBlock("")
+	copyBlock := fn.NewBlock("")
+	stored := fn.NewBlock("")
+	done := fn.NewBlock("")
+
+	// Nothing to append is nothing to do — before the growth arithmetic, not after.
+	block.NewCondBr(nonEmpty, work, done)
+
+	length := work.NewLoad(lltypes.I64, dynArrayLenPtr(work, boxTy, box))
+	capacity := work.NewLoad(lltypes.I64, dynArrayCapPtr(work, boxTy, box))
+	needed := work.NewAdd(length, n)
+	work.NewCondBr(work.NewICmp(enum.IPredSGT, needed, capacity), growBlock, copyBlock)
+
+	// At least what is needed, at least double, and at least push's floor of 4. The old
+	// buffer is freed last, after the source is read: `p` may point into it.
+	doubled := growBlock.NewMul(capacity, i64c(2))
+	newCap := growBlock.NewSelect(growBlock.NewICmp(enum.IPredSGT, doubled, needed), doubled, needed)
+	newCap = growBlock.NewSelect(growBlock.NewICmp(enum.IPredSLT, newCap, i64c(4)), i64c(4), newCap)
+	oldBuf := growBlock.NewLoad(elemPtrTy, dynArrayElemsPtr(growBlock, boxTy, box))
+	newBuf := growBlock.NewCall(l.malloc, growBlock.NewMul(newCap, stride))
+	l.copyBytes(growBlock, newBuf, oldBuf, growBlock.NewMul(length, stride))
+	grownEnd := growBlock.NewGetElementPtr(elemLL, growBlock.NewBitCast(newBuf, elemPtrTy), length)
+	l.copyBytes(growBlock, grownEnd, src, growBlock.NewMul(n, stride))
+	growBlock.NewCall(l.free, growBlock.NewBitCast(oldBuf, i8ptr))
+	growBlock.NewStore(growBlock.NewBitCast(newBuf, elemPtrTy), dynArrayElemsPtr(growBlock, boxTy, box))
+	growBlock.NewStore(newCap, dynArrayCapPtr(growBlock, boxTy, box))
+	growBlock.NewBr(stored)
+
+	// Room enough already: one copy into the spare capacity.
+	l.copyBytes(copyBlock, dynArrayElemPtr(copyBlock, boxTy, box, length), src, copyBlock.NewMul(n, stride))
+	copyBlock.NewBr(stored)
+
+	stored.NewStore(needed, dynArrayLenPtr(stored, boxTy, box))
+	stored.NewBr(done)
+	return nil, done, nil
+}
+
 // reallocFunc lazily declares libc's `i8* @realloc(i8*, i64)`, cached on the lowerer
 // beside malloc and free.
 func (l *lowerer) reallocFunc() *ir.Func {

@@ -678,8 +678,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 - **[IDEA] Big-endian byte reads want a home.** The TZif parser has private `read_int` over
   `[]u8`; a second binary format would copy it. `std.bytes` when there is one.
-- **[OPEN] No bulk `^u8 → []u8`.** `CBuffer.get(i)` in a loop is the only spelling;
-  nothing needs it yet.
+- **[DONE 11/10] A bulk `^T → []T` copy**: `xs.push_from(p, n)`, any C-layout element; eight
+  binding loops moved (COMPLETED.md, 11/10). Left: no `CBuffer` method over it, since no caller
+  copies bytes out of a `CBuffer`; and nothing writes a `[]T` back into C memory in bulk.
 - **[OPEN] `@must_release` extensions:** a `newtype` cannot carry the attribute
   (`constrained_type` has no attribute slot); a multi-binding pattern is untracked; `defer`
   would be the natural companion.

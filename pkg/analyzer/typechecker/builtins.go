@@ -519,6 +519,34 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 			}, true
 		}
 	}
+	// `xs.push_from(p, n)` — n elements read through a `^T`, appended to a `[]T` in **one
+	// copy**. `push_utf8` for foreign memory, and the mirror of `p.decode_utf8(n)`.
+	//
+	// **The callers wrote it first**, as a `push` per element: a C library hands back a
+	// pointer and a count (raylib's pixels, samples and file bytes; FreeType's glyph rows;
+	// SDL's surface rows), and the only spelling was `out.push(unsafe { raw.offset(i)^ })` in
+	// a loop — a capacity compare, a possible growth and a store per element, against one
+	// memcpy. Every one of those callers starts from an empty or growing array, so the
+	// builtin appends: a fresh copy is `var out: []T = []` and one call, and a row-by-row
+	// read is one call a row, with no intermediate array to concatenate.
+	//
+	// **Any element type with a C layout**, not only `u8`, because that is what the callers
+	// copy (`Color`, `f32`, `u32`). The rule is checked in requireUnsafeBuiltin rather than
+	// here so that a refused element gets its own message instead of "no method": the copy
+	// is of bytes, so an element owning a reference would be duplicated without a retain
+	// and freed twice, and `bool`'s one bit is not the byte C wrote.
+	//
+	// `unsafe`, for `decode_utf8`'s reason: a pointer carries no length, and nothing can
+	// check that `n` elements are readable.
+	if dyn, ok := recv.(types.DynamicArrayType); ok && name == "push_from" {
+		return &types.LambdaType{
+			Parameters: []types.ParameterType{
+				{Type: types.RawPointerType{Pointee: dyn.ElementType}},
+				{Type: types.PrimitiveType{Name: types.Int64}},
+			},
+			ReturnType: types.ReturnType{Type: types.VoidType{}},
+		}, true
+	}
 	// String methods, both **rune-indexed**, which is not a fresh decision: `s[i]`
 	// already yields the i-th *code point* and `for c in s` already walks code
 	// points, so a byte-based length would make `for i in 0..<s.len() { s[i] }` —
@@ -807,7 +835,7 @@ func builtinMethodAllocates(recv types.Type, name string) bool {
 	// call — amortized doubling means most pushes are a store — but `noalloc` is a
 	// static promise about what a function may do, not a statistical one, so a call
 	// that can allocate counts.
-	if name == "push" || name == "push_utf8" || name == "reserve" {
+	if name == "push" || name == "push_utf8" || name == "push_from" || name == "reserve" {
 		if _, isDyn := recv.(types.DynamicArrayType); isDyn {
 			return true
 		}
@@ -825,13 +853,13 @@ func builtinMethodAllocates(recv types.Type, name string) bool {
 // rule held for `xs[0] = v` and not for `xs.push(v)`, which is a distinction no author
 // could be expected to predict.
 //
-// The four are the dynamic array's: `push` and `push_utf8` add, `reserve` changes the
-// buffer, `clear` empties it. `slice` and the rest read.
+// The five are the dynamic array's: `push`, `push_utf8` and `push_from` add, `reserve`
+// changes the buffer, `clear` empties it. `slice` and the rest read.
 func builtinMethodMutates(recv types.Type, name string) bool {
 	if _, isDyn := recv.(types.DynamicArrayType); !isDyn {
 		return false
 	}
-	return name == "push" || name == "push_utf8" || name == "reserve" || name == "clear"
+	return name == "push" || name == "push_utf8" || name == "push_from" || name == "reserve" || name == "clear"
 }
 
 // isBuiltinPrintFn reports whether name is one of the compiler-provided output

@@ -1963,8 +1963,8 @@ func (tc *TypeChecker) checkReturnStmt(s *ast.ReturnStmt) {
 }
 
 // checkBuiltinMutatesReceiver enforces the mutability rule for a builtin method that
-// writes through its receiver — `xs.push(v)`, `bytes.push_utf8(s)`, `xs.clear()` and
-// `xs.reserve(n)` today.
+// writes through its receiver — `xs.push(v)`, `bytes.push_utf8(s)`, `xs.push_from(p, n)`,
+// `xs.clear()` and `xs.reserve(n)` today.
 //
 // It asks rootBindingIsMutable, the same predicate `xs[i] = v` goes through, because
 // push *is* interior mutation with a different spelling: a plain `let` is deeply
@@ -1977,7 +1977,7 @@ func (tc *TypeChecker) checkReturnStmt(s *ast.ReturnStmt) {
 func (tc *TypeChecker) checkBuiltinMutatesReceiver(recv types.Type, name string, member *ast.MemberExpr) {
 	mutates := false
 	switch name {
-	case "push", "push_utf8", "clear", "reserve":
+	case "push", "push_utf8", "push_from", "clear", "reserve":
 		_, mutates = recv.(types.DynamicArrayType)
 	case "next":
 		_, mutates = seqElementType(recv) // a step moves the sequence's cursor
@@ -2039,10 +2039,31 @@ func (tc *TypeChecker) requireUnsafeBuiltin(recv types.Type, name string, member
 				"`%s` reads or writes a number, a bool or a pointer; %s points at %s", name, ptr, ptr.Pointee)
 		}
 	}
+	// `push_from` copies elements as bytes from memory C laid out, so the element must have a
+	// C layout: one owning a reference would be duplicated without a retain and freed twice,
+	// and a `bool`'s one bit is not the byte C wrote. A type variable is refused for the
+	// first reason — nothing says what it will be.
+	if dyn, isDyn := recv.(types.DynamicArrayType); isDyn && name == "push_from" {
+		elem := tc.resolveTypeIfKnown(dyn.ElementType, member.GetLocation())
+		if !tc.hasCLayout(elem, member.GetLocation(), map[string]bool{}) {
+			tc.addErrorCode(member.GetLocation(), SeverityError, diag.CodeNotFFISafe,
+				"`push_from` copies elements as raw bytes from C memory, so the element type "+
+					"needs a C layout — a number, a rune, a pointer, or a struct, tuple or fixed "+
+					"array of those; %s has none", dyn.ElementType)
+		}
+	}
 	if tc.inUnsafe {
 		return
 	}
 	switch name {
+	case "push_from":
+		if _, isDyn := recv.(types.DynamicArrayType); !isDyn {
+			return
+		}
+		// Reading `n` elements through a raw pointer: as `decode_utf8`, nothing can check that
+		// they are readable.
+		tc.addErrorCode(member.GetLocation(), SeverityError, diag.CodeUnsafeOutsideUnsafe,
+			"`push_from` reads through a raw pointer, so it requires an `unsafe` block or function")
 	case "offset":
 		if _, isPtr := recv.(types.RawPointerType); !isPtr {
 			return

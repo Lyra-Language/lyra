@@ -717,6 +717,10 @@ const (
 	// x86-64 changes the *arity*, so it reaches call lowering rather than declarations
 	// alone. That is a per-target classifier with a links-cleanly-computes-wrong failure
 	// mode, so the message names the pointer instead, which is correct everywhere.
+	//
+	// **It also refuses `xs.push_from(p, n)` on an element without a C layout** (11/10): the
+	// same question — what C memory may be read as — asked of an array's element rather than
+	// a signature's slot, and answered by the same predicate (`hasCLayout`).
 	CodeNotFFISafe = "lyra-E063"
 
 	// CodeAliasIsNotConstructible: a type **alias** applied to an operand — `CULong(n)`,

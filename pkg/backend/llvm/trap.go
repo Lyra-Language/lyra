@@ -60,6 +60,11 @@ const (
 	// `[v; n]` with a negative runtime n. The constant form refuses one at compile
 	// time; this is the same rule at the only moment a runtime count exists.
 	negativeLengthTrapMessage = "lyra: array length must not be negative"
+	// `xs.push_from(p, n)`: an element count read through a pointer. Its own messages
+	// rather than the array-length one, which names an array the caller did not size —
+	// the count is how many elements C is promised to have.
+	negativeCountTrapMessage = "lyra: element count must not be negative"
+	nullSourceTrapMessage    = "lyra: push_from read elements through a null pointer"
 	// The user message, where and the newline follow this at run time.
 	panicPrefixMessage = "lyra: panic: "
 )
@@ -389,6 +394,14 @@ func (l *lowerer) narrowOverflowFunc() *ir.Func {
 // an error: it yields an empty array, exactly as `[]` does.
 func (l *lowerer) panicNegativeLengthFunc() *ir.Func {
 	return l.panicFunc("lyra_panic_negative_length", negativeLengthTrapMessage)
+}
+
+func (l *lowerer) panicNegativeCountFunc() *ir.Func {
+	return l.panicFunc("lyra_panic_negative_count", negativeCountTrapMessage)
+}
+
+func (l *lowerer) panicNullSourceFunc() *ir.Func {
+	return l.panicFunc("lyra_panic_null_source", nullSourceTrapMessage)
 }
 
 // panicConstraintFunc is the trap for a value that reaches a constrained newtype
