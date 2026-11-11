@@ -88,6 +88,27 @@ rm -f "$OUT/lib/liblyra-dialog.a"
 ar rcs "$OUT/lib/liblyra-dialog.a" "$OUT/lib/dialog.o"
 rm -f "$OUT/lib/dialog.o"
 
+# **The C half of `bindings.audio`** (`audio.c`): MP3, FLAC, Ogg Vorbis and WAV decoded, the
+# four vendored public-domain decoders beside it (`NOTICE.md`) — what a modern game's tracks
+# play through (`std.game.track`) and what Vega imports them with. Also for iOS and its
+# Simulator where their SDKs and SDL3 are (`lib/<platform>/`, `tools/sdl3-ios.sh`): a game
+# built for one links it from there.
+"${LYRA_CC:-clang}" -O2 -std=c11 -c "$ROOT/bindings/audio/audio.c" -o "$OUT/lib/audio.o"
+rm -f "$OUT/lib/liblyra-audio.a"
+ar rcs "$OUT/lib/liblyra-audio.a" "$OUT/lib/audio.o"
+rm -f "$OUT/lib/audio.o"
+if [[ "$(uname)" == "Darwin" ]]; then
+  for pair in "ios:iphoneos:arm64-apple-ios17.0" "ios-simulator:iphonesimulator:arm64-apple-ios17.0-simulator"; do
+    IFS=: read -r platform sdk triple <<<"$pair"
+    [[ -d "$OUT/lib/$platform/lib" ]] || continue
+    sysroot="$(xcrun --sdk "$sdk" --show-sdk-path 2>/dev/null)" || continue
+    clang -O2 -std=c11 -target "$triple" -isysroot "$sysroot" -c "$ROOT/bindings/audio/audio.c" -o "$OUT/lib/$platform/audio.o"
+    rm -f "$OUT/lib/$platform/lib/liblyra-audio.a"
+    ar rcs "$OUT/lib/$platform/lib/liblyra-audio.a" "$OUT/lib/$platform/audio.o"
+    rm -f "$OUT/lib/$platform/audio.o"
+  done
+fi
+
 # **lyrafmt is built when it can be**, and skipped with a note when it cannot. The
 # formatter is a Lyra program that links the tree-sitter runtime and the grammar
 # (examples/lyrafmt/libs.sh), so it needs a C compiler, `libtree-sitter` and the sibling
@@ -148,4 +169,4 @@ else
   gpu_note="a stub liblyra-gpu.a (${gpu_err##*: })"
 fi
 
-printf 'built %s/{lyrac,lyra-lsp} %s, %s, lib/liblyra-{menubar,pty,wake,hittest,dialog}.a, %s, %s and %s, with std -> ../std, bindings -> ../bindings, ui -> ../ui\n' "$OUT" "$fmt_note" "$lui_note" "$imgui_note" "$accesskit_note" "$gpu_note"
+printf 'built %s/{lyrac,lyra-lsp} %s, %s, lib/liblyra-{menubar,pty,wake,hittest,dialog,audio}.a, %s, %s and %s, with std -> ../std, bindings -> ../bindings, ui -> ../ui\n' "$OUT" "$fmt_note" "$lui_note" "$imgui_note" "$accesskit_note" "$gpu_note"

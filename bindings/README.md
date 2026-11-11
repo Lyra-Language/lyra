@@ -733,6 +733,18 @@ itself, as the wake's does: `build.sh` builds `liblyra-dialog.a` with a bare C c
 the test harness compiles it where `build/lib` has none. (`bindings.imgui` has its own, on
 ImGui's host, which draws every frame and needs no wake.)
 
+## `bindings/audio/`
+
+Compressed sound files decoded: MP3, FLAC, Ogg Vorbis and WAV, told apart by their first bytes —
+`open_decoder(bytes)` → `Maybe<Decoder>` (`@must_release(close_decoder)`: its channels, rate,
+frames; `read(frames)` interleaved `f32`, `seek(frame)`) and `decode_all(bytes)` → `Maybe<Decoded>`.
+The C half (`audio.c`) is four public-domain single-file decoders vendored beside it at
+released versions (`NOTICE.md`: dr_mp3, dr_flac, dr_wav, stb_vorbis), so a program linking
+it stays MIT; `build.sh` builds `liblyra-audio.a` for the machine and, where `lib/ios*/` has
+SDL3, for iOS and its Simulator. A decoder reads from the bytes it keeps. `std.game.track`
+plays through it; Vega imports with it. Tested by `cmd/lyrac/audio_test.go` on fixtures
+ffmpeg made (`testdata/audio`).
+
 ## `bindings/pty/`
 
 A program on a pseudo-terminal, for a terminal emulator (`../termina`). `spawn(args, cols,

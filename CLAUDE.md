@@ -841,7 +841,16 @@ of Markdown.
   it, `std.game.sound` in its chip, the Genesis's Z80 from the cartridge — both through
   `dac_byte`'s level tables, so it is the same sound on each; `std.game.sound` mixes the
   chips at Furnace's levels, checked against its renders; `i32`/`i16` and in place, for
-  the 68000's frame; tested in `cmd/lyrac/sound_test.go`, on both runtimes), `std/ffi.lyra`, `std/io.lyra`
+  the 68000's frame; tested in `cmd/lyrac/sound_test.go`, on both runtimes); **tracks** — long
+  recordings, music or a voice — by the same names on both runtimes: `std.game.track` decodes
+  a compressed file as it plays (`bindings.audio`), resampled and mixed over the chips through
+  `std.game.sound.mix_in` (whose output is **stereo**, the chips the same on both sides), and
+  `std.genesis.track` plays 8-bit bytes the game `embed`s on the DAC — **the DAC one source a
+  frame**: a sampled effect, a voice, the music track, the song's notes (`follow_chosen`); a
+  track's place kept while unheard, so the music comes back where it has got to; DAC mode on
+  for a track and FM 6 lent it; and **no 64 KB limit**, the position a byte and 65536ths and
+  the driver's 16-bit count topped up by a `TUNE` as a long sample plays, exact once its end
+  is near (`cmd/lyrac/genesis_track_test.go`, `track_test.go`), `std/ffi.lyra`, `std/io.lyra`
   (files and directories over libc; `walk_dir` is a tree's files, sorted, depth first, the
   caller's `keep` pruning, a symlinked directory never followed — what lyrafmt, lui and
   lyra-md walk with; tested against Go's `filepath.WalkDir`), `std/compress.lyra`

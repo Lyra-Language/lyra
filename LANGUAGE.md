@@ -971,6 +971,13 @@ target = "genesis"
   leaf (a string, a data value) and any other `const` is inlined at each use, as before.
   Indexing or looping over any module-level array addresses it in place rather than
   copying it to the stack.
+- **`embed("path")` is a file's bytes as a `const`**, read when the program is compiled:
+  `const THEME_PCM: [N]u8 = embed("art/theme.pcm")` — data, as a table of literals is, for
+  what is too large to write as one (a megabyte as hex took 12 s and 1.2 GB to compile; as
+  a file, 0.4 s). Its type is `[N]u8`, N the file's length, so an annotation of another is
+  the ordinary mismatch. **The path is relative to the source file**, never to where lyrac
+  runs, and must be a string literal. Only a whole `const`'s value: anywhere else — a `let`,
+  part of a literal — is an error, as is a file that cannot be read.
 
 ### Imports
 

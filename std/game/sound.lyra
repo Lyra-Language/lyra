@@ -19,8 +19,12 @@ module std.game.sound
 //!
 //! **Heard without anyone at it**: played with `--frames N --wav FILE` (as `std.game.screen`
 //! plays headless), nothing is sent to a device; the sound of the first N updates is
-//! written to `FILE` as a 16-bit mono WAV — how Vega's checks listen to a game, as Sheliak's
+//! written to `FILE` as a 16-bit stereo WAV — how Vega's checks listen to a game, as Sheliak's
 //! `--wav` lets them listen to a ROM.
+//!
+//! **Out in stereo**: the chips are mono, the same on both sides, and what [mix_in] is given
+//! — a track's sound (`std.game.track`), decoded at full quality — is added over them, its
+//! own left and right.
 
 import bindings.sdl3.{ init, INIT_AUDIO, AudioStream, open_audio }
 import std.io.{ write_bytes }
@@ -45,7 +49,7 @@ pub const RATE: i64 = 48000
 
 /// Samples in one update — `std.game.screen.UPDATES_PER_SECOND`, 60 a second,
 /// which the players step at: a sound effect's step, a song's tick.
-const UPDATE_SAMPLES: i64 = RATE / 60
+pub const UPDATE_SAMPLES: i64 = RATE / 60
 
 /// The PSG's clock, as the Sega consoles feed it (their Z80's): what pitches an effect's
 /// periods, so a period is the same note here.
@@ -164,12 +168,39 @@ let play_dac<const S: i64> = (dac: Dac, samples: ref [S]u8) -> void => {
   synth.follow(dac)
 }
 
-/// An update's samples to the device, or kept for the WAV.
-let heard = (samples: []f32) -> void => {
+/// Stereo samples — left and right interleaved, an update's at most ([UPDATE_SAMPLES]
+/// frames) — added over the chips' in this update's sound: a track's, decoded. Called before
+/// the update (Vega's `update_sounds` calls `track.update()` first); what is not given is
+/// silence.
+pub let mix_in = (frames: []f32) -> void => {
+  if mixed.len() != UPDATE_SAMPLES * 2 { mixed = [0.0; UPDATE_SAMPLES * 2] }
+  for k in 0..<frames.len().min(UPDATE_SAMPLES * 2) { mixed[k] += frames[k] }
+  mixing = true
+}
+
+/// What [mix_in] has added this update, and whether it has.
+var mixed: []f32 = []
+var mixing: bool = false
+
+/// An update's samples — the chips', mono — to the device in stereo with what [mix_in]
+/// added, or kept for the WAV.
+let heard = (mono: []f32) -> void => {
+  var samples: []f32 = [0.0; mono.len() * 2]
+  for k, v in mono {
+    samples[k * 2] = v
+    samples[k * 2 + 1] = v
+  }
+  if mixing {
+    for k in 0..<samples.len().min(mixed.len()) {
+      samples[k] += mixed[k]
+      mixed[k] = 0.0
+    }
+    mixing = false
+  }
   updates += 1
   if wav_path != "" {
     for s in samples { recorded.push(s) }
-    if updates == wav_frames && !write_bytes(wav_path, wav(recorded, RATE)) {
+    if updates == wav_frames && !write_bytes(wav_path, wav(recorded, RATE, 2)) {
       println("could not write ${wav_path}")
     }
     return
@@ -353,12 +384,12 @@ impl Synth {
 }
 
 /// `samples` (mono, -1 to 1, at `rate`) as a 16-bit WAV file's bytes.
-pub let wav = pure (samples: []f32, rate: i64) -> []u8 => {
+pub let wav = pure (samples: []f32, rate: i64, channels: i64 = 1) -> []u8 => {
   let data = samples.len() * 2
   var out: []u8 = [
     ..."RIFF".encode_utf8(), ...le32(36 + data), ...("WAVE".encode_utf8()),
-    ...("fmt ".encode_utf8()), ...le32(16), ...le16(1), ...le16(1), ...le32(rate),
-    ...le32(rate * 2), ...le16(2), ...le16(16),
+    ...("fmt ".encode_utf8()), ...le32(16), ...le16(1), ...le16(channels), ...le32(rate),
+    ...le32(rate * 2 * channels), ...le16(2 * channels), ...le16(16),
     ...("data".encode_utf8()), ...le32(data),
   ]
   for s in samples {
@@ -430,7 +461,7 @@ let start = () -> void => {
     i += 1
   }
   if wav_path != "" { return }
-  if init(INIT_AUDIO) { stream = open_audio(i32(RATE), 1) }
+  if init(INIT_AUDIO) { stream = open_audio(i32(RATE), 2) }
 }
 
 let le16 = pure (v: i64) -> []u8 => [u8(v & 0xFF), u8((v >> 8) & 0xFF)]

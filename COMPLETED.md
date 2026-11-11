@@ -9,6 +9,33 @@ Newest first.
 
 ## Dated log
 
+### 11/11/26 — Long audio: `embed`, `bindings.audio`, tracks on both runtimes
+
+**`embed("path")` is a file's bytes as a `const`** because a Genesis track had to be bytes in
+the ROM and a table of hex is the only other way to say them: 1 MB of hex is 6 MB of source,
+and took lyrac 12 s and 1.2 GB; embedded, 0.4 s and 59 MB. The typechecker reads the file's
+size (its type is `[N]u8`, so a wrong annotation is the ordinary mismatch) and the backend
+emits it as one `c"…"` constant through the static-data path `#[…]` tables already took. The
+path is relative to the source file, never the working directory.
+
+**Decoders are vendored C, not Lyra**: dr_mp3, dr_flac, dr_wav and stb_vorbis, single files,
+public domain, pinned at releases (HEAD of dr_libs said UNRELEASED). Thousands of lines of
+MP3 and Vorbis in Lyra would have been a probe of their own; this was the user's choice.
+ffmpeg made the fixtures once (its own `vorbis` encoder: Homebrew's has no libvorbis).
+
+**`std.game.sound` went stereo** for music at its own quality; the chips stay mono, the same
+on both sides, and two tests that read the WAV as mono read it by its channels now.
+
+**On the Genesis the DAC has one source a frame**, so a track keeps its own place and the
+driver is told where to start when it gets the DAC back. Two things made a track silent at
+first: nothing turned the YM2612's DAC mode on for one (a song's note and an effect each
+write `2B` themselves, and an effect's end turns it off), and the song still had FM 6. **The
+64 KB limit was the 68000's arithmetic, not the driver's**: the driver crosses banks and
+`TUNE` reloads its count without moving it, so a long sample's count is 65535 topped up
+every few seconds and made exact within 32 KB of its end. The first measurement looked like
+a failure: a one-second window at exactly 500 Hz read a tenth of the level, because the
+driver's real rate is a hair off nominal and the tone's phase drifted across the window.
+
 ### 11/11/26 — lyrafmt: a comment before a closer, and a struct's fields, indent with the list
 
 **A whole-line comment after a list's last element was indented as its continuation**:

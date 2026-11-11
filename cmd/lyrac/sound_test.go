@@ -78,7 +78,8 @@ let main = () -> u8 => {
 
 // std.game.sound played headless with --frames and --wav: an effect of thirty steps at
 // period 254 is heard at the PSG's pitch for it (the clock over 32 × 254, 440.4 Hz) for half
-// a second, then is silent — written as a 16-bit mono WAV at 48 kHz.
+// a second, then is silent — written as a 16-bit stereo WAV at 48 kHz, the chips the same on
+// both sides.
 func TestRun_GameSoundIsHeardAtThePsgsPitch(t *testing.T) {
 	t.Parallel()
 	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
@@ -118,12 +119,16 @@ let main = () -> u8 => {
 	channels := binary.LittleEndian.Uint16(data[22:])
 	rate := int(binary.LittleEndian.Uint32(data[24:]))
 	bits := binary.LittleEndian.Uint16(data[34:])
-	if channels != 1 || rate != 48000 || bits != 16 {
+	if channels != 2 || rate != 48000 || bits != 16 {
 		t.Fatalf("a WAV of %d channels at %d Hz, %d bits", channels, rate, bits)
 	}
 	var samples []float64
-	for i := 44; i+1 < len(data); i += 2 {
-		samples = append(samples, float64(int16(binary.LittleEndian.Uint16(data[i:])))/32768)
+	for i := 44; i+3 < len(data); i += 4 {
+		left := binary.LittleEndian.Uint16(data[i:])
+		if right := binary.LittleEndian.Uint16(data[i+2:]); right != left {
+			t.Fatalf("the chips differ between left (%d) and right (%d) at byte %d", left, right, i)
+		}
+		samples = append(samples, float64(int16(left))/32768)
 	}
 	frame := rate / 60
 	if len(samples) < 40*frame-2 {
@@ -209,14 +214,7 @@ let main = () -> u8 => {
 	if _, err := fmt.Sscanf(stdout, "%d %d", &block, &fnum); err != nil || block != 4 || fnum != 1083 {
 		t.Fatalf("A4 is block %d, F-number %d (%v); want 4, 1083", block, fnum, err)
 	}
-	data, err := os.ReadFile(wav)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var samples []float64
-	for i := 44; i+1 < len(data); i += 2 {
-		samples = append(samples, float64(int16(binary.LittleEndian.Uint16(data[i:])))/32768)
-	}
+	samples := wavSamples(t, wav)
 	frame := 48000 / 60
 	window := samples[3*frame : 27*frame]
 	power := func(f float64) float64 {

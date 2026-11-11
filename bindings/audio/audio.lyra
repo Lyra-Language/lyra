@@ -1,0 +1,101 @@
+@link("lyra-audio")
+module bindings.audio
+//! Compressed sound files decoded: MP3, FLAC, Ogg Vorbis and WAV, told apart by their first
+//! bytes, read from memory into `f32` samples in -1.0..1.0, channels interleaved — a frame at
+//! a time, so a long one is decoded while it plays ([Decoder]) rather than all at once
+//! ([decode_all], for a tool).
+//!
+//! Its C half (`audio.c`) is four public-domain decoders — dr_mp3, dr_flac and dr_wav, and
+//! stb_vorbis, the releases `NOTICE.md` pins — vendored beside it, and builds into
+//! `build/lib/liblyra-audio.a` with `build.sh`. A program linking it stays MIT.
+
+import std.ffi
+
+/// A sound file being decoded: its channels, rate and length in frames (a frame is a
+/// sample of each channel), and where it has got to. It decodes from `bytes`, which it
+/// keeps. Released by [close_decoder].
+@must_release(close_decoder)
+pub struct Decoder {
+  handle: ^u8,
+  bytes: []u8,
+  channels: i64,
+  rate: i64,
+  frames: i64,
+}
+
+/// A file decoded whole: its channels, its rate, and every sample, channels interleaved.
+pub struct Decoded {
+  channels: i64,
+  rate: i64,
+  samples: []f32,
+}
+
+/// A decoder over the file `bytes`, from its start — or `None` when it is not an MP3, a
+/// FLAC, an Ogg Vorbis or a WAV file, or is damaged past reading.
+pub let open_decoder = (bytes: []u8) -> Maybe<Decoder> => {
+  if bytes.len() == 0 { return None }
+  let kept = bytes
+  let handle = unsafe { lyra_audio_open(kept.data(), kept.len()) }
+  if handle == nullptr { return None }
+  Some(Decoder {
+    handle: handle,
+    bytes: kept,
+    channels: i64(unsafe { lyra_audio_channels(handle) }),
+    rate: i64(unsafe { lyra_audio_rate(handle) }),
+    frames: unsafe { lyra_audio_frames(handle) },
+  })
+}
+
+/// The decoder closed: its handle is no good after.
+pub let close_decoder = (d: own Decoder) -> void => unsafe { lyra_audio_close(d.handle) }
+
+/// The file `bytes` decoded whole, or `None` where [open_decoder] would be.
+pub let decode_all = (bytes: []u8) -> Maybe<Decoded> => {
+  let Some(d) = open_decoder(bytes) else { return None }
+  var samples: []f32 = []
+  var more = true
+  while more {
+    let chunk = d.read(4096)
+    for v in chunk { samples.push(v) }
+    more = chunk.len() > 0
+  }
+  let decoded = Decoded { channels: d.channels, rate: d.rate, samples: samples }
+  close_decoder(d)
+  Some(decoded)
+}
+
+impl Decoder {
+  /// Up to `frames` frames from where it has got to, channels interleaved: fewer only at its
+  /// end, none past it.
+  pub let read = (self: ref, frames: i64) -> []f32 => {
+    if frames <= 0 || self.channels <= 0 { return [] }
+    var out: []f32 = [0.0; frames * self.channels]
+    let got = unsafe { lyra_audio_read(self.handle, out.data_mut(), frames) }
+    if got <= 0 { return [] }
+    out.slice(0, got * self.channels)
+  }
+
+  /// Its place moved to frame `frame` (0 its start): whether it could be.
+  pub let seek = (self: ref, frame: i64) -> bool => unsafe { lyra_audio_seek(self.handle, frame) } != 0
+}
+
+@symbol("lyra_audio_open")
+unsafe extern lyra_audio_open: (data: ^u8, size: i64) -> ^u8
+
+@symbol("lyra_audio_channels")
+unsafe extern lyra_audio_channels: (a: ^u8) -> i32
+
+@symbol("lyra_audio_rate")
+unsafe extern lyra_audio_rate: (a: ^u8) -> i32
+
+@symbol("lyra_audio_frames")
+unsafe extern lyra_audio_frames: (a: ^u8) -> i64
+
+@symbol("lyra_audio_read")
+unsafe extern lyra_audio_read: (a: ^u8, out: ^mut f32, frames: i64) -> i64
+
+@symbol("lyra_audio_seek")
+unsafe extern lyra_audio_seek: (a: ^u8, frame: i64) -> i32
+
+@symbol("lyra_audio_close")
+unsafe extern lyra_audio_close: (a: ^u8) -> void

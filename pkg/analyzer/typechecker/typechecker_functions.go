@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 	"maps"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/Lyra-Language/lyra/pkg/analyzer/ownership"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -978,6 +980,9 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		if isBuiltinPointerAtFn(ident.Name) {
 			return tc.inferPointerAtCall(call)
 		}
+		if ident.Name == "embed" {
+			return tc.inferEmbedCall(call)
+		}
 		if ident.Name == "port_read" || ident.Name == "port_write" {
 			return tc.inferPortCall(call, ident.Name)
 		}
@@ -1781,6 +1786,10 @@ func (tc *TypeChecker) checkMutArgument(calleeName string, position int, paramNa
 // A `ref` scalar is exempt for the same reason it is passed by value
 // (types.IsByRefParam): there is no shared storage to alias. A `mut` scalar is not —
 // `swap(a, a)` hands the callee one slot twice.
+//
+// **A bare parameter holding a managed value counts as a `ref`** (11/11, bareParamBorrows):
+// the callee borrows the reference without a retain, so `f(ys, ys)` with `(xs: []T, m:
+// mut []T)` let `m = [...]` free the box `xs` was still reading.
 func (tc *TypeChecker) checkExclusiveMutableBorrow(calleeName string, lambda *ast.LambdaExpr, call *ast.FunctionCallExpr) {
 	type argPlace struct {
 		place    place
@@ -1797,12 +1806,37 @@ func (tc *TypeChecker) checkExclusiveMutableBorrow(calleeName string, lambda *as
 			continue
 		}
 		mode := param.TypeModifier
-		if !types.IsByRefParam(mode, tc.resolveType(param.Type, param.GetLocation())) {
-			continue // `own` transfers a copy; a bare parameter or a `ref` scalar is a value
+		paramType := tc.resolveType(param.Type, param.GetLocation())
+		if !types.IsByRefParam(mode, paramType) && !tc.bareParamBorrows(mode, paramType, param.GetLocation()) {
+			continue // `own` transfers a copy; a `ref` scalar or a bare plain value is a value
 		}
 		p, ok := tc.placeOf(arg)
 		if !ok {
 			continue // a temporary has no storage to alias
+		}
+		if os.Getenv("LYRA_MEASURE_BYREF") != "" && types.IsByRefParam(mode, paramType) {
+			throughBox := false
+			for e := ast.Expression(arg); ; {
+				if ix, isIx := e.(*ast.IndexExpr); isIx {
+					ot := tc.stripNewtypeResolving(tc.resolveType(tc.inferExprType(ix.Object), ix.Object.GetLocation()), ix.Object.GetLocation())
+					if types.IsDynamicArray(ot) {
+						throughBox = true
+					}
+				}
+				obj, more := ast.PlaceObject(e)
+				if !more {
+					break
+				}
+				e = obj
+			}
+			otherMut := false
+			for j, a2 := range call.Arguments {
+				if j != i && j < len(lambda.Parameters) && lambda.Parameters[j].TypeModifier == types.Mut {
+					_ = a2
+					otherMut = true
+				}
+			}
+			fmt.Fprintf(os.Stderr, "MEASURE byref box=%v otherMut=%v mode=%s %s %s:%d\n", throughBox, otherMut, mode, calleeName, arg.GetLocation().File, arg.GetLocation().StartLine)
 		}
 		places = append(places, argPlace{place: p, position: i + 1, isMut: mode == types.Mut})
 	}
@@ -1835,6 +1869,14 @@ func (tc *TypeChecker) checkExclusiveMutableBorrow(calleeName string, lambda *as
 			return
 		}
 	}
+}
+
+// bareParamBorrows reports whether a bare parameter of type t borrows from its argument:
+// it holds a reference-counted value (ownership.OwnsManaged, the definition the backend
+// releases by), which a call lends without a retain. A plain value is copied, so writing
+// its argument's place through a `mut` beside it changes nothing the callee holds.
+func (tc *TypeChecker) bareParamBorrows(mode types.TypeModifier, t types.Type, loc ast.Location) bool {
+	return mode == "" && ownership.OwnsManaged(t, tc.symTable, loc)
 }
 
 // place is an argument's storage path: the binding it is rooted at, then one step per

@@ -1,0 +1,166 @@
+module std.game.track
+//! Long sound in a modern game — music, a voice — played from a compressed file at its own
+//! quality: an MP3, FLAC, Ogg Vorbis or WAV file the game ships (`lyra.toml`'s `resources`,
+//! Vega's `art/`), decoded while it plays (`bindings.audio`), resampled to
+//! `std.game.sound`'s rate and mixed over the chips in stereo.
+//!
+//! ```
+//! import std.game.track
+//!
+//! assets.THEME.play()          // a Track, by the name Vega gave it
+//! // each update, before the chips' (Vega's update_sounds does both):
+//! track.update()
+//! ```
+//!
+//! **Two at a time**: the music, which a new one replaces — and a song (`std.game.sound`'s
+//! `Tune`) stops, as one stops it — and a voice over it, which a new voice replaces. A
+//! track plays once, or loops from `loop_from` (a frame of the file: a sample of each
+//! channel) to its end. A file that will not open is said once and is silence.
+//!
+//! **Resampled by straight lines** between the file's frames: a file at 44.1 kHz played at
+//! 48 kHz. A mono file is heard on both sides, a file of more channels by its first two.
+
+import std.io.{ read_bytes }
+import bindings.sdl3.{ base_path }
+import bindings.audio.{ Decoder, open_decoder, close_decoder }
+import std.game.sound
+import std.game.sound.{ RATE, UPDATE_SAMPLES }
+
+/// A file to play: its path from the folder the game runs from (`art/theme.ogg`; one starting
+/// `/` is taken as it is), the
+/// frame it loops back to after its end (-1: it plays once), whether it is a voice (over
+/// the music) rather than the music, and how loud, 1.0 as recorded.
+pub struct Track {
+  file: string,
+  loop_from: i64 = -1,
+  voice: bool = false,
+  volume: f32 = 1.0,
+}
+
+impl Track {
+  /// Play it from its start: the music in place of any music (and any song), or a voice in
+  /// place of any voice.
+  pub let play = (self) -> void => {
+    let Some(p) = opened(self) else { return }
+    if self.voice {
+      stop_voice()
+      voice = Some(p)
+    } else {
+      stop_music()
+      sound.stop_music()
+      music = Some(p)
+    }
+  }
+}
+
+/// The music stopped, if one plays.
+pub let stop_music = () -> void => {
+  if let Some(p) = music { close_decoder(p.decoder) }
+  music = None
+}
+
+/// The voice stopped, if one plays.
+pub let stop_voice = () -> void => {
+  if let Some(p) = voice { close_decoder(p.decoder) }
+  voice = None
+}
+
+/// Whether music, or a voice, is playing.
+pub let music_playing = () -> bool => music.is_some()
+pub let voice_playing = () -> bool => voice.is_some()
+
+/// An update's sound of the music and the voice, mixed into `std.game.sound`'s: call once
+/// an update, before its `update`.
+pub let update = () -> void => {
+  var out: []f32 = [0.0; UPDATE_SAMPLES * 2]
+  var any = false
+  if let Some(p) = music {
+    var m = p
+    if m.add_to(out) { music = Some(m) } else { stop_music() }
+    any = true
+  }
+  if let Some(p) = voice {
+    var v = p
+    if v.add_to(out) { voice = Some(v) } else { stop_voice() }
+    any = true
+  }
+  if any { sound.mix_in(out) }
+}
+
+/// A track playing: its decoder, its frames decoded and not yet heard (stereo), where the
+/// next output falls among them (in the file's frames), and each output's step.
+struct Playing {
+  track: Track,
+  decoder: Decoder,
+  frames: []f32 = [],
+  at: f64 = 0.0,
+  step: f64 = 1.0,
+  ended: bool = false,
+}
+
+var music: Maybe<Playing> = None
+var voice: Maybe<Playing> = None
+
+/// `t`'s file opened from its start, or `None`, said.
+let opened = (t: Track) -> Maybe<Playing> => {
+  let path = if t.file.starts_with("/") { t.file } else { "${base_path().unwrap_or("")}${t.file}" }
+  let Some(bytes) = read_bytes(path) else {
+    println("cannot read ${path}")
+    return None
+  }
+  let Some(d) = open_decoder(bytes) else {
+    println("${path}: not an MP3, FLAC, Ogg Vorbis or WAV file")
+    return None
+  }
+  let step = f64(d.rate) / f64(RATE)
+  Some(Playing { track: t, decoder: d, step: step })
+}
+
+impl Playing {
+  /// An update's frames of it added into `out` (stereo, interleaved): whether it plays on.
+  let add_to = (self: mut, out: mut []f32) -> bool => {
+    let n = out.len() / 2
+    let volume = self.track.volume
+    for k in 0..<n {
+      let i = self.at.floor()
+      // Its end: the update's last frames silence.
+      if !self.have(i + 1) { return false }
+      let f = f32(self.at - f64(i))
+      for c in 0..<2 {
+        let a = self.frames[i * 2 + c]
+        let b = self.frames[(i + 1) * 2 + c]
+        out[k * 2 + c] += (a + (b - a) * f) * volume
+      }
+      self.at += self.step
+    }
+    // What has been heard is let go, but for the frame the next output starts from.
+    let gone = self.at.floor()
+    if gone > 4096 {
+      self.frames = self.frames.slice(gone * 2, self.frames.len())
+      self.at -= f64(gone)
+    }
+    true
+  }
+
+  /// Whether its frames reach frame `want` (counted among those kept), decoding more — and
+  /// going back to its loop at the file's end — until they do or it has ended.
+  let have = (self: mut, want: i64) -> bool => {
+    while self.frames.len() / 2 <= want {
+      if self.ended { return false }
+      let chunk = self.decoder.read(4096)
+      if chunk.len() == 0 {
+        if self.track.loop_from >= 0 && self.decoder.seek(self.track.loop_from) { continue }
+        self.ended = true
+        return false
+      }
+      let channels = self.decoder.channels
+      for f in 0..<chunk.len() / channels {
+        let left = chunk[f * channels]
+        let right = if channels > 1 { chunk[f * channels + 1] } else { left }
+        self.frames.push(left)
+        self.frames.push(right)
+      }
+    }
+    true
+  }
+}

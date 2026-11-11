@@ -28,7 +28,7 @@ module std.genesis.sound
 //! takes the Z80's bus once — the queue filled, the sample told to start, stop or change —
 //! and gives it back.
 
-import std.chips.effects.{ Effect, EffectStep, Player, new_player }
+import std.chips.effects.{ Effect, EffectStep, Player, new_player, FM_CHANNEL }
 import std.chips.music.{
   Tune,
   MusicData,
@@ -41,7 +41,7 @@ import std.chips.music.{
   DAC_GAINS
 }
 import std.chips.sn76489.{ attenuation_byte }
-import std.chips.ym2612.{ FmPatch }
+import std.chips.ym2612.{ FmPatch, key_on_code }
 
 /// Every PSG channel silent — a PSG may power up sounding — and the Z80's driver loaded and
 /// started, the YM2612 its to write. A game calls this first.
@@ -100,11 +100,48 @@ pub let playing = () -> bool => player.playing()
 impl Tune {
   /// Play the song from its start, in place of any song playing; heard from the next
   /// [update_music], under the effects.
-  pub let play = (self) -> void => music.play_song(self)
+  pub let play = (self) -> void => {
+    music_track.on = false
+    music.play_song(self)
+  }
 }
 
 /// Stop the song playing.
 pub let stop_music = () -> void => music.stop()
+
+/// **Tracks** (`std.genesis.track`'s, long recordings — music, a voice — as 8-bit bytes in
+/// the cartridge) play on the DAC too: of everything that wants it in a frame, a sampled
+/// effect has it, then a voice, then the music track, then the song's sampled notes. A
+/// track keeps its place while another has the DAC and comes back there — the music goes on
+/// under a voice, unheard — where a song's note cut by an effect does not come back.
+///
+/// The bytes every track plays from: the game's table of them, which `assets.load()` names
+/// once (Vega's `TRACK_PCM`, an `embed` of its tracks' bytes).
+pub let use_track_bytes<const T: i64> = (pcm: ref [T]u8) -> void => {
+  track_base = if pcm.len() > 0 { u32(unsafe { (&pcm[0]).address() }) } else { 0 }
+}
+
+/// Track `t` — its bytes among the game's ([use_track_bytes]), its rate, the byte it loops
+/// back to (-1 once) — played from its start: as the voice in place of any voice, or as the
+/// music in place of the music track and any song.
+pub let start_track = (t: Sample, voice: bool) -> void => {
+  track_starts = track_starts.wrapping_add(1)
+  let started = TrackPlay { sample: t, on: t.length > 0, start: track_starts, step: track_step(t.rate) }
+  if voice {
+    voice_track = started
+  } else {
+    music.stop()
+    music_track = started
+  }
+}
+
+/// The voice track, or the music track, stopped.
+pub let stop_track = (voice: bool) -> void => {
+  if voice { voice_track.on = false } else { music_track.on = false }
+}
+
+/// Whether the voice track, or the music track, is playing.
+pub let track_playing = (voice: bool) -> bool => if voice { voice_track.on } else { music_track.on }
 
 /// [update], and the song playing's tick under the effects — a channel an effect is
 /// playing on the effect's (`std.chips.music`): once each vertical blank. `tables` is the
@@ -132,12 +169,9 @@ pub let update_music_sampled<const N: i64, const P: i64, const S: i64, const E: 
 ) -> void => {
   let before = held_by(player)
   let effect_writes = effects_frame(steps, patches)
-  let (bytes, writes) = music.frame(tables, before | held_by(player), music_psg, music_fm)
+  let (bytes, writes) = music.frame(tables, before | held_by(player) | track_holds(), music_psg, music_fm)
   for i in 0..<bytes { write(music_psg[i]) }
-  follow_dac(
-    if player.dac.playing { effect_dac(player, effect_samples) } else { music.dac },
-    samples
-  )
+  follow_chosen(effect_samples, samples, music.dac)
   // The Z80 stopped only while what was made is copied to it: a byte copied a byte.
   take_bus()
   for i: i16 in 0..<i16(writes) { queue_fm(
@@ -146,9 +180,97 @@ pub let update_music_sampled<const N: i64, const P: i64, const S: i64, const E: 
     music_fm[i * 3 + 2]
   ) }
   queue_effects(effect_writes)
+  queue_tracks()
   send_dac()
   give_bus()
 }
+
+/// The frame's DAC, from whoever has it: a sampled effect (its bytes in `samples`, where
+/// `effect_samples` says), a voice track, the music track, or else the song's `song` —
+/// each track a frame on whether heard or not.
+let follow_chosen<const S: i64, const E: i64> = (
+  effect_samples: ref [E]Sample,
+  samples: ref [S]u8,
+  song: Dac
+) -> void => {
+  voice_track.advance()
+  music_track.advance()
+  let base = if samples.len() > 0 { u32(unsafe { (&samples[0]).address() }) } else { 0 }
+  // A track taking the DAC — started, or back after an effect, whose end turned the DAC's
+  // mode off — keys FM 6 off and turns DAC mode on; the DAC given back to the song turns it
+  // off, as the song's own notes will want. Queued after the effects' writes.
+  let track_had = dac_source == 2 || dac_source == 3
+  let track_has = !player.dac.playing && (voice_track.on || music_track.on)
+  if track_has && (!track_had || !dac_on) {
+    track_fm = #[0, 0x28, key_on_code(FM_CHANNEL), 0, 0x2B, 0x80]
+    track_writes = 2
+  } else if track_had && !track_has && !player.dac.playing {
+    track_fm = #[0, 0x2B, 0, 0, 0, 0]
+    track_writes = 1
+  }
+  if player.dac.playing {
+    follow_dac_from(effect_dac(player, effect_samples), base, 0, 1)
+  } else if voice_track.on {
+    follow_dac_from(voice_track.dac(), track_base, voice_track.at, 2)
+  } else if music_track.on {
+    follow_dac_from(music_track.dac(), track_base, music_track.at, 3)
+  } else {
+    follow_dac_from(song, base, 0, 0)
+  }
+}
+
+/// A track playing: its bytes and rate, whether it plays, the number of the time it was
+/// started (its [Dac]'s note), and where it has got to — a byte and 65536ths of the next —
+/// stepped as the driver would step it.
+struct TrackPlay {
+  sample: Sample = Sample {},
+  on: bool = false,
+  start: u16 = 0,
+  step: u32 = 1,
+  at: u32 = 0,
+  frac: u32 = 0,
+}
+
+impl TrackPlay {
+  /// A frame on: past its end, back to its loop or over.
+  let advance = (self: mut) -> void => {
+    if !self.on { return }
+    self.frac += self.step * (Z80_RATE / 60)
+    self.at += self.frac >> 16
+    self.frac &= 0xFFFF
+    let length = self.sample.length
+    if self.at < length { return }
+    let from = self.sample.loop_at
+    if from < 0 || u32(from) >= length {
+      self.on = false
+      return
+    }
+    self.at = u32(from) + (self.at - length) % (length - u32(from))
+  }
+
+  /// It as the DAC plays it.
+  let dac = pure (self) -> Dac =>
+    Dac { sample: self.sample, rate: u32(self.sample.rate), level: 15, playing: true, note: self.start }
+}
+
+/// The driver's step through a sample at `rate` bytes a second: 65536ths of a byte an output.
+let track_step = pure (rate: u16) -> u32 => ((u32(rate) << 16) / Z80_RATE).max(1)
+
+/// FM 6 held for the song while a track plays: it is lent to the DAC.
+let track_holds = () -> u16 => if voice_track.on || music_track.on { u16(1) << u16(FM_CHANNEL) } else { 0 }
+
+/// The writes [follow_chosen] asked for, to the driver's queue after the effects'.
+let queue_tracks = () -> void => {
+  for i: i16 in 0..<i16(track_writes) { queue_fm(track_fm[i * 3], track_fm[i * 3 + 1], track_fm[i * 3 + 2]) }
+  track_writes = 0
+}
+
+var track_fm: [6]u8 = #[0; 6]
+var track_writes: i64 = 0
+var track_base: u32 = 0
+var music_track: TrackPlay = TrackPlay {}
+var voice_track: TrackPlay = TrackPlay {}
+var track_starts: u16 = 0
 
 /// No sampled effects: what [update_music] passes for a game without them.
 const NO_SAMPLES: [1]Sample = #[Sample {}]
@@ -163,9 +285,10 @@ pub let update_sampled<const N: i64, const P: i64, const S: i64, const E: i64> =
   effect_samples: ref [E]Sample
 ) -> void => {
   let writes = effects_frame(steps, patches)
-  follow_dac(effect_dac(player, effect_samples), samples)
+  follow_chosen(effect_samples, samples, Dac {})
   take_bus()
   queue_effects(writes)
+  queue_tracks()
   send_dac()
   give_bus()
 }
@@ -178,10 +301,20 @@ pub let update<const N: i64, const P: i64> = (
   patches: ref [P]FmPatch
 ) -> void => {
   let writes = effects_frame(steps, patches)
+  // A game's tracks play with its effects whatever else it has.
+  let tracks = track_base != 0
+  if tracks { follow_chosen(NO_SAMPLES, NO_BYTES, Dac {}) }
   take_bus()
   queue_effects(writes)
+  if tracks {
+    queue_tracks()
+    send_dac()
+  }
   give_bus()
 }
+
+/// No sample bytes: what [update] follows tracks with.
+const NO_BYTES: [0]u8 = #[]
 
 /// The Z80's driver, loaded at 0 by [init]: it plays the DAC's sample at [Z80_RATE] bytes a
 /// second, a byte every 312 of its T-states whichever way through its loop — reading it
@@ -755,16 +888,18 @@ let queue_effects = (writes: i64) -> void => {
   ) }
 }
 
-/// The DAC as the song wants it, made a command for the driver ([send_dac]): a new note's
+/// The DAC as `dac` wants it, made a command for the driver ([send_dac]): a new note's
 /// sample started, a sample stopped, a new rate or level; and where the sample has got to,
 /// kept here a frame at a time — the driver counts down in its own bytes, which a new rate
-/// changes.
-let follow_dac<const S: i64> = (dac: Dac, samples: ref [S]u8) -> void => {
-  if dac.note != dac_note {
+/// changes. The sample's bytes are from address `base`, a new one started `offset` bytes in
+/// (a track coming back where it has got to), and `source` says whose it is: another's is a
+/// new note whatever its number.
+let follow_dac_from = (dac: Dac, base: u32, offset: u32, source: u8) -> void => {
+  if dac.note != dac_note || source != dac_source {
     dac_note = dac.note
-    if dac.playing && dac.sample.length > 0 && samples.len() > 0 {
-      let base = u32(unsafe { (&samples[0]).address() })
-      start_sample(dac, base)
+    dac_source = source
+    if dac.playing && dac.sample.length > 0 && base != 0 {
+      start_sample(dac, base, offset)
     } else if dac_on {
       stop_sample()
     }
@@ -774,34 +909,65 @@ let follow_dac<const S: i64> = (dac: Dac, samples: ref [S]u8) -> void => {
     tune_sample(dac)
   }
   if !dac_on { return }
-  dac_pos += dac_step * (Z80_RATE / 60)
-  let end = dac_length << 16
-  if dac_pos >= end {
+  // The driver's frame: Z80_RATE / 60 bytes out, each a step through the sample.
+  dac_frac += dac_step * (Z80_RATE / 60)
+  dac_at += dac_frac >> 16
+  dac_frac &= 0xFFFF
+  dac_count_left -= (Z80_RATE / 60).min(dac_count_left)
+  if dac_at >= dac_length {
     if dac_loop < 0 {
       dac_on = false
       return
     }
-    let looped = end - (u32(dac_loop) << 16)
-    dac_pos = (u32(dac_loop) << 16) + (dac_pos - end) % looped.max(1)
+    let looped = dac_length - u32(dac_loop)
+    dac_at = u32(dac_loop) + (dac_at - dac_length) % looped.max(1)
+    // The driver has gone back to the loop with its loop's count.
+    let (count, clamped) = outputs(looped, 0)
+    dac_count_left = u32(count) - (dac_at - u32(dac_loop)).min(u32(count))
+    dac_clamped = clamped
+  }
+  // A long sample's count is more than the driver's 16 bits hold: topped up before it runs
+  // out, and made exact once the end is near enough to count.
+  if dac_clamped && dac_command == 0 && (dac_count_left < TOP_UP || dac_length - dac_at <= EXACT_BYTES) {
+    let (count, clamped) = outputs(dac_length - dac_at, dac_frac)
+    block16(COUNT, count)
+    dac_count_left = u32(count)
+    dac_clamped = clamped
+    dac_command = TUNE
   }
 }
 
-/// `dac`'s sample, from address `base` of the cartridge's sample bytes, started.
-let start_sample = (dac: Dac, base: u32) -> void => {
+/// A clamped count is topped up when the driver has fewer than this many bytes out left
+/// (about a third of a second).
+const TOP_UP: u32 = 4000
+
+/// The bytes still to play that [outputs] counts exactly: past them `bytes << 16` would
+/// overflow.
+const EXACT_BYTES: u32 = 32767
+
+/// `dac`'s sample, from address `base` of the cartridge's sample bytes, started `offset`
+/// bytes in.
+let start_sample = (dac: Dac, base: u32, offset: u32) -> void => {
   let at = base + dac.sample.first
-  dac_length = dac.sample.length.min(65535)
+  dac_length = dac.sample.length
   dac_loop = if dac.sample.loop_at >= 0 && u32(dac.sample.loop_at) < dac_length { dac.sample.loop_at } else { -1 }
-  dac_pos = 0
+  dac_at = offset.min(dac_length - 1)
+  dac_frac = 0
   set_rate(dac)
-  block16(BANK, u16(at >> 15))
-  block16(PTR, u16(0x8000 | (at & 0x7FFF)))
-  block16(COUNT, outputs(dac_length << 16))
+  let from = at + dac_at
+  block16(BANK, u16(from >> 15))
+  block16(PTR, u16(0x8000 | (from & 0x7FFF)))
+  let (count, clamped) = outputs(dac_length - dac_at, 0)
+  block16(COUNT, count)
+  dac_count_left = u32(count)
+  dac_clamped = clamped
   if dac_loop >= 0 {
-    let from = at + u32(dac_loop)
+    let again = at + u32(dac_loop)
     block8(LOOPS, 1)
-    block16(LOOP_BANK, u16(from >> 15))
-    block16(LOOP_PTR, u16(0x8000 | (from & 0x7FFF)))
-    block16(LOOP_COUNT, outputs((dac_length - u32(dac_loop)) << 16))
+    block16(LOOP_BANK, u16(again >> 15))
+    block16(LOOP_PTR, u16(0x8000 | (again & 0x7FFF)))
+    let (loop_count, _) = outputs(dac_length - u32(dac_loop), 0)
+    block16(LOOP_COUNT, loop_count)
   } else {
     block8(LOOPS, 0)
   }
@@ -812,7 +978,10 @@ let start_sample = (dac: Dac, base: u32) -> void => {
 /// The playing sample at `dac`'s rate and level from where it has got to.
 let tune_sample = (dac: Dac) -> void => {
   set_rate(dac)
-  block16(COUNT, outputs((dac_length << 16) - dac_pos.min(dac_length << 16)))
+  let (count, clamped) = outputs(dac_length - dac_at.min(dac_length), dac_frac)
+  block16(COUNT, count)
+  dac_count_left = u32(count)
+  dac_clamped = clamped
   dac_command = TUNE
 }
 
@@ -832,9 +1001,15 @@ let set_rate = (dac: Dac) -> void => {
   block8(VOLUME_PAGE, u8((VOLUME_TABLES >> 8) + u16(dac.level.clamp(0, 15))))
 }
 
-/// The driver's bytes out for `span` of the sample (65536ths of a byte), at least one.
-let outputs = (span: u32) -> u16 =>
-  u16(((span + dac_step - 1) / dac_step).clamp(1, 65535))
+/// The driver's bytes out for `bytes` of the sample less `frac` (65536ths of one already
+/// played), at least one — and whether that is more than its 16-bit count holds, or more
+/// than can be counted here, so 65535 stands for it until [follow_dac_from] tops it up.
+let outputs = (bytes: u32, frac: u32) -> (u16, bool) => {
+  if bytes > EXACT_BYTES { return (65535, true) }
+  let span = (bytes << 16) - frac.min(bytes << 16)
+  let n = (span + dac_step - 1) / dac_step
+  if n > 65535 { (65535, true) } else { (u16(n.max(1)), false) }
+}
 
 /// The command made, given the driver (the bus held): its block, its kind, then the serial
 /// it watches.
@@ -912,9 +1087,10 @@ var effects_fm: [128]u8 = #[0; 128]
 var queue_tail: u16 = 0
 
 /// The DAC as last told the driver: the command's serial, whether a sample plays, the note
-/// it was started for, its rate and level; and, to tell it where a new rate leaves it, the
-/// sample's length and loop, the step (65536ths of a byte an output) and where it has got
-/// to (65536ths of a byte).
+/// it was started for and whose it is ([follow_dac_from]'s `source`), its rate and level;
+/// and, to tell it where a new rate leaves it, the sample's length and loop, the step
+/// (65536ths of a byte an output), where it has got to (a byte and 65536ths of the next),
+/// the outputs the driver has left on its count and whether that count stands for more.
 var dac_serial: u16 = 0
 var dac_command: u8 = 0
 var dac_block: [17]u8 = #[0; 17]
@@ -925,4 +1101,8 @@ var dac_level: i16 = 15
 var dac_length: u32 = 0
 var dac_loop: i32 = -1
 var dac_step: u32 = 1
-var dac_pos: u32 = 0
+var dac_at: u32 = 0
+var dac_frac: u32 = 0
+var dac_source: u8 = 0
+var dac_count_left: u32 = 0
+var dac_clamped: bool = false

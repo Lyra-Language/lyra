@@ -1,0 +1,56 @@
+module std.genesis.track
+//! Long sound on the Genesis — music, a voice — as `std.game.track` is in a modern game, by
+//! the same names: a recording's 8-bit bytes in the cartridge, played on the YM2612's DAC by
+//! `std.genesis.sound`'s Z80 driver, any length the cartridge holds.
+//!
+//! ```
+//! import std.genesis.track
+//!
+//! assets.THEME.play()          // a Track, by the name Vega gave it
+//! // each vertical blank (Vega's update_sounds does both):
+//! track.update()
+//! assets.update_sounds()
+//! ```
+//!
+//! **Two at a time, one heard**: the music, which a new one replaces — and a song stops, as
+//! one stops it — and a voice, which a new voice replaces. The DAC plays one sample, so a
+//! voice is heard in the music's place, and a sampled effect in either's; the music goes on
+//! under them, unheard, and comes back where it has got to. A track plays once, or loops
+//! from `loop_from` (a byte of it) to its end. The bytes are the game's table, which
+//! `sound.use_track_bytes` names (Vega's `assets.load()`).
+
+import std.genesis.sound
+import std.chips.music.{ Sample }
+
+/// A recording to play: its bytes among the game's track bytes (`first`, `length`, `0x80`
+/// the middle), how many a second (the driver plays at most `sound.Z80_RATE`), the byte it
+/// loops back to after its end (-1: it plays once), and whether it is a voice rather than
+/// the music.
+pub struct Track {
+  first: u32,
+  length: u32,
+  rate: u16,
+  loop_from: i32 = -1,
+  voice: bool = false,
+}
+
+impl Track {
+  /// Play it from its start: the music in place of any music (and any song), or a voice in
+  /// place of any voice.
+  pub let play = (self) -> void =>
+    sound.start_track(Sample { first: self.first, length: self.length, rate: self.rate, loop_at: self.loop_from }, self.voice)
+}
+
+/// The music stopped, if one plays.
+pub let stop_music = () -> void => sound.stop_track(false)
+
+/// The voice stopped, if one plays.
+pub let stop_voice = () -> void => sound.stop_track(true)
+
+/// Whether music, or a voice, is playing.
+pub let music_playing = () -> bool => sound.track_playing(false)
+pub let voice_playing = () -> bool => sound.track_playing(true)
+
+/// Nothing to do: on the Genesis the sound's own update plays the tracks (a modern game's
+/// `track.update` decodes them). Here so a game calls the same on both.
+pub let update = pure () -> void => {}

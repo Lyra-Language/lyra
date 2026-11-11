@@ -2,7 +2,9 @@ package llvm
 
 import (
 	"math/big"
+	"os"
 
+	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	"github.com/llir/llvm/ir"
@@ -43,14 +45,43 @@ func (l *lowerer) staticConstCandidate(vd *ast.VarDeclStmt) bool {
 		return v.Fixed
 	case *ast.ArrayRepeatExpr:
 		return v.Fixed
+	case *ast.FunctionCallExpr:
+		_, isEmbed := embedPath(v)
+		return isEmbed
 	}
 	return false
+}
+
+// embedPath is the file an `embed("path")` call reads (typechecker/embed.go, which checked
+// it), or false for any other call. Only a const's whole initializer reaches here.
+func embedPath(call *ast.FunctionCallExpr) (string, bool) {
+	ident, ok := call.Function.(*ast.IdentifierExpr)
+	if !ok || ident.Name != "embed" || len(call.Arguments) != 1 {
+		return "", false
+	}
+	lit, ok := call.Arguments[0].(*ast.StringLiteralExpr)
+	if !ok {
+		return "", false
+	}
+	return typechecker.EmbedPath(call.GetLocation().File, lit.Value), true
 }
 
 // staticConstant is expr as an LLVM constant of type ty, or false when some leaf is not a
 // constant.
 func (l *lowerer) staticConstant(expr ast.Expression, ty lltypes.Type) (constant.Constant, bool) {
 	switch v := expr.(type) {
+	case *ast.FunctionCallExpr:
+		// `embed`: the file's bytes, read again here — what the typechecker sized.
+		path, isEmbed := embedPath(v)
+		at, isArray := ty.(*lltypes.ArrayType)
+		if !isEmbed || !isArray || !at.ElemType.Equal(lltypes.I8) {
+			return nil, false
+		}
+		bytes, err := os.ReadFile(path)
+		if err != nil || uint64(len(bytes)) != at.Len {
+			return nil, false
+		}
+		return constant.NewCharArray(bytes), true
 	case *ast.ArrayLiteralExpr:
 		at, ok := ty.(*lltypes.ArrayType)
 		if !ok || uint64(len(v.Elements)) != at.Len {

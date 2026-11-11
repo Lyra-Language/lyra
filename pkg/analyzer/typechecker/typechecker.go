@@ -51,6 +51,9 @@ type TypeChecker struct {
 	// reached the compiler's builtin or a declaration that shadows it is the method
 	// table's answer, and the table has no entry until inference has run.
 	constBuiltinCalls []*ast.FunctionCallExpr
+	// embedConsts are the `embed("path")` calls that are a whole `const`'s initializer —
+	// the one place embed.go allows one.
+	embedConsts map[*ast.FunctionCallExpr]bool
 	// walkingArm is set while checkNestedArmPattern walks a match arm, where a capitalized
 	// name is a pattern the author meant to match rather than a binding they misspelled.
 	walkingArm    bool
@@ -527,7 +530,14 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	// A `const` must be evaluable at compile time: reject any initializer that
 	// isn't a literal, another constant, or an expression built purely from those.
 	if decl.BindingKind == ast.BindingConst {
-		tc.checkConstInitializer(decl.Name, decl.Value)
+		if call, ok := tc.embedCall(decl.Value); ok {
+			if tc.embedConsts == nil {
+				tc.embedConsts = map[*ast.FunctionCallExpr]bool{}
+			}
+			tc.embedConsts[call] = true
+		} else {
+			tc.checkConstInitializer(decl.Name, decl.Value)
+		}
 	}
 
 	// Lambda values (function declarations) are handled separately.
