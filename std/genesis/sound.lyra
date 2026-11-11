@@ -34,8 +34,10 @@ import std.chips.music.{
   MusicData,
   MusicPlayer,
   Dac,
+  Sample,
   new_music,
   held_by,
+  effect_dac,
   DAC_GAINS
 }
 import std.chips.sn76489.{ attenuation_byte }
@@ -108,25 +110,62 @@ pub let stop_music = () -> void => music.stop()
 /// playing on the effect's (`std.chips.music`): once each vertical blank. `tables` is the
 /// game's music, and `samples` its sampled instruments' bytes, which the DAC plays from
 /// where they are in the cartridge.
+///
+/// The effects' YM2612 writes go after the song's, so a sampled effect's DAC is on when the
+/// song lends it FM 6 in the same frame.
 pub let update_music<const N: i64, const P: i64, const S: i64, d> where d: MusicData = (
   steps: ref [N]EffectStep,
   patches: ref [P]FmPatch,
   tables: ref d,
   samples: ref [S]u8
+) -> void => update_music_sampled(steps, patches, tables, samples, NO_SAMPLES)
+
+/// [update_music], for a game with sampled effects too: `effect_samples` are theirs
+/// (Vega's `SOUND_SAMPLES`), their bytes in `samples` with the song's. While one plays, the
+/// DAC plays it in place of the song's (`std.chips.music`'s [effect_dac]).
+pub let update_music_sampled<const N: i64, const P: i64, const S: i64, const E: i64, d> where d: MusicData = (
+  steps: ref [N]EffectStep,
+  patches: ref [P]FmPatch,
+  tables: ref d,
+  samples: ref [S]u8,
+  effect_samples: ref [E]Sample
 ) -> void => {
   let before = held_by(player)
   let effect_writes = effects_frame(steps, patches)
   let (bytes, writes) = music.frame(tables, before | held_by(player), music_psg, music_fm)
   for i in 0..<bytes { write(music_psg[i]) }
-  follow_dac(music.dac, samples)
+  follow_dac(
+    if player.dac.playing { effect_dac(player, effect_samples) } else { music.dac },
+    samples
+  )
   // The Z80 stopped only while what was made is copied to it: a byte copied a byte.
   take_bus()
-  queue_effects(effect_writes)
   for i: i16 in 0..<i16(writes) { queue_fm(
     music_fm[i * 3],
     music_fm[i * 3 + 1],
     music_fm[i * 3 + 2]
   ) }
+  queue_effects(effect_writes)
+  send_dac()
+  give_bus()
+}
+
+/// No sampled effects: what [update_music] passes for a game without them.
+const NO_SAMPLES: [1]Sample = #[Sample {}]
+
+/// [update], for a game with sampled effects and no songs: a sampled effect's bytes, from
+/// `samples` where `effect_samples` (Vega's `SOUND_SAMPLES`) says, streamed to the DAC by
+/// the Z80 as a song's are.
+pub let update_sampled<const N: i64, const P: i64, const S: i64, const E: i64> = (
+  steps: ref [N]EffectStep,
+  patches: ref [P]FmPatch,
+  samples: ref [S]u8,
+  effect_samples: ref [E]Sample
+) -> void => {
+  let writes = effects_frame(steps, patches)
+  follow_dac(effect_dac(player, effect_samples), samples)
+  take_bus()
+  queue_effects(writes)
   send_dac()
   give_bus()
 }

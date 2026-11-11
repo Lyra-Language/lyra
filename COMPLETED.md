@@ -9,6 +9,21 @@ Newest first.
 
 ## Dated log
 
+### 11/11/26 — Sampled sound effects: a recording on FM 6's DAC (std and Vega)
+
+**An effect may be a sample** (`std.chips.effects.Effect.sample`, a `Player.dac` slot) so a
+game plays a WAV as a sound effect on both runtimes, through the path a song's drums already
+took: `music.effect_dac` makes the slot a `Dac` the Genesis's Z80 driver or the modern synth
+plays, and `held_by` counts it as holding FM 6, so the song lets the channel go. **The
+order of the frame's YM2612 writes matters**: the song turns DAC mode off for a channel an
+effect holds, so the effects' writes must follow the song's or the effect's `2B=80` loses the
+frame it starts in — `TestRun_SampledEffectTakesTheDACFromTheSong` starts the effect mid-song
+for that reason, and fails with the order reversed (started first, it passed either way). A
+song note the effect cut does not come back; one effect plays at a time, FM effects included.
+`update_music` keeps its four parameters and forwards with `NO_SAMPLES`. **Vega averages a
+recording down to 11,473 bytes a second for the Genesis** (the driver's rate): faster, the
+driver skips bytes, aliasing; averaging filters first (`sample_import.wav_sound`).
+
 ### 11/11/26 — `bindings.imgui`: arrays, payloads, the list clipper; two compiler bugs
 
 **The generator closes what `todo.md` named and what was next to it**, rather than hand-written

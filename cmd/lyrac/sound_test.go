@@ -629,3 +629,237 @@ let main = () -> void => {
 	}
 	check("Genesis", gsamples[onset:], rate)
 }
+
+// A sampled effect plays its bytes on the YM2612's DAC — a 1 kHz square here, 8 bytes a
+// cycle at 8,000 a second, for 18 frames — through std.game.sound's update_sampled, and
+// the same program in Sheliak through std.genesis.sound's, where the Z80 streams it from
+// the cartridge: heard while it plays, gone after.
+func TestRun_SampledEffectPlaysOnTheDAC(t *testing.T) {
+	t.Parallel()
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	var bytes strings.Builder
+	for i := range 2400 {
+		if i%8 < 4 {
+			bytes.WriteString("0xE0, ")
+		} else {
+			bytes.WriteString("0x20, ")
+		}
+	}
+	tables := `import std.chips.effects.{ Effect, EffectStep }
+import std.chips.ym2612.{ FmPatch }
+import std.chips.music.{ Sample }
+
+const STEPS: [1]EffectStep = #[EffectStep { period: 0, volume: 0 }]
+const PATCHES: [1]FmPatch = #[FmPatch { ops: #[0; 28], feedback_algorithm: 0, sensitivity: 0 }]
+const PCM: [2400]u8 = #[` + bytes.String() + `]
+const SOUND_SAMPLES: [1]Sample = #[Sample { first: 0, length: 2400, rate: 8000 }]
+const BEEP: Effect = Effect { first: 0, count: 18, sample: 0 }
+`
+	check := func(runtime string, samples []float64, rate int) {
+		t.Helper()
+		frame := rate / 60
+		power := func(from, to int, f float64) float64 {
+			from, to = from*frame, min(to*frame, len(samples))
+			var re, im float64
+			for i := from; i < to; i++ {
+				a := 2 * math.Pi * f * float64(i) / float64(rate)
+				re += samples[i] * math.Cos(a)
+				im += samples[i] * math.Sin(a)
+			}
+			n := float64(to - from)
+			return math.Sqrt(re*re+im*im) / n
+		}
+		during, after := power(2, 15, 1000), power(24, 40, 1000)
+		if during < 0.02 || after > during/20 {
+			t.Errorf("%s: 1 kHz at %.4f while the effect plays and %.4f after; want it heard, then gone", runtime, during, after)
+		}
+	}
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "beep.lyra")
+	program := "import std.game.sound\n" + tables + `
+let main = () -> u8 => {
+  BEEP.play()
+  for _ in 0..<45 { sound.update_sampled(STEPS, PATCHES, PCM, SOUND_SAMPLES) }
+  0
+}
+`
+	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wav := filepath.Join(dir, "beep.wav")
+	if _, stderr, code := captureRun(t, "run", src, "--", "--frames", "45", "--wav", wav); code != 0 {
+		t.Fatalf("run exited %d\nstderr: %s", code, stderr)
+	}
+	check("modern", wavSamples(t, wav), 48000)
+
+	genesisToolchainOrSkip(t)
+	gdir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(gdir, "lyra.toml"), []byte("target = \"genesis\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gsrc := filepath.Join(gdir, "beep.lyra")
+	gprogram := "import std.genesis.vdp\nimport std.genesis.sound\n" + tables + `
+@interrupt(vblank)
+let on_vblank = () -> void => sound.update_sampled(STEPS, PATCHES, PCM, SOUND_SAMPLES)
+
+let main = () -> void => {
+  vdp.init()
+  sound.init()
+  BEEP.play()
+  vdp.display_on()
+  vdp.enable_vblank_interrupt()
+  loop {}
+}
+`
+	if err := os.WriteFile(gsrc, []byte(gprogram), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rom := filepath.Join(gdir, "beep.bin")
+	if _, stderr, code := captureRun(t, "build", "-o", rom, gsrc); code != 0 {
+		t.Fatalf("build exited %d: %s", code, stderr)
+	}
+	emulator := os.Getenv("SHELIAK")
+	if emulator == "" {
+		t.Log("SHELIAK is not set; the ROM was built but not heard")
+		return
+	}
+	gwav := filepath.Join(gdir, "beep.wav")
+	cmd := command(t, emulator, rom, "--frames", "60", "--wav", gwav)
+	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("sheliak: %v\n%s", err, out)
+	}
+	gsamples, rate := wavSamplesRate(t, gwav)
+	onset := 0
+	for i, v := range gsamples {
+		if math.Abs(v) > 0.05 {
+			onset = i
+			break
+		}
+	}
+	check("Genesis", gsamples[onset:], rate)
+}
+
+// A sampled effect takes the DAC from a song's sampled instrument: the song's 500 Hz on
+// FM 6 (its sample a C5, played at 16,000 bytes a second), and an effect playing the same
+// bytes at half that — 250 Hz, within the Genesis driver's 11,473 bytes a second — for 12
+// frames from frame 3, the song's already sounding, so the song lends FM 6 to it: the
+// effect's DAC must be on after the song's "off" that frame (the effects' writes last).
+// While the effect plays, its 250 Hz and not the song's; after, neither —
+// the note the effect cut does not come back, as one an FM effect cuts does not. On both
+// runtimes (update_music_sampled).
+func TestRun_SampledEffectTakesTheDACFromTheSong(t *testing.T) {
+	t.Parallel()
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	extra := `
+const SOUND_SAMPLES: [1]Sample = #[Sample { first: 0, length: 256, rate: 8000, loop_at: 0 }]
+const BEEP: Effect = Effect { first: 0, count: 12, sample: 0 }
+`
+	check := func(runtime string, samples []float64, rate int) {
+		t.Helper()
+		frame := rate / 60
+		power := func(from, to int, f float64) float64 {
+			from, to = from*frame, min(to*frame, len(samples))
+			var re, im float64
+			for i := from; i < to; i++ {
+				a := 2 * math.Pi * f * float64(i) / float64(rate)
+				re += samples[i] * math.Cos(a)
+				im += samples[i] * math.Sin(a)
+			}
+			return math.Sqrt(re*re+im*im) / float64(to-from)
+		}
+		effect250, effect500 := power(5, 13, 250), power(5, 13, 500)
+		after250, after500 := power(17, 23, 250), power(17, 23, 500)
+		if effect250 < 0.02 || effect500 > effect250/10 {
+			t.Errorf("%s: while the effect plays, 250 Hz %.4f and 500 Hz %.4f; want the effect's alone", runtime, effect250, effect500)
+		}
+		if after250 > effect250/10 || after500 > effect250/10 {
+			t.Errorf("%s: after it, 250 Hz %.4f and 500 Hz %.4f; want neither", runtime, after250, after500)
+		}
+	}
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "both.lyra")
+	program := "import std.game.sound\nimport std.chips.effects.{ Effect }\n" + songTables + extra + `
+let main = () -> u8 => {
+  TUNE.play()
+  let tables = Tables
+  for i in 0..<30 {
+    if i == 3 { BEEP.play() }
+    sound.update_music_sampled(STEPS, PATCHES, tables, SAMPLE_BYTES, SOUND_SAMPLES)
+  }
+  0
+}
+`
+	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wav := filepath.Join(dir, "both.wav")
+	if _, stderr, code := captureRun(t, "run", src, "--", "--frames", "30", "--wav", wav); code != 0 {
+		t.Fatalf("run exited %d\nstderr: %s", code, stderr)
+	}
+	check("modern", wavSamples(t, wav), 48000)
+
+	genesisToolchainOrSkip(t)
+	gdir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(gdir, "lyra.toml"), []byte("target = \"genesis\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gsrc := filepath.Join(gdir, "both.lyra")
+	gprogram := "import std.genesis.vdp\nimport std.genesis.sound\nimport std.chips.effects.{ Effect }\n" + songTables + extra + `
+let tables = Tables
+var frames: u16 = 0
+
+@interrupt(vblank)
+let on_vblank = () -> void => {
+  if frames == 3 { BEEP.play() }
+  frames += 1
+  sound.update_music_sampled(STEPS, PATCHES, tables, SAMPLE_BYTES, SOUND_SAMPLES)
+}
+
+let main = () -> void => {
+  vdp.init()
+  sound.init()
+  TUNE.play()
+  vdp.display_on()
+  vdp.enable_vblank_interrupt()
+  loop {}
+}
+`
+	if err := os.WriteFile(gsrc, []byte(gprogram), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rom := filepath.Join(gdir, "both.bin")
+	if _, stderr, code := captureRun(t, "build", "-o", rom, gsrc); code != 0 {
+		t.Fatalf("build exited %d: %s", code, stderr)
+	}
+	emulator := os.Getenv("SHELIAK")
+	if emulator == "" {
+		t.Log("SHELIAK is not set; the ROM was built but not heard")
+		return
+	}
+	gwav := filepath.Join(gdir, "both.wav")
+	cmd := command(t, emulator, rom, "--frames", "60", "--wav", gwav)
+	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("sheliak: %v\n%s", err, out)
+	}
+	gsamples, rate := wavSamplesRate(t, gwav)
+	onset := 0
+	for i, v := range gsamples {
+		if math.Abs(v) > 0.05 {
+			onset = i
+			break
+		}
+	}
+	check("Genesis", gsamples[onset:], rate)
+}

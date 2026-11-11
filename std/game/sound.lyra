@@ -25,7 +25,17 @@ module std.game.sound
 import bindings.sdl3.{ init, INIT_AUDIO, AudioStream, open_audio }
 import std.io.{ write_bytes }
 import std.chips.effects.{ Effect, EffectStep, Player, new_player }
-import std.chips.music.{ Tune, MusicData, MusicPlayer, Dac, new_music, held_by, dac_byte }
+import std.chips.music.{
+  Tune,
+  MusicData,
+  MusicPlayer,
+  Dac,
+  Sample,
+  new_music,
+  held_by,
+  effect_dac,
+  dac_byte
+}
 import std.chips.sn76489.{ Psg, new_psg }
 import std.chips.ym2612.{ Ym2612, FmPatch, new_ym2612 }
 import std.chips.resample.{ Resampler, new_resampler }
@@ -77,11 +87,25 @@ pub let update<const N: i64, const P: i64> = (
 /// [update], and the song playing's tick under the effects — a channel an effect is
 /// playing on the effect's (`std.chips.music`). `tables` is the game's music, and `samples`
 /// its sampled instruments' bytes, which the DAC plays from.
+///
+/// The effects' YM2612 writes go after the song's, so a sampled effect's DAC is on when the
+/// song lends it FM 6 in the same update.
 pub let update_music<const N: i64, const P: i64, const S: i64, d> where d: MusicData = (
   steps: ref [N]EffectStep,
   patches: ref [P]FmPatch,
   tables: ref d,
   samples: ref [S]u8
+) -> void => update_music_sampled(steps, patches, tables, samples, NO_SAMPLES)
+
+/// [update_music], for a game with sampled effects too: `effect_samples` are theirs
+/// (Vega's `SOUND_SAMPLES`), their bytes in `samples` with the song's. While one plays, the
+/// DAC plays it in place of the song's (`std.chips.music`'s [effect_dac]).
+pub let update_music_sampled<const N: i64, const P: i64, const S: i64, const E: i64, d> where d: MusicData = (
+  steps: ref [N]EffectStep,
+  patches: ref [P]FmPatch,
+  tables: ref d,
+  samples: ref [S]u8,
+  effect_samples: ref [E]Sample
 ) -> void => {
   if !started { start() }
   let before = held_by(player)
@@ -90,7 +114,6 @@ pub let update_music<const N: i64, const P: i64, const S: i64, d> where d: Music
   var fm: [128]u8 = #[0; 128]
   let writes = player.fm_frame(steps, patches, fm)
   for i in 0..<n { synth.write_psg(out[i]) }
-  for i in 0..<writes { synth.write_fm(fm[i * 3], fm[i * 3 + 1], fm[i * 3 + 2]) }
   var psg: [16]u8 = #[0; 16]
   var music_fm: [768]u8 = #[0; 768]
   let (bytes, music_writes) = music.frame(tables, before | held_by(player), psg, music_fm)
@@ -100,14 +123,45 @@ pub let update_music<const N: i64, const P: i64, const S: i64, d> where d: Music
     music_fm[i * 3 + 1],
     music_fm[i * 3 + 2]
   ) }
-  let dac = music.dac
+  for i in 0..<writes { synth.write_fm(fm[i * 3], fm[i * 3 + 1], fm[i * 3 + 2]) }
+  play_dac(
+    if player.dac.playing { effect_dac(player, effect_samples) } else { music.dac },
+    samples
+  )
+  heard(synth.run(UPDATE_SAMPLES))
+}
+
+/// No sampled effects: what [update_music] passes for a game without them.
+const NO_SAMPLES: [1]Sample = #[Sample {}]
+
+/// [update], for a game with sampled effects and no songs: a sampled effect's bytes, from
+/// `samples` where `effect_samples` (Vega's `SOUND_SAMPLES`) says, played on the DAC as a
+/// song's are.
+pub let update_sampled<const N: i64, const P: i64, const S: i64, const E: i64> = (
+  steps: ref [N]EffectStep,
+  patches: ref [P]FmPatch,
+  samples: ref [S]u8,
+  effect_samples: ref [E]Sample
+) -> void => {
+  if !started { start() }
+  var out: [8]u8 = #[0; 8]
+  let n = player.frame(steps, out)
+  var fm: [128]u8 = #[0; 128]
+  let writes = player.fm_frame(steps, patches, fm)
+  for i in 0..<n { synth.write_psg(out[i]) }
+  for i in 0..<writes { synth.write_fm(fm[i * 3], fm[i * 3 + 1], fm[i * 3 + 2]) }
+  play_dac(effect_dac(player, effect_samples), samples)
+  heard(synth.run(UPDATE_SAMPLES))
+}
+
+/// The DAC playing as `dac` says, its sample's bytes from `samples`: a new note's started.
+let play_dac<const S: i64> = (dac: Dac, samples: ref [S]u8) -> void => {
   if synth.new_sample(dac) {
     let from = i64(dac.sample.first).min(samples.len())
     let to = (from + i64(dac.sample.length)).min(samples.len())
     synth.play_sample(dac, [k in from..<to | samples[k]])
   }
   synth.follow(dac)
-  heard(synth.run(UPDATE_SAMPLES))
 }
 
 /// An update's samples to the device, or kept for the WAV.

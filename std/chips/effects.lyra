@@ -60,6 +60,10 @@ pub struct Effect {
   white: bool = true,
   fm: bool = false,
   patch: u16 = 0,
+  /// A sampled effect: which of the game's samples (`std.chips.music`'s [Sample], Vega's
+  /// `SOUND_SAMPLES`) it plays on the YM2612's DAC, from its first byte, for `count`
+  /// frames; -1 for a stepped one.
+  sample: i16 = -1,
 }
 
 /// An FM note as a step's `period`: its block (0–7) above its F-number (11 bits).
@@ -85,6 +89,10 @@ pub struct Player {
   tone: Slot,
   noise: Slot,
   fm: Slot,
+  /// A sampled effect on the DAC — FM 6, which it shares with an FM effect, one at a
+  /// time — its sample in `patch`; and how many have started, so each is a new note.
+  dac: Slot = Slot {},
+  dac_starts: u16 = 0,
 }
 
 /// An effect under way: the next step to play, the step after its last, and whether the
@@ -107,7 +115,7 @@ impl Slot {
 
 /// A player with nothing playing.
 pub let new_player = pure () -> Player =>
-  Player { tone: Slot {}, noise: Slot {}, fm: Slot {} }
+  Player { tone: Slot {}, noise: Slot {}, fm: Slot {}, dac: Slot {} }
 
 /// The tone channel effects play on, and the one whose period pitches the noise.
 const TONE: u8 = 0
@@ -115,8 +123,24 @@ const NOISE_PITCH: u8 = 2
 const NOISE: u8 = 3
 
 impl Player {
-  /// Start `effect` from its first step, in place of any its channel was playing.
+  /// Start `effect` from its first step, in place of any its channel was playing. A
+  /// sampled one and an FM one share FM 6: either ends the other.
   pub let start = (self: mut, effect: Effect) -> void => {
+    if effect.sample >= 0 {
+      // An FM effect under way keys off, and the DAC takes the channel.
+      if self.fm.playing { self.fm.end = self.fm.next }
+      self.dac = Slot {
+        next: 0,
+        end: effect.count,
+        playing: true,
+        fresh: true,
+        patch: u16(effect.sample)
+      }
+      self.dac_starts = self.dac_starts.wrapping_add(1)
+      return
+    }
+    // The DAC gives FM 6 back before an FM effect sounds on it.
+    if effect.fm && self.dac.playing { self.dac.end = self.dac.next }
     let slot = Slot {
       next: effect.first,
       end: effect.first + effect.count,
@@ -136,7 +160,7 @@ impl Player {
 
   /// Whether an effect is still playing on any channel.
   pub let playing = pure (self: ref) -> bool =>
-    self.tone.playing || self.noise.playing || self.fm.playing
+    self.tone.playing || self.noise.playing || self.fm.playing || self.dac.playing
 
   /// The PSG steps due this frame, as indices into the game's table: the tone channel's and
   /// the noise's, -1 where none is playing a step.
@@ -211,20 +235,46 @@ impl Player {
   /// a write: bank, register, value — and how many writes: its patch and the key on at its
   /// first step, each step's note and its carriers' levels, the key off after its last.
   /// Steps or a patch past the end of the tables end it.
+  ///
+  /// A sampled effect's writes come first: FM 6 keyed off and turned into the DAC as it
+  /// starts, and back as it ends — the runtime streams its bytes (`std.chips.music`'s
+  /// [effect_dac]). The runtime sends these after the song's, so the DAC is on when a song
+  /// lends FM 6 in the same frame.
   pub let fm_frame<const N: i64, const P: i64> = (
     self: mut,
     steps: ref [N]EffectStep,
     patches: ref [P]FmPatch,
     out: mut [128]u8
   ) -> i64 => {
-    if !self.fm.playing { return 0 }
+    let n = self.dac_frame(out)
+    if !self.fm.playing { return n }
     let (k, p) = self.fm_due()
     if p >= patches.len() {
       self.fm.playing = false
-      return 0
+      return n
     }
     let step = if k >= 0 && k < steps.len() { Some(steps[k]) } else { None }
-    self.fm_frame_with(step, patches[p], out)
+    self.fm_frame_from(step, patches[p], out, n)
+  }
+
+  /// The DAC's writes this frame into `out` from its start, and how many: FM 6 keyed off and
+  /// made the DAC as a sampled effect starts, a frame on while it plays, FM 6 back after its
+  /// last frame.
+  pub let dac_frame = (self: mut, out: mut [128]u8) -> i64 => {
+    if !self.dac.playing { return 0 }
+    var n: i64 = 0
+    if self.dac.fresh {
+      n = write(out, n, 0, 0x28, key_on_code(FM_CHANNEL))
+      n = write(out, n, 0, 0x2B, 0x80)
+      self.dac.fresh = false
+    }
+    if self.dac.next >= self.dac.end {
+      n = write(out, n, 0, 0x2B, 0)
+      self.dac.playing = false
+    } else {
+      self.dac.next += 1
+    }
+    n
   }
 
   /// [fm_frame], given the step due and its patch rather than the tables (an editor's).
@@ -234,11 +284,20 @@ impl Player {
     step: Maybe<EffectStep>,
     patch: FmPatch,
     out: mut [128]u8
+  ) -> i64 => self.fm_frame_from(step, patch, out, 0)
+
+  /// [fm_frame_with], its writes after the first `start` in `out`.
+  let fm_frame_from = (
+    self: mut,
+    step: Maybe<EffectStep>,
+    patch: FmPatch,
+    out: mut [128]u8,
+    start: i64
   ) -> i64 => {
-    if !self.fm.playing { return 0 }
+    if !self.fm.playing { return start }
     let bank: u8 = if FM_CHANNEL < 3 { 0 } else { 1 }
     let ch = FM_CHANNEL % 3
-    var n: i64 = 0
+    var n = start
     if self.fm.fresh {
       n = write(out, n, 0, 0x28, key_on_code(FM_CHANNEL))
       for k in 0..<PATCH_WRITES {

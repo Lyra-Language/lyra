@@ -823,7 +823,10 @@ of Markdown.
   rates); `effects`, the sound-effect player `std.genesis.sound` and `std.game.sound`
   share — the bytes the PSG is sent each frame, and for an FM effect (on channel 6, a patch,
   `ym2612.FmPatch`, keyed on at its first step and off after its last so its release rings)
-  the YM2612's register writes — no heap, so the 68000 runs it; and `music`, the song player
+  the YM2612's register writes; a **sampled** effect (`Effect.sample`, the game's sample k)
+  takes FM 6's DAC for `count` frames, through `music.effect_dac` and `update_sampled` /
+  `update_music_sampled` (the effects' YM2612 writes after the song's, so its DAC mode wins
+  the frame it lends FM 6) — no heap, so the 68000 runs it; and `music`, the song player
   both runtimes run under the effects (`update_music`): a tracker's ten channels (thirteen
   in a song whose FM 3 is extended, `Tune.extended`: its operators 2–4 channels of their own,
   each keyed through register `28` on the chip's special mode, as Furnace's extended CH3), Furnace's

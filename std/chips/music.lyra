@@ -149,6 +149,22 @@ pub struct Sample {
   loop_at: i32 = -1,
 }
 
+/// What the DAC plays for the effects `player` is playing, as a song's [Dac] says it: the
+/// sampled effect's sample (from the game's `samples`, Vega's `SOUND_SAMPLES`) at its own
+/// rate and full level while it plays, else nothing. Its notes are apart from a song's, so
+/// the runtime starts each one, and the song's again after it. A runtime plays this in
+/// place of the song's DAC while `player.dac.playing`.
+pub let effect_dac<const K: i64> = pure (
+  player: ref Player,
+  samples: ref [K]Sample
+) -> Dac => {
+  let k = i64(player.dac.patch)
+  let note = 0x8000 | (player.dac_starts & 0x7FFF)
+  if !player.dac.playing || k >= K { return Dac { note: note } }
+  let sample = samples[k]
+  Dac { sample: sample, rate: u32(sample.rate), level: 15, playing: true, note: note }
+}
+
 /// What the DAC plays, as the song says: [MusicPlayer.dac]. The runtime starts `sample` from
 /// its first byte whenever `note` changes, plays it at `rate` bytes a second and `level`
 /// (0–15, [dac_byte]) while `playing`, and stops when not.
@@ -194,7 +210,7 @@ pub const MAX_MUSIC_FM_WRITES: i64 = 256
 /// music leaves them alone.
 pub let held_by = pure (player: Player) -> u16 => {
   var held: u16 = 0
-  if player.fm.playing { held = held | (u16(1) << u16(FM_CHANNEL)) }
+  if player.fm.playing || player.dac.playing { held = held | (u16(1) << u16(FM_CHANNEL)) }
   if player.tone.playing { held = held | (u16(1) << u16(FIRST_PSG)) }
   if player.noise.playing { held = held | (u16(1) << u16(NOISE)) | (u16(1) << u16(FIRST_PSG + 2)) }
   held
