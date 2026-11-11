@@ -65,9 +65,7 @@ func TestCodeAction_AddImportKeepsTheListValid(t *testing.T) {
 		{name: "a name per line with comments", formatted: true,
 			imports: "import nums.{\n  twice, // doubles\n  half // halves\n}",
 			want:    "import nums.{\n  twice, // doubles\n  half, // halves\n  thrice\n}"},
-		// Not formatted: lyrafmt indents a comment after the last member a step further
-		// (todo.md), so the case cannot be one it leaves alone.
-		{name: "a comment line before the brace",
+		{name: "a comment line before the brace", formatted: true,
 			imports: "import nums.{\n  twice,\n  half\n  // more to come\n}",
 			want:    "import nums.{\n  twice,\n  half,\n  thrice\n  // more to come\n}"},
 		{name: "a list past lyrafmt's width", formatted: true,

@@ -629,6 +629,37 @@ func TestExample_LyrafmtIndentsInherentMembers(t *testing.T) {
 	}
 }
 
+// **A comment on its own line before a closer sits with the list, and a struct's fields
+// each begin a line of their own** (11/11). The comment after a list's last element, with
+// no comma between, was owned by that element and indented as its continuation — found by
+// lyra-lsp's import quick-fix tests — and a struct's fields were owned by its body, so a
+// field after a line with no comma (a newline separates fields too) sat a level deeper.
+func TestExample_LyrafmtIndentsTrailingCommentsAndFields(t *testing.T) {
+	t.Parallel()
+	bin := buildLyrafmt(t)
+	want := "import m.{\n  a,\n  b\n  // more to come\n}\n" +
+		"let f = foo(\n  a,\n  b\n  // one\n  /* two */\n)\n" +
+		"let h = match x {\n  1 => 2,\n  _ => 3\n  // note\n}\n" +
+		"struct P {\n  x: i64\n  /// The second.\n  y: i64\n  // note\n}\n" +
+		"let s = a +\n  // explain\n  b\n"
+	// Each line pushed out of place; `explain` continues the `let`, so it stays a level in.
+	src := strings.NewReplacer("\n  //", "\n      //", "\n  /*", "\n /*", "\n  y", "\n    y",
+		"\n  ///", "\n    ///").Replace(want)
+	for _, in := range []string{src, want} {
+		path := filepath.Join(t.TempDir(), "in.lyra")
+		if err := os.WriteFile(path, []byte(in), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := command(t, bin, path).Output()
+		if err != nil {
+			t.Fatalf("formatting: %v", err)
+		}
+		if string(got) != want {
+			t.Errorf("formatted:\n%s\nwant:\n%s", got, want)
+		}
+	}
+}
+
 // **A type list is never exploded, and is not part of the list around it** (10/07). `<`
 // was no delimiter to the breaker, so the commas of `<t, e>` belonged to the enclosing list:
 // a long line split `(self: Result<t,` ⏎ `e>)`, and in an `impl` block — whose `{` encloses

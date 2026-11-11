@@ -9,6 +9,22 @@ Newest first.
 
 ## Dated log
 
+### 11/11/26 — lyrafmt: a comment before a closer, and a struct's fields, indent with the list
+
+**A whole-line comment after a list's last element was indented as its continuation**:
+`b` / `// note` / `}` gave the note a level more than `b`, in an import list, a call, an
+array, a `match`. With no comma between them the comment's owner was `b`'s, and a line
+continuing its owner is one deeper. Now a comment with only comments between it and a
+closer is the list's last line (`comment_before_closer`). Found by the import quick-fix
+tests the same day, which skipped that case's lyrafmt check until this.
+
+Looking at it found a worse one: **a struct's fields separated by a newline** (which the
+grammar allows) had every field after the first a level deeper, since the struct's body was
+not a member list to `is_block_like` the way a trait's is. `struct_type_body`,
+`anonymous_struct_type` and `union_type_body` joined it. Every tracked `.lyra` file in lyra,
+Vega, Sheliak and Termina (430) formats byte for byte as it did, so neither shape was in
+use; `TestExample_LyrafmtIndentsTrailingCommentsAndFields` pins both.
+
 ### 11/11/26 — Import quick fixes put the comma where it belongs (lyra-lsp)
 
 **Reported from Zed**: "Import x from m" did not add commas in the right places. The fix

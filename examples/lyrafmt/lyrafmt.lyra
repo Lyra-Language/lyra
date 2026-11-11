@@ -37,7 +37,8 @@
 //     deeper than that line, so the body of a wrapped signature is not level with the
 //     signature's own continuation;
 //   - a line beginning with a closing delimiter closes it first and sits at the level of
-//     its anchor's line, and an `else` on its own line takes the previous line's level.
+//     its anchor's line, and an `else` on its own line takes the previous line's level;
+//     a comment on its own line just before a closer is the list's, never a continuation.
 //
 // Four more, all about the space *between* tokens, and none of them touching a leaf — so
 // a comment, a string or a raw string keeps every byte it had:
@@ -371,7 +372,10 @@ let parameter_list_start = (lambda: Node, fallback: i64) -> i64 => {
 /// loop's body, and the member lists a newline separates — an `impl Type { … }` block's
 /// `let`s among them, and attributes, since each of `@link("a")` and `@link("b")` above a
 /// `module` is a line of its own, and the second was indented as a continuation of the
-/// first (09/27, found formatting `bindings.imgui`).
+/// first (09/27, found formatting `bindings.imgui`). A struct's or union's fields are a
+/// member list too, a newline separating them as well as a comma: without them a field
+/// after a line with no comma read as continuing the field above, and sat a level deeper
+/// (11/11).
 let is_block_like = pure (k: string) -> bool =>
   k == "program" ||
   k == "block" ||
@@ -379,6 +383,7 @@ let is_block_like = pure (k: string) -> bool =>
   k == "while_body" ||
   k == "for_in_body" ||
   k == "impl_methods" || k == "inherent_members" || k == "trait_methods" ||
+  k == "struct_type_body" || k == "anonymous_struct_type" || k == "union_type_body" ||
   k == "attribute_list"
 
 /// Whether the token before a node makes the node an owner: an opening delimiter or a
@@ -404,6 +409,17 @@ let after_update_bar = pure (out: []Leaf) -> bool => {
   }
   false
 }
+
+/// Whether `leaves[i]` is a comment with nothing but comments between it and a closing
+/// delimiter.
+let comment_before_closer = pure (leaves: []Leaf, i: i64) -> bool => {
+  if !is_comment_kind(leaves[i].kind) { return false }
+  var j = i + 1
+  while j < leaves.len() && is_comment_kind(leaves[j].kind) { j += 1 }
+  j < leaves.len() && closes(leaves[j].kind)
+}
+
+let is_comment_kind = pure (k: string) -> bool => k == "comment" || k == "doc_comment"
 
 /// The kind of the last token in `out` that is not a comment, or "" with none.
 let last_code_kind = pure (out: []Leaf) -> string => {
@@ -477,11 +493,11 @@ let format = (bytes: []u8, len: i64, leaves: []Leaf, rule: bool, breaks: []bool,
       } else {
         scopes[scopes.len() - 1].level
       }
-      let continuation = !closes(leaf.kind) && last_newline(
-        bytes,
-        leaf.owner,
-        leaf.start
-      ) >= 0
+      // A comment on its own line before a closer is the list's last line, not more of
+      // the element above it: `b` / `// note` / `}` puts the note level with `b`. Its owner
+      // is `b`'s when no comma came between, which read as a continuation (11/11).
+      let ends_list = closes(leaf.kind) || comment_before_closer(leaves, i)
+      let continuation = !ends_list && last_newline(bytes, leaf.owner, leaf.start) >= 0
       previous_line_level = line_level
       previous_line_last_kind = last_kind
       // An `else` on its own line sits under the line its `if` began — the previous line,
