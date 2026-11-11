@@ -35,6 +35,10 @@ module std.sms.entity
 //!
 //! **Meeting is one-sided**, as `std.sms.collision` says: `a.meets(b)` asks whether a
 //! collider of `a` looks for a layer one of `b`'s is on, whatever `b` looks for.
+//!
+//! **A path is followed, not steered** ([give_path], [follow_path]): Vega bakes the curve
+//! drawn in its scene editor into points [PATH_STEP] pixels apart, so a frame along it is a
+//! shift and a multiply at the kind's top speed.
 
 import std.sms.collision.{ Shape, Collider }
 
@@ -128,6 +132,18 @@ pub struct Entity {
   /// solid's push ([blocked_by]) shoved it into a wall or another solid. The game decides
   /// what that means (hurt it, stop the solid); `block` sets it each time it runs.
   squeezed: bool = false,
+  /// Its path ([give_path]) and whether it starts when first shown; where it is with it
+  /// ([PATH_WAITING], [PATH_FOLLOWING], [PATH_DONE]); how far along it is, in 256ths of a
+  /// pixel, from where it started it (`path_x`, `path_y`), and whether it is on its way back.
+  /// `path_laps` counts the ends it has reached.
+  path: Path = NO_PATH,
+  path_when_seen: bool = false,
+  path_state: u8 = PATH_NONE,
+  path_at: i32 = 0,
+  path_back: bool = false,
+  path_x: i32 = 0,
+  path_y: i32 = 0,
+  path_laps: u16 = 0,
 }
 
 /// The fastest an entity falls, in 256ths of a pixel a frame: 8 pixels, a tile, so a fall
@@ -558,6 +574,142 @@ impl Entity {
     }
   }
 }
+
+// ── Paths ──────────────────────────────────────────────────────────────────────────────
+
+/// How far apart a path's points are, in pixels: Vega lays them out evenly along the curve
+/// drawn in its scene editor, so following one is a shift and a multiply a frame — never a
+/// root, which the CPU has no instruction for.
+pub const PATH_STEP: i16 = 4
+
+/// What an entity does at the end of its path ([Path.end]): stays there…
+pub const PATH_STOP: u8 = 0
+/// …goes round again (Vega closes such a path, its last point its first)…
+pub const PATH_LOOP: u8 = 1
+/// …goes back along it to the start, and out again…
+pub const PATH_BACK_AND_FORTH: u8 = 2
+/// …or carries on the way it was going, at its speed: out of the screen, as a shooter's
+/// enemies leave.
+pub const PATH_LEAVE: u8 = 3
+
+/// Where an entity is with its path ([Entity.path_state]): it has none…
+pub const PATH_NONE: u8 = 0
+/// …it has one and waits to start it ([start_path])…
+pub const PATH_WAITING: u8 = 1
+/// …it is following it…
+pub const PATH_FOLLOWING: u8 = 2
+/// …or it reached the end of one that stops or leaves ([path_finished]).
+pub const PATH_DONE: u8 = 3
+
+/// A path an entity follows: `count` points from `first` in the game's table of every path's
+/// points (Vega's `PATH_POINTS`), [PATH_STEP] pixels apart, and what it does at the end.
+pub struct Path {
+  first: u16,
+  count: u16,
+  end: u8,
+}
+
+/// No path: what an entity has until it is given one.
+pub const NO_PATH: Path = Path { first: 0, count: 0, end: PATH_STOP }
+
+/// A point of a path, from where it starts, in 256ths of a pixel: wherever an entity is when
+/// it starts the path is its first point.
+pub struct PathPoint {
+  x: i32,
+  y: i32,
+}
+
+impl Entity {
+  /// The entity given `path`, to start where it stands when the game says ([start_path]) —
+  /// or, `when_seen`, when the camera first shows it, which the game's assets ask
+  /// (`follow_path_in`). A path of fewer than two points is none.
+  pub let give_path = (self: mut, path: Path, when_seen: bool = false) -> void => {
+    self.path = path
+    self.path_when_seen = when_seen
+    self.path_state = if path.count >= 2 { PATH_WAITING } else { PATH_NONE }
+    self.path_laps = 0
+  }
+
+  /// Its path started from where it stands, from its first point — again, if it was on it.
+  pub let start_path = (self: mut) -> void => {
+    if self.path.count < 2 { return }
+    self.path_state = PATH_FOLLOWING
+    self.path_x = self.fx
+    self.path_y = self.fy
+    self.path_at = 0
+    self.path_back = false
+  }
+
+  /// A frame along its path at its kind's top speed, through anything — once a frame, in
+  /// place of a move. Its speed is set to the step, for what asks it (which way it faces,
+  /// [blocked_by]). One that left its path's end carries on as it went; one waiting, done
+  /// or with none stays still.
+  pub let follow_path<const K: i64> = (self: mut, points: ref [K]PathPoint) -> void => {
+    if self.path_state == PATH_DONE && self.path.end == PATH_LEAVE {
+      self.move()
+      return
+    }
+    if self.path_state != PATH_FOLLOWING { return }
+    let span = i32(self.path.count - 1) << PATH_SHIFT
+    let speed = i32(self.kind.max_speed)
+    if self.path_back {
+      self.path_at -= speed
+      if self.path_at <= 0 {
+        self.path_at = (-self.path_at).min(span)
+        self.path_back = false
+        self.path_laps = self.path_laps.wrapping_add(1)
+      }
+    } else {
+      self.path_at += speed
+      if self.path_at >= span {
+        self.path_laps = self.path_laps.wrapping_add(1)
+        if self.path.end == PATH_LOOP {
+          self.path_at = (self.path_at - span).min(span)
+        } else if self.path.end == PATH_BACK_AND_FORTH {
+          self.path_at = (span * 2 - self.path_at).max(0)
+          self.path_back = true
+        } else {
+          self.path_at = span
+          self.path_state = PATH_DONE
+        }
+      }
+    }
+    // Between the two points it is past, as far along as it is.
+    let k = u16(self.path_at >> PATH_SHIFT)
+    let p = points[self.path.first + k]
+    var nx = self.path_x + p.x
+    var ny = self.path_y + p.y
+    if k + 1 < self.path.count {
+      let q = points[self.path.first + k + 1]
+      let part = self.path_at & (PATH_STEP_FIXED - 1)
+      nx += ((q.x - p.x) * part) >> PATH_SHIFT
+      ny += ((q.y - p.y) * part) >> PATH_SHIFT
+    }
+    self.was_x = self.x()
+    self.was_y = self.y()
+    self.vx = i16(nx - self.fx)
+    self.vy = i16(ny - self.fy)
+    self.fx = nx
+    self.fy = ny
+    self.on_floor = false
+    // Leaving: on the way its last whole step went, at its speed.
+    if self.path_state == PATH_DONE && self.path.end == PATH_LEAVE {
+      let to = self.path.first + self.path.count - 1
+      let from = if self.path.count >= 3 { to - 1 } else { to }
+      let a = points[from - 1]
+      let b = points[from]
+      self.vx = i16(((b.x - a.x) * speed) >> PATH_SHIFT)
+      self.vy = i16(((b.y - a.y) * speed) >> PATH_SHIFT)
+    }
+  }
+
+  /// Whether it reached the end of a path that stops or leaves there.
+  pub let path_finished = pure (self: ref) -> bool => self.path_state == PATH_DONE
+}
+
+/// [PATH_STEP] in 256ths of a pixel, and the shift that divides by it.
+const PATH_STEP_FIXED: i32 = 1024
+const PATH_SHIFT: i32 = 10
 
 /// Whether a sprite `width` × `height` with its top-left at (`x`, `y`) on the screen shows
 /// there — one well off it would wrap round onto it. The screen is the Master System's 256×124

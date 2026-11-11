@@ -797,7 +797,7 @@ func (l *lowerer) lowerCallArgs(block *ir.Block, args []value.Value, argExprs []
 		// function-long lifetime is more than enough, and an owned temporary is still
 		// released after the statement by the ordinary pending-temp machinery.
 		if i < len(params) && paramIsByRef(params[i]) {
-			if isLValuePath(argExpr) {
+			if isLValuePath(argExpr) && l.namesStorage(argExpr) {
 				if block, err = l.deferByRefPlace(block, argExpr, len(args), &deferred); err != nil {
 					return nil, nil, false, err
 				}
@@ -896,8 +896,12 @@ func (l *lowerer) promoteVariadicArg(block *ir.Block, argExpr ast.Expression, v 
 // address is passed. Only `ref` reaches the temporary case in a well-typed program
 // — checkMutArgument requires a `mut` argument to be an lvalue rooted at a mutable
 // binding, since writing to a temporary would be meaningless.
+//
+// A `const` that is not static data (declareStaticConsts) — an element an expression the
+// backend cannot fold — is lowered at each use and has no storage: a path rooted at one is
+// a temporary too. Lending one by `ref` asked lvalueAddress for a slot it never had (11/10).
 func (l *lowerer) argumentAddress(block *ir.Block, arg ast.Expression) (value.Value, *ir.Block, error) {
-	if isLValuePath(arg) {
+	if isLValuePath(arg) && l.namesStorage(arg) {
 		loc, block, err := l.lvalueAddress(block, arg)
 		if err != nil {
 			return nil, nil, err

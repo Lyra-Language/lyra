@@ -18,6 +18,10 @@ not a formality.
 
 ### Backend — LLVM IR
 
+- **[DONE 11/10] A `const` table lent by `ref`**: a negative integer in an element now folds
+  to static data, and a table left inlined (an element arithmetic) is lent as a temporary
+  rather than failing as "an unbound identifier" (COMPLETED.md 11/10).
+
 - **[DONE 10/30] Reassigning a managed global releases what it replaced**, in `main` too, and
   a borrowed read of one is held for its statement (COMPLETED.md, 10/30).
 - **[PARTIAL] Perceus reference counting.** Stages 1–3 (last-use, dup/drop fusion,

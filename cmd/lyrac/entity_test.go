@@ -665,3 +665,114 @@ let main = () -> u8 => {
   0
 }
 `
+
+// An entity follows a path Vega laid out: waiting until started, at its kind's top speed
+// between points PATH_STEP apart, and stopping, going round, back and forth, or leaving at
+// the end — alike on every runtime.
+func TestRun_EntitiesFollowPaths(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	for _, rt := range []struct {
+		name string
+		repl *strings.Replacer
+	}{
+		{"genesis", strings.NewReplacer("@RT", "genesis", "@D", "", "@ONE", "256", "@P4", "1024", "@P8", "2048", "@P12", "3072", "@P0", "0", "@ZERO", "0")},
+		{"sms", strings.NewReplacer("@RT", "sms", "@D", "", "@ONE", "256", "@P4", "1024", "@P8", "2048", "@P12", "3072", "@P0", "0", "@ZERO", "0")},
+		{"game", strings.NewReplacer("@RT", "game", "@D", ".0", "@ONE", "1.0", "@P4", "4.0", "@P8", "8.0", "@P12", "12.0", "@P0", "0.0", "@ZERO", "0.0")},
+	} {
+		t.Run(rt.name, func(t *testing.T) {
+			src := filepath.Join(t.TempDir(), "main.lyra")
+			if err := os.WriteFile(src, []byte(rt.repl.Replace(entityPathSource)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, stderr, code := captureRun(t, "run", src); code != 0 {
+				t.Errorf("case %d failed; stderr: %s", code, stderr)
+			}
+		})
+	}
+}
+
+const entityPathSource = `import std.@RT.collision.{ Shape, Collider }
+import std.@RT.entity.{ Animation, EntityKind, Path, PathPoint }
+import std.@RT.entity
+
+const STILL: Animation = Animation { sprite: 0, first: 0, count: 1, total: 1, looping: false }
+const NONE: Collider = Collider { shape: Shape { x: 0@D, y: 0@D, width: 0@D, height: 0@D }, layers: 0, mask: 0 }
+const FLIER: EntityKind = EntityKind {
+  width: 8@D,
+  height: 8@D,
+  animation: STILL,
+  colliders: #[NONE, NONE, NONE, NONE],
+  collider_count: 0,
+  max_speed: @ONE,
+  acceleration: @ONE,
+  friction: @ONE,
+  gravity: @ZERO
+}
+
+// Across 12 pixels; out 4 and back; down 8; and a diagonal step.
+const POINTS: [12]PathPoint = #[
+  PathPoint { x: @P0, y: @P0 }, PathPoint { x: @P4, y: @P0 }, PathPoint { x: @P8, y: @P0 }, PathPoint { x: @P12, y: @P0 },
+  PathPoint { x: @P0, y: @P0 }, PathPoint { x: @P4, y: @P0 }, PathPoint { x: @P0, y: @P0 },
+  PathPoint { x: @P0, y: @P0 }, PathPoint { x: @P0, y: @P4 }, PathPoint { x: @P0, y: @P8 },
+  PathPoint { x: @P0, y: @P0 }, PathPoint { x: @P4, y: @P4 },
+]
+
+let main = () -> u8 => {
+  // Stops: waits until started, then a pixel an update, and stays at the end.
+  var e = FLIER.spawn(10@D, 20@D)
+  e.give_path(Path { first: 0, count: 4, end: entity.PATH_STOP })
+  if e.path_state != entity.PATH_WAITING { return 1 }
+  e.follow_path(POINTS)
+  if e.x() != 10@D { return 2 }
+  e.start_path()
+  for _ in 0..<3 { e.follow_path(POINTS) }
+  if e.x() != 13@D || e.y() != 20@D || e.path_finished() { return 3 }
+  for _ in 0..<20 { e.follow_path(POINTS) }
+  if e.x() != 22@D || !e.path_finished() || e.path_laps != 1 { return 4 }
+
+  // Loops: round to the start and on.
+  var l = FLIER.spawn(0@D, 0@D)
+  l.give_path(Path { first: 4, count: 3, end: entity.PATH_LOOP })
+  l.start_path()
+  for _ in 0..<8 { l.follow_path(POINTS) }
+  if l.x() != 0@D || l.path_laps != 1 || l.path_finished() { return 5 }
+  for _ in 0..<2 { l.follow_path(POINTS) }
+  if l.x() != 2@D { return 6 }
+
+  // Back and forth: out along it, back along it, and out again.
+  var b = FLIER.spawn(0@D, 0@D)
+  b.give_path(Path { first: 0, count: 3, end: entity.PATH_BACK_AND_FORTH })
+  b.start_path()
+  for _ in 0..<10 { b.follow_path(POINTS) }
+  if b.x() != 6@D || !b.path_back { return 7 }
+  for _ in 0..<7 { b.follow_path(POINTS) }
+  if b.x() != 1@D || b.path_back || b.path_laps != 2 { return 8 }
+
+  // Leaves: on down at its speed past the end.
+  var d = FLIER.spawn(0@D, 0@D)
+  d.give_path(Path { first: 7, count: 3, end: entity.PATH_LEAVE })
+  d.start_path()
+  for _ in 0..<8 { d.follow_path(POINTS) }
+  if d.y() != 8@D || !d.path_finished() || d.vy != @ONE || d.vx != @ZERO { return 9 }
+  for _ in 0..<4 { d.follow_path(POINTS) }
+  if d.y() != 12@D || d.x() != 0@D { return 10 }
+
+  // Between points, as far along as it is.
+  var s = FLIER.spawn(0@D, 0@D)
+  s.give_path(Path { first: 10, count: 2, end: entity.PATH_STOP })
+  s.start_path()
+  s.follow_path(POINTS)
+  s.follow_path(POINTS)
+  if s.x() != 2@D || s.y() != 2@D || s.vx != @ONE { return 11 }
+
+  // One point is no path.
+  var n = FLIER.spawn(5@D, 5@D)
+  n.give_path(Path { first: 0, count: 1, end: entity.PATH_STOP })
+  n.start_path()
+  n.follow_path(POINTS)
+  if n.path_state != entity.PATH_NONE || n.x() != 5@D { return 12 }
+  0
+}
+`

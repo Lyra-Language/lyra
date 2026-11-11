@@ -58,6 +58,48 @@ let main = () -> void => {
 	}
 }
 
+// A negative integer in a struct lowers to `sub 0, n`, which must fold too: a path's table of
+// 8.8 points was left inlined on the Genesis, and could not be lent by `ref` (11/10).
+func TestExec_ConstTableNegativeIntByRef(t *testing.T) {
+	t.Parallel()
+	src := `module main
+struct Point { x: i32, y: i32 }
+const POINTS: [2]Point = #[Point { x: 990, y: -170 }, Point { x: -1146, y: 0 }]
+let second<const N: i64> = (t: ref [N]Point) -> i32 => t[1].x
+
+let main = () -> void => {
+  println("${second(POINTS)} ${POINTS[0].y}")
+}
+`
+	got := strings.TrimSpace(buildAndRunWithPrelude(t, src, ""))
+	if want := "-1146 -170"; got != want {
+		t.Errorf("got %q; want %q", got, want)
+	}
+	ir := emitWithPrelude(t, src)
+	if !strings.Contains(ir, "@lyra_const_main.POINTS = private constant [2 x %main__Point] [%main__Point { i32 990, i32 -170 }, %main__Point { i32 -1146, i32 0 }]") {
+		t.Errorf("expected POINTS as constant data; IR:\n%s", ir)
+	}
+}
+
+// A `const` the backend cannot fold — an element an expression — is lowered at each use and
+// has no storage; lent by `ref`, it is a temporary, not "an unbound identifier" (11/10).
+func TestExec_InlinedConstTableByRef(t *testing.T) {
+	t.Parallel()
+	got := strings.TrimSpace(buildAndRunWithPrelude(t, `module main
+struct Point { x: i32, y: i32 }
+const POINTS: [2]Point = #[Point { x: 0, y: 0 }, Point { x: 2048 + 1024, y: 0 }]
+let second<const N: i64> = (t: ref [N]Point) -> i32 => t[1].x
+let second_x<const N: i64> = (self: ref [N]Point) -> i32 => self[1].x
+
+let main = () -> void => {
+  println("${second(POINTS)} ${POINTS.second_x()}")
+}
+`, ""))
+	if want := "3072 3072"; got != want {
+		t.Errorf("got %q; want %q", got, want)
+	}
+}
+
 // The table is emitted once as constant data, and a loop over it indexes the global — no
 // whole-array load, which is what became a stack copy.
 func TestEmit_AConstTableIsConstantData(t *testing.T) {

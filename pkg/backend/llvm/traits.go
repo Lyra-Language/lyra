@@ -282,7 +282,7 @@ func (l *lowerer) methodParamModes(call *ast.FunctionCallExpr) []types.Parameter
 // `at` in the arguments, and answers nil until findDeferredPlaces fills it in.
 func (l *lowerer) methodOperand(block *ir.Block, operand ast.Expression, params []types.ParameterType, idx, at int, deferred *[]deferredPlace) (value.Value, *ir.Block, error) {
 	if idx < len(params) && paramIsByRef(ast.Parameter{Type: params[idx].Type, TypeModifier: params[idx].Borrow}) {
-		if isLValuePath(operand) {
+		if isLValuePath(operand) && l.namesStorage(operand) {
 			block, err := l.deferByRefPlace(block, operand, at, deferred)
 			return nil, block, err
 		}

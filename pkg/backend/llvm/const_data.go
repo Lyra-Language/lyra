@@ -134,6 +134,17 @@ func foldInsertValues(block *ir.Block, result value.Value) (constant.Constant, b
 			folded[neg] = &constant.Float{Typ: f.Typ, X: new(big.Float).Neg(f.X)}
 			continue
 		}
+		// And a negative integer literal to `sub 0, magnitude` (11/10: a path's table of
+		// 8.8 points, half of them negative, was inlined on the Genesis).
+		if sub, isSub := inst.(*ir.InstSub); isSub {
+			zero, isZero := sub.X.(*constant.Int)
+			n, isInt := sub.Y.(*constant.Int)
+			if !isZero || !isInt || zero.X.Sign() != 0 {
+				return nil, false
+			}
+			folded[sub] = &constant.Int{Typ: n.Typ, X: new(big.Int).Neg(n.X)}
+			continue
+		}
 		iv, ok := inst.(*ir.InstInsertValue)
 		if !ok {
 			return nil, false

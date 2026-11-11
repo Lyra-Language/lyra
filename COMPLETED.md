@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 11/10/26 — Paths an entity follows, and a `const` table lent by `ref`
+
+**`std.game`, `std.genesis` and `std.sms` entities follow paths** (`Path`, `PathPoint`,
+`give_path`, `start_path`, `follow_path`, `path_finished`), for Vega's scene editor. Vega
+bakes the curve, so a runtime only walks points `PATH_STEP` (4) pixels apart: its place is
+`at >> 10` points along and `at & 1023` of the next, a shift and a multiply a frame — no
+root, which neither the 68000 nor the Z80 has. Every step being the same length is what
+makes the speed the entity's Max speed wherever it is on the curve; the last step alone
+may be shorter. A loop is closed by Vega (its last point its first), so the runtime only
+wraps the distance. Leaving goes on along the last *whole* step, the last one being the
+one that may be short. The ends and states are `u8` constants, not a `data`, to keep the
+three runtimes' entities alike and cheap on the consoles. `TestRun_EntitiesFollowPaths`
+runs the same program on each.
+
+**Two backend bugs a path's table found.** A Genesis point table is 8.8 integers, half
+negative, and `-170` lowers to `sub 0, 170` — which `foldInsertValues` refused, as it had
+refused `fneg` until 11/08. The table was left inlined: built on the stack at each use,
+and, lent by `ref` to `follow_path`, answered "assignment to unbound identifier", because
+`argumentAddress` took any path rooted at a name for storage. Both fixed: `sub 0, C` folds,
+and a path whose root has no slot (`namesStorage`, already the receivers' test) is lent as
+a temporary — so a table that *must* stay inlined (an element `2048 + 1024`) still works.
+`TestExec_ConstTableNegativeIntByRef` checks the table is static data,
+`TestExec_InlinedConstTableByRef` the fallback; each fails with its fix taken out.
+
 ### 11/10/26 — `xs.push_from(p, n)`: a C buffer into an array in one copy
 
 The mirror of 08/26's `p.decode_utf8(n)`, which that entry left unbuilt because nothing

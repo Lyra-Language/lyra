@@ -90,7 +90,7 @@ func (l *lowerer) lowerUnionMemberExpr(block *ir.Block, e *ast.MemberExpr, ut ty
 // path, and a fresh spill of the value otherwise (a union returned by a call, say, which
 // has no home of its own).
 func (l *lowerer) unionAddress(block *ir.Block, obj ast.Expression, ut types.UnionType) (value.Value, *ir.Block, error) {
-	if isLValuePath(obj) {
+	if isLValuePath(obj) && l.namesStorage(obj) {
 		loc, block, err := l.lvalueAddress(block, obj)
 		if err != nil {
 			return nil, nil, err
