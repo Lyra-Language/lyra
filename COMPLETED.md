@@ -9,6 +9,19 @@ Newest first.
 
 ## Dated log
 
+### 11/11/26 — Pools of entities
+
+**An entity is `alive` or not**, and a pool is an array of them: `#[BULLET.waiting(); 6]`,
+`spawn_at` bringing a waiting one into play as `spawn` makes one (its index, -1 when full),
+`despawn` taking it out. The vertical shooter parked bullets, explosions and shot enemies
+at `GONE = -100` and asked `x() >= 0` in every loop; out of play now meets nothing
+(`meets_at`), is not blocked (`blocked_by`), follows no path and is not drawn (Vega's
+generated `draw`), so loops over a pool need not ask. The methods are top-level functions
+with `self: mut [N]Entity` and their own `<const N>`, which serves a pool of any size — an
+`impl` block cannot be generic over an array's length. Vega's module adds what needs the
+game's drawing: `draw_all`, `play_all`, `play_out` (once through, then let go) and
+`despawn_off_screen`.
+
 ### 11/10/26 — A path's speed and pauses; turned sprites on whole pixels
 
 **A `Path` has a `speed` (0, the kind's top speed) and pauses** (`PathWait`: how far along,

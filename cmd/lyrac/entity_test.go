@@ -806,3 +806,73 @@ let main = () -> u8 => {
   0
 }
 `
+
+// A pool of entities: made waiting, brought into play by spawn_at — still, from its kind's
+// start — up to its size, taken out by despawn, and what is out of play meets nothing,
+// moves with move_all not at all and follows no path — alike on every runtime.
+func TestRun_EntityPools(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	for _, rt := range []struct {
+		name string
+		repl *strings.Replacer
+	}{
+		{"genesis", strings.NewReplacer("@RT", "genesis", "@D", "", "@ONE", "256", "@ZERO", "0")},
+		{"sms", strings.NewReplacer("@RT", "sms", "@D", "", "@ONE", "256", "@ZERO", "0")},
+		{"game", strings.NewReplacer("@RT", "game", "@D", ".0", "@ONE", "1.0", "@ZERO", "0.0")},
+	} {
+		t.Run(rt.name, func(t *testing.T) {
+			src := filepath.Join(t.TempDir(), "main.lyra")
+			if err := os.WriteFile(src, []byte(rt.repl.Replace(entityPoolSource)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, stderr, code := captureRun(t, "run", src); code != 0 {
+				t.Errorf("case %d failed; stderr: %s", code, stderr)
+			}
+		})
+	}
+}
+
+const entityPoolSource = `import std.@RT.collision.{ Shape, Collider }
+import std.@RT.entity.{ Animation, EntityKind, Entity }
+import std.@RT.entity
+
+const STILL: Animation = Animation { sprite: 0, first: 0, count: 1, total: 1, looping: false }
+const NONE: Collider = Collider { shape: Shape { x: 0@D, y: 0@D, width: 0@D, height: 0@D }, layers: 0, mask: 0 }
+const BOX: Collider = Collider { shape: Shape { x: 0@D, y: 0@D, width: 8@D, height: 8@D }, layers: 1, mask: 1 }
+const SHOT: EntityKind = EntityKind {
+  width: 8@D,
+  height: 8@D,
+  animation: STILL,
+  colliders: #[BOX, NONE, NONE, NONE],
+  collider_count: 1,
+  max_speed: @ONE,
+  acceleration: @ONE,
+  friction: @ONE,
+  gravity: @ZERO
+}
+
+let main = () -> u8 => {
+  var shots: [3]Entity = #[SHOT.waiting(); 3]
+  if shots.in_play() != 0 { return 1 }
+  // Waiting at the origin, as a target there is: it meets nothing.
+  let target = SHOT.spawn(0@D, 0@D)
+  if shots[0].meets(target) || target.meets(shots[0]) { return 2 }
+  if shots.spawn_at(10@D, 20@D) != 0 || shots.spawn_at(30@D, 20@D) != 1 { return 3 }
+  if shots.in_play() != 2 || shots[1].x() != 30@D || shots[1].tick != 0 { return 4 }
+  shots[0].vy = -@ONE
+  shots[0].tick = 7
+  shots.move_all()
+  if shots[0].y() != 19@D || shots[1].y() != 20@D || shots[2].y() != 0@D { return 5 }
+  // Full: one more has no place.
+  if shots.spawn_at(50@D, 0@D) != 2 || shots.spawn_at(70@D, 0@D) != -1 { return 6 }
+  // Out of play: meets nothing, moved by nothing, and its place taken by the next.
+  shots[0].despawn()
+  if shots.in_play() != 2 || shots[0].vy != @ZERO { return 7 }
+  let near = SHOT.spawn(10@D, 19@D)
+  if shots[0].meets(near) { return 8 }
+  if shots.spawn_at(90@D, 5@D) != 0 || shots[0].x() != 90@D || shots[0].tick != 0 || shots[0].vy != @ZERO { return 9 }
+  0
+}
+`

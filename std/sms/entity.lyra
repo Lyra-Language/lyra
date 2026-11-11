@@ -132,6 +132,9 @@ pub struct Entity {
   /// solid's push ([blocked_by]) shoved it into a wall or another solid. The game decides
   /// what that means (hurt it, stop the solid); `block` sets it each time it runs.
   squeezed: bool = false,
+  /// In play: an entity of a pool not in use is not ([waiting], [despawn]), and meets
+  /// nothing, is drawn nowhere and follows no path. One spawned is.
+  alive: bool = true,
   /// Its path ([give_path]) and whether it starts when first shown; where it is with it
   /// ([PATH_WAITING], [PATH_FOLLOWING], [PATH_DONE]); how far along it is, in 256ths of a
   /// pixel, from where it started it (`path_x`, `path_y`), and whether it is on its way back.
@@ -385,6 +388,7 @@ impl Entity {
 
   /// [meets], were its top-left at (`ax`, `ay`).
   pub let meets_at = pure (self: ref, ax: i16, ay: i16, other: ref Entity) -> bool => {
+    if !self.alive || !other.alive { return false }
     let bx = other.x()
     let by = other.y()
     for i: u16 in 0..<self.kind.collider_count {
@@ -424,6 +428,7 @@ impl Entity {
   /// by the solid's move. A push answers only to this solid: it may push the entity into
   /// the map, or another solid — squeezed, as the game decides.
   pub let blocked_by = (self: mut, solid: ref Entity) -> void => {
+    if !self.alive || !solid.alive { return }
     // Where it started, taken along by the solid's move: clear of the solid there.
     let dx = solid.x() - solid.was_x
     let dy = solid.y() - solid.was_y
@@ -582,6 +587,57 @@ impl Entity {
   }
 }
 
+// ── Pools ──────────────────────────────────────────────────────────────────────────────
+
+// **A pool is an array of entities of a kind, in play or waiting** — bullets, explosions,
+// a wave of enemies: made of `waiting` ones (`#[BULLET.waiting(); 6]`), one brought into
+// play by `spawn_at` and taken out by `despawn`, none ever made or freed while the game
+// runs. What is not `alive` meets nothing, is drawn nowhere and follows no path, so a
+// game's loops over a pool need not ask.
+impl EntityKind {
+  /// An entity of this kind waiting to be brought into play: what a pool is made of.
+  pub let waiting = pure (self) -> Entity => Entity { self.spawn(0, 0) | alive: false }
+}
+
+impl Entity {
+  /// Out of play, off any path: drawn nowhere and meeting nothing until spawned again.
+  pub let despawn = (self: mut) -> void => {
+    self.stop_path()
+    self.alive = false
+    self.vx = 0
+    self.vy = 0
+  }
+}
+
+/// A waiting entity of the pool brought into play with its top-left at (`x`, `y`), as
+/// [EntityKind.spawn] makes one — still, upright, showing what its kind starts with, from
+/// that animation's start — and which it is; -1 when all are in play.
+pub let spawn_at<const N: i64> = (self: mut [N]Entity, x: i16, y: i16) -> i16 => {
+  for i: u16 in 0..<u16(N) {
+    if !self[i].alive {
+      self[i] = Entity { self[i].kind.spawn(x, y) | mirrored: false }
+      return i16(i)
+    }
+  }
+  -1
+}
+
+/// How many of the pool are in play.
+pub let in_play<const N: i64> = pure (self: ref [N]Entity) -> u16 => {
+  var n: u16 = 0
+  for i: u16 in 0..<u16(N) {
+    if self[i].alive { n += 1 }
+  }
+  n
+}
+
+/// Every one of the pool in play moved by its speed ([Entity.move]), through anything.
+pub let move_all<const N: i64> = (self: mut [N]Entity) -> void => {
+  for i: u16 in 0..<u16(N) {
+    if self[i].alive { self[i].move() }
+  }
+}
+
 // ── Paths ──────────────────────────────────────────────────────────────────────────────
 
 /// How far apart a path's points are, in pixels: Vega lays them out evenly along the curve
@@ -678,6 +734,7 @@ impl Entity {
     points: ref [K]PathPoint,
     waits: ref [W]PathWait
   ) -> void => {
+    if !self.alive { return }
     if self.path_state == PATH_DONE && self.path.end == PATH_LEAVE {
       // A pause at its end first: standing, still facing the way it will go.
       if self.path_wait > 0 {
