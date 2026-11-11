@@ -9,6 +9,26 @@ Newest first.
 
 ## Dated log
 
+### 11/11/26 — Import quick fixes put the comma where it belongs (lyra-lsp)
+
+**Reported from Zed**: "Import x from m" did not add commas in the right places. The fix
+inserted `, name` at the last member's `EndCol` read as a 0-based byte column, where an
+ast.Location's end column is 1-based and exclusive, so the comma landed one character late:
+`{ twice , thrice}`, and in an exploded list `half,, thrice` — a syntax error. The existing
+test checked the new text and the line, never the column, so it passed throughout.
+
+Both import-list fixes now go through `importList` (`cmd/lyra-lsp/importlist.go`), which
+edits the source text so a list keeps the layout lyrafmt would keep: appended on one line,
+exploded as lyrafmt explodes it past 90 columns, or a new line in an exploded list's own
+indentation with its trailing comma or lack of one; `import m.{}` is filled in. The same
+work let "Remove unused import" take one member out of several, which it declined before,
+and fixed its lone-member case: lyra-W004 also fires on a name only called method-style,
+and deleting the line removed the module import that call resolves through. Now a lone
+member whose name appears elsewhere leaves `import m`. Twenty-one cases, each applied,
+checked for errors and held to `build/lyrafmt`. Two skip the formatter check: `{}`, which
+does not parse to begin with, and a comment line after the last member, which lyrafmt
+over-indents (todo.md).
+
 ### 11/11/26 — Sampled sound effects: a recording on FM 6's DAC (std and Vega)
 
 **An effect may be a sample** (`std.chips.effects.Effect.sample`, a `Player.dac` slot) so a

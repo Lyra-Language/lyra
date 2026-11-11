@@ -207,15 +207,46 @@ func removeUnusedVariableAction(analysis *docAnalysis, source string, uri lsp.Do
 	return quickFix(fmt.Sprintf("Remove unused variable %q", decl.Name), uri, edit, d)
 }
 
-// removeUnusedImportAction deletes an unused import. It only fires when the
-// whole statement can be removed safely: a plain/alias import, or a member
-// import whose single member is the unused one. Multi-member imports are left
-// alone (removing one member needs comma surgery we don't attempt).
+// removeUnusedImportAction removes an unused import: the statement, or — when lyra-W004
+// points at one member of several — that member, by importList's comma rules.
+//
+// **A lone member is not always the whole statement's to delete.** W004 also fires on a
+// name only ever called method-style (`import nums.{ twice }` beside `1.twice()`), whose
+// message says `import nums` alone is enough: the module import is what lets the call
+// resolve, so deleting the line broke the program the fix was offered for, as it did
+// until 11/11. Where the name appears anywhere else in the file the edit leaves `import
+// nums`; a name that is truly unused still costs a second fix for the module, which is
+// the price of never breaking a call.
 func removeUnusedImportAction(analysis *docAnalysis, source string, uri lsp.DocumentURI, d lsp.Diagnostic) *lsp.CodeAction {
 	line, col := diagStart(source, d)
 	imp := findImportContaining(analysis.program, line, col)
-	if imp == nil || len(imp.Members) > 1 {
+	if imp == nil {
 		return nil
+	}
+	if len(imp.Members) == 0 {
+		edit := lsp.TextEdit{Range: deleteLinesRange(source, imp.GetLocation()), NewText: ""}
+		return quickFix("Remove unused import", uri, edit, d)
+	}
+	list, ok := readImportList(source, imp)
+	if !ok {
+		return nil
+	}
+	at := -1
+	for i, m := range list.members {
+		if containsPos(m.loc, line, col) {
+			at = i
+		}
+	}
+	if at < 0 {
+		return nil
+	}
+	m := list.members[at]
+	if len(list.members) > 1 {
+		return quickFix(fmt.Sprintf("Remove unused import %s", m.name), uri, list.removeEdit(at), d)
+	}
+	if mentionedOutside(source, list.stmt, list.close+1, m.name, m.alias) {
+		edit := list.replace(list.open-len(".{"), list.close+1, "")
+		return quickFix(fmt.Sprintf("Remove unused import %s", m.name), uri, edit, d)
 	}
 	edit := lsp.TextEdit{Range: deleteLinesRange(source, imp.GetLocation()), NewText: ""}
 	return quickFix("Remove unused import", uri, edit, d)
@@ -614,19 +645,20 @@ func fileImportsName(program *ast.Program, name string) bool {
 
 // importEdit is the single edit that imports name from module: into an existing member
 // list where the file already imports that module, and as a new line where it does not.
+//
+// Into a list, the edit is importList's: placed from the source text so the list keeps
+// its layout and its commas are right. Until 11/11 it was `, name` at the last member's
+// end column read as 0-based where ast.Location's is 1-based, which put the comma one
+// character late — `{ twice , thrice}`, and `twice,, thrice` in an exploded list.
 func importEdit(
 	program *ast.Program, source, module, name string,
 ) (lsp.TextEdit, bool) {
-	if imp := importOf(program, module); imp != nil && len(imp.Members) > 0 {
-		last := imp.Members[len(imp.Members)-1].Location
-		pos := lsp.Position{
-			Line:      lspPos(last.EndLine),
-			Character: utf16Column(source, lspPos(last.EndLine), last.EndCol),
+	if imp := importOf(program, module); imp != nil {
+		list, ok := readImportList(source, imp)
+		if !ok {
+			return lsp.TextEdit{}, false
 		}
-		return lsp.TextEdit{
-			Range:   lsp.Range{Start: pos, End: pos},
-			NewText: ", " + name,
-		}, true
+		return list.addEdit(name), true
 	}
 	// A plain `import lib` binds a namespace and no bare names, so a member list has to
 	// be introduced rather than extended — which is a rewrite of the reader's chosen

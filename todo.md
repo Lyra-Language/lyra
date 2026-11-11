@@ -958,6 +958,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   exploded list, `widest_list` picks that list and has nothing to add, so `foo(a, b),` never
   breaks its own arguments. Skipping a line's last comma fixes it and reformats 37 of lyra's
   234 formatted files.
+- **[OPEN] lyrafmt indents a comment after an exploded list's last element a step too
+  far**: `import m.{` / `  a` / `  // note` / `}` gets `    // note`, as if it continued `a`.
+  Found 11/11 by the import-list quick-fix tests, which skip that case's lyrafmt check.
 - **[OPEN] `ui.sdl3`'s platform half is untested.** Nothing headless sends it input: bind
   `SDL_PushEvent` and script events, as `std.game`'s `--hold` scripts a pad.
 - **[OPEN] A rounded clip is square on SDL's renderer** (`PushClip`'s radii are ignored):

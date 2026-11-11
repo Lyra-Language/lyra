@@ -80,6 +80,28 @@ dropped.
   nothing there. A program importing a generated module still reads it from disk — keep
   `lui --watch` running, or regenerate.
 
+## Quick fixes that edit an import list (`importlist.go`)
+
+"Import x from m" (`addImportActions`) and "Remove unused import" (lyra-W004) edit an
+`import m.{ … }` through `importList`, which reads the braces and members as byte offsets
+and edits the text, never a re-printed statement — comments, aliases and layout survive.
+
+- **An added name is appended**, not sorted in: lyrafmt does not sort import lists.
+- **The layout is the one lyrafmt keeps.** A one-line list gets `, name` after its last
+  member, or is exploded a member per line, as lyrafmt explodes it, once the line would pass
+  90 columns (comment-free lists only). A list already a name per line gets a new line in its
+  own indentation, and the comma the list ends with (or lacks). `import m.{}` is filled in;
+  `import m` gets a new `import m.{ name }` line beside it.
+- **One member of several is removed with its comma**, its line too when it stands alone;
+  the member before takes the end and loses its comma when the list had no trailing one.
+- **A lone member becomes `import m`, not a deleted line, when its name appears elsewhere**:
+  W004 fires on a name only called method-style, and the module import is what resolves the
+  call.
+- **An ast.Location's end column is 1-based and exclusive**: the 0-based byte column is
+  `EndCol-1`, which is what the add fix got wrong (a comma one character late).
+- `TestCodeAction_AddImportKeepsTheListValid` and `TestCodeAction_RemoveUnusedImportMember`
+  apply each edit, re-check the result for errors and hold it to `build/lyrafmt`.
+
 ## Handler conventions
 
 - Prologue is `handler.go`'s: `defer recoverHandler(name, &result, &retErr)`, `h.docFor(uri)`
