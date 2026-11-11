@@ -12,8 +12,9 @@ module std.game.track
 //! track.update()
 //! ```
 //!
-//! **Two at a time**: the music, which a new one replaces — and a song (`std.game.sound`'s
-//! `Tune`) stops, as one stops it — and a voice over it, which a new voice replaces. A
+//! **Two at a time**: the music, which a new one replaces — a song (`std.game.sound`'s `Tune`)
+//! started stops it, as it stops one (it sees `sound.songs_started` move) — and a voice over
+//! it, which a new voice replaces. A
 //! track plays once, or loops from `loop_from` (a frame of the file: a sample of each
 //! channel) to its end. A file that will not open is said once and is silence.
 //!
@@ -48,7 +49,7 @@ impl Track {
     } else {
       stop_music()
       sound.stop_music()
-      music = Some(p)
+      music = Some(Playing { p | songs: sound.songs_started() })
     }
   }
 }
@@ -74,6 +75,10 @@ pub let voice_playing = () -> bool => voice.is_some()
 pub let update = () -> void => {
   var out: []f32 = [0.0; UPDATE_SAMPLES * 2]
   var any = false
+  // A song started since the music was: the song plays in its place.
+  if let Some(p) = music {
+    if p.songs != sound.songs_started() { stop_music() }
+  }
   if let Some(p) = music {
     var m = p
     if m.add_to(out) { music = Some(m) } else { stop_music() }
@@ -96,6 +101,8 @@ struct Playing {
   at: f64 = 0.0,
   step: f64 = 1.0,
   ended: bool = false,
+  /// The songs started when it was, for the music: one more is a song in its place.
+  songs: i64 = 0,
 }
 
 var music: Maybe<Playing> = None

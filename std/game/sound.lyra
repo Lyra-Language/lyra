@@ -65,10 +65,20 @@ impl Effect {
 pub let playing = () -> bool => player.playing()
 
 impl Tune {
-  /// Play the song from its start, in place of any song playing; heard from the next
+  /// Play the song from its start, in place of any song playing — and of any music track
+  /// (`std.game.track`, which sees [songs_started] move); heard from the next
   /// [update_music], under the effects.
-  pub let play = (self) -> void => music.play_song(self)
+  pub let play = (self) -> void => {
+    started_songs += 1
+    music.play_song(self)
+  }
 }
+
+/// How many songs have been started: a music track (`std.game.track`) started before the
+/// last one stops — the track module can see this one, where this one cannot see it.
+pub let songs_started = () -> i64 => started_songs
+
+var started_songs: i64 = 0
 
 /// Stop the song playing.
 pub let stop_music = () -> void => music.stop()

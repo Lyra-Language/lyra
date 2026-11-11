@@ -844,7 +844,9 @@ of Markdown.
   the 68000's frame; tested in `cmd/lyrac/sound_test.go`, on both runtimes); **tracks** — long
   recordings, music or a voice — by the same names on both runtimes: `std.game.track` decodes
   a compressed file as it plays (`bindings.audio`), resampled and mixed over the chips through
-  `std.game.sound.mix_in` (whose output is **stereo**, the chips the same on both sides), and
+  `std.game.sound.mix_in` (whose output is **stereo**, the chips the same on both sides) — a
+  song started stops the music track, which watches `sound.songs_started` (the import goes
+  one way) — and
   `std.genesis.track` plays 8-bit bytes the game `embed`s on the DAC — **the DAC one source a
   frame**: a sampled effect, a voice, the music track, the song's notes (`follow_chosen`); a
   track's place kept while unheard, so the music comes back where it has got to; DAC mode on
