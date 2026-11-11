@@ -18,6 +18,12 @@ not a formality.
 
 ### Backend — LLVM IR
 
+- **[BUG] A 68000 function past 32 KB can crash llc** ("Cannot relax the instruction, value
+  does not fit"): a branch the 68000 cannot reach with `bra.w` has no longer form on it, and
+  the M68k backend does not branch round with a `jmp`. The hero's `main` is 44 KB at `-O2`
+  and builds only while its far branches stay within reach; 13 inlined `follow_path`s
+  broke it (11/10), fixed for now by `@noinline`.
+
 - **[DONE 11/10] A `const` table lent by `ref`**: a negative integer in an element now folds
   to static data, and a table left inlined (an element arithmetic) is lent as a temporary
   rather than failing as "an unbound identifier" (COMPLETED.md 11/10).

@@ -144,6 +144,10 @@ pub struct Entity {
   path_x: i32 = 0,
   path_y: i32 = 0,
   path_laps: u16 = 0,
+  /// Frames it has yet to stand still at a pause of its path.
+  path_wait: u16 = 0,
+  /// Started and not yet followed: a pause at its first point is still to come.
+  path_fresh: bool = false,
 }
 
 /// The fastest an entity falls, in 256ths of a pixel a frame: 8 pixels, a tile, so a fall
@@ -155,10 +159,13 @@ impl Entity {
   pub let x = pure (self: ref) -> i16 => i16(self.fx >> 8)
   pub let y = pure (self: ref) -> i16 => i16(self.fy >> 8)
 
-  /// Put it with its top-left at (`x`, `y`), its speed kept.
+  /// Put it with its top-left at (`x`, `y`), its speed kept — and its last move starting
+  /// there, as [spawn] has it, so a solid does not back it off towards where it was.
   pub let place = (self: mut, x: i16, y: i16) -> void => {
     self.fx = i32(x) << 8
     self.fy = i32(y) << 8
+    self.was_x = x
+    self.was_y = y
   }
 
   /// A frame's push, `dx` and `dy` each -1, 0 or 1 (the pad's directions): a pushed axis gains
@@ -607,6 +614,20 @@ pub struct Path {
   first: u16,
   count: u16,
   end: u8,
+  /// How fast an entity goes along it, in 256ths of a pixel a frame; 0 for the
+  /// entity's kind's top speed.
+  speed: i16 = 0,
+  /// Its pauses: `wait_count` from `wait_first` in the game's table of every path's (Vega's
+  /// `PATH_WAITS`), in the order they come along it.
+  wait_first: u16 = 0,
+  wait_count: u16 = 0,
+}
+
+/// A pause on a path: how far along it, in 256ths of a pixel — a point it goes through — and
+/// for how many frames an entity there stands still.
+pub struct PathWait {
+  at: i32,
+  frames: u16,
 }
 
 /// No path: what an entity has until it is given one.
@@ -638,29 +659,68 @@ impl Entity {
     self.path_y = self.fy
     self.path_at = 0
     self.path_back = false
+    self.path_wait = 0
+    self.path_fresh = true
   }
 
-  /// A frame along its path at its kind's top speed, through anything — once a frame, in
-  /// place of a move. Its speed is set to the step, for what asks it (which way it faces,
-  /// [blocked_by]). One that left its path's end carries on as it went; one waiting, done
-  /// or with none stays still.
-  pub let follow_path<const K: i64> = (self: mut, points: ref [K]PathPoint) -> void => {
+  /// A frame along its path — at the path's speed, else its kind's top speed — through
+  /// anything: once a frame, in place of a move, `waits` the game's table of every path's
+  /// pauses (Vega's `PATH_WAITS`). Reaching a pause it stops on its point and stands there
+  /// as long as it says. Its speed is set to the step, for what asks it (which way it faces,
+  /// [blocked_by]). One that left its path's end carries on as it went; one waiting to
+  /// start, done or with none stays still.
+  ///
+  /// Never inlined: a scene follows each of its entities' paths, and a loop of them unrolled
+  /// with this in every copy made the hero's `main` longer than a 68000's branch reaches.
+  @noinline
+  pub let follow_path<const K: i64, const W: i64> = (
+    self: mut,
+    points: ref [K]PathPoint,
+    waits: ref [W]PathWait
+  ) -> void => {
     if self.path_state == PATH_DONE && self.path.end == PATH_LEAVE {
+      // A pause at its end first: standing, still facing the way it will go.
+      if self.path_wait > 0 {
+        self.path_wait -= 1
+        return
+      }
       self.move()
       return
     }
     if self.path_state != PATH_FOLLOWING { return }
+    // A pause at its first point, as it starts; and standing still through one.
+    if self.path_fresh {
+      self.path_fresh = false
+      let first = self.pause_between(waits, -1, 0)
+      if first >= 0 { self.path_wait = waits[self.path.wait_first + u16(first)].frames }
+    }
+    if self.path_wait > 0 {
+      self.path_wait -= 1
+      self.was_x = self.x()
+      self.was_y = self.y()
+      self.vx = 0
+      self.vy = 0
+      return
+    }
     let span = i32(self.path.count - 1) << PATH_SHIFT
-    let speed = i32(self.kind.max_speed)
+    let speed = i32(if self.path.speed > 0 { self.path.speed } else { self.kind.max_speed })
+    // On by its speed — or to the first pause on the way, there to stand.
+    let from = self.path_at
+    var to = if self.path_back { from - speed } else { from + speed }
+    let pause = self.pause_between(waits, from, to)
+    if pause >= 0 {
+      let w = waits[self.path.wait_first + u16(pause)]
+      to = w.at
+      self.path_wait = w.frames
+    }
+    self.path_at = to
     if self.path_back {
-      self.path_at -= speed
       if self.path_at <= 0 {
         self.path_at = (-self.path_at).min(span)
         self.path_back = false
         self.path_laps = self.path_laps.wrapping_add(1)
       }
     } else {
-      self.path_at += speed
       if self.path_at >= span {
         self.path_laps = self.path_laps.wrapping_add(1)
         if self.path.end == PATH_LOOP {
@@ -694,13 +754,43 @@ impl Entity {
     self.on_floor = false
     // Leaving: on the way its last whole step went, at its speed.
     if self.path_state == PATH_DONE && self.path.end == PATH_LEAVE {
-      let to = self.path.first + self.path.count - 1
-      let from = if self.path.count >= 3 { to - 1 } else { to }
-      let a = points[from - 1]
-      let b = points[from]
+      let last = self.path.first + self.path.count - 1
+      let whole = if self.path.count >= 3 { last - 1 } else { last }
+      let a = points[whole - 1]
+      let b = points[whole]
       self.vx = i16(((b.x - a.x) * speed) >> PATH_SHIFT)
       self.vy = i16(((b.y - a.y) * speed) >> PATH_SHIFT)
     }
+  }
+
+  /// Which of its path's pauses it meets going from `from` to `to`, either way — the first
+  /// it comes to, past `from` and as far as `to` — or -1.
+  let pause_between<const W: i64> = pure (
+    self: ref,
+    waits: ref [W]PathWait,
+    from: i32,
+    to: i32
+  ) -> i32 => {
+    var found: i32 = -1
+    var best: i32 = 0
+    for i: u16 in 0..<self.path.wait_count {
+      let at = waits[self.path.wait_first + i].at
+      let met = if to >= from { at > from && at <= to } else { at < from && at >= to }
+      let nearer = found < 0 || (if to >= from { at < best } else { at > best })
+      if met && nearer {
+        found = i32(i)
+        best = at
+      }
+    }
+    found
+  }
+
+  /// Off its path, staying where it is: [follow_path] moves it no more. What a game does
+  /// before putting it somewhere else — one shot down, say — or the path takes it back.
+  pub let stop_path = (self: mut) -> void => {
+    self.path = NO_PATH
+    self.path_state = PATH_NONE
+    self.path_wait = 0
   }
 
   /// Whether it reached the end of a path that stops or leaves there.

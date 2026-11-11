@@ -677,9 +677,9 @@ func TestRun_EntitiesFollowPaths(t *testing.T) {
 		name string
 		repl *strings.Replacer
 	}{
-		{"genesis", strings.NewReplacer("@RT", "genesis", "@D", "", "@ONE", "256", "@P4", "1024", "@P8", "2048", "@P12", "3072", "@P0", "0", "@ZERO", "0")},
-		{"sms", strings.NewReplacer("@RT", "sms", "@D", "", "@ONE", "256", "@P4", "1024", "@P8", "2048", "@P12", "3072", "@P0", "0", "@ZERO", "0")},
-		{"game", strings.NewReplacer("@RT", "game", "@D", ".0", "@ONE", "1.0", "@P4", "4.0", "@P8", "8.0", "@P12", "12.0", "@P0", "0.0", "@ZERO", "0.0")},
+		{"genesis", strings.NewReplacer("@RT", "genesis", "@D", "", "@ONE", "256", "@P4", "1024", "@P8", "2048", "@P12", "3072", "@P0", "0", "@ZERO", "0", "@TWO", "512", "@FRAMES", "frames")},
+		{"sms", strings.NewReplacer("@RT", "sms", "@D", "", "@ONE", "256", "@P4", "1024", "@P8", "2048", "@P12", "3072", "@P0", "0", "@ZERO", "0", "@TWO", "512", "@FRAMES", "frames")},
+		{"game", strings.NewReplacer("@RT", "game", "@D", ".0", "@ONE", "1.0", "@P4", "4.0", "@P8", "8.0", "@P12", "12.0", "@P0", "0.0", "@ZERO", "0.0", "@TWO", "2.0", "@FRAMES", "updates")},
 	} {
 		t.Run(rt.name, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "main.lyra")
@@ -694,7 +694,7 @@ func TestRun_EntitiesFollowPaths(t *testing.T) {
 }
 
 const entityPathSource = `import std.@RT.collision.{ Shape, Collider }
-import std.@RT.entity.{ Animation, EntityKind, Path, PathPoint }
+import std.@RT.entity.{ Animation, EntityKind, Path, PathPoint, PathWait }
 import std.@RT.entity
 
 const STILL: Animation = Animation { sprite: 0, first: 0, count: 1, total: 1, looping: false }
@@ -719,60 +719,90 @@ const POINTS: [12]PathPoint = #[
   PathPoint { x: @P0, y: @P0 }, PathPoint { x: @P4, y: @P4 },
 ]
 
+// No pauses; and one at 4 pixels for 3 updates, and at the start for 2.
+const NO_WAITS: [1]PathWait = #[PathWait { at: @P0, @FRAMES: 0 }]
+const WAITS: [2]PathWait = #[PathWait { at: @P0, @FRAMES: 2 }, PathWait { at: @P4, @FRAMES: 3 }]
+
 let main = () -> u8 => {
   // Stops: waits until started, then a pixel an update, and stays at the end.
   var e = FLIER.spawn(10@D, 20@D)
   e.give_path(Path { first: 0, count: 4, end: entity.PATH_STOP })
   if e.path_state != entity.PATH_WAITING { return 1 }
-  e.follow_path(POINTS)
+  e.follow_path(POINTS, NO_WAITS)
   if e.x() != 10@D { return 2 }
   e.start_path()
-  for _ in 0..<3 { e.follow_path(POINTS) }
+  for _ in 0..<3 { e.follow_path(POINTS, NO_WAITS) }
   if e.x() != 13@D || e.y() != 20@D || e.path_finished() { return 3 }
-  for _ in 0..<20 { e.follow_path(POINTS) }
+  for _ in 0..<20 { e.follow_path(POINTS, NO_WAITS) }
   if e.x() != 22@D || !e.path_finished() || e.path_laps != 1 { return 4 }
 
   // Loops: round to the start and on.
   var l = FLIER.spawn(0@D, 0@D)
   l.give_path(Path { first: 4, count: 3, end: entity.PATH_LOOP })
   l.start_path()
-  for _ in 0..<8 { l.follow_path(POINTS) }
+  for _ in 0..<8 { l.follow_path(POINTS, NO_WAITS) }
   if l.x() != 0@D || l.path_laps != 1 || l.path_finished() { return 5 }
-  for _ in 0..<2 { l.follow_path(POINTS) }
+  for _ in 0..<2 { l.follow_path(POINTS, NO_WAITS) }
   if l.x() != 2@D { return 6 }
 
   // Back and forth: out along it, back along it, and out again.
   var b = FLIER.spawn(0@D, 0@D)
   b.give_path(Path { first: 0, count: 3, end: entity.PATH_BACK_AND_FORTH })
   b.start_path()
-  for _ in 0..<10 { b.follow_path(POINTS) }
+  for _ in 0..<10 { b.follow_path(POINTS, NO_WAITS) }
   if b.x() != 6@D || !b.path_back { return 7 }
-  for _ in 0..<7 { b.follow_path(POINTS) }
+  for _ in 0..<7 { b.follow_path(POINTS, NO_WAITS) }
   if b.x() != 1@D || b.path_back || b.path_laps != 2 { return 8 }
 
   // Leaves: on down at its speed past the end.
   var d = FLIER.spawn(0@D, 0@D)
   d.give_path(Path { first: 7, count: 3, end: entity.PATH_LEAVE })
   d.start_path()
-  for _ in 0..<8 { d.follow_path(POINTS) }
+  for _ in 0..<8 { d.follow_path(POINTS, NO_WAITS) }
   if d.y() != 8@D || !d.path_finished() || d.vy != @ONE || d.vx != @ZERO { return 9 }
-  for _ in 0..<4 { d.follow_path(POINTS) }
+  for _ in 0..<4 { d.follow_path(POINTS, NO_WAITS) }
   if d.y() != 12@D || d.x() != 0@D { return 10 }
 
   // Between points, as far along as it is.
   var s = FLIER.spawn(0@D, 0@D)
   s.give_path(Path { first: 10, count: 2, end: entity.PATH_STOP })
   s.start_path()
-  s.follow_path(POINTS)
-  s.follow_path(POINTS)
+  s.follow_path(POINTS, NO_WAITS)
+  s.follow_path(POINTS, NO_WAITS)
   if s.x() != 2@D || s.y() != 2@D || s.vx != @ONE { return 11 }
 
   // One point is no path.
   var n = FLIER.spawn(5@D, 5@D)
   n.give_path(Path { first: 0, count: 1, end: entity.PATH_STOP })
   n.start_path()
-  n.follow_path(POINTS)
+  n.follow_path(POINTS, NO_WAITS)
   if n.path_state != entity.PATH_NONE || n.x() != 5@D { return 12 }
+
+  // A path's own speed, two pixels an update, over its kind's one.
+  var f = FLIER.spawn(0@D, 0@D)
+  f.give_path(Path { first: 0, count: 4, end: entity.PATH_STOP, speed: @TWO })
+  f.start_path()
+  for _ in 0..<3 { f.follow_path(POINTS, NO_WAITS) }
+  if f.x() != 6@D { return 13 }
+
+  // Pauses: two updates at the start, then on, stopping at 4 for three, then on again.
+  var w = FLIER.spawn(0@D, 0@D)
+  w.give_path(Path { first: 0, count: 4, end: entity.PATH_STOP, wait_first: 0, wait_count: 2 })
+  w.start_path()
+  for _ in 0..<2 { w.follow_path(POINTS, WAITS) }
+  if w.x() != 0@D { return 14 }
+  for _ in 0..<4 { w.follow_path(POINTS, WAITS) }
+  if w.x() != 4@D || w.path_wait != 3 { return 15 }
+  for _ in 0..<3 { w.follow_path(POINTS, WAITS) }
+  if w.x() != 4@D || w.vx != @ZERO { return 16 }
+  w.follow_path(POINTS, WAITS)
+  if w.x() != 5@D { return 17 }
+
+  // Stopped: off its path, put elsewhere, it stays there.
+  w.stop_path()
+  w.place(100@D, 100@D)
+  w.follow_path(POINTS, WAITS)
+  if w.x() != 100@D || w.path_state != entity.PATH_NONE { return 18 }
   0
 }
 `

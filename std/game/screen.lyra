@@ -621,13 +621,15 @@ let draw_sprites = (r: Renderer, front: bool, t: f32) -> void => {
 
 /// A sprite faded, tinted, turned, grown or added as light: the sprite art's alpha, colour
 /// and blending set for it — they are the texture's, not the draw's — and put back after.
-/// Grown about its middle, at the fraction of a pixel it is at.
+/// Grown about its middle, its box at the whole pixel a sprite as drawn is at: a place
+/// between pixels is one each renderer rounds its own way, and a turned star moving along
+/// a path was a pixel apart on the Mac and in the iOS Simulator (11/10).
 let draw_changed = (r: Renderer, art: Texture, s: Sprite, source: Rect) -> void => {
   let w = s.width * s.scale
   let h = s.height * s.scale
   let place = Rect {
-    x: s.x + (s.width - w) / 2.0,
-    y: s.y + (s.height - h) / 2.0,
+    x: f32(s.x.floor()) + (s.width - w) / 2.0,
+    y: f32(s.y.floor()) + (s.height - h) / 2.0,
     w: w,
     h: h
   }

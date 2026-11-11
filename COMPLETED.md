@@ -9,6 +9,34 @@ Newest first.
 
 ## Dated log
 
+### 11/10/26 — A path's speed and pauses; turned sprites on whole pixels
+
+**A `Path` has a `speed` (0, the kind's top speed) and pauses** (`PathWait`: how far along,
+and for how long), passed to `follow_path` as a table beside the points. A pause met on the
+way stops the entity *on* it — the step cut short — and it stands there; a pause at the
+start is met on the first `follow_path` after `start_path` (`path_fresh`), and one at a
+Leave path's end before it carries on. Vega puts a loop's first point's pause at both 0
+and the end, so it comes every lap without the runtime knowing a loop's ends are one place.
+
+**`follow_path` is `@noinline`.** A scene's `follow_paths` is a loop over its entities, and
+opt unrolled the hero's 13 stars with `follow_path` inlined into each: `main` crossed what a
+68000 branch reaches and llc died relaxing it ("value does not fit", todo.md). The hero's
+`main` was already 44 KB and had built only while its far branches stayed in reach.
+
+**`place` sets where the last move started** (`was_x`/`was_y`), as `spawn` does: Vega now
+spawns a scene's array of one kind once and places each, and a solid would have backed a
+placed entity off towards the first one's place.
+
+**`stop_path()` takes an entity off its path.** Following a path sets its place each update,
+so a game putting one elsewhere — the vertical shooter's enemy shot down, `place(GONE, GONE)`
+— had it back on its path the next, and hit again and again.
+
+**A faded, tinted, turned or grown sprite is drawn at a whole pixel**, as one drawn plainly
+is (`draw_changed`). The turned star circling in the modern hero sat at x.5 on frame 90,
+and the Mac's software renderer and Metal in the iOS Simulator rounded it opposite ways — a
+pixel apart. The sprite list and the entity's place were identical on both; only the draw
+of a place between pixels differs.
+
 ### 11/10/26 — Paths an entity follows, and a `const` table lent by `ref`
 
 **`std.game`, `std.genesis` and `std.sms` entities follow paths** (`Path`, `PathPoint`,
