@@ -48,6 +48,11 @@ pub let read = (port: u8) -> u16 => {
 /// Whether `button` is among `buttons`.
 pub let held = pure (buttons: u16, button: u16) -> bool => (buttons & button) != 0
 
+/// Whether `button` went down: held in `buttons` and not in `before`, the last frame's —
+/// true for one frame a press, as `std.game.pad`'s is.
+pub let pressed = pure (buttons: u16, before: u16, button: u16) -> bool =>
+  (buttons & button) != 0 && (before & button) == 0
+
 /// Pad `port`'s data lines (A10003, A10005) and its control register (A10009, A1000B).
 let data_lines = pure (port: u8) -> ^mut u8 =>
   if port == 2 { unsafe { pointer_at(0xA10005) } } else { unsafe { pointer_at(0xA10003) } }
