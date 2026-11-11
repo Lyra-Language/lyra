@@ -18,6 +18,10 @@ not a formality.
 
 ### Backend — LLVM IR
 
+- **[IDEA] The M68k backend's arithmetic**, found profiling the hero (11/11): a multiply by
+  a constant (`stars[i]`, an entity 166 bytes) is a `__mulsi3` call, not shifts and adds;
+  a product of two sign-extended 16-bit values is never `muls.w`; and a checked `i32`
+  multiply goes through `__muldi3`. Each is an LLVM patch beside `tools/llvm-m68k-patches`.
 - **[BUG] A 68000 function past 32 KB can crash llc** ("Cannot relax the instruction, value
   does not fit"): a branch the 68000 cannot reach with `bra.w` has no longer form on it, and
   the M68k backend does not branch round with a `jmp`. The hero's `main` is 44 KB at `-O2`

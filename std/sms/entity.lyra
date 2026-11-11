@@ -94,7 +94,14 @@ pub struct EntityKind {
   frame_shapes: u16 = NO_FRAME_SHAPES,
   /// The row of the frame it starts on: the shapes a map stops it by ([use_steady_shapes]).
   steady_shapes: u16 = NO_FRAME_SHAPES,
+  /// The box its colliders reach, on any frame, from its top-left — written by Vega — so
+  /// [meets] passes over a pair whose boxes are apart without placing a collider. A kind
+  /// written by hand has none ([NO_REACH]), and every pair of its is placed.
+  reach: Shape = NO_REACH,
 }
+
+/// No reach: a kind's colliders may be anywhere, so [meets] places each pair.
+pub const NO_REACH: Shape = Shape { x: 0, y: 0, width: 0, height: -1 }
 
 /// An entity: one of a kind in the game, where it is and how fast it is going (256ths of a
 /// pixel), what it shows, and which way it faces.
@@ -387,23 +394,51 @@ impl Entity {
     self.meets_at(self.x(), self.y(), other)
 
   /// [meets], were its top-left at (`ax`, `ay`).
+  ///
+  /// Never inlined: a game asks it of many pairs in its busiest loop (the hero, of each
+  /// star), and inlined there it shared `main`'s registers — every value of it spilled to
+  /// the stack and back, a quarter of the hero's frame (11/11).
+  @noinline
   pub let meets_at = pure (self: ref, ax: i16, ay: i16, other: ref Entity) -> bool => {
     if !self.alive || !other.alive { return false }
     let bx = other.x()
     let by = other.y()
+    // The two kinds' reaches first, where both have one: the hero against a star across the
+    // field is told apart here, a few compares rather than every pair of colliders placed.
+    if self.kind.reach.height >= 0 && other.kind.reach.height >= 0 {
+      let ar = if self.mirrored { self.kind.reach.mirrored(self.kind.width) } else { self.kind.reach }
+      let br = if other.mirrored { other.kind.reach.mirrored(other.kind.width) } else { other.kind.reach }
+      let a_left = i32(ax) + i32(ar.x)
+      let a_top = i32(ay) + i32(ar.y)
+      let b_left = i32(bx) + i32(br.x)
+      let b_top = i32(by) + i32(br.y)
+      if b_left >= a_left + i32(ar.width) || b_left + i32(br.width) <= a_left || b_top >= a_top + i32(ar.height) || b_top + i32(br.height) <= a_top {
+        return false
+      }
+    }
     for i: u16 in 0..<self.kind.collider_count {
-      let ac = self.kind.colliders[i]
-      let ap = if self.mirrored { ac.mirrored(self.kind.width) } else { ac }
-      // Layers, then the rectangles, compared here: most pairs a game asks about are not
-      // looking for each other, or are nowhere near, and a call each cost the 68000 a
-      // tenth of a frame for four enemies and a player (10/05).
-      let left = ax + ap.shape.x
-      let top = ay + ap.shape.y
-      let right = left + ap.shape.width
-      let bottom = top + ap.shape.height
+      // The layers first, read where they are: most pairs a game asks about — the hero
+      // against each star — are not looking for each other, and copying and mirroring both
+      // colliders before asking was a quarter of the hero's frame (11/11).
+      let mask = self.kind.colliders[i].mask
+      if mask == 0 { continue }
+      var placed_a = false
+      var ap = self.kind.colliders[i]
+      var left: i16 = 0
+      var top: i16 = 0
+      var right: i16 = 0
+      var bottom: i16 = 0
       for j: u16 in 0..<other.kind.collider_count {
+        if (mask & other.kind.colliders[j].layers) == 0 { continue }
+        if !placed_a {
+          if self.mirrored { ap = ap.mirrored(self.kind.width) }
+          left = ax + ap.shape.x
+          top = ay + ap.shape.y
+          right = left + ap.shape.width
+          bottom = top + ap.shape.height
+          placed_a = true
+        }
         let bc = other.kind.colliders[j]
-        if (ap.mask & bc.layers) == 0 { continue }
         let bp = if other.mirrored { bc.mirrored(other.kind.width) } else { bc }
         let b_left = bx + bp.shape.x
         let b_top = by + bp.shape.y
@@ -725,16 +760,28 @@ impl Entity {
   /// as long as it says. Its speed is set to the step, for what asks it (which way it faces,
   /// [blocked_by]). One that left its path's end carries on as it went; one waiting to
   /// start, done or with none stays still.
-  ///
-  /// Never inlined: a scene follows each of its entities' paths, and a loop of them unrolled
-  /// with this in every copy made the hero's `main` longer than a 68000's branch reaches.
-  @noinline
   pub let follow_path<const K: i64, const W: i64> = (
     self: mut,
     points: ref [K]PathPoint,
     waits: ref [W]PathWait
   ) -> void => {
+    // Most of a scene's entities are still — waiting to be seen, done or on none — and the
+    // step below is a large function to call: a still one asks only this.
     if !self.alive { return }
+    if self.path_state == PATH_FOLLOWING || (self.path_state == PATH_DONE && self.path.end == PATH_LEAVE) {
+      self.step_path(points, waits)
+    }
+  }
+
+  /// [follow_path]'s step, for an entity on the move. Never inlined: a scene follows each of
+  /// its entities' paths, and a loop of them unrolled with this in every copy made the hero's
+  /// `main` longer than a 68000's branch reaches.
+  @noinline
+  let step_path<const K: i64, const W: i64> = (
+    self: mut,
+    points: ref [K]PathPoint,
+    waits: ref [W]PathWait
+  ) -> void => {
     if self.path_state == PATH_DONE && self.path.end == PATH_LEAVE {
       // A pause at its end first: standing, still facing the way it will go.
       if self.path_wait > 0 {
@@ -799,8 +846,11 @@ impl Entity {
     if k + 1 < self.path.count {
       let q = points[self.path.first + k + 1]
       let part = self.path_at & (PATH_STEP_FIXED - 1)
-      nx += ((q.x - p.x) * part) >> PATH_SHIFT
-      ny += ((q.y - p.y) * part) >> PATH_SHIFT
+      // A step is at most 1024 each way and `part` under 1024, so neither product can pass
+      // 32 bits: wrapping is exact, and spares a checked multiply, which the 68000 makes
+      // through a 64-bit one in software — most of a moving entity's frame (11/11).
+      nx += (q.x - p.x).wrapping_mul(part) >> PATH_SHIFT
+      ny += (q.y - p.y).wrapping_mul(part) >> PATH_SHIFT
     }
     self.was_x = self.x()
     self.was_y = self.y()

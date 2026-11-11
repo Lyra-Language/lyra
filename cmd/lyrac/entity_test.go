@@ -876,3 +876,255 @@ let main = () -> u8 => {
   0
 }
 `
+
+// Entities drawn through a game's art (Art): an animation's frame by the game's steps, an
+// entity drawn where the camera shows it and not off the screen nor out of play, its
+// colliders by frame, a pool played once through and let go, and one off the screen let go
+// — alike on the Genesis and the modern runtime. (The Master System's `art` reaches its
+// video chip through the camera, which a program on the host cannot build; Vega's checks
+// build it for the Z80.)
+func TestRun_EntitiesDrawThroughArt(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	for _, rt := range []struct {
+		name string
+		repl *strings.Replacer
+	}{
+		{"genesis", strings.NewReplacer("@RT", "genesis", "@D", "", "@W", "u16", "@P", "i16", "@ONE", "256", "@ZERO", "0", "@EXTRA", "", "@CAMERA", "Camera { world_width: 1000, world_height: 1000 }", "@ROW", "0")},
+		{"game", strings.NewReplacer("@RT", "game", "@D", ".0", "@W", "i64", "@P", "f32", "@ONE", "1.0", "@ZERO", "0.0", "@EXTRA", ", _angle, _scale", "@CAMERA", "Camera { world_width: 1000.0, world_height: 1000.0, view_width: 320.0, view_height: 224.0 }", "@ROW", "0")},
+	} {
+		t.Run(rt.name, func(t *testing.T) {
+			src := filepath.Join(t.TempDir(), "main.lyra")
+			if err := os.WriteFile(src, []byte(rt.repl.Replace(entityArtSource)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, stderr, code := captureRun(t, "run", src); code != 0 {
+				t.Errorf("case %d failed; stderr: %s", code, stderr)
+			}
+		})
+	}
+}
+
+const entityArtSource = `import std.@RT.collision.{ Shape, Collider }
+import std.@RT.entity.{ Animation, EntityKind, Entity }
+import std.@RT.art.{ Step, Art }
+import std.@RT.art
+import std.@RT.camera.{ Camera }
+import std.@RT.entity
+
+// Two steps: frame 5 for 2, frame 6 for 3; and the shapes by frame, a collider a row.
+const STEPS: [2]Step = #[Step { frame: 5, ticks: 2 }, Step { frame: 6, ticks: 3 }]
+const SHAPES: [7]Shape = #[
+  Shape { x: 0@D, y: 0@D, width: 1@D, height: 1@D }, Shape { x: 0@D, y: 0@D, width: 1@D, height: 1@D },
+  Shape { x: 0@D, y: 0@D, width: 1@D, height: 1@D }, Shape { x: 0@D, y: 0@D, width: 1@D, height: 1@D },
+  Shape { x: 0@D, y: 0@D, width: 1@D, height: 1@D }, Shape { x: 0@D, y: 0@D, width: 5@D, height: 5@D },
+  Shape { x: 0@D, y: 0@D, width: 6@D, height: 6@D },
+]
+const BLINK: Animation = Animation { sprite: 1, first: 0, count: 2, total: 5, looping: false }
+const NONE: Collider = Collider { shape: Shape { x: 0@D, y: 0@D, width: 0@D, height: 0@D }, layers: 0, mask: 0 }
+const BOX: Collider = Collider { shape: Shape { x: 0@D, y: 0@D, width: 8@D, height: 8@D }, layers: 1, mask: 1 }
+const THING: EntityKind = EntityKind {
+  width: 8@D,
+  height: 8@D,
+  animation: BLINK,
+  colliders: #[BOX, NONE, NONE, NONE],
+  collider_count: 1,
+  max_speed: @ONE,
+  acceleration: @ONE,
+  friction: @ONE,
+  gravity: @ZERO,
+  frame_shapes: @ROW
+}
+
+// What was drawn: how many frames, and the last one's sprite, frame and place.
+var drawn: i64 = 0
+var last_sprite: @W = 0
+var last_frame: @W = 0
+var last_x: @P = @ZERO
+
+data Fake = Fake
+
+impl Art for Fake {
+  step = pure (self, i) => STEPS[i]
+  draw_frame = (self, sprite, x, _y, frame, _mirrored@EXTRA) => {
+    drawn += 1
+    last_sprite = sprite
+    last_frame = frame
+    last_x = x
+  }
+  frame_shape = pure (self, i) => SHAPES[i]
+}
+
+let main = () -> u8 => {
+  if BLINK.frame_in(Fake, 0) != 5 || BLINK.frame_in(Fake, 2) != 6 || BLINK.frame_in(Fake, 9) != 6 { return 1 }
+  if BLINK.finished(4) || !BLINK.finished(5) { return 2 }
+  let view = @CAMERA
+  var e = THING.spawn(30@D, 40@D)
+  e.draw_with(Fake, view)
+  if drawn != 1 || last_sprite != 1 || last_frame != 5 || last_x != 30@D || e.tick != 1 || !e.drawn { return 3 }
+  // Its collider the shown frame's: frame 5's row is the shape 5 wide.
+  if e.kind.colliders[0].shape.width != 5@D { return 4 }
+  e.draw_with(Fake, view)
+  e.draw_with(Fake, view)
+  if last_frame != 6 || e.kind.colliders[0].shape.width != 6@D { return 5 }
+  // Off the screen, or out of play: not drawn.
+  var far = THING.spawn(900@D, 900@D)
+  far.draw_with(Fake, view)
+  if drawn != 3 { return 6 }
+  e.despawn()
+  e.draw_with(Fake, view)
+  if drawn != 3 { return 7 }
+  // A pool played once through and let go; and one off the screen let go.
+  var puffs: [2]Entity = #[THING.waiting(); 2]
+  let _ = puffs.spawn_at(10@D, 10@D)
+  for _ in 0..<5 { puffs.play_out_with(Fake, view) }
+  if puffs.in_play() != 1 { return 8 }
+  puffs.play_out_with(Fake, view)
+  if puffs.in_play() != 0 { return 9 }
+  let _ = puffs.spawn_at(10@D, 10@D)
+  let _ = puffs.spawn_at(900@D, 10@D)
+  puffs.despawn_off_screen(view)
+  if puffs.in_play() != 1 || !puffs[0].alive { return 10 }
+  0
+}
+`
+
+// On the modern runtime std.game.art draws an entity at its angle and size, one grown past
+// its box while partly on the screen, and one with a parallax of its own where its speed
+// puts it.
+func TestRun_ArtDrawsGrownTurnedAndParallax(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	src := filepath.Join(t.TempDir(), "main.lyra")
+	if err := os.WriteFile(src, []byte(artModernSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, stderr, code := captureRun(t, "run", src); code != 0 {
+		t.Errorf("case %d failed; stderr: %s", code, stderr)
+	}
+}
+
+const artModernSource = `import std.game.collision.{ Shape, Collider }
+import std.game.entity.{ Animation, EntityKind, Entity }
+import std.game.art.{ Step, Art, NO_SHAPE }
+import std.game.art
+import std.game.camera.{ Camera }
+
+const STEPS: [1]Step = #[Step { frame: 0, ticks: 1 }]
+const STILL: Animation = Animation { sprite: 0, first: 0, count: 1, total: 1, looping: false }
+const NONE: Collider = Collider { shape: Shape { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }, layers: 0, mask: 0 }
+const THING: EntityKind = EntityKind {
+  width: 10.0,
+  height: 10.0,
+  animation: STILL,
+  colliders: #[NONE, NONE, NONE, NONE],
+  collider_count: 0,
+  max_speed: 1.0,
+  acceleration: 1.0,
+  friction: 1.0,
+  gravity: 0.0
+}
+
+var drawn: i64 = 0
+var last_x: f32 = 0.0
+var last_angle: f32 = 0.0
+var last_scale: f32 = 0.0
+
+data Fake = Fake
+
+impl Art for Fake {
+  step = pure (self, i) => STEPS[i]
+  draw_frame = (self, _sprite, x, _y, _frame, _mirrored, angle, scale) => {
+    drawn += 1
+    last_x = x
+    last_angle = angle
+    last_scale = scale
+  }
+  frame_shape = pure (self, _i) => NO_SHAPE
+}
+
+let main = () -> u8 => {
+  let view = Camera { world_width: 1000.0, world_height: 1000.0, view_width: 320.0, view_height: 224.0, x: 100.0 }
+  // At its angle and size.
+  var e = THING.spawn(150.0, 50.0)
+  e.angle = 90.0
+  e.scale = 2.0
+  e.draw_with(Fake, view)
+  if drawn != 1 || last_x < 49.5 || last_x > 50.5 || last_angle < 89.5 || last_scale < 1.5 { return 1 }
+  // Its box just off the left edge, grown twice: its picture reaches onto the screen.
+  var big = THING.spawn(89.0, 50.0)
+  big.scale = 2.0
+  big.draw_with(Fake, view)
+  if drawn != 2 { return 2 }
+  var small = THING.spawn(89.0, 50.0)
+  small.draw_with(Fake, view)
+  if drawn != 2 { return 3 }
+  // Half the camera's speed: at x 150, shown at 150 - 100 / 2.
+  var far = THING.spawn(150.0, 50.0)
+  far.parallax_x = 0.5
+  far.draw_with(Fake, view)
+  if drawn != 3 || last_x < 99.5 || last_x > 100.5 { return 4 }
+  0
+}
+`
+
+// A console kind's reach lets meets pass over a pair far apart without placing a collider —
+// and never changes an answer: a pair whose reaches touch is placed and tested as before,
+// mirrored ones mirror their reach, and a kind with none (NO_REACH) is always placed.
+func TestRun_EntitiesMeetByReach(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	for _, rt := range []string{"genesis", "sms"} {
+		t.Run(rt, func(t *testing.T) {
+			src := filepath.Join(t.TempDir(), "main.lyra")
+			if err := os.WriteFile(src, []byte(strings.ReplaceAll(entityReachSource, "@RT", rt)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, stderr, code := captureRun(t, "run", src); code != 0 {
+				t.Errorf("case %d failed; stderr: %s", code, stderr)
+			}
+		})
+	}
+}
+
+const entityReachSource = `import std.@RT.collision.{ Shape, Collider }
+import std.@RT.entity.{ Animation, EntityKind, NO_COLLIDER, NO_REACH }
+
+const STILL: Animation = Animation { sprite: 0, first: 0, count: 1, total: 1, looping: false }
+// A collider on the right half of a 16-wide sprite, and its reach saying so.
+const RIGHT: Collider = Collider { shape: Shape { x: 8, y: 0, width: 8, height: 8 }, layers: 1, mask: 1 }
+const REACHING: EntityKind = EntityKind {
+  width: 16,
+  height: 8,
+  animation: STILL,
+  colliders: #[RIGHT, NO_COLLIDER, NO_COLLIDER, NO_COLLIDER],
+  collider_count: 1,
+  max_speed: 0,
+  acceleration: 0,
+  friction: 0,
+  gravity: 0,
+  reach: Shape { x: 8, y: 0, width: 8, height: 8 }
+}
+let main = () -> u8 => {
+  let unreached = EntityKind { REACHING | reach: NO_REACH }
+  let a = REACHING.spawn(0, 0)
+  // Colliders at 8..16 and 12..20 meet; at 8..16 and -4..4, or far off, do not.
+  if !a.meets(REACHING.spawn(4, 0)) { return 1 }
+  if a.meets(REACHING.spawn(-12, 0)) || a.meets(REACHING.spawn(100, 0)) { return 2 }
+  // Mirrored, its collider is at 0..8: the reach mirrors with it — it meets one at 4..12,
+  // and not one at 12..20, which it would unmirrored.
+  var m = REACHING.spawn(0, 0)
+  m.mirrored = true
+  if !m.meets(REACHING.spawn(-4, 0)) { return 3 }
+  // One at 0..8 is inside it, and wholly outside the reach unmirrored: the reach must turn.
+  if !m.meets(REACHING.spawn(-8, 0)) { return 6 }
+  if m.meets(REACHING.spawn(4, 0)) { return 4 }
+  // No reach: the same answers, every pair placed.
+  let u = unreached.spawn(0, 0)
+  if !u.meets(unreached.spawn(4, 0)) || u.meets(unreached.spawn(-12, 0)) { return 5 }
+  0
+}
+`

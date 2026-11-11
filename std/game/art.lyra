@@ -1,0 +1,221 @@
+module std.game.art
+//! **Entities drawn through a game's art** ([Art]): its animations' steps, its sprites'
+//! frames and its colliders' shapes by frame are the game's tables — Vega's `assets.lyra`
+//! implements [Art] over them — and drawing, playing, pools and paths seen by the camera are
+//! here, once for every game. The module keeps its old names (`play`, `draw`, `frame_of`)
+//! as one-line calls of these.
+//!
+//! Apart from `std.game.entity` because it needs the camera:
+//! an entity alone moves, collides and follows a path anywhere.
+
+import std.game.collision.{ Shape }
+import std.game.camera.{ Camera }
+import std.game.entity.{
+  Animation,
+  Entity,
+  NO_FRAME_SHAPES,
+  PATH_WAITING,
+  PathPoint,
+  PathWait
+}
+import std.game.sprites
+
+/// One step of an animation: a frame of its sprite, and how many updates (1/60 s) it shows.
+pub struct Step {
+  frame: i64,
+  ticks: i64,
+}
+
+/// A shape of no size: what a game with no colliders that change by frame answers
+/// [Art.frame_shape] with — nothing asks it.
+pub const NO_SHAPE: Shape = Shape { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }
+
+/// **A game's art, as the runtime draws it**: its animations' steps, its sprites' frames,
+/// and the shapes of colliders that change by frame. Vega's `assets.lyra` implements it over
+/// its tables (`GameArt`), so entities are drawn and played here, once for every game, and
+/// the module keeps its old names as one-line calls of these.
+pub trait Art {
+  /// Step `index` of the game's table of every animation's steps.
+  pure step: (Self, i64) -> Step,
+  /// Frame `frame` of sprite `sprite` (its place in the project) with its top-left at (`x`,
+  /// `y`) on the screen, facing the other way when `mirrored`, turned `angle` degrees
+  /// clockwise and grown `scale` times about its middle, into the sprite list.
+  draw_frame: (Self, i64, f32, f32, i64, bool, f32, f32) -> void,
+  /// Shape `index` of the game's table of colliders' shapes by frame (a kind's
+  /// `frame_shapes` row, a collider each).
+  pure frame_shape: (Self, i64) -> Shape,
+}
+
+impl Animation {
+  /// The frame of its sprite it shows `tick` updates after it started: going round when it
+  /// loops, holding its last step when it does not.
+  pub let frame_in<a> where a: Art = pure (self, art: ref a, tick: i64) -> i64 => {
+    var left = if self.looping { tick % self.total } else { tick.min(self.total - 1) }
+    for k in 0..<self.count {
+      let step = art.step(self.first + k)
+      if left < step.ticks { return step.frame }
+      left -= step.ticks
+    }
+    art.step(self.first + self.count - 1).frame
+  }
+
+  /// Whether it has played to its end `tick` updates after it started — never, for one that
+  /// loops.
+  pub let finished = pure (self, tick: i64) -> bool => !self.looping && tick >= self.total
+
+  /// The animation drawn with its top-left at (`x`, `y`) on the screen as it is `tick` updates
+  /// after it started, facing the other way when `mirrored`, turned and grown about its middle.
+  pub let play_with<a> where a: Art = (
+    self,
+    art: ref a,
+    x: f32,
+    y: f32,
+    tick: i64,
+    mirrored: bool = false,
+    angle: f32 = 0.0,
+    scale: f32 = 1.0
+  ) -> void =>
+    art.draw_frame(self.sprite, x, y, self.frame_in(art, tick), mirrored, angle, scale)
+}
+
+impl Entity {
+  /// The entity showing `animation` — from its start when it is not what it shows now, else
+  /// going on — facing the other way when `mirrored`, and drawn where `view` shows it.
+  pub let play_with<a> where a: Art = (
+    self: mut,
+    art: ref a,
+    animation: Animation,
+    view: Camera,
+    mirrored: bool = false
+  ) -> void => {
+    self.set_animation(animation, mirrored)
+    self.draw_with(art, view)
+  }
+
+  /// The entity into the sprite list where `view` shows it — nothing when it is out of play
+  /// or off the screen — its colliders the frame's where they change by frame, and its
+  /// animation an update on.
+  pub let draw_with<a> where a: Art = (self: mut, art: ref a, view: Camera) -> void => {
+    if !self.alive { return }
+    if self.kind.frame_shapes != NO_FRAME_SHAPES && self.animation.sprite == self.kind.animation.sprite {
+      let row = self.kind.frame_shapes + self.animation.frame_in(
+        art,
+        self.tick
+      ) * self.kind.collider_count
+      if row != self.shown_row {
+        for i in 0..<self.kind.collider_count { self.kind.colliders[i].shape = art.frame_shape(row + i) }
+        self.shown_row = row
+      }
+    }
+    let (sx, sy) = self.view_of(view).on_screen(self.x(), self.y())
+    // Grown or turned, it reaches past its box: one partly on the screen is still drawn.
+    let pad = if self.scale > 1.0 || self.angle < 0.0 || self.angle > 0.0 { self.kind.width.max(self.kind.height) * self.scale.max(1.0) } else { 0.0 }
+    let first = sprites.listed()
+    if view.sees(
+      sx - pad,
+      sy - pad,
+      self.kind.width + pad * 2.0,
+      self.kind.height + pad * 2.0
+    ) {
+      self.animation.play_with(
+        art,
+        sx,
+        sy,
+        self.tick,
+        self.mirrored,
+        self.angle,
+        self.scale
+      )
+    }
+    self.shown_at(sx, sy, first)
+    self.tick += 1
+    self.drawn = true
+  }
+
+  /// The entity drawn unless it was this update, and ready for the next: what a scene's
+  /// `draw` does with each, so one the game has played is not drawn twice.
+  pub let draw_once_with<a> where a: Art = (
+    self: mut,
+    art: ref a,
+    view: Camera
+  ) -> void => {
+    if !self.drawn { self.draw_with(art, view) }
+    self.drawn = false
+  }
+
+  /// A step along its path ([follow_path]) — started first, from where it stands, if it
+  /// waits for the camera to show it and `view` does.
+  pub let follow_path_seen<const K: i64, const W: i64> = (
+    self: mut,
+    view: Camera,
+    points: ref [K]PathPoint,
+    waits: ref [W]PathWait
+  ) -> void => {
+    if self.alive && self.path_state == PATH_WAITING && self.path_when_seen {
+      let (sx, sy) = self.view_of(view).on_screen(self.x(), self.y())
+      if view.sees(sx, sy, self.kind.width, self.kind.height) { self.start_path() }
+    }
+    self.follow_path(points, waits)
+  }
+
+  /// `view` as this entity scrolls with it: moved at its own speed when it has one
+  /// (`parallax_x`, `parallax_y`), else as it is.
+  pub let view_of = pure (self: ref, view: Camera) -> Camera =>
+    if self.parallax_x < 1.0 || self.parallax_x > 1.0 || self.parallax_y < 1.0 || self.parallax_y > 1.0 {
+      view.parallaxed(self.parallax_x, self.parallax_y)
+    } else {
+      view
+    }
+}
+
+/// Every one of the pool in play drawn where `view` shows it ([Entity.draw_with]).
+pub let draw_all_with<a, const N: i64> where a: Art = (
+  self: mut [N]Entity,
+  art: ref a,
+  view: Camera
+) -> void => {
+  for i in 0..<N {
+    if self[i].alive { self[i].draw_with(art, view) }
+  }
+}
+
+/// Every one of the pool in play showing `animation` ([Entity.play_with]).
+pub let play_all_with<a, const N: i64> where a: Art = (
+  self: mut [N]Entity,
+  art: ref a,
+  animation: Animation,
+  view: Camera
+) -> void => {
+  for i in 0..<N {
+    if self[i].alive { self[i].play_with(art, animation, view) }
+  }
+}
+
+/// Every one of the pool in play showing its animation once through — an explosion, a
+/// puff — and let go ([Entity.despawn]) when it has played to its end.
+pub let play_out_with<a, const N: i64> where a: Art = (
+  self: mut [N]Entity,
+  art: ref a,
+  view: Camera
+) -> void => {
+  for i in 0..<N {
+    if !self[i].alive { continue }
+    if self[i].animation.finished(self[i].tick) { self[i].despawn() } else { self[i].draw_with(
+      art,
+      view
+    ) }
+  }
+}
+
+/// Every one of the pool in play that `view` no longer shows let go ([Entity.despawn]): a
+/// shot past the screen's edge.
+pub let despawn_off_screen<const N: i64> = (
+  self: mut [N]Entity,
+  view: Camera
+) -> void => {
+  for i in 0..<N {
+    if !self[i].alive { continue }
+    let (sx, sy) = self[i].view_of(view).on_screen(self[i].x(), self[i].y())
+    if !view.sees(sx, sy, self[i].kind.width, self[i].kind.height) { self[i].despawn() }
+  }
+}

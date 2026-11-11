@@ -9,6 +9,43 @@ Newest first.
 
 ## Dated log
 
+### 11/11/26 — The Genesis hero's frame: paths, `meets` and a kind's reach
+
+Walking right, the hero kept up with 108 frames in 180 once its stars followed paths
+(154 before). Measured with a scratch Sheliak counting the 68000's clocks at each address
+and the game counting its own loop passes on the score: the loop was already at about 97%
+of a frame, so the paths' few percent pushed most frames over. Three causes, three fixes:
+**a scene followed every placement's path** (13 calls a frame for 2 on paths — Vega now
+writes only those); **`follow_path` was a large function called for still entities** — it
+is now an inlined check calling `@noinline step_path` only for one on the move; and
+**`meets_at` was a quarter of the frame**: the hero against each star, every value spilled
+inlined into `main`, and about 2,000 cycles a call even apart. It is `@noinline`, asks the
+layers before copying colliders, and **a console kind carries its colliders' `reach`**,
+written by Vega (each shape and every place it has by frame), so a pair whose reaches are
+apart is told so in a few compares; a kind written by hand has `NO_REACH` and every pair
+is placed, as before. Standing the hero now keeps up with every frame (181 in 180, against
+154 before paths); walking, 157 to 160 (142 to 154 before). `TestRun_EntitiesMeetByReach`
+fails if a mirrored entity's reach is not mirrored. The step's products use
+`wrapping_mul`, which cannot overflow there and spares a `__muldi3`. The backend's
+arithmetic is in todo.md.
+
+### 11/11/26 — Drawing moved from Vega's generated module into `std.*.art`
+
+Every game's `assets.lyra` carried the same drawing code — an animation's frame by its
+steps, an entity drawn where the camera shows it, its colliders by frame, pools played and
+paths started when seen — differing only in the tables it read and the sprites it drew.
+**`std.<runtime>.art` holds it once**, reading the game's through a trait, `Art` (a step, a
+sprite's frame drawn, a shape by frame), as `std.chips.music` reads a game's songs through
+`MusicData`; generics are made per type, so on the 68000 the calls are what they were. The
+module implements `Art` over its tables (`GameArt`) and keeps its names (`play`, `draw`,
+`frame_of`, `follow_path_in`, `draw_all`…) as one-line calls, so games are unchanged —
+except where they call what is now the runtime's (`despawn_off_screen`, `finished`), which
+needs `std.*.art` imported. Each example's module is about a hundred lines shorter.
+
+**Why a module of its own**: drawing needs the camera, and `std.sms.camera` imports its
+VDP, whose `port_read` a program built for the host refuses — every SMS entity test failed
+the moment `std.sms.entity` imported the camera. An entity alone stays host-runnable.
+
 ### 11/11/26 — Pools of entities
 
 **An entity is `alive` or not**, and a pool is an array of them: `#[BULLET.waiting(); 6]`,

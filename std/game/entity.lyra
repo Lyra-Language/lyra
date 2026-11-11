@@ -734,16 +734,28 @@ impl Entity {
   /// as long as it says. Its speed is set to the step, for what asks it (which way it faces,
   /// [blocked_by]). One that left its path's end carries on as it went; one waiting to
   /// start, done or with none stays still.
-  ///
-  /// Never inlined: a scene follows each of its entities' paths, and a loop of them unrolled
-  /// with this in every copy made the hero's `main` longer than a 68000's branch reaches.
-  @noinline
   pub let follow_path<const K: i64, const W: i64> = (
     self: mut,
     points: ref [K]PathPoint,
     waits: ref [W]PathWait
   ) -> void => {
+    // Most of a scene's entities are still — waiting to be seen, done or on none — and the
+    // step below is a large function to call: a still one asks only this.
     if !self.alive { return }
+    if self.path_state == PATH_FOLLOWING || (self.path_state == PATH_DONE && self.path.end == PATH_LEAVE) {
+      self.step_path(points, waits)
+    }
+  }
+
+  /// [follow_path]'s step, for an entity on the move. Never inlined: a scene follows each of
+  /// its entities' paths, and a loop of them unrolled with this in every copy made the hero's
+  /// `main` longer than a 68000's branch reaches.
+  @noinline
+  let step_path<const K: i64, const W: i64> = (
+    self: mut,
+    points: ref [K]PathPoint,
+    waits: ref [W]PathWait
+  ) -> void => {
     if self.path_state == PATH_DONE && self.path.end == PATH_LEAVE {
       // A pause at its end first: standing, still facing the way it will go.
       if self.path_wait > 0 {
