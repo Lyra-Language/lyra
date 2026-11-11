@@ -817,6 +817,7 @@ func (a *analyzer) computeLastUse(lam *ast.LambdaExpr) map[ast.Expression]bool {
 		}
 		return true
 	})
+	pinThroughBinders(lam.Body, addrTaken)
 
 	eligible := func(name string) bool {
 		return declCount[name] == 1 && !params[name] && !reassigned[name] && !addrTaken[name]
@@ -902,6 +903,7 @@ func (a *analyzer) computeOwnedLastRef(lam *ast.LambdaExpr) map[string]ast.Expre
 		}
 		return true
 	})
+	pinThroughBinders(lam.Body, addrTaken)
 
 	// Names the body binds again. This pass keys on names, so for an `own` parameter
 	// whose name a `let`, loop variable, pattern or nested parameter rebinds, the final
@@ -1129,6 +1131,81 @@ func (a *analyzer) notePointerHandedOut(call *ast.FunctionCallExpr, into map[str
 	}
 	for _, arg := range call.Arguments {
 		pin(arg)
+	}
+}
+
+// pinThroughBinders carries a pin from a binding that only borrows part of another value to
+// that value. `[c in s_items | unsafe { c.data() }]` pins `c`, a borrowed element of
+// `s_items`, and it is `s_items` that last-use frees — at the comprehension, its last
+// mention — while the pointers into its elements are kept in the result: every C string
+// read back empty (bindings.imgui's `[]string` wrappers, 11/11). A pinned comprehension
+// clause or `for` loop element pins every name in its source, and a pinned binding of a
+// `match` arm, an `if let` or a destructuring `let` every name in the value it takes apart;
+// to a fixed point, for nesting.
+//
+// A pinned `let` copy needs nothing: it holds a reference of its own, kept to its scope's end.
+func pinThroughBinders(body ast.Expression, into map[string]bool) {
+	type borrow struct {
+		binders []string
+		source  ast.Expression
+	}
+	var borrows []borrow
+	destructured := func(d *ast.DestructuringDeclStmt) {
+		var names []string
+		ast.EachPatternBinding(d.Pattern, func(b ast.PatternBinding) {
+			names = append(names, b.Name)
+		})
+		borrows = append(borrows, borrow{names, d.Value})
+	}
+	onStmt := func(s ast.Statement) bool {
+		switch v := s.(type) {
+		case *ast.DestructuringDeclStmt:
+			destructured(v)
+		case *ast.IfDestructuringStmt:
+			destructured(&v.DestructuringStatement)
+		}
+		return true
+	}
+	ast.WalkExpr(body, onStmt, func(e ast.Expression) bool {
+		switch v := e.(type) {
+		case *ast.ArrayCompExpr:
+			for _, g := range v.Generators {
+				borrows = append(borrows, borrow{[]string{g.Identifier}, g.Value})
+			}
+		case *ast.ForInLoopExpr:
+			borrows = append(borrows, borrow{[]string{v.Key, v.Value}, v.Iterable})
+		case *ast.MatchExpr:
+			var names []string
+			for _, arm := range v.MatchArms {
+				ast.EachPatternBinding(arm.Pattern, func(b ast.PatternBinding) {
+					names = append(names, b.Name)
+				})
+			}
+			borrows = append(borrows, borrow{names, v.Scrutinee})
+		}
+		return true
+	})
+	for changed := true; changed; {
+		changed = false
+		for _, b := range borrows {
+			pinned := false
+			for _, name := range b.binders {
+				if name != "" && into[name] {
+					pinned = true
+				}
+			}
+			if !pinned || b.source == nil {
+				continue
+			}
+			sources := map[string]bool{}
+			collectNames(b.source, sources)
+			for name := range sources {
+				if !into[name] {
+					into[name] = true
+					changed = true
+				}
+			}
+		}
 	}
 }
 

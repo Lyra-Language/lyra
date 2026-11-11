@@ -144,6 +144,12 @@ as a reference, so otherwise `CBuffer { ptr: unsafe { &xs[0] }, len: 3 }` frees 
 (`notePointerHandedOut`, by the result's type through `holdsRawPointer`): `let p = xs.data()` is
 `&xs[0]` by another name. A temporary has nothing to pin, and lasts its statement.
 
+**A pinned binder pins what it borrows from** (`pinThroughBinders`, after both walks): a
+comprehension clause's or `for` loop's element pins its source's names, and a `match` arm's,
+statement `if let`'s (`IfDestructuringStmt`) or destructuring `let`'s binding its value's, to a
+fixed point. `[c in s_items | unsafe { c.data() }]` pinned only `c`, and `s_items` was freed at
+the comprehension with the pointers into it kept.
+
 Remove the pin → use-after-free. Remove the arm → double free for a value shared out of the block
 (`TestExec_UnsafeBlockRetainsWhatItShares`).
 

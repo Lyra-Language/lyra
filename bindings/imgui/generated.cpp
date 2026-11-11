@@ -371,6 +371,27 @@ bool lyra_imgui_ImGuiIO_get_AppAcceptingEvents(ImGuiIO* self) { return self->App
 void lyra_imgui_ImGuiIO_set_AppAcceptingEvents(ImGuiIO* self, bool value) { self->AppAcceptingEvents = value; }
 ImWchar16 lyra_imgui_ImGuiIO_get_InputQueueSurrogate(ImGuiIO* self) { return self->InputQueueSurrogate; }
 void lyra_imgui_ImGuiIO_set_InputQueueSurrogate(ImGuiIO* self, ImWchar16 value) { self->InputQueueSurrogate = value; }
+int lyra_imgui_ImGuiIO_get_InputQueueCharacters_size(ImGuiIO* self) { return self->InputQueueCharacters.Size; }
+ImWchar lyra_imgui_ImGuiIO_get_InputQueueCharacters(ImGuiIO* self, int index) { return index >= 0 && index < self->InputQueueCharacters.Size ? self->InputQueueCharacters.Data[index] : ImWchar(); }
+const void* lyra_imgui_ImGuiPayload_get_Data(ImGuiPayload* self) { return self->Data; }
+int lyra_imgui_ImGuiPayload_get_DataSize(ImGuiPayload* self) { return self->DataSize; }
+ImGuiListClipper* lyra_imgui_ImGuiListClipper_new() { return IM_NEW(ImGuiListClipper)(); }
+void lyra_imgui_ImGuiListClipper_destroy(ImGuiListClipper* self) { IM_DELETE(self); }
+int lyra_imgui_ImGuiListClipper_get_DisplayStart(ImGuiListClipper* self) { return self->DisplayStart; }
+int lyra_imgui_ImGuiListClipper_get_DisplayEnd(ImGuiListClipper* self) { return self->DisplayEnd; }
+int lyra_imgui_ImGuiListClipper_get_UserIndex(ImGuiListClipper* self) { return self->UserIndex; }
+int lyra_imgui_ImGuiListClipper_get_ItemsCount(ImGuiListClipper* self) { return self->ItemsCount; }
+float lyra_imgui_ImGuiListClipper_get_ItemsHeight(ImGuiListClipper* self) { return self->ItemsHeight; }
+ImGuiListClipperFlags lyra_imgui_ImGuiListClipper_get_Flags(ImGuiListClipper* self) { return self->Flags; }
+double lyra_imgui_ImGuiListClipper_get_StartPosY(ImGuiListClipper* self) { return self->StartPosY; }
+double lyra_imgui_ImGuiListClipper_get_StartSeekOffsetY(ImGuiListClipper* self) { return self->StartSeekOffsetY; }
+ImGuiContext* lyra_imgui_ImGuiListClipper_get_Ctx(ImGuiListClipper* self) { return self->Ctx; }
+int lyra_imgui_ImDrawList_get_CmdBuffer_size(ImDrawList* self) { return self->CmdBuffer.Size; }
+int lyra_imgui_ImDrawList_get_IdxBuffer_size(ImDrawList* self) { return self->IdxBuffer.Size; }
+ImDrawIdx lyra_imgui_ImDrawList_get_IdxBuffer(ImDrawList* self, int index) { return index >= 0 && index < self->IdxBuffer.Size ? self->IdxBuffer.Data[index] : ImDrawIdx(); }
+int lyra_imgui_ImDrawList_get_VtxBuffer_size(ImDrawList* self) { return self->VtxBuffer.Size; }
+ImDrawListFlags lyra_imgui_ImDrawList_get_Flags(ImDrawList* self) { return self->Flags; }
+void lyra_imgui_ImDrawList_set_Flags(ImDrawList* self, ImDrawListFlags value) { self->Flags = value; }
 ImGuiID lyra_imgui_ImGuiViewport_get_ID(ImGuiViewport* self) { return self->ID; }
 void lyra_imgui_ImGuiViewport_set_ID(ImGuiViewport* self, ImGuiID value) { self->ID = value; }
 ImGuiViewportFlags lyra_imgui_ImGuiViewport_get_Flags(ImGuiViewport* self) { return self->Flags; }

@@ -17,6 +17,9 @@
 // | `const char *` | `string` (`Maybe<string>` when C's default is `NULL`) | `with_cstring` |
 // | `bool *`, `float *` … | `mut bool`, `mut f32` — the caller's own variable | `&mut` |
 // | `float[3]` | `mut [3]f32` | `&mut` |
+// | `const float *` and a count after it (`values_count`) | `[]f32` — `[]Vec2`, `[]u8` for a `const void *` | `xs.data()`, NULL when empty, and `xs.len()` |
+// | `const char *const []` and a count | `[]string` | each string's C copy, then their addresses |
+// | `const ImVec4 *` returned | `Vec4`, copied | `^` |
 //
 // **One wrapper per function family.** dear_bindings splits each C++ function with
 // default arguments into a short helper (`ImGui_Button`) and a full `…Ex` form; the
@@ -26,17 +29,28 @@
 //
 // **A nullable pointer is left out.** `p_open` (`bool *` defaulting to NULL) makes a second
 // wrapper, `…_closable`, taking `open: mut bool`; the plain one passes NULL. A nullable
-// handle is always NULL, and a `text_end` is always NULL (the string's NUL ends it).
+// handle is always NULL, and a `text_end` is always NULL (the string's NUL ends it); so is
+// anything else defaulting to NULL that Lyra cannot pass — a callback, a `const ImVec2 *`,
+// a glyph range — as C++'s default would leave it (`is_mouse_pos_valid()`,
+// `set_next_window_size_constraints(min, max)`). A handle ImGui's header says may come back
+// NULL ([NULLABLE_RESULTS]) is a `Maybe` of it: `accept_drag_drop_payload("tile")`.
 //
 // **Fields are functions.** Lyra cannot reach a C struct's field without its layout, so for
 // the structs a program configures or reads each frame ([FIELD_STRUCTS]) this also writes
 // `generated.cpp`: a C accessor per field, which the wrappers call like any ImGui function.
 // `io.delta_time()`, `style.set_alpha(0.9)`, `style.colors(COL_TEXT)`; strings and handles
-// are read-only, and an array's index is checked on the C side.
+// are read-only, and an array's index is checked on the C side. An `ImVector` field is its
+// length (`draw_list.vtx_buffer_size()`) and, for numbers, its elements by index; a `void *`
+// with a `…Size` after it is its bytes, copied (`payload.data_()`).
 //
-// Anything else — `void *`, callbacks, `va_list`, C-owned buffers, by-value structs other
-// than the vectors — is not bound, and is listed at the end of the generated file with
-// the reason, so hand-written wrappers (`imgui.lyra`) know what is theirs to cover.
+// **A struct C++ makes on the stack is made on ImGui's heap** ([OWNED_STRUCTS]): Lyra cannot
+// size it, so `generated.cpp` gives it a constructor and a destructor —
+// `ListClipper.new()`, `clipper.destroy()`.
+//
+// Anything else — a `void *` that is not a byte buffer, a callback that must be given,
+// `va_list`, writable C buffers, by-value structs other than the vectors — is not bound,
+// and is listed at the end of the generated file with the reason, so hand-written wrappers
+// (`imgui.lyra`) know what is theirs to cover.
 
 import std.io.{ read_file, write_file }
 import std.json.{ parse_json, JsonValue }
@@ -72,6 +86,11 @@ let main = () -> u8 => {
   }
   var accessors: []string = []
   for st in doc.field("structs").unwrap_or(JsonNull).elements() {
+    if includes(OWNED_STRUCTS, text_of(st, "name")) {
+      let made = constructor(text_of(st, "name"))
+      for f in made.fns { bound.push(f) }
+      for line in made.cpp { accessors.push(line) }
+    }
     if includes(FIELD_STRUCTS, text_of(st, "name")) {
       let fields = read_fields(st, api)
       for f in fields.fns { bound.push(f) }
@@ -105,6 +124,18 @@ data Kind =
   | InOut(string)
   /// `T[n]` of a scalar, a `mut [n]T` parameter.
   | Fixed(string, i64)
+  /// `const T *` and the count after it, as a `[]T` parameter: `f32`, `Vec2`, or `u8` for
+  /// a `const void *` and its size.
+  | Span(string)
+  /// `const char *const []` and the count after it, as a `[]string` parameter.
+  | Strings
+  /// `const ImVec4 *` as a result: the vector it points to, copied.
+  | VectorAt(string)
+  /// A `void *` field and the `…Size` field after it: the bytes, copied, as a `[]u8`;
+  /// the size accessor's extern is named here.
+  | Bytes(string)
+  /// A handle that may be NULL, as a `Maybe` of it (a result).
+  | MaybeHandle(string)
   /// `void`, as a return type.
   | Nothing
   /// Anything else, and why.
@@ -120,6 +151,8 @@ data Role =
   | Null
   /// The receiver of a method.
   | Receiver
+  /// Left out of the wrapper: the length of the `Span` or `Strings` parameter named here.
+  | Count(string)
 
 /// One C parameter.
 struct Param {
@@ -146,6 +179,9 @@ struct Function {
   cpp_name: string,
   /// The comment ImGui's header attaches to the declaration.
   comment: string,
+  /// The handle an associated function (one with no receiver) belongs to, `ListClipper`
+  /// for `ListClipper.new()`; `""` for any other function.
+  owner: string = "",
 }
 
 /// What became of one function in the JSON.
@@ -165,6 +201,8 @@ struct Api {
   enums: Set<string>,
   /// Default-argument helpers (`ImGui_Button`), whose `…Ex` form takes their name.
   helpers: Set<string>,
+  /// Each `ImVector_T` instantiation → the description of `T`, its element.
+  vectors: HashMap<string, JsonValue>,
 }
 
 /// Functions the host (`host.cpp`) calls itself; a program calling them would break the
@@ -186,14 +224,32 @@ const HOST_OWNED: []string = [
   "ImGui_DebugCheckVersionAndDataLayout",
 ]
 
+/// Functions answering a handle that may be NULL — ImGui's header says when — so their
+/// wrappers answer a `Maybe`: `accept_drag_drop_payload("tile") -> Maybe<Payload>`.
+const NULLABLE_RESULTS: []string = [
+  "ImGui_AcceptDragDropPayload",
+  "ImGui_GetDragDropPayload",
+  "ImGui_FindViewportByID",
+]
+
 let load_api = pure (doc: JsonValue) -> Api => {
   var typedefs = HashMap.new::<string, JsonValue>()
   for t in doc.field("typedefs").unwrap_or(JsonNull).elements() {
     typedefs.insert(text_of(t, "name"), description(t.field("type").unwrap_or(JsonNull)))
   }
   var structs = Set.new::<string>()
+  var vectors = HashMap.new::<string, JsonValue>()
   for s in doc.field("structs").unwrap_or(JsonNull).elements() {
-    structs.insert(text_of(s, "name"))
+    let name = text_of(s, "name")
+    structs.insert(name)
+    if name.starts_with("ImVector_") {
+      for f in s.field("fields").unwrap_or(JsonNull).elements() {
+        if text_of(f, "name") == "Data" {
+          let data = description(f.field("type").unwrap_or(JsonNull))
+          vectors.insert(name, data.field("inner_type").unwrap_or(JsonNull))
+        }
+      }
+    }
   }
   var enums = Set.new::<string>()
   for e in doc.field("enums").unwrap_or(JsonNull).elements() {
@@ -203,14 +259,84 @@ let load_api = pure (doc: JsonValue) -> Api => {
   for f in doc.field("functions").unwrap_or(JsonNull).elements() {
     if flag(f, "is_default_argument_helper") { helpers.insert(text_of(f, "name")) }
   }
-  Api { typedefs: typedefs, structs: structs, enums: enums, helpers: helpers }
+  Api {
+    typedefs: typedefs,
+    structs: structs,
+    enums: enums,
+    helpers: helpers,
+    vectors: vectors
+  }
+}
+
+// ── Structs a program makes ──────────────────────────────────────────────────
+
+/// The structs a program makes itself rather than being handed — C++ puts them on the
+/// stack, which Lyra cannot do for a type whose layout it does not know — so
+/// `generated.cpp` gives each a constructor and a destructor: `ListClipper.new()` and
+/// `clipper.destroy()`.
+const OWNED_STRUCTS: []string = ["ImGuiListClipper"]
+
+/// What [constructor] adds: the two wrappers, and the C++ defining them.
+struct Made {
+  fns: []Function,
+  cpp: []string,
+}
+
+let constructor = pure (c_struct: string) -> Made => {
+  let handle = handle_name(c_struct)
+  let make = Function {
+    symbol: "lyra_imgui_${c_struct}_new",
+    name: "new",
+    extern_name: "c_${snake(handle)}_new",
+    params: [],
+    result: Handle(handle),
+    cpp_name: "${c_struct}::${c_struct}",
+    comment: "a new one, on ImGui's heap; give it back with `destroy`.",
+    owner: handle,
+  }
+  let receiver = Param {
+    name: "self",
+    kind: Handle(handle),
+    role: Receiver,
+    default: None
+  }
+  let destroy = Function {
+    make |
+    symbol: "lyra_imgui_${c_struct}_destroy",
+    name: "destroy",
+    extern_name: "c_${snake(handle)}_destroy",
+    params: [receiver],
+    result: Nothing,
+    cpp_name: "${c_struct}::~${c_struct}",
+    comment: "frees one made by `new`; it must not be used after.",
+    owner: "",
+  }
+  Made {
+    fns: [make, destroy],
+    cpp: [
+      "${c_struct}* lyra_imgui_${c_struct}_new() { return IM_NEW(${c_struct})(); }",
+      "void lyra_imgui_${c_struct}_destroy(${c_struct}* self) { IM_DELETE(self); }",
+    ],
+  }
 }
 
 // ── Reading a struct's fields ────────────────────────────────────────────────
 
 /// The structs whose fields get accessors: the ones a program configures (`ImGuiStyle`, the
 /// `Config…` half of `ImGuiIO`) or reads each frame (the rest of `ImGuiIO`, a viewport).
-const FIELD_STRUCTS: []string = ["ImGuiIO", "ImGuiStyle", "ImGuiViewport"]
+/// A draw list's (its buffers' lengths), a list clipper's (the rows to draw) and a
+/// drag-and-drop payload's (its bytes) are read.
+const FIELD_STRUCTS: []string = [
+  "ImGuiIO",
+  "ImGuiStyle",
+  "ImGuiViewport",
+  "ImDrawList",
+  "ImGuiListClipper",
+  "ImGuiPayload",
+]
+
+/// Structs whose fields are read and never written: ImGui fills them in.
+const READ_ONLY_STRUCTS: []string = ["ImGuiListClipper", "ImGuiPayload"]
 
 /// One struct's accessors: the wrappers, as functions calling C accessors, and the C++
 /// defining those accessors.
@@ -235,27 +361,79 @@ let read_fields = pure (st: JsonValue, api: Api) -> Fields => {
     role: Given,
     default: None
   }
+  let read_only = includes(READ_ONLY_STRUCTS, c_struct)
   var fns: []Function = []
   var cpp: []string = []
   var skipped: []string = []
-  for field in st.field("fields").unwrap_or(JsonNull).elements() {
+  let fields = st.field("fields").unwrap_or(JsonNull).elements()
+  for i, field in fields {
     let name = text_of(field, "name")
-    if flag(field, "is_internal") || field.field("conditionals") != None {
+    // A leading `_` is ImGui's mark for a field it keeps to itself (`ImDrawList::_Path`).
+    let private = name.starts_with("_")
+    if flag(field, "is_internal") || field.field("conditionals") != None || private {
       continue
     }
     let desc = description(field.field("type").unwrap_or(JsonNull))
+    let lyra_name = snake(name)
+    let get = "lyra_imgui_${c_struct}_get_${name}"
+    let accessor = Function {
+      symbol: get,
+      name: escape(lyra_name),
+      extern_name: "c_${snake(handle)}_get_${lyra_name}",
+      params: [receiver],
+      result: Nothing,
+      cpp_name: "${c_struct}::${name}",
+      comment: attached_comment(field),
+    }
+
+    // An `ImVector<T>` by value: its length, and its elements when they are numbers or
+    // vectors (`io.input_queue_characters(i)`), an index out of range reading zero.
+    if let Some(element) = api.vectors.get(text_of(desc, "name")) {
+      fns.push(Function {
+        accessor |
+        symbol: "${get}_size",
+        name: "${lyra_name}_size",
+        extern_name: "${accessor.extern_name}_size",
+        result: Scalar("i32"),
+        comment: "how many elements `${name}` holds.",
+      })
+      cpp.push("int ${get}_size(${c_struct}* self) { return self->${name}.Size; }")
+      let kind = classify(element, api)
+      let plain = match kind {
+        Scalar(_) => true,
+        Vector(_) => true,
+        _ => false,
+      }
+      if plain {
+        let c_type = c_element(element)
+        fns.push(Function { accessor | params: [receiver, index_param], result: kind })
+        cpp.push("${c_type} ${get}(${c_struct}* self, int index) { return index >= 0 && index < self->${name}.Size ? self->${name}.Data[index] : ${c_type}(); }")
+      }
+      continue
+    }
+
+    // `void *Data` and `int DataSize` after it: the bytes, copied (`payload.data()`).
+    let next = if i + 1 < fields.len() { text_of(fields[i + 1], "name") } else { "" }
+    if is_void_pointer(desc) && next == "${name}Size" {
+      fns.push(Function { accessor | result: Bytes("c_${snake(handle)}_get_${snake(next)}") })
+      cpp.push("const void* ${get}(${c_struct}* self) { return self->${name}; }")
+      continue
+    }
+
     let array = text_of(desc, "kind") == "Array"
     let element = if array { desc.field("inner_type").unwrap_or(JsonNull) } else { desc }
     let kind = classify(element, api)
-    let settable = match kind {
+    let settable = !read_only && match kind {
       Scalar(_) => true,
       Vector(_) => true,
       _ => false,
     }
     let readable = match kind {
+      Scalar(_) => true,
+      Vector(_) => true,
       Text => !array,
       Handle(_) => !array,
-      _ => settable,
+      _ => false,
     }
     if !readable {
       let why = match kind {
@@ -267,18 +445,12 @@ let read_fields = pure (st: JsonValue, api: Api) -> Fields => {
     }
     let declared = text_of(field.field("type").unwrap_or(JsonNull), "declaration")
     let c_type = if array { c_element(element) } else { declared }
-    let lyra_name = snake(name)
-    let get = "lyra_imgui_${c_struct}_get_${name}"
     let set = "lyra_imgui_${c_struct}_set_${name}"
     let bounds = "index >= 0 && index < IM_ARRAYSIZE(self->${name})"
     let getter = Function {
-      symbol: get,
-      name: escape(lyra_name),
-      extern_name: "c_${snake(handle)}_get_${lyra_name}",
+      accessor |
       params: if array { [receiver, index_param] } else { [receiver] },
       result: kind,
-      cpp_name: "${c_struct}::${name}",
-      comment: attached_comment(field),
     }
     fns.push(getter)
     if array {
@@ -322,28 +494,67 @@ let read_function = pure (f: JsonValue, api: Api) -> Outcome => {
   if includes(HOST_OWNED, symbol) || symbol.starts_with("DearBindings_") {
     return Ignored
   }
-  if f.field("conditionals") != None { return Skipped("under a preprocessor conditional") }
+  // Obsolete functions (ImGui's `#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`) and debug tools:
+  // each named by its condition.
+  if let Some(conditions) = f.field("conditionals") {
+    let first = conditions.elements()
+    let why = if first.len() == 0 {
+      "under a preprocessor conditional"
+    } else if text_of(first[0], "expression") == "IMGUI_DISABLE_OBSOLETE_FUNCTIONS" {
+      "obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)"
+    } else {
+      "under `#${text_of(first[0], "condition")} ${text_of(first[0], "expression")}`"
+    }
+    return Skipped(why)
+  }
 
   var params: []Param = []
-  for a in f.field("arguments").unwrap_or(JsonNull).elements() {
+  let args = f.field("arguments").unwrap_or(JsonNull).elements()
+  var at = 0
+  while at < args.len() {
+    let a = args[at]
+    at += 1
     if flag(a, "is_varargs") {
       return Skipped("variadic (the `…Unformatted` form is bound)")
     }
     let c_type = a.field("type").unwrap_or(JsonNull)
     if text_of(c_type, "declaration") == "va_list" { return Skipped("takes a va_list") }
+    let name = escape(text_of(a, "name"))
+    // A pointer and the count after it are one Lyra array.
+    if at < args.len() {
+      if let Some(span) = span_kind(description(c_type), args[at], api) {
+        let count = escape(text_of(args[at], "name"))
+        let count_kind = classify(
+          description(args[at].field("type").unwrap_or(JsonNull)),
+          api
+        )
+        params.push(Param { name: name, kind: span, role: Given, default: None })
+        params.push(Param {
+          name: count,
+          kind: count_kind,
+          role: Count(name),
+          default: None
+        })
+        at += 1
+        continue
+      }
+    }
     let kind = classify(description(c_type), api)
     let c_default = a.field("default_value").unwrap_or(JsonNull).as_text()
     let is_null = c_default == Some("NULL")
-    let name = escape(text_of(a, "name"))
     if flag(a, "is_instance_pointer") {
       if let Handle(_) = kind {} else { return Skipped("receiver is not a struct pointer") }
       params.push(Param { name: "self", kind: kind, role: Receiver, default: None })
       continue
     }
+    // Anything defaulting to NULL — a callback, a `const ImVec2 *`, a glyph range — is left
+    // out, as C++'s default would leave it.
     let role = match kind {
-      Unsupported(why) => return Skipped("parameter `${name}`: ${why}"),
       Text => if is_null && name.ends_with("_end") { Null } else if is_null { MaybeText } else { Given },
       Handle(_) => if is_null { Null } else { Given },
+      Unsupported(why) =>
+        if is_null { Null } else { return Skipped("parameter `${name}`: ${why}") },
+      VectorAt(v) => if is_null { Null } else { return Skipped("parameter `${name}`: a pointer to `${v}`") },
       _ => Given,
     }
     params.push(Param {
@@ -353,8 +564,13 @@ let read_function = pure (f: JsonValue, api: Api) -> Outcome => {
       default: lyra_default(c_default, kind, role)
     })
   }
-  let result = classify(description(f.field("return_type").unwrap_or(JsonNull)), api)
-  if let Unsupported(why) = result { return Skipped("returns ${why}") }
+  let returned = classify(description(f.field("return_type").unwrap_or(JsonNull)), api)
+  if let Unsupported(why) = returned { return Skipped("returns ${why}") }
+  let result = match returned {
+    Handle(h) =>
+      if includes(NULLABLE_RESULTS, symbol) { MaybeHandle(h) } else { returned },
+    _ => returned,
+  }
 
   // An `…Unformatted` helper stands in for a variadic function that is not bound, so it
   // takes that function's name: `ImGui_TextColoredUnformatted` is `text_colored`.
@@ -429,6 +645,7 @@ let disambiguate = (fns: []Function, dropped: mut []string) -> []Function => {
 /// The Lyra type of a wrapper's receiver — the `impl` block it is rendered in — or `""`
 /// for a free function.
 let receiver_type = pure (f: Function) -> string => {
+  if f.owner != "" { return f.owner }
   for p in f.params {
     if p.role == Receiver { return lyra_type(p.kind) }
   }
@@ -437,6 +654,7 @@ let receiver_type = pure (f: Function) -> string => {
 
 /// The handle a method is called on, or `""` for a free function.
 let receiver_of = pure (f: Function) -> string => {
+  if f.owner != "" { return f.owner }
   for p in f.params {
     if p.role == Receiver {
       if let Handle(h) = p.kind { return h }
@@ -533,10 +751,7 @@ let user_type = pure (name: string, api: Api) -> Kind => {
 }
 
 let pointer_type = pure (inner: JsonValue, api: Api) -> Kind => {
-  var is_const = false
-  for c in inner.field("storage_classes").unwrap_or(JsonNull).elements() {
-    if c.as_text() == Some("const") { is_const = true }
-  }
+  let is_const = const_type(inner)
   let kind = text_of(inner, "kind")
   if kind == "Builtin" && text_of(inner, "builtin_type") == "char" {
     return if is_const { Text } else { Unsupported("a writable `char *` buffer") }
@@ -546,7 +761,9 @@ let pointer_type = pure (inner: JsonValue, api: Api) -> Kind => {
   }
   if kind == "User" && api.structs.contains(text_of(inner, "name")) {
     let name = text_of(inner, "name")
-    if name == "ImVec2" || name == "ImVec4" { return Unsupported("a pointer to `${name}`") }
+    if name == "ImVec2" || name == "ImVec4" {
+      return if is_const { VectorAt(drop_im(name)) } else { Unsupported("a pointer to `${name}`") }
+    }
     return Handle(handle_name(name))
   }
   match classify(inner, api) {
@@ -555,6 +772,54 @@ let pointer_type = pure (inner: JsonValue, api: Api) -> Kind => {
     Handle(_) => Unsupported("a pointer to a pointer"),
     Unsupported(why) => Unsupported("a pointer to ${why}"),
     _ => Unsupported("a pointer to `${text_of(inner, "kind")}`"),
+  }
+}
+
+/// Whether a type is written `const`.
+let const_type = pure (desc: JsonValue) -> bool => {
+  for c in desc.field("storage_classes").unwrap_or(JsonNull).elements() {
+    if c.as_text() == Some("const") { return true }
+  }
+  false
+}
+
+/// `void *`, `const` or not.
+let is_void_pointer = pure (desc: JsonValue) -> bool => {
+  let inner = desc.field("inner_type").unwrap_or(JsonNull)
+  text_of(desc, "kind") == "Pointer" && text_of(inner, "builtin_type") == "void"
+}
+
+/// A `const T *` (a `const void *`, a `const char *const []`) and, after it, its count —
+/// an `int` or `size_t` named `num_…`, `…_count`, `…_size` or `sz` — as the one Lyra array
+/// they describe: `add_polyline(points: []Vec2, …)`, `plot_lines(label, values: []f32)`,
+/// `list_box(label, current, items: []string)`, `set_drag_drop_payload(type_, data: []u8)`.
+let span_kind = pure (desc: JsonValue, next: JsonValue, api: Api) -> Maybe<Kind> => {
+  let count = text_of(next, "name")
+  let counted = count.starts_with("num_") ||
+    count.ends_with("_count") ||
+    count.ends_with("_size") ||
+    count == "sz"
+  if !counted { return None }
+  let integer = match classify(description(next.field("type").unwrap_or(JsonNull)), api) {
+    Scalar("i32") => true,
+    Scalar("u64") => true,
+    _ => false,
+  }
+  if !integer { return None }
+  let inner = desc.field("inner_type").unwrap_or(JsonNull)
+  match text_of(desc, "kind") {
+    "Array" => if classify(inner, api) == Text { Some(Strings) } else { None },
+    "Pointer" => {
+      // A `const char *` and its size is text, a `string` already.
+      if !const_type(inner) || text_of(inner, "builtin_type") == "char" { return None }
+      if is_void_pointer(desc) { return Some(Span("u8")) }
+      match classify(inner, api) {
+        Scalar(s) => Some(Span(s)),
+        Vector(v) => Some(Span(v)),
+        _ => None,
+      }
+    },
+    _ => None,
   }
 }
 
@@ -727,8 +992,13 @@ let handles_used = pure (fns: []Function) -> [](string, string) => {
         if seen.insert(h) { out.push((c_handle(h), h)) }
       }
     }
-    if let Handle(h) = f.result {
-      if seen.insert(h) { out.push((c_handle(h), h)) }
+    let returned = match f.result {
+      Handle(h) => h,
+      MaybeHandle(h) => h,
+      _ => "",
+    }
+    if returned != "" && seen.insert(returned) {
+      out.push((c_handle(returned), returned))
     }
   }
   out.sorted_by((a, b) => a.1.compare(b.1))
@@ -768,6 +1038,7 @@ let render_wrapper = (out: mut []string, f: Function) -> void => {
       // Its type is the `impl` block's (render).
       Receiver => shown.push("self"),
       Null => {},
+      Count(_) => {},
       MaybeText => shown.push("${p.name}: Maybe<string> = None"),
       Given => {
         let t = match p.kind {
@@ -786,7 +1057,6 @@ let render_wrapper = (out: mut []string, f: Function) -> void => {
   }
   let result = match f.result {
     Nothing => "void",
-    Text => "string",
     k => lyra_type(k),
   }
 
@@ -816,10 +1086,28 @@ let render_wrapper = (out: mut []string, f: Function) -> void => {
         setup.push("let c_${p.name} = unsafe { &mut ${p.name} }")
         args.push("c_${p.name}")
       },
+      // An empty array has no first element to point at, and C reads none: NULL.
+      (Given, Span(t)) => {
+        setup.push("let c_${p.name}: ^${t} = if ${p.name}.len() == 0 { nullptr } else { unsafe { ${p.name}.data() } }")
+        args.push("c_${p.name}")
+      },
+      // Each string's NUL-terminated copy, then their addresses: both live to the end of
+      // the wrapper, past the call.
+      (Given, Strings) => {
+        setup.push("let s_${p.name} = [s in ${p.name} | s.cstring()]")
+        setup.push("let p_${p.name} = [c in s_${p.name} | unsafe { c.data() }]")
+        setup.push("let c_${p.name}: ^^u8 = if p_${p.name}.len() == 0 { nullptr } else { unsafe { p_${p.name}.data() } }")
+        args.push("c_${p.name}")
+      },
+      (Count(of), k) => args.push("${lyra_type(k)}(${of}.len())"),
       (Given, _) => args.push(p.name),
     }
   }
-  var call = "unsafe { ${f.extern_name}(${args.join(", ")}) }"
+  let deref = match f.result {
+    VectorAt(_) => "^",
+    _ => "",
+  }
+  var call = "unsafe { ${f.extern_name}(${args.join(", ")})${deref} }"
   var i = texts.len() - 1
   while i >= 0 {
     let (name, maybe) = texts[i]
@@ -831,17 +1119,33 @@ let render_wrapper = (out: mut []string, f: Function) -> void => {
     i -= 1
   }
   let head = "pub let ${f.name} = (${shown.join(", ")}) -> ${result} =>"
-  let returns_text = f.result == Text
-  if setup.len() == 0 && !returns_text {
+  let plain = match f.result {
+    Text => false,
+    MaybeHandle(_) => false,
+    Bytes(_) => false,
+    _ => true,
+  }
+  if setup.len() == 0 && plain {
     out.push("${head} ${call}")
     return
   }
   out.push("${head} {")
   for s in setup { out.push("  ${s}") }
-  if returns_text {
-    out.push("  from_cstring(${call})")
-  } else {
-    out.push("  ${call}")
+  match f.result {
+    Text => out.push("  from_cstring(${call})"),
+    MaybeHandle(_) => {
+      out.push("  let p = ${call}")
+      out.push("  if p == nullptr { None } else { Some(p) }")
+    },
+    // The bytes are ImGui's, valid only this frame: copied out.
+    Bytes(size) => {
+      out.push("  let p = ${call}")
+      out.push("  let n = i64(unsafe { ${size}(self) })")
+      out.push("  var bytes: []u8 = []")
+      out.push("  if p != nullptr && n > 0 { unsafe { bytes.push_from(p, n) } }")
+      out.push("  bytes")
+    },
+    _ => out.push("  ${call}"),
   }
   out.push("}")
 }
@@ -853,6 +1157,11 @@ let render_extern = (out: mut []string, f: Function) -> void => {
       Text => "^u8",
       InOut(s) => "^mut ${s}",
       Fixed(s, n) => "^mut [${n}]${s}",
+      Span(s) => "^${s}",
+      Strings => "^^u8",
+      VectorAt(v) => "^${v}",
+      // Left out (`Null`): a callback, a `void *` or an array, always NULL.
+      Unsupported(_) => "^u8",
       k => lyra_type(k),
     }
     params.push("${p.name}: ${t}")
@@ -860,6 +1169,9 @@ let render_extern = (out: mut []string, f: Function) -> void => {
   let result = match f.result {
     Nothing => "void",
     Text => "^u8",
+    VectorAt(v) => "^${v}",
+    MaybeHandle(h) => h,
+    Bytes(_) => "^u8",
     k => lyra_type(k),
   }
   out.push("@symbol(\"${f.symbol}\")")
@@ -874,6 +1186,11 @@ let lyra_type = pure (k: Kind) -> string => match k {
   Text => "string",
   InOut(s) => "^mut ${s}",
   Fixed(s, n) => "[${n}]${s}",
+  Span(s) => "[]${s}",
+  Strings => "[]string",
+  VectorAt(v) => v,
+  Bytes(_) => "[]u8",
+  MaybeHandle(h) => "Maybe<${h}>",
   Nothing => "void",
   Unsupported(why) => "<${why}>",
 }

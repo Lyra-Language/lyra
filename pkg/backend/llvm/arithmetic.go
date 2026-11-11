@@ -1152,6 +1152,8 @@ func (l *lowerer) isRawPointerExpr(e ast.Expression) bool {
 	if !ok {
 		return false
 	}
-	_, isPtr := t.(types.RawPointerType)
+	// Through a newtype: `type Payload = ^u8` is an address too, and two of them reached
+	// the structural walk (11/11).
+	_, isPtr := l.stripNewtype(t).(types.RawPointerType)
 	return isPtr
 }

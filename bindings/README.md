@@ -197,7 +197,11 @@ and the window's close arrive through `poll_menu` like an item's; `set_title`,
 ## `bindings/imgui/`
 
 Dear ImGui (docking branch) with multi-viewports: a window dragged out of the main one
-becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it.
+becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it, and
+`examples/imgui/gallery.lyra` shows the generated array, list and payload shapes, its
+`--check` driving them headless (`cmd/lyrac`'s `TestRun_ImGuiExamplesCheckHeadless`, with
+`components.lyra --check`, wherever `build/lib/liblyra-imgui.a` is built). Vega, Termina and
+Sheliak no longer import it.
 - **The host** (`imgui.lyra` over `host.cpp`): `create_host(title, w, h, flags)`
   (`HOST_DOCKING | HOST_VIEWPORTS`), then `for begin_frame(host) { …; end_frame(host, r, g, b) }`,
   then `destroy_host`. It owns the window, the SDL_GPU device and the frame loop, so Lyra
@@ -221,10 +225,19 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
   "the shortcut key". A program needing the physical keys — a terminal — swaps back when
   `io.config_mac_osx_behaviors()` (Termina's `ui/modifiers.lyra`).
 - **Fields are methods**: `generated.cpp` is a C accessor per field of `ImGuiIO`,
-  `ImGuiStyle` and `ImGuiViewport` (`FIELD_STRUCTS`), so `get_io().delta_time()`,
+  `ImGuiStyle`, `ImGuiViewport`, `ImDrawList`, `ImGuiListClipper` and `ImGuiPayload`
+  (`FIELD_STRUCTS`; the last two read-only), so `get_io().delta_time()`,
   `get_style().set_alpha(0.9)`, `get_style().set_colors(COL_TEXT, v)`. An array's index is
   checked in C (out of range reads zero, writes nothing); strings and handles are read-only.
-  A field whose setter is also a real method (`ImGuiIO::SetAppAcceptingEvents`) keeps the method.
+  **An `ImVector` field is its length** (`draw_list.vtx_buffer_size()`) and, when its elements
+  are numbers, each by index (`io.input_queue_characters(i)`); **a `void *` with a `…Size`
+  after it is its bytes, copied** (`payload.data_()` — `data` is a keyword). A leading `_`
+  marks a field ImGui keeps to itself, and is left out. A field whose setter is also a real
+  method (`ImGuiIO::SetAppAcceptingEvents`) keeps the method.
+- **A struct C++ makes on the stack is made on ImGui's heap** (`OWNED_STRUCTS`):
+  `ListClipper.new()` … `clipper.destroy()` (`IM_NEW`/`IM_DELETE` in `generated.cpp`), since
+  Lyra cannot size it. Its `Begin` is `clipper.begin_list_clipper(n)`, the free `begin`
+  taking the plain name; then `while clipper.step()` over `display_start()..<display_end()`.
 - **Naming**: ImGui's names in snake case, one wrapper per function family — the full `…Ex`
   form under the short name, C++'s defaults as Lyra's (`button(label, size = Vec2 { … })`).
   A struct's functions are methods on its handle (`draw_list.add_line(p1, p2, col)`); one
@@ -234,6 +247,17 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
   caller's `open` and answers whether it was clicked, as ImGui's `bool *` does; `float[3]` is
   `mut [3]f32`. A nullable `bool *p_open` makes two wrappers: `begin(name)` and
   `begin_closable(name, open)`. A `const char *` defaulting to NULL is `Maybe<string> = None`.
+  **Anything else defaulting to NULL is left out**, as C++'s default would leave it — a
+  callback (`set_next_window_size_constraints(min, max)`), a `const ImVec2 *`
+  (`is_mouse_pos_valid()`), a glyph range.
+- **A pointer and the count after it are one array**: `const float *values, int
+  values_count` is `values: []f32`, `const ImVec2 *points, int num_points` `[]Vec2`, `const
+  void *data, size_t sz` `[]u8`, and `const char *const items[], int items_count`
+  `[]string` (each string's C copy, then their addresses). An empty array passes NULL and 0.
+  A `const char *` and its size stay a `string`. **A `const ImVec4 *` returned is the
+  `Vec4`, copied** (`get_style_color_vec4`), and a handle ImGui's header says may be NULL
+  (`NULLABLE_RESULTS`) is a `Maybe`: `accept_drag_drop_payload("tile")`,
+  `get_drag_drop_payload()`, `find_viewport_by_id(id)`.
 - **Hand-written in `imgui.lyra`** (over `host.cpp`) — what needs C++ on Lyra's behalf:
   - `input_text(label, value: mut string)`, `…_with_hint`, `…_multiline`: the host copies
     the string into a buffer ImGui grows through its resize callback, and the wrapper copies
@@ -332,8 +356,9 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
     `BeginViewportSideBar`. Call it before `dock_space_over_viewport`, which then docks in
     what is left.
   - **A font from a file**: `font_file(host, path, size, offset_y)` → `Maybe<Font>`, for
-    `push_font_float` — `AddFontFromFileTTF`, which the generator leaves out for its
-    glyph-range array. Loaded once and **kept by the host**: a font belongs to the context
+    `push_font_float` — `AddFontFromFileTTF` (generated too, as the atlas's
+    `add_font_from_file_ttf`, without the offset and the host's keeping). Loaded once and
+    **kept by the host**: a font belongs to the context
     that loaded it, and a program-wide cache handed the next host a freed font (Vega's
     checks, a host each, 10/05). `None` when the file cannot be read (ImGui itself asserts).
     1.92's fonts are dynamic, so the size drawn is chosen at the push; `offset_y` raises
@@ -354,8 +379,10 @@ becomes an OS window. `examples/imgui/pixels.lyra` is a pixel editor built on it
     then if it is not yet): a font may have a loader of its own if the loader has no
     start-up, which stb's has not. Off by default: a program that never asks (Vega)
     draws as before. Termina asks off macOS.
-- **Not bound** — `void *`, callbacks, `va_list`, `ImTextureRef` by value — listed with the
-  reason at the end of `generated.lyra`.
+- **Not bound** — a `void *` that is not a byte buffer (`push_id_ptr`'s, the `…Scalar`
+  widgets' `p_data`), a callback that must be given, `va_list`, writable `char *` buffers
+  (`input_text` is hand-written), `ImTextureRef` by value (the hand-written `image`s), the
+  obsolete functions — listed with the reason at the end of `generated.lyra`.
 - **Built by `bindings/imgui/build.sh`** (run from `./build.sh`) into
   `build/lib/liblyra-imgui.a` from a **downloaded** ImGui and dear_bindings, pinned by tag
   and SHA-256 and cached in `build/deps/`. Bump both tags together. **FreeType is

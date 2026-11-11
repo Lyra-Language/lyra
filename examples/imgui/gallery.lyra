@@ -1,0 +1,279 @@
+// The binding's arrays, lists and payloads, one window of them: a plot of a `[]f32`, a
+// polyline of a `[]Vec2`, a list box of a `[]string`, ten thousand rows through a list
+// clipper, and a tile dragged onto a slot with its bytes. Each is a shape the generator
+// turns into a Lyra one (`bindings/imgui/gen/gen.lyra`'s header has the mapping).
+//
+//   build/lyrac run examples/imgui/gallery.lyra
+//   build/lyrac run examples/imgui/gallery.lyra -- --check   # headless: drive it, exit with the failures
+
+import bindings.imgui.{
+  create_host,
+  create_headless_host,
+  begin_frame,
+  end_frame,
+  destroy_host,
+  begin,
+  end,
+  begin_child,
+  end_child,
+  set_next_window_pos,
+  set_next_window_size,
+  set_next_window_size_constraints,
+  get_window_size,
+  get_window_draw_list,
+  get_cursor_screen_pos,
+  get_text_line_height,
+  get_item_rect_min,
+  get_item_rect_max,
+  get_io,
+  get_style,
+  get_style_color_vec4,
+  is_mouse_pos_valid,
+  plot_lines,
+  plot_histogram,
+  list_box,
+  combo_char,
+  button,
+  dummy,
+  text,
+  begin_drag_drop_source,
+  set_drag_drop_payload,
+  end_drag_drop_source,
+  begin_drag_drop_target,
+  accept_drag_drop_payload,
+  end_drag_drop_target,
+  get_drag_drop_payload,
+  col32,
+  Host,
+  ListClipper,
+  Vec2,
+  COL_TEXT,
+  MOUSE_BUTTON_LEFT,
+}
+
+let main = () -> u8 => {
+  if program_args().filter((a) => a == "--check").len() > 0 { return check() }
+  let Some(host) = create_host("Gallery", 640, 560, 0) else {
+    println("could not open a window")
+    return 1
+  }
+  var state = State {}
+  while begin_frame(host) {
+    state = draw(state)
+    end_frame(host, 0.1, 0.1, 0.12)
+  }
+  destroy_host(host)
+  0
+}
+
+/// What the window shows and what was done to it.
+struct State {
+  /// The list box's choice.
+  fruit: i32 = 0,
+  /// The combo's choice.
+  flavour: i32 = 0,
+  /// The bytes last dropped on the slot.
+  slot: []u8 = [],
+  /// What the last frame measured: the vertices a polyline added, the rows the clipper let
+  /// through, the characters typed, the window's size, and the two buttons' rectangles.
+  line_vertices: i32 = 0,
+  rows_drawn: i64 = 0,
+  typed: string = "",
+  window: Vec2 = Vec2 { x: 0.0, y: 0.0 },
+  fruit_box: Vec2 = Vec2 { x: 0.0, y: 0.0 },
+  tile: Vec2 = Vec2 { x: 0.0, y: 0.0 },
+  target: Vec2 = Vec2 { x: 0.0, y: 0.0 },
+}
+
+const SAMPLES: []f32 = [0.0, 0.4, 0.9, 0.6, 0.2, 0.7, 1.0, 0.3]
+const FRUITS: []string = ["Apple", "Banana", "Pear", "Plum"]
+const FLAVOURS: []string = ["Salt", "Sweet", "Sour"]
+/// What the tile carries.
+const TILE: []u8 = [7, 8, 9]
+
+let draw = (state: State) -> State => {
+  var s = state
+  set_next_window_pos(Vec2 { x: 10.0, y: 10.0 })
+  set_next_window_size(Vec2 { x: 800.0, y: 800.0 })
+  // C++'s callback and its data default to NULL, so the wrapper leaves them out.
+  set_next_window_size_constraints(
+    Vec2 { x: 200.0, y: 200.0 },
+    Vec2 { x: 600.0, y: 520.0 }
+  )
+  if begin("Gallery") {
+    s.window = get_window_size()
+    plot_lines("samples", SAMPLES)
+    plot_histogram("histogram", SAMPLES)
+    plot_lines("nothing", [])
+
+    let lines = get_window_draw_list()
+    let o = get_cursor_screen_pos()
+    let before = lines.vtx_buffer_size()
+    let zigzag = [
+      Vec2 { x: o.x, y: o.y + 20.0 },
+      Vec2 { x: o.x + 40.0, y: o.y },
+      Vec2 { x: o.x + 80.0, y: o.y + 20.0 },
+      Vec2 { x: o.x + 120.0, y: o.y },
+    ]
+    lines.add_polyline(zigzag, col32(240, 200, 60), 2.0)
+    s.line_vertices = lines.vtx_buffer_size() - before
+    lines.add_polyline([], col32(240, 200, 60), 2.0)
+    lines.add_convex_poly_filled(
+      [
+        Vec2 { x: o.x + 140.0, y: o.y + 20.0 },
+        Vec2 { x: o.x + 160.0, y: o.y },
+        Vec2 { x: o.x + 180.0, y: o.y + 20.0 },
+      ],
+      col32(90, 160, 240)
+    )
+    dummy(Vec2 { x: 180.0, y: 24.0 })
+
+    list_box("fruit", s.fruit, FRUITS, 4)
+    s.fruit_box = get_item_rect_min()
+    combo_char("flavour", s.flavour, FLAVOURS)
+
+    button("Tile")
+    s.tile = middle()
+    if begin_drag_drop_source() {
+      set_drag_drop_payload("tile", TILE)
+      text("Tile")
+      end_drag_drop_source()
+    }
+    button("Slot (${s.slot.len()} bytes)")
+    s.target = middle()
+    if begin_drag_drop_target() {
+      if let Some(payload) = accept_drag_drop_payload("tile") { s.slot = payload.data_() }
+      end_drag_drop_target()
+    }
+
+    let io = get_io()
+    for i in 0..<io.input_queue_characters_size() {
+      s.typed = "${s.typed}${rune(i64(io.input_queue_characters(i)))}"
+    }
+
+    if begin_child("rows", Vec2 { x: 0.0, y: 100.0 }) {
+      let clipper = ListClipper.new()
+      // ImGui's `Begin`, beside the free `begin`, so suffixed with its receiver.
+      clipper.begin_list_clipper(10000)
+      var shown = 0
+      while clipper.step() {
+        for i in clipper.display_start()..<clipper.display_end() {
+          text("row ${i}")
+          shown += 1
+        }
+      }
+      clipper.destroy()
+      s.rows_drawn = shown
+    }
+    end_child()
+  }
+  end()
+  s
+}
+
+/// The middle of the item just drawn.
+let middle = () -> Vec2 => {
+  let a = get_item_rect_min()
+  let b = get_item_rect_max()
+  Vec2 { x: (a.x + b.x) / 2.0, y: (a.y + b.y) / 2.0 }
+}
+
+// ── --check ──────────────────────────────────────────────────────────────────
+
+/// The window on a headless host, driven: what each shape crossed as, read back from
+/// ImGui. The exit status is the failures.
+let check = () -> u8 => {
+  let Some(host) = create_headless_host(800, 600, 0) else {
+    println("no headless host")
+    return 1
+  }
+  var failures = 0
+  var state = frame(host, State {})
+  failures += verify(!is_mouse_pos_valid(), "no mouse yet: its position is not valid")
+  failures += verify(get_drag_drop_payload() == None, "nothing is being dragged")
+  let shown = get_style_color_vec4(COL_TEXT)
+  let stored = get_style().colors(COL_TEXT)
+  failures += verify(
+    near(shown.x, stored.x) && near(shown.y, stored.y) && near(shown.z, stored.z) && near(shown.w, stored.w),
+    "the text colour through its pointer is the style's"
+  )
+  failures += verify(
+    near(state.window.x, 600.0) && near(state.window.y, 520.0),
+    "the size constraints hold the window: ${state.window.x} × ${state.window.y}"
+  )
+  failures += verify(
+    state.line_vertices > 0,
+    "the polyline drew: ${state.line_vertices} vertices"
+  )
+  failures += verify(
+    state.rows_drawn > 0 && state.rows_drawn < 100,
+    "the clipper let through only the rows in view: ${state.rows_drawn}"
+  )
+
+  // The third fruit: a list box's rows are a line each, after the frame's padding.
+  let padding = get_style().frame_padding().y
+  let row = get_text_line_height() + get_style().item_spacing().y
+  let pear = Vec2 {
+    x: state.fruit_box.x + 20.0,
+    y: state.fruit_box.y + padding + 2.0 * row + get_text_line_height() / 2.0
+  }
+  state = click(host, state, pear)
+  failures += verify(is_mouse_pos_valid(), "with a mouse, its position is valid")
+  failures += verify(state.fruit == 2, "the list box chose Pear: ${state.fruit}")
+
+  get_io().add_input_characters_utf8("hi")
+  state = frame(host, state)
+  failures += verify(
+    state.typed == "hi",
+    "the characters typed are queued: \"${state.typed}\""
+  )
+
+  // The tile pressed, dragged past ImGui's threshold onto the slot, held there a frame so
+  // the slot accepts it, and let go.
+  let from = state.tile
+  let to = state.target
+  get_io().add_mouse_pos_event(from.x, from.y)
+  state = frame(host, state)
+  get_io().add_mouse_button_event(MOUSE_BUTTON_LEFT, true)
+  state = frame(host, state)
+  get_io().add_mouse_pos_event(from.x + 20.0, (from.y + to.y) / 2.0)
+  state = frame(host, state)
+  failures += verify(get_drag_drop_payload() != None, "the tile is being dragged")
+  get_io().add_mouse_pos_event(to.x, to.y)
+  state = frame(host, state)
+  state = frame(host, state)
+  get_io().add_mouse_button_event(MOUSE_BUTTON_LEFT, false)
+  state = frame(host, state)
+  failures += verify(
+    state.slot == TILE,
+    "the slot holds the tile's bytes: ${state.slot.len()} of them"
+  )
+
+  destroy_host(host)
+  println(if failures == 0 { "all passed" } else { "${failures} failed" })
+  u8(failures.min(255))
+}
+
+let frame = (host: Host, state: State) -> State => {
+  if !begin_frame(host) { return state }
+  let s = draw(State { state | typed: "" })
+  end_frame(host, 0.0, 0.0, 0.0)
+  s
+}
+
+/// Moved to `at`, pressed, released: a frame each.
+let click = (host: Host, state: State, at: Vec2) -> State => {
+  get_io().add_mouse_pos_event(at.x, at.y)
+  var s = frame(host, state)
+  get_io().add_mouse_button_event(MOUSE_BUTTON_LEFT, true)
+  s = frame(host, s)
+  get_io().add_mouse_button_event(MOUSE_BUTTON_LEFT, false)
+  frame(host, s)
+}
+
+let near = pure (a: f32, b: f32) -> bool => (a - b).abs() < 0.001
+
+let verify = (ok: bool, what: string) -> i64 => {
+  println("${if ok { "ok  " } else { "FAIL" }} ${what}")
+  if ok { 0 } else { 1 }
+}

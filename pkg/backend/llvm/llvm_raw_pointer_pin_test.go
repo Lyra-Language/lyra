@@ -99,6 +99,29 @@ let remember = (p: ^u8) -> void => { kept = p }
   }
   total
 }`, 6},
+		// A pointer into a borrowed element pins what the element is borrowed from: the
+		// pin fell on the binder, and the array it borrows from was freed at its last
+		// mention, the comprehension (bindings.imgui's `[]string` → `^^u8`, 11/11).
+		{"from a comprehension's element", `let main = () -> u8 => {
+  let rows = [bytes(21, 8), bytes(22, 8)]
+  let ptrs = [r in rows | unsafe { r.data() }]
+  println("a statement between")
+  unsafe { ptrs[1]^ }
+}`, 22},
+		{"from a for loop's element", `let main = () -> u8 => {
+  let rows = [bytes(23, 8), bytes(24, 8)]
+  var ptrs: []^u8 = []
+  for r in rows { ptrs.push(unsafe { r.data() }) }
+  println("a statement between")
+  unsafe { ptrs[0]^ }
+}`, 23},
+		{"from an if let's payload", `let main = () -> u8 => {
+  let row: Maybe<[]u8> = Some(bytes(25, 8))
+  var p: ^u8 = nullptr
+  if let Some(r) = row { p = unsafe { r.data() } }
+  println("a statement between")
+  unsafe { p^ }
+}`, 25},
 		{"inside a branch", `let main = () -> u8 => {
   let xs = bytes(17, 8)
   if xs.len() == 2 {

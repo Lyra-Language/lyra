@@ -183,6 +183,15 @@ func (l *lowerer) emitEqRoot(block *ir.Block, a, b value.Value, t types.Type) (v
 	if _, isInt := a.Type().(*lltypes.IntType); isInt {
 		return block.NewICmp(enum.IPredEQ, a, b), block, nil
 	}
+	// A raw pointer is an address, compared as one — the leaf a top-level `p == q` reaches
+	// in lowerPointerComparison, here for a pointer inside an aggregate: `Maybe<^u8>`
+	// against `None`, ImGui's `Maybe<Payload>` (11/11). Asked of the Lyra type, never the
+	// LLVM one, which a `shared` box shares (handled above).
+	if _, isPtr := l.stripNewtype(resolved).(types.RawPointerType); isPtr {
+		if _, ok := a.Type().(*lltypes.PointerType); ok {
+			return block.NewICmp(enum.IPredEQ, a, b), block, nil
+		}
+	}
 	return nil, nil, fmt.Errorf("llvm: structural equality on %s is not implemented", t)
 }
 

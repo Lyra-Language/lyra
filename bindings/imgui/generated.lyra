@@ -2218,6 +2218,9 @@ pub let set_next_window_pos = (pos: Vec2, cond: i32 = 0, pivot: Vec2 = Vec2 { x:
 /// `ImGui::SetNextWindowSize` — set next window size. set axis to 0.0f to force an auto-fit on this axis. call before Begin()
 pub let set_next_window_size = (size: Vec2, cond: i32 = 0) -> void => unsafe { c_set_next_window_size(size, cond) }
 
+/// `ImGui::SetNextWindowSizeConstraints` — set next window size limits. use 0.0f or FLT_MAX if you don't want limits. Use -1 for both min and max of same axis to preserve current size (which itself is a constraint). Use callback to apply non-trivial programmatic constraints.
+pub let set_next_window_size_constraints = (size_min: Vec2, size_max: Vec2) -> void => unsafe { c_set_next_window_size_constraints(size_min, size_max, nullptr, nullptr) }
+
 /// `ImGui::SetNextWindowContentSize` — set next window content size (~ scrollable client area, which enforce the range of scrollbars). Not including window decorations (title bar, menu bar, etc.) nor WindowPadding. set an axis to 0.0f to leave it automatic. call before Begin()
 pub let set_next_window_content_size = (size: Vec2) -> void => unsafe { c_set_next_window_content_size(size) }
 
@@ -2364,6 +2367,9 @@ pub let get_color_u32_vec4 = (col: Vec4) -> u32 => unsafe { c_get_color_u32_vec4
 
 /// `ImGui::GetColorU32` — retrieve given color with style alpha applied, packed as a 32-bit value suitable for ImDrawList
 pub let get_color_u32_u32 = (col: u32, alpha_mul: f32 = 1.0) -> u32 => unsafe { c_get_color_u32_u32_ex(col, alpha_mul) }
+
+/// `ImGui::GetStyleColorVec4` — retrieve style color as stored in ImGuiStyle structure. use to feed back into PushStyleColor(), otherwise use GetColorU32() to get style color with style alpha baked in.
+pub let get_style_color_vec4 = (idx: i32) -> Vec4 => unsafe { c_get_style_color_vec4(idx)^ }
 
 /// `ImGui::GetCursorScreenPos` — cursor position, absolute coordinates. THIS IS YOUR BEST FRIEND (prefer using this rather than GetCursorPos(), also more useful to work with ImDrawList API).
 pub let get_cursor_screen_pos = () -> Vec2 => unsafe { c_get_cursor_screen_pos() }
@@ -2535,6 +2541,15 @@ pub let begin_combo = (label: string, preview_value: string, flags: i32 = 0) -> 
 
 /// `ImGui::EndCombo` — only call EndCombo() if BeginCombo() returns true!
 pub let end_combo = () -> void => unsafe { c_end_combo() }
+
+/// `ImGui::Combo`.
+pub let combo_char = (label: string, current_item: mut i32, items: []string, popup_max_height_in_items: i32 = -1) -> bool => {
+  let c_current_item = unsafe { &mut current_item }
+  let s_items = [s in items | s.cstring()]
+  let p_items = [c in s_items | unsafe { c.data() }]
+  let c_items: ^^u8 = if p_items.len() == 0 { nullptr } else { unsafe { p_items.data() } }
+  label.with_cstring((c_label) => unsafe { c_combo_char_ex(c_label, c_current_item, c_items, i32(items.len()), popup_max_height_in_items) })
+}
 
 /// `ImGui::Combo` — Separate items with \0 within a string, end item-list with \0\0. e.g. "One\0Two\0Three\0"
 pub let combo = (label: string, current_item: mut i32, items_separated_by_zeros: string, popup_max_height_in_items: i32 = -1) -> bool => {
@@ -2742,6 +2757,12 @@ pub let color_picker3 = (label: string, col: mut [3]f32, flags: i32 = 0) -> bool
   label.with_cstring((c_label) => unsafe { c_color_picker3(c_label, c_col, flags) })
 }
 
+/// `ImGui::ColorPicker4`.
+pub let color_picker4 = (label: string, col: mut [4]f32, flags: i32 = 0) -> bool => {
+  let c_col = unsafe { &mut col }
+  label.with_cstring((c_label) => unsafe { c_color_picker4(c_label, c_col, flags, nullptr) })
+}
+
 /// `ImGui::ColorButton` — display a color square/button, hover for details, return true when pressed.
 pub let color_button = (desc_id: string, col: Vec4, flags: i32 = 0, size: Vec2 = Vec2 { x: 0.0, y: 0.0 }) -> bool => desc_id.with_cstring((c_desc_id) => unsafe { c_color_button_ex(c_desc_id, col, flags, size) })
 
@@ -2810,6 +2831,27 @@ pub let begin_list_box = (label: string, size: Vec2 = Vec2 { x: 0.0, y: 0.0 }) -
 
 /// `ImGui::EndListBox` — only call EndListBox() if BeginListBox() returned true!
 pub let end_list_box = () -> void => unsafe { c_end_list_box() }
+
+/// `ImGui::ListBox`.
+pub let list_box = (label: string, current_item: mut i32, items: []string, height_in_items: i32 = -1) -> bool => {
+  let c_current_item = unsafe { &mut current_item }
+  let s_items = [s in items | s.cstring()]
+  let p_items = [c in s_items | unsafe { c.data() }]
+  let c_items: ^^u8 = if p_items.len() == 0 { nullptr } else { unsafe { p_items.data() } }
+  label.with_cstring((c_label) => unsafe { c_list_box(c_label, c_current_item, c_items, i32(items.len()), height_in_items) })
+}
+
+/// `ImGui::PlotLines`.
+pub let plot_lines = (label: string, values: []f32, values_offset: i32 = 0, overlay_text: Maybe<string> = None, scale_min: f32 = 3.4028234e38, scale_max: f32 = 3.4028234e38, graph_size: Vec2 = Vec2 { x: 0.0, y: 0.0 }, stride: i32 = 4) -> void => {
+  let c_values: ^f32 = if values.len() == 0 { nullptr } else { unsafe { values.data() } }
+  label.with_cstring((c_label) => with_maybe_cstring(overlay_text, (c_overlay_text) => unsafe { c_plot_lines_ex(c_label, c_values, i32(values.len()), values_offset, c_overlay_text, scale_min, scale_max, graph_size, stride) }))
+}
+
+/// `ImGui::PlotHistogram`.
+pub let plot_histogram = (label: string, values: []f32, values_offset: i32 = 0, overlay_text: Maybe<string> = None, scale_min: f32 = 3.4028234e38, scale_max: f32 = 3.4028234e38, graph_size: Vec2 = Vec2 { x: 0.0, y: 0.0 }, stride: i32 = 4) -> void => {
+  let c_values: ^f32 = if values.len() == 0 { nullptr } else { unsafe { values.data() } }
+  label.with_cstring((c_label) => with_maybe_cstring(overlay_text, (c_overlay_text) => unsafe { c_plot_histogram_ex(c_label, c_values, i32(values.len()), values_offset, c_overlay_text, scale_min, scale_max, graph_size, stride) }))
+}
 
 /// `ImGui::BeginMenuBar` — append to menu-bar of current window (requires ImGuiWindowFlags_MenuBar flag set on parent window).
 pub let begin_menu_bar = () -> bool => unsafe { c_begin_menu_bar() }
@@ -3038,6 +3080,12 @@ pub let log_text = (text: string) -> void => text.with_cstring((c_text) => unsaf
 /// `ImGui::BeginDragDropSource` — call after submitting an item which may be dragged. when this return true, you can call SetDragDropPayload() + EndDragDropSource()
 pub let begin_drag_drop_source = (flags: i32 = 0) -> bool => unsafe { c_begin_drag_drop_source(flags) }
 
+/// `ImGui::SetDragDropPayload` — type is a user defined string of maximum 32 characters. Strings starting with '_' are reserved for dear imgui internal types. Data is copied and held by imgui. Return true when payload has been accepted.
+pub let set_drag_drop_payload = (type_: string, data_: []u8, cond: i32 = 0) -> bool => {
+  let c_data_: ^u8 = if data_.len() == 0 { nullptr } else { unsafe { data_.data() } }
+  type_.with_cstring((c_type_) => unsafe { c_set_drag_drop_payload(c_type_, c_data_, u64(data_.len()), cond) })
+}
+
 /// `ImGui::EndDragDropSource` — only call EndDragDropSource() if BeginDragDropSource() returns true!
 pub let end_drag_drop_source = () -> void => unsafe { c_end_drag_drop_source() }
 
@@ -3045,13 +3093,19 @@ pub let end_drag_drop_source = () -> void => unsafe { c_end_drag_drop_source() }
 pub let begin_drag_drop_target = () -> bool => unsafe { c_begin_drag_drop_target() }
 
 /// `ImGui::AcceptDragDropPayload` — accept contents of a given type. If ImGuiDragDropFlags_AcceptBeforeDelivery is set you can peek into the payload before the mouse button is released.
-pub let accept_drag_drop_payload = (type_: string, flags: i32 = 0) -> Payload => type_.with_cstring((c_type_) => unsafe { c_accept_drag_drop_payload(c_type_, flags) })
+pub let accept_drag_drop_payload = (type_: string, flags: i32 = 0) -> Maybe<Payload> => {
+  let p = type_.with_cstring((c_type_) => unsafe { c_accept_drag_drop_payload(c_type_, flags) })
+  if p == nullptr { None } else { Some(p) }
+}
 
 /// `ImGui::EndDragDropTarget` — only call EndDragDropTarget() if BeginDragDropTarget() returns true!
 pub let end_drag_drop_target = () -> void => unsafe { c_end_drag_drop_target() }
 
 /// `ImGui::GetDragDropPayload` — peek directly into the current payload from anywhere. returns NULL when drag and drop is finished or inactive. use ImGuiPayload::IsDataType() to test for the payload type.
-pub let get_drag_drop_payload = () -> Payload => unsafe { c_get_drag_drop_payload() }
+pub let get_drag_drop_payload = () -> Maybe<Payload> => {
+  let p = unsafe { c_get_drag_drop_payload() }
+  if p == nullptr { None } else { Some(p) }
+}
 
 /// `ImGui::BeginDisabled`.
 pub let begin_disabled = (disabled: bool = true) -> void => unsafe { c_begin_disabled(disabled) }
@@ -3247,6 +3301,9 @@ pub let get_mouse_clicked_count = (button: i32) -> i32 => unsafe { c_get_mouse_c
 /// `ImGui::IsMouseHoveringRect` — is mouse hovering given bounding rect (in screen space). clipped by current clipping settings, but disregarding of other consideration of focus/window ordering/popup-block.
 pub let is_mouse_hovering_rect = (r_min: Vec2, r_max: Vec2, clip: bool = true) -> bool => unsafe { c_is_mouse_hovering_rect_ex(r_min, r_max, clip) }
 
+/// `ImGui::IsMousePosValid` — by convention we use (-FLT_MAX,-FLT_MAX) to denote that there is no mouse available
+pub let is_mouse_pos_valid = () -> bool => unsafe { c_is_mouse_pos_valid(nullptr) }
+
 /// `ImGui::IsAnyMouseDown` — [WILL OBSOLETE] is any mouse button held? This was designed for backends, but prefer having backend maintain a mask of held mouse buttons, because upcoming input queue system will make this invalid.
 pub let is_any_mouse_down = () -> bool => unsafe { c_is_any_mouse_down() }
 
@@ -3307,7 +3364,10 @@ pub let debug_flash_style_color = (idx: i32) -> void => unsafe { c_debug_flash_s
 pub let debug_start_item_picker = () -> void => unsafe { c_debug_start_item_picker() }
 
 /// `ImGui::FindViewportByID` — this is a helper for backends.
-pub let find_viewport_by_id = (viewport_id: u32) -> Viewport => unsafe { c_find_viewport_by_id(viewport_id) }
+pub let find_viewport_by_id = (viewport_id: u32) -> Maybe<Viewport> => {
+  let p = unsafe { c_find_viewport_by_id(viewport_id) }
+  if p == nullptr { None } else { Some(p) }
+}
 
 impl Style {
   /// `ScaleAllSizes` — Scale all spacing/padding/thickness values. Do not scale fonts. See comments in definition. Consider not calling this if your initial scale factor if <1.0.
@@ -3638,11 +3698,32 @@ impl DrawList {
   /// `AddText`.
   pub let add_text = (self, pos: Vec2, col: u32, text_begin: string) -> void => text_begin.with_cstring((c_text_begin) => unsafe { c_draw_list_add_text_ex(self, pos, col, c_text_begin, nullptr) })
 
+  /// `AddText`.
+  pub let add_text_font_ptr = (self, font: Font, font_size: f32, pos: Vec2, col: u32, text_begin: string, wrap_width: f32 = 0.0) -> void => text_begin.with_cstring((c_text_begin) => unsafe { c_draw_list_add_text_font_ptr_ex(self, font, font_size, pos, col, c_text_begin, nullptr, wrap_width, nullptr) })
+
   /// `AddBezierCubic` — Cubic Bezier (4 control points)
   pub let add_bezier_cubic = (self, p1: Vec2, p2: Vec2, p3: Vec2, p4: Vec2, col: u32, thickness: f32, num_segments: i32 = 0) -> void => unsafe { c_draw_list_add_bezier_cubic(self, p1, p2, p3, p4, col, thickness, num_segments) }
 
   /// `AddBezierQuadratic` — Quadratic Bezier (3 control points)
   pub let add_bezier_quadratic = (self, p1: Vec2, p2: Vec2, p3: Vec2, col: u32, thickness: f32, num_segments: i32 = 0) -> void => unsafe { c_draw_list_add_bezier_quadratic(self, p1, p2, p3, col, thickness, num_segments) }
+
+  /// `AddPolyline`.
+  pub let add_polyline = (self, points: []Vec2, col: u32, thickness: f32, flags: i32 = 0) -> void => {
+    let c_points: ^Vec2 = if points.len() == 0 { nullptr } else { unsafe { points.data() } }
+    unsafe { c_draw_list_add_polyline(self, c_points, i32(points.len()), col, thickness, flags) }
+  }
+
+  /// `AddConvexPolyFilled`.
+  pub let add_convex_poly_filled = (self, points: []Vec2, col: u32) -> void => {
+    let c_points: ^Vec2 = if points.len() == 0 { nullptr } else { unsafe { points.data() } }
+    unsafe { c_draw_list_add_convex_poly_filled(self, c_points, i32(points.len()), col) }
+  }
+
+  /// `AddConcavePolyFilled`.
+  pub let add_concave_poly_filled = (self, points: []Vec2, col: u32) -> void => {
+    let c_points: ^Vec2 = if points.len() == 0 { nullptr } else { unsafe { points.data() } }
+    unsafe { c_draw_list_add_concave_poly_filled(self, c_points, i32(points.len()), col) }
+  }
 
   /// `PathClear`.
   pub let path_clear = (self) -> void => unsafe { c_draw_list_path_clear(self) }
@@ -3822,6 +3903,18 @@ impl FontAtlas {
 
   /// `AddFontDefaultBitmap` — Embedded classic pixel-clean font. Recommended at Size 13px with no scaling.
   pub let add_font_default_bitmap = (self) -> Font => unsafe { c_font_atlas_add_font_default_bitmap(self, FontConfig(nullptr)) }
+
+  /// `AddFontFromFileTTF`.
+  pub let add_font_from_file_ttf = (self, filename: string, size_pixels: f32 = 0.0) -> Font => filename.with_cstring((c_filename) => unsafe { c_font_atlas_add_font_from_file_ttf(self, c_filename, size_pixels, FontConfig(nullptr), nullptr) })
+
+  /// `AddFontFromMemoryCompressedTTF` — 'compressed_font_data' still owned by caller. Compress with binary_to_compressed_c.cpp.
+  pub let add_font_from_memory_compressed_ttf = (self, compressed_font_data: []u8, size_pixels: f32 = 0.0) -> Font => {
+    let c_compressed_font_data: ^u8 = if compressed_font_data.len() == 0 { nullptr } else { unsafe { compressed_font_data.data() } }
+    unsafe { c_font_atlas_add_font_from_memory_compressed_ttf(self, c_compressed_font_data, i32(compressed_font_data.len()), size_pixels, FontConfig(nullptr), nullptr) }
+  }
+
+  /// `AddFontFromMemoryCompressedBase85TTF` — 'compressed_font_data_base85' still owned by caller. Compress with binary_to_compressed_c.cpp with -base85 parameter.
+  pub let add_font_from_memory_compressed_base85_ttf = (self, compressed_font_data_base85: string, size_pixels: f32 = 0.0) -> Font => compressed_font_data_base85.with_cstring((c_compressed_font_data_base85) => unsafe { c_font_atlas_add_font_from_memory_compressed_base85_ttf(self, c_compressed_font_data_base85, size_pixels, FontConfig(nullptr), nullptr) })
 
   /// `RemoveFont` — Remove a font
   pub let remove_font = (self, font: Font) -> void => unsafe { c_font_atlas_remove_font(self, font) }
@@ -4994,6 +5087,81 @@ impl IO {
 
   /// `ImGuiIO::InputQueueSurrogate` — For AddInputCharacterUTF16()
   pub let set_input_queue_surrogate = (self, value: u16) -> void => unsafe { c_io_set_input_queue_surrogate(self, value) }
+
+  /// `ImGuiIO::InputQueueCharacters` — how many elements `InputQueueCharacters` holds.
+  pub let input_queue_characters_size = (self) -> i32 => unsafe { c_io_get_input_queue_characters_size(self) }
+
+  /// `ImGuiIO::InputQueueCharacters` — Queue of _characters_ input (obtained by platform backend). Fill using AddInputCharacter() helper.
+  pub let input_queue_characters = (self, index: i32) -> u16 => unsafe { c_io_get_input_queue_characters(self, index) }
+}
+
+impl Payload {
+  /// `ImGuiPayload::Data` — Data (copied and owned by dear imgui)
+  pub let data_ = (self) -> []u8 => {
+    let p = unsafe { c_payload_get_data(self) }
+    let n = i64(unsafe { c_payload_get_data_size(self) })
+    var bytes: []u8 = []
+    if p != nullptr && n > 0 { unsafe { bytes.push_from(p, n) } }
+    bytes
+  }
+
+  /// `ImGuiPayload::DataSize` — Data size
+  pub let data_size = (self) -> i32 => unsafe { c_payload_get_data_size(self) }
+}
+
+impl ListClipper {
+  /// `ImGuiListClipper::ImGuiListClipper` — a new one, on ImGui's heap; give it back with `destroy`.
+  pub let new = () -> ListClipper => unsafe { c_list_clipper_new() }
+
+  /// `ImGuiListClipper::~ImGuiListClipper` — frees one made by `new`; it must not be used after.
+  pub let destroy = (self) -> void => unsafe { c_list_clipper_destroy(self) }
+
+  /// `ImGuiListClipper::DisplayStart` — First item to display, updated by each call to Step()
+  pub let display_start = (self) -> i32 => unsafe { c_list_clipper_get_display_start(self) }
+
+  /// `ImGuiListClipper::DisplayEnd` — End of items to display (exclusive)
+  pub let display_end = (self) -> i32 => unsafe { c_list_clipper_get_display_end(self) }
+
+  /// `ImGuiListClipper::UserIndex` — Helper storage for user convenience/code. Optional, and otherwise unused if you don't use it.
+  pub let user_index = (self) -> i32 => unsafe { c_list_clipper_get_user_index(self) }
+
+  /// `ImGuiListClipper::ItemsCount` — [Internal] Number of items
+  pub let items_count = (self) -> i32 => unsafe { c_list_clipper_get_items_count(self) }
+
+  /// `ImGuiListClipper::ItemsHeight` — [Internal] Height of item after a first step and item submission can calculate it
+  pub let items_height = (self) -> f32 => unsafe { c_list_clipper_get_items_height(self) }
+
+  /// `ImGuiListClipper::Flags` — [Internal] Flags, currently not yet well exposed.
+  pub let flags = (self) -> i32 => unsafe { c_list_clipper_get_flags(self) }
+
+  /// `ImGuiListClipper::StartPosY` — [Internal] Cursor position at the time of Begin() or after table frozen rows are all processed
+  pub let start_pos_y = (self) -> f64 => unsafe { c_list_clipper_get_start_pos_y(self) }
+
+  /// `ImGuiListClipper::StartSeekOffsetY` — [Internal] Account for frozen rows in a table and initial loss of precision in very large windows.
+  pub let start_seek_offset_y = (self) -> f64 => unsafe { c_list_clipper_get_start_seek_offset_y(self) }
+
+  /// `ImGuiListClipper::Ctx` — [Internal] Parent UI context
+  pub let ctx = (self) -> Context => unsafe { c_list_clipper_get_ctx(self) }
+}
+
+impl DrawList {
+  /// `ImDrawList::CmdBuffer` — how many elements `CmdBuffer` holds.
+  pub let cmd_buffer_size = (self) -> i32 => unsafe { c_draw_list_get_cmd_buffer_size(self) }
+
+  /// `ImDrawList::IdxBuffer` — how many elements `IdxBuffer` holds.
+  pub let idx_buffer_size = (self) -> i32 => unsafe { c_draw_list_get_idx_buffer_size(self) }
+
+  /// `ImDrawList::IdxBuffer` — Index buffer. Each command consume ImDrawCmd::ElemCount of those
+  pub let idx_buffer = (self, index: i32) -> u16 => unsafe { c_draw_list_get_idx_buffer(self, index) }
+
+  /// `ImDrawList::VtxBuffer` — how many elements `VtxBuffer` holds.
+  pub let vtx_buffer_size = (self) -> i32 => unsafe { c_draw_list_get_vtx_buffer_size(self) }
+
+  /// `ImDrawList::Flags` — Flags, you may poke into these to adjust anti-aliasing settings per-primitive.
+  pub let flags = (self) -> i32 => unsafe { c_draw_list_get_flags(self) }
+
+  /// `ImDrawList::Flags` — Flags, you may poke into these to adjust anti-aliasing settings per-primitive.
+  pub let set_flags = (self, value: i32) -> void => unsafe { c_draw_list_set_flags(self, value) }
 }
 
 impl Viewport {
@@ -5186,6 +5354,9 @@ unsafe extern c_set_next_window_pos_ex: (pos: Vec2, cond: i32, pivot: Vec2) -> v
 @symbol("ImGui_SetNextWindowSize")
 unsafe extern c_set_next_window_size: (size: Vec2, cond: i32) -> void
 
+@symbol("ImGui_SetNextWindowSizeConstraints")
+unsafe extern c_set_next_window_size_constraints: (size_min: Vec2, size_max: Vec2, custom_callback: ^u8, custom_callback_data: ^u8) -> void
+
 @symbol("ImGui_SetNextWindowContentSize")
 unsafe extern c_set_next_window_content_size: (size: Vec2) -> void
 
@@ -5332,6 +5503,9 @@ unsafe extern c_get_color_u32_vec4: (col: Vec4) -> u32
 
 @symbol("ImGui_GetColorU32ImU32Ex")
 unsafe extern c_get_color_u32_u32_ex: (col: u32, alpha_mul: f32) -> u32
+
+@symbol("ImGui_GetStyleColorVec4")
+unsafe extern c_get_style_color_vec4: (idx: i32) -> ^Vec4
 
 @symbol("ImGui_GetCursorScreenPos")
 unsafe extern c_get_cursor_screen_pos: () -> Vec2
@@ -5492,6 +5666,9 @@ unsafe extern c_begin_combo: (label: ^u8, preview_value: ^u8, flags: i32) -> boo
 @symbol("ImGui_EndCombo")
 unsafe extern c_end_combo: () -> void
 
+@symbol("ImGui_ComboCharEx")
+unsafe extern c_combo_char_ex: (label: ^u8, current_item: ^mut i32, items: ^^u8, items_count: i32, popup_max_height_in_items: i32) -> bool
+
 @symbol("ImGui_ComboEx")
 unsafe extern c_combo_ex: (label: ^u8, current_item: ^mut i32, items_separated_by_zeros: ^u8, popup_max_height_in_items: i32) -> bool
 
@@ -5594,6 +5771,9 @@ unsafe extern c_color_edit4: (label: ^u8, col: ^mut [4]f32, flags: i32) -> bool
 @symbol("ImGui_ColorPicker3")
 unsafe extern c_color_picker3: (label: ^u8, col: ^mut [3]f32, flags: i32) -> bool
 
+@symbol("ImGui_ColorPicker4")
+unsafe extern c_color_picker4: (label: ^u8, col: ^mut [4]f32, flags: i32, ref_col: ^u8) -> bool
+
 @symbol("ImGui_ColorButtonEx")
 unsafe extern c_color_button_ex: (desc_id: ^u8, col: Vec4, flags: i32, size: Vec2) -> bool
 
@@ -5656,6 +5836,15 @@ unsafe extern c_begin_list_box: (label: ^u8, size: Vec2) -> bool
 
 @symbol("ImGui_EndListBox")
 unsafe extern c_end_list_box: () -> void
+
+@symbol("ImGui_ListBox")
+unsafe extern c_list_box: (label: ^u8, current_item: ^mut i32, items: ^^u8, items_count: i32, height_in_items: i32) -> bool
+
+@symbol("ImGui_PlotLinesEx")
+unsafe extern c_plot_lines_ex: (label: ^u8, values: ^f32, values_count: i32, values_offset: i32, overlay_text: ^u8, scale_min: f32, scale_max: f32, graph_size: Vec2, stride: i32) -> void
+
+@symbol("ImGui_PlotHistogramEx")
+unsafe extern c_plot_histogram_ex: (label: ^u8, values: ^f32, values_count: i32, values_offset: i32, overlay_text: ^u8, scale_min: f32, scale_max: f32, graph_size: Vec2, stride: i32) -> void
 
 @symbol("ImGui_BeginMenuBar")
 unsafe extern c_begin_menu_bar: () -> bool
@@ -5867,6 +6056,9 @@ unsafe extern c_log_text_unformatted: (text: ^u8) -> void
 @symbol("ImGui_BeginDragDropSource")
 unsafe extern c_begin_drag_drop_source: (flags: i32) -> bool
 
+@symbol("ImGui_SetDragDropPayload")
+unsafe extern c_set_drag_drop_payload: (type_: ^u8, data_: ^u8, sz: u64, cond: i32) -> bool
+
 @symbol("ImGui_EndDragDropSource")
 unsafe extern c_end_drag_drop_source: () -> void
 
@@ -6061,6 +6253,9 @@ unsafe extern c_get_mouse_clicked_count: (button: i32) -> i32
 
 @symbol("ImGui_IsMouseHoveringRectEx")
 unsafe extern c_is_mouse_hovering_rect_ex: (r_min: Vec2, r_max: Vec2, clip: bool) -> bool
+
+@symbol("ImGui_IsMousePosValid")
+unsafe extern c_is_mouse_pos_valid: (mouse_pos: ^Vec2) -> bool
 
 @symbol("ImGui_IsAnyMouseDown")
 unsafe extern c_is_any_mouse_down: () -> bool
@@ -6413,11 +6608,23 @@ unsafe extern c_draw_list_add_ellipse_filled_ex: (self: DrawList, center: Vec2, 
 @symbol("ImDrawList_AddTextEx")
 unsafe extern c_draw_list_add_text_ex: (self: DrawList, pos: Vec2, col: u32, text_begin: ^u8, text_end: ^u8) -> void
 
+@symbol("ImDrawList_AddTextImFontPtrEx")
+unsafe extern c_draw_list_add_text_font_ptr_ex: (self: DrawList, font: Font, font_size: f32, pos: Vec2, col: u32, text_begin: ^u8, text_end: ^u8, wrap_width: f32, cpu_fine_clip_rect: ^Vec4) -> void
+
 @symbol("ImDrawList_AddBezierCubic")
 unsafe extern c_draw_list_add_bezier_cubic: (self: DrawList, p1: Vec2, p2: Vec2, p3: Vec2, p4: Vec2, col: u32, thickness: f32, num_segments: i32) -> void
 
 @symbol("ImDrawList_AddBezierQuadratic")
 unsafe extern c_draw_list_add_bezier_quadratic: (self: DrawList, p1: Vec2, p2: Vec2, p3: Vec2, col: u32, thickness: f32, num_segments: i32) -> void
+
+@symbol("ImDrawList_AddPolyline")
+unsafe extern c_draw_list_add_polyline: (self: DrawList, points: ^Vec2, num_points: i32, col: u32, thickness: f32, flags: i32) -> void
+
+@symbol("ImDrawList_AddConvexPolyFilled")
+unsafe extern c_draw_list_add_convex_poly_filled: (self: DrawList, points: ^Vec2, num_points: i32, col: u32) -> void
+
+@symbol("ImDrawList_AddConcavePolyFilled")
+unsafe extern c_draw_list_add_concave_poly_filled: (self: DrawList, points: ^Vec2, num_points: i32, col: u32) -> void
 
 @symbol("ImDrawList_PathClear")
 unsafe extern c_draw_list_path_clear: (self: DrawList) -> void
@@ -6589,6 +6796,15 @@ unsafe extern c_font_atlas_add_font_default_vector: (self: FontAtlas, font_cfg: 
 
 @symbol("ImFontAtlas_AddFontDefaultBitmap")
 unsafe extern c_font_atlas_add_font_default_bitmap: (self: FontAtlas, font_cfg: FontConfig) -> Font
+
+@symbol("ImFontAtlas_AddFontFromFileTTF")
+unsafe extern c_font_atlas_add_font_from_file_ttf: (self: FontAtlas, filename: ^u8, size_pixels: f32, font_cfg: FontConfig, glyph_ranges: ^u8) -> Font
+
+@symbol("ImFontAtlas_AddFontFromMemoryCompressedTTF")
+unsafe extern c_font_atlas_add_font_from_memory_compressed_ttf: (self: FontAtlas, compressed_font_data: ^u8, compressed_font_data_size: i32, size_pixels: f32, font_cfg: FontConfig, glyph_ranges: ^u8) -> Font
+
+@symbol("ImFontAtlas_AddFontFromMemoryCompressedBase85TTF")
+unsafe extern c_font_atlas_add_font_from_memory_compressed_base85_ttf: (self: FontAtlas, compressed_font_data_base85: ^u8, size_pixels: f32, font_cfg: FontConfig, glyph_ranges: ^u8) -> Font
 
 @symbol("ImFontAtlas_RemoveFont")
 unsafe extern c_font_atlas_remove_font: (self: FontAtlas, font: Font) -> void
@@ -7742,6 +7958,69 @@ unsafe extern c_io_get_input_queue_surrogate: (self: IO) -> u16
 @symbol("lyra_imgui_ImGuiIO_set_InputQueueSurrogate")
 unsafe extern c_io_set_input_queue_surrogate: (self: IO, value: u16) -> void
 
+@symbol("lyra_imgui_ImGuiIO_get_InputQueueCharacters_size")
+unsafe extern c_io_get_input_queue_characters_size: (self: IO) -> i32
+
+@symbol("lyra_imgui_ImGuiIO_get_InputQueueCharacters")
+unsafe extern c_io_get_input_queue_characters: (self: IO, index: i32) -> u16
+
+@symbol("lyra_imgui_ImGuiPayload_get_Data")
+unsafe extern c_payload_get_data: (self: Payload) -> ^u8
+
+@symbol("lyra_imgui_ImGuiPayload_get_DataSize")
+unsafe extern c_payload_get_data_size: (self: Payload) -> i32
+
+@symbol("lyra_imgui_ImGuiListClipper_new")
+unsafe extern c_list_clipper_new: () -> ListClipper
+
+@symbol("lyra_imgui_ImGuiListClipper_destroy")
+unsafe extern c_list_clipper_destroy: (self: ListClipper) -> void
+
+@symbol("lyra_imgui_ImGuiListClipper_get_DisplayStart")
+unsafe extern c_list_clipper_get_display_start: (self: ListClipper) -> i32
+
+@symbol("lyra_imgui_ImGuiListClipper_get_DisplayEnd")
+unsafe extern c_list_clipper_get_display_end: (self: ListClipper) -> i32
+
+@symbol("lyra_imgui_ImGuiListClipper_get_UserIndex")
+unsafe extern c_list_clipper_get_user_index: (self: ListClipper) -> i32
+
+@symbol("lyra_imgui_ImGuiListClipper_get_ItemsCount")
+unsafe extern c_list_clipper_get_items_count: (self: ListClipper) -> i32
+
+@symbol("lyra_imgui_ImGuiListClipper_get_ItemsHeight")
+unsafe extern c_list_clipper_get_items_height: (self: ListClipper) -> f32
+
+@symbol("lyra_imgui_ImGuiListClipper_get_Flags")
+unsafe extern c_list_clipper_get_flags: (self: ListClipper) -> i32
+
+@symbol("lyra_imgui_ImGuiListClipper_get_StartPosY")
+unsafe extern c_list_clipper_get_start_pos_y: (self: ListClipper) -> f64
+
+@symbol("lyra_imgui_ImGuiListClipper_get_StartSeekOffsetY")
+unsafe extern c_list_clipper_get_start_seek_offset_y: (self: ListClipper) -> f64
+
+@symbol("lyra_imgui_ImGuiListClipper_get_Ctx")
+unsafe extern c_list_clipper_get_ctx: (self: ListClipper) -> Context
+
+@symbol("lyra_imgui_ImDrawList_get_CmdBuffer_size")
+unsafe extern c_draw_list_get_cmd_buffer_size: (self: DrawList) -> i32
+
+@symbol("lyra_imgui_ImDrawList_get_IdxBuffer_size")
+unsafe extern c_draw_list_get_idx_buffer_size: (self: DrawList) -> i32
+
+@symbol("lyra_imgui_ImDrawList_get_IdxBuffer")
+unsafe extern c_draw_list_get_idx_buffer: (self: DrawList, index: i32) -> u16
+
+@symbol("lyra_imgui_ImDrawList_get_VtxBuffer_size")
+unsafe extern c_draw_list_get_vtx_buffer_size: (self: DrawList) -> i32
+
+@symbol("lyra_imgui_ImDrawList_get_Flags")
+unsafe extern c_draw_list_get_flags: (self: DrawList) -> i32
+
+@symbol("lyra_imgui_ImDrawList_set_Flags")
+unsafe extern c_draw_list_set_flags: (self: DrawList, value: i32) -> void
+
 @symbol("lyra_imgui_ImGuiViewport_get_ID")
 unsafe extern c_viewport_get_id: (self: Viewport) -> u32
 
@@ -7828,8 +8107,6 @@ unsafe extern c_viewport_set_platform_request_close: (self: Viewport, value: boo
 
 // ── Not bound ───────────────────────────────────────────────────────────────
 //
-// ImGui_SetNextWindowSizeConstraints: parameter `custom_callback`: a pointer to a function pointer (a callback)
-// ImGui_GetStyleColorVec4: returns a pointer to `ImVec4`
 // ImGui_PushIDPtr: parameter `ptr_id`: `void *`
 // ImGui_GetIDPtr: parameter `ptr_id`: `void *`
 // ImGui_Text: variadic (the `…Unformatted` form is bound)
@@ -7847,7 +8124,6 @@ unsafe extern c_viewport_set_platform_request_close: (self: Viewport, value: boo
 // ImGui_ImageEx: parameter `tex_ref`: `ImTextureRef` by value
 // ImGui_ImageWithBgEx: parameter `tex_ref`: `ImTextureRef` by value
 // ImGui_ImageButtonEx: parameter `tex_ref`: `ImTextureRef` by value
-// ImGui_ComboCharEx: parameter `items`: an array of `` non-scalars
 // ImGui_ComboObsoleteEx: parameter `getter`: a pointer to a function pointer (a callback)
 // ImGui_DragScalarEx: parameter `p_data`: `void *`
 // ImGui_DragScalarNEx: parameter `p_data`: `void *`
@@ -7859,7 +8135,6 @@ unsafe extern c_viewport_set_platform_request_close: (self: Viewport, value: boo
 // ImGui_InputTextWithHintEx: parameter `buf`: a writable `char *` buffer
 // ImGui_InputScalarEx: parameter `p_data`: `void *`
 // ImGui_InputScalarNEx: parameter `p_data`: `void *`
-// ImGui_ColorPicker4: parameter `ref_col`: a `const f32 *` array
 // ImGui_TreeNodeStr: variadic (the `…Unformatted` form is bound)
 // ImGui_TreeNodePtr: parameter `ptr_id`: `void *`
 // ImGui_TreeNodePtrUnformatted: parameter `ptr_id`: `void *`
@@ -7871,11 +8146,8 @@ unsafe extern c_viewport_set_platform_request_close: (self: Viewport, value: boo
 // ImGui_TreeNodeExV: takes a va_list
 // ImGui_TreeNodeExVPtr: parameter `ptr_id`: `void *`
 // ImGui_TreePushPtr: parameter `ptr_id`: `void *`
-// ImGui_ListBox: parameter `items`: an array of `` non-scalars
 // ImGui_ListBoxObsoleteEx: parameter `getter`: a pointer to a function pointer (a callback)
-// ImGui_PlotLinesEx: parameter `values`: a `const f32 *` array
 // ImGui_PlotLinesCallbackEx: parameter `values_getter`: a pointer to a function pointer (a callback)
-// ImGui_PlotHistogramEx: parameter `values`: a `const f32 *` array
 // ImGui_PlotHistogramCallbackEx: parameter `values_getter`: a pointer to a function pointer (a callback)
 // ImGui_SetTooltip: variadic (the `…Unformatted` form is bound)
 // ImGui_SetTooltipV: takes a va_list
@@ -7883,11 +8155,9 @@ unsafe extern c_viewport_set_platform_request_close: (self: Viewport, value: boo
 // ImGui_SetItemTooltipV: takes a va_list
 // ImGui_LogText: variadic (the `…Unformatted` form is bound)
 // ImGui_LogTextV: takes a va_list
-// ImGui_SetDragDropPayload: parameter `data_`: `void *`
-// ImGui_IsMousePosValid: parameter `mouse_pos`: a pointer to `ImVec2`
-// ImGui_DebugLog: under a preprocessor conditional
-// ImGui_DebugLogUnformatted: under a preprocessor conditional
-// ImGui_DebugLogV: under a preprocessor conditional
+// ImGui_DebugLog: under `#ifndef IMGUI_DISABLE_DEBUG_TOOLS`
+// ImGui_DebugLogUnformatted: under `#ifndef IMGUI_DISABLE_DEBUG_TOOLS`
+// ImGui_DebugLogV: under `#ifndef IMGUI_DISABLE_DEBUG_TOOLS`
 // ImGui_SetAllocatorFunctions: parameter `alloc_func`: a pointer to a function pointer (a callback)
 // ImGui_GetAllocatorFunctions: parameter `p_alloc_func`: a pointer to a pointer to a function pointer (a callback)
 // ImGui_MemAlloc: returns `void *`
@@ -7899,75 +8169,68 @@ unsafe extern c_viewport_set_platform_request_close: (self: Viewport, value: boo
 // ImGuiPlatformIO_SetPlatform_GetWindowFramebufferScale: parameter `getWindowFramebufferScaleFunc`: a pointer to a function pointer (a callback)
 // ImGuiPlatformIO_SetPlatform_GetWindowPos: parameter `getWindowPosFunc`: a pointer to a function pointer (a callback)
 // ImGuiPlatformIO_SetPlatform_GetWindowSize: parameter `getWindowSizeFunc`: a pointer to a function pointer (a callback)
-// ImStrv_FromCharStr: under a preprocessor conditional
+// ImStrv_FromCharStr: under `#if defined(IMGUI_HAS_IMSTR)`
 // ImGuiTextBuffer_appendf: variadic (the `…Unformatted` form is bound)
 // ImGuiTextBuffer_appendfv: takes a va_list
 // ImGuiStorage_GetVoidPtr: returns `void *`
 // ImGuiStorage_SetVoidPtr: parameter `val`: `void *`
-// ImGuiStorage_GetVoidPtrRef: parameter `default_val`: `void *`
+// ImGuiStorage_GetVoidPtrRef: returns a pointer to `void *`
 // ImColor_HSV: returns `ImColor` by value
 // ImGuiSelectionBasicStorage_GetNextSelectedItem: parameter `opaque_it`: a pointer to `void *`
 // ImDrawList_PushTexture: parameter `tex_ref`: `ImTextureRef` by value
-// ImDrawList_AddTextImFontPtrEx: parameter `cpu_fine_clip_rect`: a pointer to `ImVec4`
-// ImDrawList_AddPolyline: parameter `points`: a pointer to `ImVec2`
-// ImDrawList_AddConvexPolyFilled: parameter `points`: a pointer to `ImVec2`
-// ImDrawList_AddConcavePolyFilled: parameter `points`: a pointer to `ImVec2`
 // ImDrawList_AddImageEx: parameter `tex_ref`: `ImTextureRef` by value
 // ImDrawList_AddImageQuadEx: parameter `tex_ref`: `ImTextureRef` by value
 // ImDrawList_AddImageRounded: parameter `tex_ref`: `ImTextureRef` by value
 // ImDrawList_AddCallbackEx: parameter `callback`: a pointer to a function pointer (a callback)
-// ImDrawList_AddRectImDrawFlags: under a preprocessor conditional
-// ImDrawList_AddPolylineImDrawFlags: under a preprocessor conditional
-// ImDrawList_PathStrokeImDrawFlags: under a preprocessor conditional
-// ImDrawList_PushTextureID: under a preprocessor conditional
-// ImDrawList_PopTextureID: under a preprocessor conditional
+// ImDrawList_AddRectImDrawFlags: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImDrawList_AddPolylineImDrawFlags: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImDrawList_PathStrokeImDrawFlags: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImDrawList_PushTextureID: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImDrawList_PopTextureID: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
 // ImDrawList__SetTexture: parameter `tex_ref`: `ImTextureRef` by value
 // ImTextureData_GetPixels: returns `void *`
 // ImTextureData_GetPixelsAt: returns `void *`
 // ImTextureData_GetTexRef: returns `ImTextureRef` by value
 // ImFontGlyphRangesBuilder_AddRanges: parameter `ranges`: a `const u16 *` array
-// ImFontAtlas_AddFontFromFileTTF: parameter `glyph_ranges`: a `const u16 *` array
 // ImFontAtlas_AddFontFromMemoryTTF: parameter `font_data`: `void *`
-// ImFontAtlas_AddFontFromMemoryCompressedTTF: parameter `compressed_font_data`: `void *`
-// ImFontAtlas_AddFontFromMemoryCompressedBase85TTF: parameter `glyph_ranges`: a `const u16 *` array
-// ImFontAtlas_Build: under a preprocessor conditional
-// ImFontAtlas_GetTexDataAsAlpha8: under a preprocessor conditional
-// ImFontAtlas_GetTexDataAsRGBA32: under a preprocessor conditional
-// ImFontAtlas_SetTexID: under a preprocessor conditional
-// ImFontAtlas_SetTexIDImTextureRef: under a preprocessor conditional
-// ImFontAtlas_IsBuilt: under a preprocessor conditional
+// ImFontAtlas_Build: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImFontAtlas_GetTexDataAsAlpha8: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImFontAtlas_GetTexDataAsRGBA32: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImFontAtlas_SetTexID: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImFontAtlas_SetTexIDImTextureRef: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImFontAtlas_IsBuilt: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
 // ImFontAtlas_GetGlyphRangesDefault: returns a `const u16 *` array
-// ImFontAtlas_GetGlyphRangesGreek: under a preprocessor conditional
-// ImFontAtlas_GetGlyphRangesKorean: under a preprocessor conditional
-// ImFontAtlas_GetGlyphRangesJapanese: under a preprocessor conditional
-// ImFontAtlas_GetGlyphRangesChineseFull: under a preprocessor conditional
-// ImFontAtlas_GetGlyphRangesChineseSimplifiedCommon: under a preprocessor conditional
-// ImFontAtlas_GetGlyphRangesCyrillic: under a preprocessor conditional
-// ImFontAtlas_GetGlyphRangesThai: under a preprocessor conditional
-// ImFontAtlas_GetGlyphRangesVietnamese: under a preprocessor conditional
-// ImFontAtlas_AddCustomRectRegular: under a preprocessor conditional
-// ImFontAtlas_GetCustomRectByIndex: under a preprocessor conditional
-// ImFontAtlas_CalcCustomRectUV: under a preprocessor conditional
-// ImFontAtlas_AddCustomRectFontGlyph: under a preprocessor conditional
-// ImFontAtlas_AddCustomRectFontGlyphForSize: under a preprocessor conditional
-// ImFont_CalcWordWrapPositionA: under a preprocessor conditional
-// ImGui_SetColorEditOptions: under a preprocessor conditional
-// ImGui_PushFont: under a preprocessor conditional
-// ImGui_SetWindowFontScale: under a preprocessor conditional
-// ImGui_ImageImVec4: under a preprocessor conditional
-// ImGui_PushButtonRepeat: under a preprocessor conditional
-// ImGui_PopButtonRepeat: under a preprocessor conditional
-// ImGui_PushTabStop: under a preprocessor conditional
-// ImGui_PopTabStop: under a preprocessor conditional
-// ImGui_GetContentRegionMax: under a preprocessor conditional
-// ImGui_GetWindowContentRegionMin: under a preprocessor conditional
-// ImGui_GetWindowContentRegionMax: under a preprocessor conditional
+// ImFontAtlas_GetGlyphRangesGreek: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImFontAtlas_GetGlyphRangesKorean: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImFontAtlas_GetGlyphRangesJapanese: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImFontAtlas_GetGlyphRangesChineseFull: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImFontAtlas_GetGlyphRangesChineseSimplifiedCommon: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImFontAtlas_GetGlyphRangesCyrillic: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImFontAtlas_GetGlyphRangesThai: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImFontAtlas_GetGlyphRangesVietnamese: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImFontAtlas_AddCustomRectRegular: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImFontAtlas_GetCustomRectByIndex: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImFontAtlas_CalcCustomRectUV: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImFontAtlas_AddCustomRectFontGlyph: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImFontAtlas_AddCustomRectFontGlyphForSize: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImFont_CalcWordWrapPositionA: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImGui_SetColorEditOptions: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImGui_PushFont: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImGui_SetWindowFontScale: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImGui_ImageImVec4: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImGui_PushButtonRepeat: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImGui_PopButtonRepeat: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImGui_PushTabStop: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImGui_PopTabStop: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImGui_GetContentRegionMax: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImGui_GetWindowContentRegionMin: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
+// ImGui_GetWindowContentRegionMax: obsolete (`#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`)
 // ImGuiIO::UserData: `void *`
 // ImGuiIO::BackendPlatformUserData: `void *`
 // ImGuiIO::BackendRendererUserData: `void *`
 // ImGuiIO::BackendLanguageUserData: `void *`
 // ImGuiIO::KeysData: `ImGuiKeyData` by value
-// ImGuiIO::InputQueueCharacters: `ImVector_ImWchar` by value
+// ImGuiListClipper::TempData: `void *`
 // ImGuiViewport::RendererUserData: `void *`
 // ImGuiViewport::PlatformUserData: `void *`
 // ImGuiViewport::PlatformIconData: `void *`

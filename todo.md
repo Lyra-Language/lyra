@@ -624,12 +624,15 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   Termina's `menus/menus.lyra` each walk a menus tree into `bindings.menubar` (items by tag,
   greying synced each frame). One shared function could serve both, and Vega's would then
   read `Shortcut.alt`.
+- **[DONE 11/11] `bindings.imgui`: the list clipper, payloads, arrays and `IsMousePosValid`**
+  — generated: NULL defaults left out, pointer-and-count as `[]T`/`[]string`/`[]u8`, `Maybe`
+  handles, `ImVector` lengths, `ListClipper.new()` (COMPLETED.md, 11/11). `set_layout_file`
+  had already answered `imgui.ini`.
 - **[OPEN] `bindings.imgui`: what is still unbound** is listed at the end of `generated.lyra`.
-  Next likely: `ImGuiListClipper` (long lists — needs a constructor), drag-and-drop payload
-  data (`void *`), and a layout location for `imgui.ini` chosen by the program.
-- **[OPEN] `bindings.imgui`: `IsMousePosValid` is unbound** (its `const ImVec2 *` parameter).
-  Sulafat tests `get_mouse_pos()` against -FLT_MAX instead; `floor()` on that position traps.
-  A hand-written no-argument wrapper would do.
+  Left: the `…Scalar` widgets (`ImGuiDataType` and a `void *p_data`: a wrapper per width,
+  `drag_i64`, `slider_u8`, would close them), and a callback that must be given (`InputText`'s,
+  `PlotLinesCallback`), which `lyra-E066` keeps to a `pub extern` per function. Not wanted:
+  `void *` IDs (`push_id_int`/strings do it) and the obsolete functions.
 - **[DONE 09/29] `bindings.imgui`: `cancel_quit` and SDL's open/save dialogs**; `std`:
   `string.replace` and `std.json`'s writer. (COMPLETED.md, 09/29.)
 - **[OPEN] Defaults in the remaining by-name passes.** A filled-in default

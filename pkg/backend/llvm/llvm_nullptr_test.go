@@ -87,6 +87,26 @@ func TestExec_NullPtr(t *testing.T) {
 			 }`,
 			"true true",
 		},
+		{
+			// A pointer inside an aggregate compares as an address too: equality's glue had
+			// no leaf for one, and `Maybe<Payload> == None` (bindings.imgui, 11/11) passed the
+			// typechecker and died in the backend. A newtype over a pointer is an address at
+			// the top level as well, which `isRawPointerExpr` missed.
+			"a pointer in a Maybe, a tuple or a struct, and a newtype over one",
+			`type H = ^i64
+			 struct Pair { h: H, n: i64 }
+			 let main = () -> void => {
+			   var n = 3
+			   let x = H(nullptr)
+			   let y = H(nullptr)
+			   let z = H(unsafe { &n })
+			   let m: Maybe<H> = Some(z)
+			   let none: Maybe<^i64> = None
+			   println("${x == y} ${x != z} ${(x, 1) == (y, 1)} ${Pair { h: x, n: 1 } == Pair { h: z, n: 1 }}")
+			   println("${m == None} ${m == Some(z)} ${m == Some(x)} ${none == None}")
+			 }`,
+			"true true true false\nfalse true false true",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

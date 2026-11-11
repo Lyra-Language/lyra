@@ -9,6 +9,42 @@ Newest first.
 
 ## Dated log
 
+### 11/11/26 — `bindings.imgui`: arrays, payloads, the list clipper; two compiler bugs
+
+**The generator closes what `todo.md` named and what was next to it**, rather than hand-written
+shims: a parameter of any kind defaulting to NULL is left out, as C++ would leave it
+(`is_mouse_pos_valid()`, `set_next_window_size_constraints(min, max)` without its callback,
+`color_picker4` without `ref_col`); a `const T *` and the count after it are one `[]T`
+(`plot_lines`, `add_polyline`'s `[]Vec2`, `set_drag_drop_payload`'s `[]u8`) and `const char
+*const []` with its count a `[]string` (`list_box`, `combo_char`); a `const ImVec4 *` result is
+copied; three handle results ImGui documents as nullable are `Maybe`s; an `ImVector` field is
+its length and its numeric elements; `void *Data` with `DataSize` after it is `payload.data_()`,
+copied; and `ImGuiListClipper`, which C++ puts on the stack, gets `ListClipper.new()` and
+`destroy()` in `generated.cpp`. 18 functions and one field more are bound. A `const char *`
+and its size stay a `string` (the span rule first took `load_ini_settings_from_memory`'s for an
+`[]i8`). `examples/imgui/gallery.lyra --check` drives each on a headless host, and
+`TestRun_ImGuiExamplesCheckHeadless` runs it and the components example's check — the first
+test to run an ImGui program, not only check one.
+
+**`==` on a raw pointer inside an aggregate died in the backend** — `Maybe<Payload>` against
+`None`, `Payload` being `type Payload = ^u8`. Equality's glue had no leaf for a pointer, and
+`isRawPointerExpr` did not see through a newtype, so `H == H` reached the same refusal.
+Both are an address `icmp` now, asked of the Lyra type (a `shared` box is an LLVM pointer too);
+`TestExec_NullPtr`'s new case.
+
+**A pointer into a borrowed element dangled.** The `[]string` wrapper's
+`[c in s_items | unsafe { c.data() }]` pinned `c`, the binder, and last use freed `s_items` at
+the comprehension, its last mention: every C string read back empty, and the list box's click
+found no item. `pinThroughBinders` carries a pin from a comprehension clause's or `for` loop's
+element to its source, and from a `match`, `if let` or destructuring binding to its value, to a
+fixed point. The statement `if let` is `IfDestructuringStmt`, not a `MatchExpr`, and was missed
+until its case failed under ASan. Three cases in `TestExec_ARawPointerPinsWhatItBorrowed`, each
+an ASan use-after-free without it, on macOS as well.
+
+**Left** (`todo.md`): the `…Scalar` widgets' `ImGuiDataType` and `void *`, and callbacks that must
+be given. None of Vega, Termina or Sheliak imports `bindings.imgui` any more; the examples are
+its users.
+
 ### 11/11/26 — The 68000's multiplies: word multiplies, and a faster `__muldi3`
 
 **LLVM made every `i32` multiply on the 68000 a call to `__mulsi3`** — an element's

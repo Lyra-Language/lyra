@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -63,4 +65,56 @@ func TestImGuiGenerator_ReproducesCommittedBinding(t *testing.T) {
 			t.Errorf("bindings/imgui/%s is not what gen/gen.lyra makes from %s — rerun the generator (its header has the command)", name, matches[0])
 		}
 	}
+}
+
+// The shapes the generator makes of ImGui's pointers — a `[]f32` plot, a `[]Vec2`
+// polyline, a `[]string` list box, a `[]u8` drag-and-drop payload copied back out, a
+// `Maybe` handle, a `const ImVec4 *` copied, a NULL-default callback left out, an
+// `ImVector`'s length and elements, and a list clipper made with its constructor — driven
+// on a headless host by `examples/imgui/gallery.lyra --check`, beside the components
+// example's own check. Checking needs nothing; running needs build.sh's
+// build/lib/liblyra-imgui.a (and SDL3), and skips without it.
+func TestRun_ImGuiExamplesCheckHeadless(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	gallery := filepath.Join(root, "examples", "imgui", "gallery.lyra")
+	stdout, stderr, code := captureRun(t, "check", gallery)
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Fatalf("checking the gallery exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if !imguiArchiveRunsHere(filepath.Join(root, "build", "lib", "liblyra-imgui.a")) {
+		t.Skip("no build/lib/liblyra-imgui.a built for this platform — run ./build.sh")
+	}
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	for _, name := range []string{"gallery", "components"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			bin := filepath.Join(t.TempDir(), name)
+			src := filepath.Join(root, "examples", "imgui", name+".lyra")
+			if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, src); code != 0 {
+				t.Fatalf("building %s exited %d\nstderr: %s", name, code, stderr)
+			}
+			out, err := command(t, bin, "--check").CombinedOutput()
+			if err != nil || !strings.Contains(string(out), "all passed") {
+				t.Errorf("%s --check: %v\n%s", name, err, out)
+			}
+		})
+	}
+}
+
+// imguiArchiveRunsHere reports whether the archive at path exists and holds this platform's
+// objects: `./asan.sh` mounts the Mac's build/ into a Linux container, where a Mach-O archive
+// is there and links nothing.
+func imguiArchiveRunsHere(path string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	if runtime.GOOS == "darwin" {
+		return bytes.Contains(b, []byte{0xcf, 0xfa, 0xed, 0xfe})
+	}
+	return bytes.Contains(b, []byte("\x7fELF"))
 }
