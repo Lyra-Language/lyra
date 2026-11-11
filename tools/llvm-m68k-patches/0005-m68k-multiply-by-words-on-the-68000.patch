@@ -1,0 +1,156 @@
+diff --git a/llvm/lib/Target/M68k/M68kISelLowering.cpp b/llvm/lib/Target/M68k/M68kISelLowering.cpp
+index 3415896..549c5a1 100644
+--- a/llvm/lib/Target/M68k/M68kISelLowering.cpp
++++ b/llvm/lib/Target/M68k/M68kISelLowering.cpp
+@@ -79,10 +79,14 @@ M68kTargetLowering::M68kTargetLowering(const M68kTargetMachine &TM,
+ 
+   setOperationAction({ISD::MUL, ISD::SDIV, ISD::UDIV}, MVT::i8, Promote);
+   setOperationAction({ISD::MUL, ISD::SDIV, ISD::UDIV}, MVT::i16, Legal);
+-  if (Subtarget.atLeastM68020())
++  if (Subtarget.atLeastM68020()) {
+     setOperationAction({ISD::MUL, ISD::SDIV, ISD::UDIV}, MVT::i32, Legal);
+-  else
+-    setOperationAction({ISD::MUL, ISD::SDIV, ISD::UDIV}, MVT::i32, LibCall);
++  } else {
++    setOperationAction({ISD::SDIV, ISD::UDIV}, MVT::i32, LibCall);
++    // The 68000 multiplies words only, 16 x 16 -> 32 bits: LowerMUL makes an i32
++    // multiply of those where it can, and calls __mulsi3 only for the rest.
++    setOperationAction(ISD::MUL, MVT::i32, Custom);
++  }
+   setOperationAction(ISD::MUL, MVT::i64, LibCall);
+ 
+   for (auto OP :
+@@ -1407,6 +1411,8 @@ SDValue M68kTargetLowering::LowerOperation(SDValue Op,
+   case ISD::SMULO:
+   case ISD::UMULO:
+     return LowerXALUO(Op, DAG);
++  case ISD::MUL:
++    return LowerMUL(Op, DAG);
+   case ISD::SETCC:
+     return LowerSETCC(Op, DAG);
+   case ISD::SETCCCARRY:
+@@ -1541,6 +1547,74 @@ SDValue M68kTargetLowering::LowerGlobalTLSAddress(SDValue Op,
+   llvm_unreachable("Unexpected TLS access model type");
+ }
+ 
++/// An i32 multiply on a 68000 or 68010, which multiply only words (`muls.w`, `mulu.w`:
++/// 16 x 16 -> 32 bits, about 70 cycles), as the cheapest of what it can be made of:
++///
++///   - one word multiply, when both operands fit a word, signed or unsigned — a product of
++///     two `i16`s widened, or an index into an array;
++///   - shifts and adds, for a constant of at most three set bits;
++///   - two word multiplies, a shift and an add, when one operand fits an unsigned word —
++///     a constant such as an element's size (`xs[i]` of 166-byte structs), or a value
++///     known to: the other's halves each multiplied, the high one's product shifted up;
++///   - else __mulsi3, the whole 32 x 32 multiply.
++///
++/// Each is the low 32 bits of the product, exactly as the libcall's: a word's halves sum
++/// to the operand modulo 2^32 whatever its sign.
++SDValue M68kTargetLowering::LowerMUL(SDValue Op, SelectionDAG &DAG) const {
++  SDLoc DL(Op);
++  MVT VT = Op.getSimpleValueType();
++  assert(VT == MVT::i32 && !Subtarget.atLeastM68020() &&
++         "only the 68000's and 68010's i32 multiply is custom");
++  SDValue A = Op.getOperand(0), B = Op.getOperand(1);
++  if (isa<ConstantSDNode>(A) && !isa<ConstantSDNode>(B))
++    std::swap(A, B);
++
++  auto Mul16 = [&](bool Signed, SDValue X, SDValue Y) {
++    return DAG.getNode(Signed ? M68kISD::SMUL16 : M68kISD::UMUL16, DL, VT,
++                       DAG.getNode(ISD::TRUNCATE, DL, MVT::i16, X),
++                       DAG.getNode(ISD::TRUNCATE, DL, MVT::i16, Y));
++  };
++
++  if (DAG.ComputeNumSignBits(A) > 16 && DAG.ComputeNumSignBits(B) > 16)
++    return Mul16(/*Signed=*/true, A, B);
++  bool AWord = DAG.computeKnownBits(A).countMinLeadingZeros() >= 16;
++  bool BWord = DAG.computeKnownBits(B).countMinLeadingZeros() >= 16;
++  if (AWord && BWord)
++    return Mul16(/*Signed=*/false, A, B);
++
++  if (auto *C = dyn_cast<ConstantSDNode>(B)) {
++    uint32_t Value = C->getZExtValue();
++    if (llvm::popcount(Value) <= 3) {
++      SDValue Sum;
++      for (unsigned Bit = 0; Bit < 32; ++Bit) {
++        if (!(Value & (1u << Bit)))
++          continue;
++        SDValue Term = Bit == 0 ? A
++                                : DAG.getNode(ISD::SHL, DL, VT, A,
++                                              DAG.getShiftAmountConstant(Bit, VT, DL));
++        Sum = Sum ? DAG.getNode(ISD::ADD, DL, VT, Sum, Term) : Term;
++      }
++      return Sum ? Sum : DAG.getConstant(0, DL, VT);
++    }
++  }
++
++  if (AWord && !BWord) {
++    std::swap(A, B);
++    std::swap(AWord, BWord);
++  }
++  if (BWord) {
++    SDValue Sixteen = DAG.getShiftAmountConstant(16, VT, DL);
++    SDValue Low = Mul16(/*Signed=*/false, A, B);
++    SDValue High = Mul16(/*Signed=*/false,
++                         DAG.getNode(ISD::SRL, DL, VT, A, Sixteen), B);
++    return DAG.getNode(ISD::ADD, DL, VT, Low,
++                       DAG.getNode(ISD::SHL, DL, VT, High, Sixteen));
++  }
++
++  TargetLowering::MakeLibCallOptions CallOptions;
++  return makeLibCall(DAG, RTLIB::MUL_I32, VT, {A, B}, CallOptions, DL).first;
++}
++
+ bool M68kTargetLowering::decomposeMulByConstant(LLVMContext &Context, EVT VT,
+                                                 SDValue C) const {
+   // Shifts and add instructions in M68000 and M68010 support
+diff --git a/llvm/lib/Target/M68k/M68kISelLowering.h b/llvm/lib/Target/M68k/M68kISelLowering.h
+index cbb5c92..be331e3 100644
+--- a/llvm/lib/Target/M68k/M68kISelLowering.h
++++ b/llvm/lib/Target/M68k/M68kISelLowering.h
+@@ -165,6 +165,7 @@ private:
+   SDValue LowerSETCC(SDValue Op, SelectionDAG &DAG) const;
+   SDValue LowerSETCCCARRY(SDValue Op, SelectionDAG &DAG) const;
+   SDValue LowerSELECT(SDValue Op, SelectionDAG &DAG) const;
++  SDValue LowerMUL(SDValue Op, SelectionDAG &DAG) const;
+   SDValue LowerBRCOND(SDValue Op, SelectionDAG &DAG) const;
+   SDValue LowerADDC_ADDE_SUBC_SUBE(SDValue Op, SelectionDAG &DAG) const;
+   SDValue LowerConstantPool(SDValue Op, SelectionDAG &DAG) const;
+diff --git a/llvm/lib/Target/M68k/M68kInstrArithmetic.td b/llvm/lib/Target/M68k/M68kInstrArithmetic.td
+index 56b71db..51dffa6 100644
+--- a/llvm/lib/Target/M68k/M68kInstrArithmetic.td
++++ b/llvm/lib/Target/M68k/M68kInstrArithmetic.td
+@@ -767,6 +767,15 @@ def : Pat<(mulhu i16:$dst, Mxi16immSExt16:$opd),
+             (LSR32di (LSR32di (UMULd32i16 (MOVXd32d16 $dst), imm:$opd), 8), 8),
+              MxSubRegIndex16Lo)>;
+ 
++// A word multiply's whole product (MxSMul16, MxUMul16): the 32-bit register `muls.w` and
++// `mulu.w` leave it in.
++def : Pat<(MxSMul16 i16:$dst, i16:$opd), (SMULd32d16 (MOVXd32d16 $dst), $opd)>;
++def : Pat<(MxUMul16 i16:$dst, i16:$opd), (UMULd32d16 (MOVXd32d16 $dst), $opd)>;
++def : Pat<(MxSMul16 i16:$dst, Mxi16immSExt16:$opd),
++          (SMULd32i16 (MOVXd32d16 $dst), imm:$opd)>;
++def : Pat<(MxUMul16 i16:$dst, Mxi16immSExt16:$opd),
++          (UMULd32i16 (MOVXd32d16 $dst), imm:$opd)>;
++
+ 
+ //===----------------------------------------------------------------------===//
+ // NEG/NEGX/NOT
+diff --git a/llvm/lib/Target/M68k/M68kInstrInfo.td b/llvm/lib/Target/M68k/M68kInstrInfo.td
+index 7804a24..ff5165c 100644
+--- a/llvm/lib/Target/M68k/M68kInstrInfo.td
++++ b/llvm/lib/Target/M68k/M68kInstrInfo.td
+@@ -136,6 +136,13 @@ def MxSubX : SDNode<"M68kISD::SUBX", MxSDT_BiArithCCRInOut>;
+ def MxSMul : SDNode<"M68kISD::SMUL", MxSDT_BiArithCCROut, [SDNPCommutative]>;
+ def MxUMul : SDNode<"M68kISD::UMUL", MxSDT_BiArithCCROut, [SDNPCommutative]>;
+ 
++// A word multiply's whole product, 16 x 16 -> 32 bits: the 68000's own `muls.w` and
++// `mulu.w`, which its i32 multiply is made of (LowerMUL).
++def MxSDT_Mul16 : SDTypeProfile<1, 2, [SDTCisVT<0, i32>, SDTCisVT<1, i16>,
++                                       SDTCisVT<2, i16>]>;
++def MxSMul16 : SDNode<"M68kISD::SMUL16", MxSDT_Mul16, [SDNPCommutative]>;
++def MxUMul16 : SDNode<"M68kISD::UMUL16", MxSDT_Mul16, [SDNPCommutative]>;
++
+ // M68k compare and logical compare instructions. Subtracts the source
+ // operand from the destination data register and sets the condition
+ // codes according to the result. Immediate always goes first.

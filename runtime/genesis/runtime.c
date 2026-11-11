@@ -278,8 +278,32 @@ static u64 mulu32(u32 a, u32 b) {
     return ((u64)high << 32) | sum;
 }
 
+static inline u32 muls16(u16 a, u16 b) {
+    u32 r = a;
+    __asm__("muls %1, %0" : "+d"(r) : "d"(b));
+    return r;
+}
+
 u64 __muldi3(u64 a, u64 b) {
     u32 al = (u32)a, ah = (u32)(a >> 32), bl = (u32)b, bh = (u32)(b >> 32);
+    /*
+     * A checked i32 multiply — Lyra's `*` — is one of these: LLVM widens both operands,
+     * sign-extended, and asks for the high half. Such a pair is a signed 32 x 32 multiply:
+     * one `muls` where both fit a word, else the magnitudes' product with the sign put back
+     * — where a negative one's high word read as a number of its own cost two more calls
+     * and four more multiplies (11/11, the hero's paths).
+     */
+    u32 a_sign = (u32)((int)al >> 31), b_sign = (u32)((int)bl >> 31);
+    if (ah == a_sign && bh == b_sign) {
+        u32 a_top = (u32)((int)al >> 15), b_top = (u32)((int)bl >> 15);
+        if (a_top == a_sign && b_top == b_sign) {
+            u32 p = muls16((u16)al, (u16)bl);
+            return ((u64)(u32)((int)p >> 31) << 32) | p;
+        }
+        u32 ma = a_sign ? 0u - al : al, mb = b_sign ? 0u - bl : bl;
+        u64 p = mulu32(ma, mb);
+        return (a_sign ^ b_sign) ? 0 - p : p;
+    }
     u32 high = 0;
     if (ah) {
         high += __mulsi3(ah, bl);

@@ -961,6 +961,81 @@ let word = (v: i64) -> u32 => u32(v & 0xFFFFFFFF)
 	}
 }
 
+// TestGenesis_MultipliesOfEveryShapeAgreeWithTheHost runs an i32 multiply in each shape the
+// patched M68k LLVM (tools/llvm-m68k-patches/0005) makes its own way on the 68000 — two
+// words signed (`muls.w`) or unsigned (`mulu.w`), a constant of few set bits (shifts and
+// adds), a word constant or operand (two `mulu.w`), and the rest (`__mulsi3`) — on random
+// operands, and checked ones of words, which cannot overflow: the answers, folded into one
+// word, must be the host's.
+func TestGenesis_MultipliesOfEveryShapeAgreeWithTheHost(t *testing.T) {
+	t.Parallel()
+	genesisToolchainOrSkip(t)
+	seed := uint32(2463534242)
+	next := func() uint32 {
+		seed ^= seed << 13
+		seed ^= seed >> 17
+		seed ^= seed << 5
+		return seed
+	}
+	var sum uint32
+	for range 300 {
+		a := next()
+		b := next()
+		sa, sb := int32(int16(a)), int32(int16(b>>16))
+		ua, ub := uint32(uint16(a>>8)), uint32(uint16(b))
+		sum ^= uint32(sa * sb)
+		sum ^= (ua * ub) << 1
+		sum ^= a * 10
+		sum ^= (a * 166) >> 1
+		sum ^= ua * 166
+		sum ^= a * 0x12345
+		sum ^= uint32(int32(a) * -7)
+		sum ^= a * b
+		sum ^= uint32(sa*sb) >> 3
+	}
+	out := genesisProgram(t, "multiplies", fmt.Sprintf(`import std.genesis.vdp
+
+var seed: u32 = 2463534242
+
+let main = () -> void => {
+  vdp.init()
+  vdp.display_on()
+  var sum: u32 = 0
+  for _: i16 in 0..<300 {
+    let a = next()
+    let b = next()
+    let sa = i32(i16(a & 0xFFFF).wrapping_add(0))
+    let sb = i32(i16((b >> 16) & 0xFFFF).wrapping_add(0))
+    let ua = (a >> 8) & 0xFFFF
+    let ub = b & 0xFFFF
+    sum = sum ~ u32(sa.wrapping_mul(sb))
+    sum = sum ~ (ua.wrapping_mul(ub) << 1)
+    sum = sum ~ a.wrapping_mul(10)
+    sum = sum ~ (a.wrapping_mul(166) >> 1)
+    sum = sum ~ ua.wrapping_mul(166)
+    sum = sum ~ a.wrapping_mul(0x12345)
+    sum = sum ~ u32(i32(a).wrapping_mul(-7))
+    sum = sum ~ a.wrapping_mul(b)
+    // Checked, of words: it cannot overflow, and LLVM makes it a multiply like the rest.
+    sum = sum ~ (u32(sa * sb) >> 3)
+  }
+  // Green when right, blue when wrong; the runtime's panic screen is red.
+  vdp.set_color(0, 0, if sum == %d { vdp.rgb(0, 7, 0) } else { vdp.rgb(0, 0, 7) })
+  loop {}
+}
+
+let next = () -> u32 => {
+  seed = seed ~ (seed << 13)
+  seed = seed ~ (seed >> 17)
+  seed = seed ~ (seed << 5)
+  seed
+}
+`, sum))
+	if got := runROM(t, out, "60", "").dominant(); got != "00ff00" {
+		t.Errorf("the screen is %s, want 00ff00 (blue: an answer differs from the host's)", got)
+	}
+}
+
 // TestGenesis_FixedPointRunsOnThe68000 runs the arithmetic a console game does in fixed point,
 // 8.8 and 24.8, on the processor: a multiply and a divide at twice the width, a negative floor,
 // and a conversion across formats. Compared on the machine rather than against the host, since

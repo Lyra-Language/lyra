@@ -731,7 +731,13 @@ of Markdown.
   (`TestGenesis_NoExtendIntoAnAddressRegister`, IR cut by `llvm-reduce`); and a `fastcc`
   function returning a struct popped its hidden pointer, passed in A0, off the stack, so each
   call left the stack pointer a word higher, into its caller's locals
-  (`TestGenesis_ARegisterStructReturnIsNotPopped`). **llc writes
+  (`TestGenesis_ARegisterStructReturnIsNotPopped`); and an `i32` multiply was always a
+  call to `__mulsi3`, where the 68000's `muls.w`/`mulu.w` (16 × 16 → 32) do it in one or
+  two — now one word multiply where both operands fit a word, shifts and adds for a
+  constant of at most three bits, two for one word operand (an element's size), and the
+  call only for the rest (0005, `TestGenesis_MultipliesOfEveryShapeAgreeWithTheHost`).
+  **The runtime's `__muldi3` takes a sign-extended pair as a signed 32 × 32** — what LLVM
+  makes of a checked `i32` multiply, Lyra's `*`: one `muls` for two words. **llc writes
   objects without assembling text**, so an instruction the 68000 lacks reaches the ROM
   silently: when a Genesis program misbehaves, compare llc `-O0` with `-O2`, then toggle
   its passes (`-disable-machine-licm`, `-regalloc=fast`) before suspecting Lyra. **A Genesis test

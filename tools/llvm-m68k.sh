@@ -48,6 +48,13 @@
 #     locals until one read garbage (10/16; found by the music player crashing once LLVM
 #     inlined less). Only a pointer passed on the stack is popped now. Reported as
 #     llvm/llvm-project#232869.
+#   - 0005: an i32 multiply on the 68000 and 68010 was always a call to __mulsi3, though
+#     the chip multiplies words (`muls.w`, `mulu.w`: 16 x 16 -> 32 bits). It is lowered as
+#     the cheapest of one word multiply (both operands a word, signed or unsigned), shifts
+#     and adds (a constant of at most three set bits), two word multiplies (one operand an
+#     unsigned word — an element's size in `xs[i]`), and __mulsi3 for the rest
+#     (M68kTargetLowering::LowerMUL, the SMUL16/UMUL16 nodes; 11/11, found profiling the
+#     hero's frame). TestGenesis_MultipliesOfEveryShapeAgreeWithTheHost checks every shape.
 #
 # Move the pin deliberately, and rerun lyrac's Genesis tests with SHELIAK set when you do.
 # Needs cmake and ninja (`brew install cmake ninja`). About 20 minutes on 12 cores; a

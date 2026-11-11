@@ -9,6 +9,35 @@ Newest first.
 
 ## Dated log
 
+### 11/11/26 — The 68000's multiplies: word multiplies, and a faster `__muldi3`
+
+**LLVM made every `i32` multiply on the 68000 a call to `__mulsi3`** — an element's
+address in an array of structs, a fixed-point product, a word times a word — though the
+chip has `muls.w` and `mulu.w`, 16 × 16 → 32 bits in about 70 cycles. Patch 0005 makes the
+multiply `Custom` below the 68020 (`LowerMUL`): one word multiply where both operands
+fit a word, signed or unsigned (by their sign bits and known zeros); shifts and adds for a
+constant of at most three set bits (LLVM's generic decomposition only takes 2ⁿ ± 1 and
+the like); two word multiplies, a shift and an add where one operand fits an unsigned word
+(`xs[i]` of 166-byte entities: a word index times 166 is one `mulu`); and the call only for
+a whole 32 × 32. Two new nodes, `M68kISD::SMUL16`/`UMUL16`, declared in TableGen (the
+target's opcodes are generated), match the instructions. Every part is the low 32 bits of
+the product exactly, a word's halves summing to the operand modulo 2³² whatever its sign.
+`TestGenesis_MultipliesOfEveryShapeAgreeWithTheHost` runs each shape on random operands in
+Sheliak; with the split's high half dropped it shows blue.
+
+**A checked `i32` multiply stays LLVM's expansion** — the operands widened, a 64-bit
+multiply, the high half compared — and where LLVM can prove two words it makes a plain
+multiply, now one `muls.w`. What was slow was the helper: **the runtime's `__muldi3`**
+read a negative operand's high word as a number of its own, two more calls and four more
+`mulu`s. A sign-extended pair is a signed 32 × 32: one `muls` for two words, else the
+magnitudes' unsigned product with the sign put back.
+`TestGenesis_ArithmeticHelpersAgreeWithTheHost` exercises it on every width and sign and
+shows blue with the sign left off.
+
+**Measured on the hero**, about one frame of work in 180 walking, none standing: after the
+reach and `@noinline meets_at` (the entry below), its multiplies were off its hot path.
+The patch is for what multiplies in loops — arrays of structs, fixed point, songs.
+
 ### 11/11/26 — The Genesis hero's frame: paths, `meets` and a kind's reach
 
 Walking right, the hero kept up with 108 frames in 180 once its stars followed paths
