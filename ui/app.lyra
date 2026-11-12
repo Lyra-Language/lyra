@@ -331,6 +331,9 @@ pub data Command<e> =
   /// The scroller keyed so scrolled this far down, once it is laid out: past its end is its
   /// end (`UNBOUNDED` for it), where one that follows its end follows it again.
   | ScrollTo(string, f32)
+  /// The element keyed so ([Node.keyed]) scrolled into view, once it is laid out: every
+  /// scroller round it moved just enough to show it ([Ui.reveal_keyed]).
+  | RevealKeyed(string)
   /// Minimize the window, maximize it, or put it back from either — asked of the system,
   /// which says when it has ([Subscription.OnWindowState]).
   | WindowMinimize
@@ -1356,6 +1359,9 @@ impl Host<s, e> {
         },
         ScrollTo(key, y) => {
           for k in 0..<self.windows.len() { self.windows[k].ui.scroll_keyed(key, y) }
+        },
+        RevealKeyed(key) => {
+          for k in 0..<self.windows.len() { self.windows[k].ui.reveal_keyed(key) }
         },
       }
     }

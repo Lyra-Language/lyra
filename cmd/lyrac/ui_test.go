@@ -8084,6 +8084,61 @@ a scroller following its end:
 	}
 }
 
+// An element asked to be in view by its key (`Ui.reveal_keyed`, `Command.RevealKeyed`): a list
+// 100 high of ten rows 30 high, row 7 (210 to 240) scrolled just into view at its bottom —
+// 140 — then row 1 back at its top, and row 2, already showing, moving nothing.
+func TestRun_UiRevealKeyed(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.draw.{ Size }
+import ui.text.{ fonts_new }
+import ui.style.{ Style, OverflowAuto }
+import ui.layout.{ Node, Laid, column, sized, layout_cache, tight }
+import ui.interact.{ ui_new }
+
+data Ev = Nothing
+
+let list = pure () -> Node<Ev> => column([
+  column([i in 0..<10 | sized::<Ev>(Some(200.0), Some(30.0)).keyed("row ${i}")])
+    .with_style(Style { height: Some(100.0), overflow_y: Some(OverflowAuto) })
+    .keyed("list"),
+])
+
+let offset_of = pure (laid: Laid<Ev>) -> f32 => match laid.children[0].laid.scroller {
+  Some(sc) => sc.offset.y,
+  None => -1.0,
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var ui = ui_new()
+  var cache = layout_cache::<Ev>()
+  let window = tight(Size { w: 200.0, h: 100.0 })
+  var laid = ui.frame_within(list(), window, fonts, cache)
+  println("at ${offset_of(laid)}")
+  ui.reveal_keyed("row 7")
+  laid = ui.frame_within(list(), window, fonts, cache)
+  println("row 7 revealed: at ${offset_of(laid)}")
+  ui.reveal_keyed("row 1")
+  laid = ui.frame_within(list(), window, fonts, cache)
+  println("row 1 revealed: at ${offset_of(laid)}")
+  ui.reveal_keyed("row 2")
+  laid = ui.frame_within(list(), window, fonts, cache)
+  println("row 2, showing: at ${offset_of(laid)}")
+  fonts.close()
+  0
+}
+`)
+	want := `at 0
+row 7 revealed: at 140
+row 1 revealed: at 30
+row 2, showing: at 30
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // bindings.wake's watcher thread waking an SDL wait: armed, a write to the pipe it watches
 // wakes `wait_event` with its event; having woken it is disarmed, and a second write does
 // not; armed again with that data unread, it wakes at once.

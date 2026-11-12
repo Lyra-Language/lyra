@@ -202,6 +202,9 @@ pub struct Ui {
   /// The key of a scroller to scroll once it is laid out, and how far down ([Ui.scroll_keyed]).
   scroll_wanted: string = "",
   scroll_wanted_to: f32 = 0.0,
+  /// The key of an element to scroll into view once it is laid out ([Ui.reveal_keyed]); `""`
+  /// for none.
+  reveal_key_wanted: string = "",
   /// An element to scroll into view once it is laid out — the option under an open select's
   /// keys — `""` for none.
   reveal_wanted: string = "",
@@ -303,6 +306,16 @@ impl Ui {
     // A tooltip whose element is gone goes with it.
     if !present.contains_key(self.tip_wanted) { self.tip_wanted = "" }
     if !present.contains_key(self.state.tip) { self.state.tip = "" }
+    // An element asked to be in view by key, once it is there: revealed with the rest below.
+    if self.reveal_key_wanted.len() > 0 {
+      for id in present.keys() {
+        if id.ends_with("/:${self.reveal_key_wanted}") {
+          self.reveal_wanted = id
+          self.reveal_key_wanted = ""
+          break
+        }
+      }
+    }
     // A focus asked for by key, once the element is there.
     if self.focus_wanted.len() > 0 {
       for id in present.keys() {
@@ -1061,6 +1074,11 @@ impl Ui {
     self.window_asked = []
     asked
   }
+
+  /// The element keyed `key` ([Node.keyed]) scrolled into view, once a layout has it: every
+  /// scroller round it moved just enough that it shows — a list's chosen item, chosen
+  /// elsewhere (on a canvas), kept in sight. Nothing moves where it shows already.
+  pub let reveal_keyed = (self: mut, key: string) -> void => { self.reveal_key_wanted = key }
 
   /// The scroller keyed `key` scrolled `y` units down — past its end is its end, where one that
   /// follows its end (`scroll_follow`) follows it again — once a layout has it.
