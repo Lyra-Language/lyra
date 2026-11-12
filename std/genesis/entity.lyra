@@ -126,6 +126,12 @@ pub struct Entity {
   /// Drawn this frame: the game's assets set it as they draw it (`play`, `draw`), and a
   /// scene's `draw` skips it and clears it, so an entity played is not drawn twice.
   drawn: bool = false,
+  /// How it is drawn turned (degrees clockwise) and grown (percent): the nearest of the
+  /// angles and sizes its sprite declares, each pre-rendered when the game is built
+  /// (`std.genesis.art`'s [choose_variant]). Drawing only: its colliders stay as drawn
+  /// upright, at its own size.
+  angle: i16 = 0,
+  size: i16 = 100,
   /// The row of the game's shapes by frame it shows ([show_frame_shapes]).
   shown_row: u16 = NO_FRAME_SHAPES,
   /// Standing on something: its last move in a map was a fall stopped — by a tile, a map's

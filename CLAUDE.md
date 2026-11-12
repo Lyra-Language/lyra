@@ -852,7 +852,11 @@ of Markdown.
   track's place kept while unheard, so the music comes back where it has got to; DAC mode on
   for a track and FM 6 lent it; and **no 64 KB limit**, the position a byte and 65536ths and
   the driver's 16-bit count topped up by a `TUNE` as a long sample plays, exact once its end
-  is near (`cmd/lyrac/genesis_track_test.go`, `track_test.go`), `std/ffi.lyra`, `std/io.lyra`
+  is near (`cmd/lyrac/genesis_track_test.go`, `track_test.go`); **a Genesis entity's `angle`
+  and `size`** (degrees, percent; drawing only) reach `std.genesis.art`'s `Art.draw_frame`, whose
+  `choose_variant` picks the nearest of a sprite's pre-rendered angles and sizes and the flips
+  (a half turn is both, a mirrored turn the opposite angle flipped across;
+  `genesis_variant_test.go`), `std/ffi.lyra`, `std/io.lyra`
   (files and directories over libc; `walk_dir` is a tree's files, sorted, depth first, the
   caller's `keep` pruning, a symlinked directory never followed — what lyrafmt, lui and
   lyra-md walk with; tested against Go's `filepath.WalkDir`), `std/compress.lyra`

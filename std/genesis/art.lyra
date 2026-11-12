@@ -38,11 +38,57 @@ pub trait Art {
   /// Step `index` of the game's table of every animation's steps.
   pure step: (Self, u16) -> Step,
   /// Frame `frame` of sprite `sprite` (its place in the project) with its top-left at (`x`,
-  /// `y`) on the screen, facing the other way when `mirrored`, into the sprite list.
-  draw_frame: (Self, u16, i16, i16, u16, bool) -> void,
+  /// `y`) on the screen, facing the other way when `mirrored`, turned `angle` degrees
+  /// clockwise and grown to `size` percent — the nearest its sprite declares — into the
+  /// sprite list.
+  draw_frame: (Self, u16, i16, i16, u16, bool, i16, i16) -> void,
   /// Shape `index` of the game's table of colliders' shapes by frame (a kind's
   /// `frame_shapes` row, a collider each).
   pure frame_shape: (Self, u16) -> Shape,
+}
+
+/// **A turned or sized sprite on the Genesis is pre-rendered**: the VDP neither turns nor
+/// scales, so Vega draws each angle and size a sprite declares into frames of their own
+/// when the game is built. Of `turns` angles evenly round, only the first half are drawn —
+/// a half turn more is the same picture flipped both ways, which the VDP does — and a
+/// mirrored sprite turned clockwise is the one turned the other way, flipped across (as a
+/// modern game mirrors, then turns). This picks the frames to draw for `angle` degrees
+/// clockwise at `size` percent: the nearest angle's place among those drawn, the nearest
+/// size's place among 100 and `sizes`, and the flips — `(turn, size, flip_x, flip_y)`.
+pub let choose_variant<const N: i64> = pure (
+  angle: i16,
+  size: i16,
+  mirrored: bool,
+  turns: u16,
+  sizes: ref [N]i16
+) -> (u16, u16, bool, bool) => {
+  // Upright at its own size, as most are: no dividing, which the 68000 does slowly.
+  if angle == 0 && size == 100 { return (0, 0, mirrored, false) }
+  var turn: u16 = 0
+  var flip_x = mirrored
+  var flip_y = false
+  if turns > 1 {
+    let around = i32(angle) % 360
+    let degrees = if around < 0 { around + 360 } else { around }
+    turn = u16(((degrees * i32(turns) + 180) / 360) % i32(turns))
+    if mirrored { turn = (turns - turn) % turns }
+    if turns % 2 == 0 && turn >= turns / 2 {
+      turn -= turns / 2
+      flip_x = !flip_x
+      flip_y = true
+    }
+  }
+  // The nearest of its own size (100) and those it declares.
+  var best: u16 = 0
+  var gap = (i32(size) - 100).abs()
+  for k: u16 in 0..<u16(N) {
+    let d = (i32(size) - i32(sizes[k])).abs()
+    if d < gap {
+      gap = d
+      best = k + 1
+    }
+  }
+  (turn, best, flip_x, flip_y)
 }
 
 impl Animation {
@@ -63,15 +109,18 @@ impl Animation {
   pub let finished = pure (self, tick: u16) -> bool => !self.looping && tick >= self.total
 
   /// The animation drawn with its top-left at (`x`, `y`) on the screen as it is `tick` frames
-  /// after it started, facing the other way when `mirrored`.
+  /// after it started, facing the other way when `mirrored`, turned `angle` degrees and grown
+  /// to `size` percent.
   pub let play_with<a> where a: Art = (
     self,
     art: ref a,
     x: i16,
     y: i16,
     tick: u16,
-    mirrored: bool = false
-  ) -> void => art.draw_frame(self.sprite, x, y, self.frame_in(art, tick), mirrored)
+    mirrored: bool = false,
+    angle: i16 = 0,
+    size: i16 = 100
+  ) -> void => art.draw_frame(self.sprite, x, y, self.frame_in(art, tick), mirrored, angle, size)
 }
 
 impl Entity {
@@ -106,7 +155,7 @@ impl Entity {
     let (sx, sy) = view.on_screen(self.x(), self.y())
     // Off the screen, its sprites would wrap round onto it.
     if visible(sx, sy, self.kind.width, self.kind.height) {
-      self.animation.play_with(art, sx, sy, self.tick, self.mirrored)
+      self.animation.play_with(art, sx, sy, self.tick, self.mirrored, self.angle, self.size)
     }
     self.tick = self.tick.wrapping_add(1)
     self.drawn = true

@@ -9,6 +9,24 @@ Newest first.
 
 ## Dated log
 
+### 11/11/26 — Turned and sized sprites on the Genesis, pre-rendered
+
+**The VDP neither turns nor scales, so Vega draws each declared angle and size ahead**, into
+frames after the sprite's own, and the game picks one (`std.genesis.art.choose_variant`). Only
+the first half of an even number of angles is drawn: a half turn more is the same picture
+flipped both ways, which the VDP does for nothing. A mirrored sprite turned clockwise is the
+opposite angle flipped across, because a modern game mirrors and then turns; the test that
+pinned this had its own expectation wrong first (the two flips across cancel). All variants sit
+in video memory with the scene's art, counted by the layout's own check, rather than streamed
+by DMA: simple and exact, and streaming is left for when a game runs out. Colliders stay
+upright (drawing only), both choices the user's.
+
+**The scene preview and the Genesis draw from one rule** (`turned_pixels`, moved out of the
+editor), and a Sheliak check compares six turned and grown copies with it pixel for pixel. It
+failed first on a real bug in both: a half turn's sine is 1e-16, so 8 pixels turned measured
+8.0000000000002 and the ceiling made the picture 9 wide, a pixel off its middle. The size now
+loses a hair before the ceiling.
+
 ### 11/11/26 — Three small front-end fixes
 
 - **`.data()` on a temporary or a parameter worked all along.** todo.md said it was refused,

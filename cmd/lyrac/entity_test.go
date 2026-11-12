@@ -891,7 +891,7 @@ func TestRun_EntitiesDrawThroughArt(t *testing.T) {
 		name string
 		repl *strings.Replacer
 	}{
-		{"genesis", strings.NewReplacer("@RT", "genesis", "@D", "", "@W", "u16", "@P", "i16", "@ONE", "256", "@ZERO", "0", "@EXTRA", "", "@CAMERA", "Camera { world_width: 1000, world_height: 1000 }", "@ROW", "0")},
+		{"genesis", strings.NewReplacer("@RT", "genesis", "@D", "", "@W", "u16", "@P", "i16", "@ONE", "256", "@ZERO", "0", "@EXTRA", ", _angle, _size", "@CAMERA", "Camera { world_width: 1000, world_height: 1000 }", "@ROW", "0")},
 		{"game", strings.NewReplacer("@RT", "game", "@D", ".0", "@W", "i64", "@P", "f32", "@ONE", "1.0", "@ZERO", "0.0", "@EXTRA", ", _angle, _scale", "@CAMERA", "Camera { world_width: 1000.0, world_height: 1000.0, view_width: 320.0, view_height: 224.0 }", "@ROW", "0")},
 	} {
 		t.Run(rt.name, func(t *testing.T) {
