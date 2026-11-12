@@ -510,6 +510,11 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Language surface
 
+- **[OPEN] A Genesis ROM carries the builder's absolute paths**: each panic's location names
+  its std file by its full path (185 in the hero: `/Users/…/lyra/std/genesis/sprites.lyra:53`),
+  so a ROM varies with where lyra sits, leaks a home folder, and spends ~18 KB of cartridge.
+  Name std's files from the root (`std/genesis/sprites.lyra`), and a game's from its own.
+
 - **[DONE 11/11] A `const` may be another module's `const`** through its namespace: `const
   WIDTH = assets.SCREEN_WIDTH` (COMPLETED.md, 11/11). Vega's starter game can name it once now.
 

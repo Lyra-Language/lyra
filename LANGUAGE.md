@@ -929,7 +929,8 @@ target = "genesis"
   extern is still host code — and by the host builtins. No bound names it.
 - **`lyrac build` for `genesis` makes a cartridge** (`game.bin`): the program's IR compiled for
   the 68000 by an M68k LLVM (`tools/llvm-m68k.sh` builds one into `~/Dev/llvm-m68k`, or
-  `$LYRA_M68K_LLVM`), linked with `runtime/genesis` — the vectors, start-up (TMSS, `.data`
+  `$LYRA_M68K_LLVM`; a release carries a bundle beside lyrac, `lyrac m68k-bundle`), linked with
+  `runtime/genesis` — the vectors, start-up (TMSS, `.data`
   copied to RAM, `.bss` zeroed, interrupts unmasked, `main(0, NULL)`), `memcpy` and friends, `__mulsi3` — and
   compiler-rt's helpers where the program needs them. **A panic, or any CPU fault, turns the
   screen red and halts.** `lyrac run` builds the ROM and plays it in Sheliak (`$SHELIAK`, else

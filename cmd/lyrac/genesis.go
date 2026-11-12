@@ -9,6 +9,12 @@ package main
 // by `tools/llvm-m68k.sh` into ~/Dev/llvm-m68k (or $LYRA_M68K_LLVM) — `build/bin` for the
 // tools and `src/compiler-rt` for the helpers. The runtime and helpers are compiled once
 // per toolchain and source, into the user cache directory.
+//
+// **Or a bundle**, which a release carries (`lyrac m68k-bundle`, m68k_bundle.go): `bin/opt`
+// and `bin/llc` alone, and the runtime and helpers already compiled in `objects/` — no clang,
+// a tenth of the size. lyrac looks at $LYRA_M68K_LLVM, then at ~/Dev/llvm-m68k, then for a
+// bundle beside itself (`<root>/m68k`, the root holding `std/`): a developer's full build
+// first, as a bundle left beside a build of lyrac goes stale when runtime.c changes.
 
 import (
 	"crypto/sha256"
@@ -49,33 +55,65 @@ var genesisHelpers = []string{
 	"clzsi2", "ctzsi2", "popcountsi2",
 }
 
-// m68kToolchain is where the M68k LLVM is.
+// m68kToolchain is where the M68k LLVM is: a full build, or a bundle.
 type m68kToolchain struct {
-	root string // the directory tools/llvm-m68k.sh built into
+	root   string // the directory tools/llvm-m68k.sh built into, or a bundle's
+	bundle bool   // a release's: bin/opt and bin/llc, the runtime compiled in objects/
 }
 
-func (t m68kToolchain) tool(name string) string { return filepath.Join(t.root, "build", "bin", name) }
+func (t m68kToolchain) tool(name string) string {
+	if t.bundle {
+		return filepath.Join(t.root, "bin", name)
+	}
+	return filepath.Join(t.root, "build", "bin", name)
+}
 func (t m68kToolchain) builtins() string {
 	return filepath.Join(t.root, "src", "compiler-rt", "lib", "builtins")
 }
 
-// findM68kToolchain finds the M68k LLVM, or says how to get one.
+// findM68kToolchain finds the M68k LLVM — $LYRA_M68K_LLVM alone when it is set, else
+// ~/Dev/llvm-m68k, else a bundle beside lyrac — or says how to get one.
 func findM68kToolchain() (m68kToolchain, error) {
-	root := os.Getenv("LYRA_M68K_LLVM")
-	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return m68kToolchain{}, err
+	var places []string
+	if root := os.Getenv("LYRA_M68K_LLVM"); root != "" {
+		places = []string{root}
+	} else {
+		if home, err := os.UserHomeDir(); err == nil {
+			places = append(places, filepath.Join(home, "Dev", "llvm-m68k"))
 		}
-		root = filepath.Join(home, "Dev", "llvm-m68k")
-	}
-	t := m68kToolchain{root: root}
-	for _, tool := range []string{"opt", "llc", "clang"} {
-		if _, err := os.Stat(t.tool(tool)); err != nil {
-			return t, fmt.Errorf("no M68k LLVM at %s (%s is missing): build one with tools/llvm-m68k.sh, or set LYRA_M68K_LLVM to where it is", root, tool)
+		if std := modules.StdRoot(); std != "" {
+			places = append(places, filepath.Join(std, "m68k"))
 		}
 	}
-	return t, nil
+	for _, root := range places {
+		if t, ok := m68kAt(root); ok {
+			return t, nil
+		}
+	}
+	return m68kToolchain{}, fmt.Errorf("no M68k LLVM at %s: build one with tools/llvm-m68k.sh, or set LYRA_M68K_LLVM to where it is", strings.Join(places, " or "))
+}
+
+// m68kAt is the toolchain at root, if one is whole there: a bundle (bin/opt, bin/llc,
+// objects/runtime.o) or a full build (build/bin's opt, llc and clang).
+func m68kAt(root string) (m68kToolchain, bool) {
+	for _, t := range []m68kToolchain{{root: root, bundle: true}, {root: root}} {
+		need := []string{t.tool("opt"), t.tool("llc")}
+		if t.bundle {
+			need = append(need, filepath.Join(root, "objects", "runtime.o"))
+		} else {
+			need = append(need, t.tool("clang"))
+		}
+		whole := true
+		for _, path := range need {
+			if _, err := os.Stat(path); err != nil {
+				whole = false
+			}
+		}
+		if whole {
+			return t, true
+		}
+	}
+	return m68kToolchain{}, false
 }
 
 // buildGenesis is `lyrac build` for the Genesis: the ROM at o.out (or the source's stem
@@ -202,6 +240,9 @@ func genesisRuntime(tc m68kToolchain, o buildOptions) (rom.Object, []rom.Object,
 	source := filepath.Join(modules.StdRoot(), "runtime", "genesis", "runtime.c")
 	if _, err := os.Stat(source); err != nil {
 		return rom.Object{}, nil, fmt.Errorf("the Genesis runtime is missing (%s): rebuild lyrac with ./build.sh", source)
+	}
+	if tc.bundle {
+		return bundledRuntime(tc, source)
 	}
 	total := 1 + len(genesisHelpers)
 	compiling := func(i int) func() {

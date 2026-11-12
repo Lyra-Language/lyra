@@ -56,6 +56,12 @@ func run(args []string) int {
 			return 2
 		}
 		return runProgram(opts)
+	case "m68k-bundle":
+		if len(rest) != 1 {
+			usage()
+			return 2
+		}
+		return m68kBundle(rest[0])
 	case "doc":
 		opts, ok := parseDocArgs(rest)
 		if !ok {
@@ -78,6 +84,8 @@ commands:
   build   check, then compile to a native executable
   run     build to a temporary location and execute it
   doc     render the module's documentation as Markdown, one page per module
+  m68k-bundle OUT   the Genesis toolchain a release carries — opt, llc and the runtime
+                    compiled — made from a full M68k LLVM (tools/llvm-m68k.sh)
 
 build flags:
   -o <path>     write the executable here (default: the source path without .lyra).

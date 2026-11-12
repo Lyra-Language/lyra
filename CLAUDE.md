@@ -711,7 +711,11 @@ of Markdown.
 - **`build/runtime` is a symlink too**: `runtime/genesis/runtime.c` (vectors, start-up, the
   memory functions, the panic screen) is compiled by `lyrac build` for a Genesis program with
   the M68k LLVM from `tools/llvm-m68k.sh`, cached in the user cache directory
-  (`lyra-genesis/`), and linked by `pkg/rom` with the program and compiler-rt's helpers.
+  (`lyra-genesis/`), and linked by `pkg/rom` with the program and compiler-rt's helpers —
+  or read from a **bundle** (`lyrac m68k-bundle OUT`, `m68k_bundle.go`: `bin/opt`, `bin/llc`
+  and those objects precompiled, no clang; what a release carries beside lyrac as `m68k/`,
+  refused when made from another `runtime.c`; looked for after `$LYRA_M68K_LLVM` and
+  `~/Dev/llvm-m68k`, so a developer's full build wins over a stale one).
   **On the 68000 every aggregate moves through memory** (`lowerer.inMemory`, `sret.go`):
   returned through an `sret` slot and passed as a pointer to a copy, however small. The M68k
   LLVM's own demotion of a return too big for registers puts the hidden pointer in `a0` at

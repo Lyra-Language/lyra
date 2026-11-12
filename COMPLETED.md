@@ -9,6 +9,22 @@ Newest first.
 
 ## Dated log
 
+### 11/11/26 — The Genesis toolchain a release carries: `lyrac m68k-bundle`
+
+**A release could not build a Genesis game** without the 420 MB, hours-long M68k LLVM build.
+clang is the bulk of it (158 MB) and is only used for `runtime.c` and compiler-rt's helpers,
+which come out the same for every game — so the bundle carries them compiled, with `opt` and
+`llc` (43 MB each stripped): 83 MB in all. Its objects name the `runtime.c` they came from,
+and a lyrac whose runtime differs refuses the bundle rather than link a stale one. lyrac looks
+for a developer's full build before a bundle beside itself, so a bundle left in `build/` cannot
+go stale under a developer. Vega's release workflow builds the LLVM once per pin and patches
+and caches only what the bundle reads.
+
+**Checked end to end** by building the Genesis hero with a release's lyrac and `HOME` pointed
+at an empty folder. Its ROM first differed from the full toolchain's by 12 KB, which was
+neither the stripping nor the objects: 185 panic messages carry the absolute path of their std
+file, so where lyra sits changes the ROM (todo.md). Built from the same place, it is identical.
+
 ### 11/11/26 — Turned and sized sprites on the Genesis, pre-rendered
 
 **The VDP neither turns nor scales, so Vega draws each declared angle and size ahead**, into
