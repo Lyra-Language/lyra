@@ -917,6 +917,28 @@ func (l *lowerer) flushStmtTemps(start, end *ir.Block) error {
 	return nil
 }
 
+// keepStmtTemps moves this statement's temporaries that are live at its end into the scope's
+// managed frame, so they are released where its bindings are rather than at the `;`: the
+// binding holds a raw pointer that may point into one (ownership.KeptTemps). Only a temporary
+// produced at the statement's start or end block moves — one is live on every path to end
+// there — and the rest are flushStmtTemps's as before. Each goes in a slot of its own, stored
+// at end, which an exit before this statement never sees: a frame's slots are what has been
+// added when the exit is lowered.
+func (l *lowerer) keepStmtTemps(start, end *ir.Block) {
+	rest := l.pendingReleases[l.pendingBase:l.pendingBase]
+	for i := l.pendingBase; i < len(l.pendingReleases); i++ {
+		p := l.pendingReleases[i]
+		if p.block != start && p.block != end {
+			rest = append(rest, p)
+			continue
+		}
+		slot := end.Parent.Blocks[0].NewAlloca(p.val.Type())
+		l.storeAggregate(end, p.val, slot)
+		l.addManagedBinding(slot, p.ty)
+	}
+	l.pendingReleases = l.pendingReleases[:l.pendingBase+len(rest)]
+}
+
 // regionExits answers the blocks through which control leaves the region `from`
 // dominates — the last blocks a value produced in `from` is live in. Each is sealed
 // (only end is not, and end is outside the region by the caller's test), so a release

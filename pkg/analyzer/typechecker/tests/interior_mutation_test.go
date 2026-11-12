@@ -638,3 +638,21 @@ func TestTypeCheck_ExclusiveMut_ScalarSameBinding_Ok(t *testing.T) {
 	`, false)
 	assertNoErrors(t, res)
 }
+
+// A bare argument is a value, so a `mut` of the same place beside it is no conflict: the
+// ownership pass holds it for the call (holdBareBesideMut), and `f(ys, ys)` reads the array
+// it was given. Refusing it, as `mut` beside `ref` is, cost 60 call sites (11/11).
+func TestTypeCheck_ExclusiveMut_BareBesideMutIsAValue(t *testing.T) {
+	res := parseCollectAndCheck(t, pointStruct+`
+		let f = (xs: []i64, m: mut []i64) -> i64 => { m = [9]; xs[0] }
+		let g = (n: i64, m: mut i64) -> i64 => { m = 9; n }
+		let h = (p: Point, m: mut Point) -> i64 => { m.x = 9; p.x }
+		let run = () -> i64 => {
+			var ys = [1]
+			var k = 1
+			var p = Point { x: 1, y: 2 }
+			f(ys, ys) + g(k, k) + h(p, p)
+		}
+	`, false)
+	assertNoErrors(t, res)
+}

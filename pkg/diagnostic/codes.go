@@ -1063,6 +1063,12 @@ const (
 	// does is its 64-bit integer's, and is only warned about as slow.
 	CodeFixedNoWideArithmetic = "lyra-E096"
 
+	// CodeSecondNameBorrow: storage inside a box lent to a call beside a `mut` argument that
+	// can hold a box (`via(ys[0], zs)`). After `var zs = ys` the two names are one array, so
+	// the callee growing or rewriting `zs` frees what the other argument points at; places
+	// can't tell the names apart, so the pair is refused by type (checker, global_borrow.go).
+	CodeSecondNameBorrow = "lyra-E097"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

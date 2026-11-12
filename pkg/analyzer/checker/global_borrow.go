@@ -2,6 +2,8 @@ package checker
 
 import (
 	"fmt"
+	"slices"
+	"strconv"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/captures"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/ownership"
@@ -29,8 +31,9 @@ import (
 // reach a Lyra global save through a callback it was handed.
 //
 // The local twin isn't refused: a callee reaches a local only through its arguments, where
-// exclusivity by place (`checkExclusiveMutableBorrow`) already answers for the place itself.
-// Two names for one array, `f(ys[0], zs)` after `var zs = ys`, stays open (todo.md).
+// exclusivity by place (`checkExclusiveMutableBorrow`) already answers for the place itself,
+// and two names for one array among them are `lyra-E097`'s (secondName). A local sharing a
+// global's box, grown by a callee through the global, stays open (todo.md).
 //
 // **A function returning a sequence is refused any array or `shared` value's storage**
 // (`lyra-E092`), the global's or a local's: `for v in each(ys[0]) { ys = [] }`. Its body runs
@@ -115,17 +118,122 @@ func (c *globalBorrows) call(e *ast.FunctionCallExpr) {
 	modes, receiver := c.parameterModes(e)
 	lam := c.callees.resolveCallee(e)
 	toSeq := lam != nil && (lam.IsGenerator || types.IsSeq(lam.ReturnType.Type))
+	var lent []lentArg
 	offset := 0
 	if receiver != nil {
 		offset = 1
 		if len(modes) > 0 {
 			c.argument(receiver, modes[0], 1, toSeq)
+			lent = append(lent, lentArg{receiver, modes[0], 1})
 		}
 	}
 	for i, arg := range e.Arguments {
 		if i+offset < len(modes) {
 			c.argument(arg, modes[i+offset], i+offset+1, toSeq)
+			lent = append(lent, lentArg{arg, modes[i+offset], i + offset + 1})
 		}
+	}
+	c.secondName(lent)
+}
+
+// lentArg is one argument of a call with the mode of the parameter it fills.
+type lentArg struct {
+	expr     ast.Expression
+	mode     types.TypeModifier
+	position int
+}
+
+// secondName refuses storage inside a box lent beside a `mut` argument that can hold a box
+// (`lyra-E097`): `via(ys[0], zs)` after `var zs = ys`, where `via` grows `zs` and frees the
+// buffer `ys[0]` points into. Exclusivity by place can't see it, as `ys` and `zs` are two
+// names for one box, so the pair is refused when the `mut` argument's type can hold the box the
+// lent storage is in — a `mut Fonts` beside `w.host`, with `w` a `shared Running`, can't.
+// What's lent is a by-reference argument: a retain can't save it, as growth frees the buffer
+// and keeps the box. A bare one holding a managed value is a value, which the ownership pass
+// holds for the call instead (holdBareBesideMut).
+//
+// A pair one path of which contains the other is the typechecker's (`f(ys[0], ys)`, by place),
+// and a global's storage is lyra-E091's already.
+func (c *globalBorrows) secondName(args []lentArg) {
+	for _, a := range args {
+		if !c.lends(a) || ownership.RootedAtMutableGlobal(a.expr, c.symTable, c.bound) {
+			continue
+		}
+		box, reached := ownership.BoxReached(a.expr, c.tt, c.symTable)
+		if !reached {
+			continue
+		}
+		for _, b := range args {
+			if b.position == a.position || b.mode != types.Mut || !c.canHold(b.expr, box) ||
+				pathContains(b.expr, a.expr) {
+				continue
+			}
+			c.out = append(c.out, diag.Diagnostic{
+				Location: a.expr.GetLocation(),
+				Severity: diag.SeverityError,
+				Code:     diag.CodeSecondNameBorrow,
+				Message: fmt.Sprintf(
+					"argument %d lends storage inside an array or `shared` value, and argument %d is `mut` and can hold that same array under another name (after `var zs = ys`, both are one array). Growing or rewriting it in the callee would free what argument %d points at. Copy argument %d into a local and pass that",
+					a.position, b.position, a.position, a.position),
+			})
+			return
+		}
+	}
+}
+
+// lends reports whether the callee is lent this argument's storage, by pointer.
+func (c *globalBorrows) lends(a lentArg) bool {
+	return c.byReference(a.expr, a.mode)
+}
+
+// canHold reports whether the argument's recorded type can hold a box of type box: whether it
+// can be another name for it (ownership.CanHold).
+func (c *globalBorrows) canHold(e ast.Expression, box types.Type) bool {
+	t, recorded := c.tt.Get(e)
+	return recorded && ownership.CanHold(t, box, c.symTable, e.GetLocation())
+}
+
+// pathContains reports whether the place outer is inner or one of the places inner's path
+// passes through (`ys` contains `ys[0]`, `s.items` contains `s.items[i].name`), compared as
+// written; an index is any index, as exclusivity by place treats it.
+func pathContains(outer, inner ast.Expression) bool {
+	want := placeSteps(outer)
+	if want == nil {
+		return false
+	}
+	for x, ok := inner, true; ok; x, ok = ast.PlaceObject(x) {
+		if got := placeSteps(x); got != nil && slices.Equal(got, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// placeSteps spells a place path root first, or nil for what isn't one.
+func placeSteps(e ast.Expression) []string {
+	var reversed []string
+	for {
+		switch x := e.(type) {
+		case *ast.IdentifierExpr:
+			steps := append([]string{x.Name}, make([]string, 0, len(reversed))...)
+			for i := len(reversed) - 1; i >= 0; i-- {
+				steps = append(steps, reversed[i])
+			}
+			return steps
+		case *ast.MemberExpr:
+			reversed = append(reversed, "."+x.Property.Name)
+		case *ast.TupleIndexExpr:
+			reversed = append(reversed, "."+strconv.Itoa(x.Index))
+		case *ast.IndexExpr:
+			reversed = append(reversed, "[]")
+		default:
+			return nil
+		}
+		object, ok := ast.PlaceObject(e)
+		if !ok {
+			return nil
+		}
+		e = object
 	}
 }
 

@@ -997,9 +997,11 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/03] A by-reference argument can't dangle by way of a global**: its place is found after
   every argument, and lending out a mutable global's array or `shared` value is `lyra-E091`.
   (COMPLETED.md, 11/03.)
-- **[OPEN] A by-reference argument still dangles through a second name for its array**: `via(ys[0],
-  zs)` after `var zs = ys`, where `via` grows `zs`, and a local sharing a global's array when the
-  callee grows the global. A use-after-free under ASan; exclusivity is by place, and this is by box.
+- **[DONE 11/11] A by-reference argument can't dangle through a second name in its call**: storage in
+  a box lent beside a `mut` that can hold that box is `lyra-E097` (COMPLETED.md, 11/11).
+- **[OPEN] A local sharing a global's box, grown by the callee through the global**: `var zs = g;
+  via(zs[0])` where `via` pushes onto `g`. No walk of the caller shows it; a refusal by callee would
+  hit 115 element arguments in the workspace, so it wants copy-in/copy-out or a summary of writes.
 - **[DONE 11/03] A box's storage can't be lent to a function returning a sequence** (`lyra-E092`),
   which answers a later argument freeing it and the consumer freeing it both. A sequence held as a
   value can't take a by-reference parameter, which crashed `lyrac`. (COMPLETED.md, 11/03.)
@@ -1008,11 +1010,11 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   can write an element. A consumer's `continue` no longer frees what its producer holds. (COMPLETED.md, 11/03.)
 - **[DONE 11/03] A walk ends where the array now does**, so `ys.clear()` by any name, call or `gen`
   consumer leaves nothing released to read: the length is asked afresh each iteration. (COMPLETED.md, 11/03.)
-- **[OPEN] A loop variable still dangles where the body's write isn't its root's**: `zs[0] = s` after
-  `var zs = ys`, or a call writing `g[0]` in `for y in g`. Holding it per element wherever the body
-  calls anything would answer the second, at a retain per element of every such loop over strings.
-- **[OPEN] `f(ys, ys)` with `(xs: []T, m: mut []T)` isn't refused**, and `m = [...]` frees what `xs`
-  reads, a use-after-free. Found through a loop but no loop's: exclusivity checks `mut` beside `ref`, not beside a bare parameter.
+- **[DONE 11/11] A loop variable is held when a second name can release it**: a write through the
+  walked type, a call handed something holding it, and any call over a global's or box's walk
+  (COMPLETED.md, 11/11). Left: a parameter walked while a callee writes the global it came from.
+- **[DONE 11/11] A bare argument beside a `mut` is held for the call**, so `f(ys, ys)` reads the
+  array it was given (COMPLETED.md, 11/11).
 - **[OPEN] `lib.queue[0] = 1` and `lib.add(lib.queue[0])` say `undefined identifier "lib"`.** A
   namespaced global is readable and `lib.queue.push(1)` works, but not as a place. A message at least.
 - **[OPEN] A `Seq` beside another clause** (`[n in ns, i in upto(n) | i]`) is still refused,
@@ -1163,9 +1165,10 @@ annotations.
   target for a port.
 - **[DONE 11/02] A buffer C keeps past the call stays to the end of its scope**: a call whose
   result carries a raw pointer pins what it borrowed, as `&xs[0]` does (COMPLETED.md, 11/02).
-- **[OPEN] A pointer into a temporary, bound, dangles.** `let p = mk().data()` frees the array at
-  the statement's end, unreported, where `&f()` is `lyra-E059`. Refusing by the result's type
-  would misfire on a raw handle read out of a temporary; nothing in the workspace writes it.
+- **[DONE 11/11] A `let` binding a pointer keeps its initializer's temporaries** to its scope's end:
+  `let p = word(7).cstring_ptr()` (COMPLETED.md, 11/11). Left: a pointer *reassigned* out of a
+  temporary (`p = word(8).cstring_ptr()`), and `.data()` on a temporary or a parameter, refused as
+  "member access on non-struct type".
 
 ## Const generics — a value as a type parameter
 

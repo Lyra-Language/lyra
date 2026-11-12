@@ -9,6 +9,39 @@ Newest first.
 
 ## Dated log
 
+### 11/11/26 — Four use-after-frees through a second name
+
+Each read freed memory under ASan, and each was a name the compiler didn't see the storage by.
+
+- **`f(ys, ys)` with `(xs: []T, m: mut []T)`**: a bare parameter is borrowed without a retain,
+  and `m = [...]` freed what `xs` read. Refusing it, as `mut` beside `ref` is, was built first
+  and swept, with the bare half of E097 below: 60 refusals in 17 files across std, `ui`,
+  Termina, Vega and Sheliak (`map.insert(k, args[i])`,
+  `self.open_menu(self.state.focus)`). A bare parameter promises a value, so it gets one:
+  `holdBareBesideMut` retains such an argument for the call when a `mut` beside it can hold it
+  or the box it's read from (`ownership.CanHold`). Only those calls pay.
+- **`via(ys[0], zs)` after `var zs = ys`**, where `via` grows `zs`: places can't tell two names
+  for one box apart, and a retain can't save a pointer into a buffer growth frees. So storage
+  in a box lent by reference beside a `mut` whose type can hold that box is `lyra-E097`. The
+  type test is what kept it to nothing: by "any managed `mut`" it hit `ui/app.lyra`'s
+  `window.host.step(…, window.fonts)`, a `Fonts` beside a `shared Running`'s field. On the
+  workspace it refuses nothing.
+- **A loop variable released by a second name**: `zs[0] = s` or `zs.clear()` after `var zs =
+  ys`, a struct holding the array, `reset(zs)`, or `poke()` writing the global walked. The
+  variable is held per iteration where the body can (`writesBySecondName`); reading, printing
+  and handing on the element still hold nothing (`TestOwnership_LoopVarHeldForASecondName`).
+- **`let p = unsafe { word(7).cstring_ptr() }`** freed the string at the `;`. A named argument
+  was pinned (11/02) and a temporary has no name, so a `let` binding a pointer a call handed
+  back keeps its statement's temporaries in its scope's frame (`KeptTemps`, `keepStmtTemps`),
+  as C++ extends a temporary bound to a reference. The todo's `mk().data()` doesn't compile:
+  `.data()` on a temporary is "member access on non-struct type", left in todo.md.
+- **A test that passes for the wrong reason, twice.** `s.len()` reads the length a string
+  carries with it, not the freed bytes, so the first loop tests passed without the fix; they
+  read `"${s}"` now. And a comprehension writing `zs[1]` freed an element not yet read. Every
+  case in `TestExec_SecondNameUseAfterFrees` was run with its fix taken out, and failed.
+- **Left (todo.md):** a local sharing a global's box, grown by a callee through the global
+  (a refusal by callee would hit 115 element arguments); a pointer reassigned out of a temporary.
+
 ### 11/11/26 — Long audio: `embed`, `bindings.audio`, tracks on both runtimes
 
 **`embed("path")` is a file's bytes as a `const`** because a Genesis track had to be bytes in

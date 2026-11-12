@@ -368,3 +368,45 @@ let reset = (xs: mut []string) -> void => { xs = [] }
 		})
 	}
 }
+
+// A loop variable is held for its iteration when the body can release its element by a name
+// other than the loop's root (11/11): `var zs = ys` makes two names for one box. The common
+// loop — reading, printing, calling something with the element — still holds nothing.
+func TestOwnership_LoopVarHeldForASecondName(t *testing.T) {
+	const lib = `struct H { items: []string }
+let reset = (xs: mut []string) -> void => { xs = [] }
+let show = (s: string) -> void => { println(s) }
+var g = ["a"]
+let poke = () -> void => { g[0] = "b" }
+`
+	cases := []struct {
+		name, src string
+		held      bool
+	}{
+		{"a body that reads", `let run = (xs: []string) -> i64 => { var c = 0; for x in xs { c += x.len() }; c }`, false},
+		{"a body handing on the element", `let run = (xs: []string) -> void => { for x in xs { show(x) } }`, false},
+		{"a body printing", `let run = (xs: []string) -> void => { for x in xs { println(x) } }`, false},
+		{"a write of another type's element", `let run = (xs: []string) -> void => { var ns = [1]; for x in xs { ns[0] = 2 } }`, false},
+		{"a parameter and a call writing a global (a caller passing it is todo.md's)", `let run = (xs: []string) -> void => { for x in xs { poke() } }`, false},
+		{"an element written by a second name", `let run = () -> void => { var ys = ["a"]; var zs = ys; for y in ys { zs[0] = "b" } }`, true},
+		{"a second name cleared", `let run = () -> void => { var ys = ["a"]; var zs = ys; for y in ys { zs.clear() } }`, true},
+		{"a second name handed to a call", `let run = () -> void => { var ys = ["a"]; var zs = ys; for y in ys { reset(zs) } }`, true},
+		{"a struct holding one, written", `let run = () -> void => { var ys = ["a"]; var h = H { items: ys }; for y in ys { h.items[0] = "b" } }`, true},
+		{"a global, a call that can write it", `let run = () -> void => { for y in g { poke() } }`, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res := driver.Analyze([]byte(lib + c.src))
+			if res.HasErrors() {
+				t.Fatalf("unexpected analysis errors: %v", res.Diagnostics)
+			}
+			held := false
+			for _, h := range res.Ownership.HeldLoopVars {
+				held = held || h
+			}
+			if held != c.held {
+				t.Errorf("held = %v, want %v", held, c.held)
+			}
+		})
+	}
+}

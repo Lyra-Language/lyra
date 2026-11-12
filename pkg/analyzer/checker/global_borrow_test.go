@@ -254,3 +254,70 @@ func seqBorrowDiagnostics(t *testing.T, src string) []diag.Diagnostic {
 	}
 	return out
 }
+
+// Storage inside a box lent beside a `mut` argument that can hold a box is lyra-E097's: after
+// `var zs = ys` the two are one array, which places can't tell, so growing `zs` frees `ys[0]`.
+func TestSecondNameBorrow(t *testing.T) {
+	const pre = `struct H { n: i64, xs: []string, name: string }
+let via = (s: ref string, zs: mut []string) -> void => { zs.push("x") }
+let bump = (x: mut i64, zs: mut []i64) -> void => { zs.push(1) }
+let named = (s: string, hs: mut []H) -> void => { hs[0].name = "x" }
+let fine = (x: ref i64, n: mut i64) -> void => { n += 1 }
+let bare = (s: string, zs: mut []string) -> void => { zs[0] = "x" }
+let scalar = (x: ref i64, zs: mut []i64) -> void => { zs.push(1) }
+struct F { ns: []i64 }
+let other = (s: ref string, f: mut F) -> void => { f.ns.push(1) }
+let holder = (s: ref string, h: mut H) -> void => { h.xs.push("y") }
+`
+	for stmt, wantE097 := range map[string]bool{
+		`via(ss[0], zs)`:         true,
+		`bump(ys[0], ys2)`:       true,
+		`named(hs[0].name, hs2)`: false, // a bare value, held for the call
+		`via(h.xs[0], zs)`:       true,
+		`bare(ss[0], zs)`:        false, // a value, held for the call instead
+		`fine(ys[0], n)`:         false, // a `mut` scalar holds no box
+		`via(fixed[0], zs)`:      false, // a fixed-size array's elements are its own
+		`other(ss[0], f)`:        false, // an F can't hold a []string
+		`holder(ss[0], h)`:       true,  // an H can: its `xs`
+		`scalar(ys[0], ys2)`:     false, // a scalar `ref` is a copy
+	} {
+		t.Run(stmt, func(t *testing.T) {
+			src := pre + "let main = () -> void => {\n" +
+				"  var ys = [1, 2]\n  var ys2 = ys\n  var n = 0\n" +
+				"  var ss = [\"a\", \"b\"]\n  var zs = ss\n" +
+				"  var fixed: [2]string = #[\"a\", \"b\"]\n" +
+				"  var hs = [H { n: 0, xs: [], name: \"a\" }]\n  var hs2 = hs\n" +
+				"  var h = H { n: 0, xs: [\"c\"], name: \"b\" }\n  var f = F { ns: [] }\n" +
+				"  " + stmt + "\n}\n"
+			got := checkGlobalBorrows(t, src)
+			if !wantE097 {
+				if len(got) != 0 {
+					t.Fatalf("expected nothing, got %v", got)
+				}
+				return
+			}
+			if len(got) != 1 || got[0].Code != diag.CodeSecondNameBorrow {
+				t.Fatalf("expected one lyra-E097, got %v", got)
+			}
+			if !strings.Contains(got[0].Message, "Copy argument 1 into a local") {
+				t.Errorf("should say what to do instead: %q", got[0].Message)
+			}
+		})
+	}
+}
+
+// The pair one of whose places contains the other is the typechecker's to refuse, by place,
+// so E097 says nothing more about it.
+func TestSecondNameBorrow_LeavesAContainingPlaceToTheTypechecker(t *testing.T) {
+	src := `let via = (s: ref string, zs: mut []string) -> void => { zs.push("x") }
+let main = () -> void => {
+  var ys = ["a", "b"]
+  via(ys[0], ys)
+}
+`
+	for _, d := range checkGlobalBorrows(t, src) {
+		if d.Code == diag.CodeSecondNameBorrow {
+			t.Errorf("E097 beside the typechecker's own: %v", d)
+		}
+	}
+}

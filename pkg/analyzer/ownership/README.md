@@ -46,9 +46,14 @@ A binding / `own` parameter holds one owning reference. The pass records:
   see replaced (`holdLoopSource`): the body writes its root or yields, or the place is reached
   through a box. The walk reads a box it loaded once. **`HeldLoopVars[source]`** adds the loop
   variable, per iteration, where the body writes the root, which can release what it borrows
-  without the box going (`ys[0] = s`, a fixed-size array assigned; `holdLoopVar`). **Both, on what
+  without the box going (`ys[0] = s`, a fixed-size array assigned; `holdLoopVar`), **or a second
+  name for the box** (`writesBySecondName`: a write through a value of the walked type, a call
+  handed something that can hold it (`CanHold`), and, for a source rooted at a mutable global or
+  reached through a box, any call running the program's code). **Both, on what
   a call returning a sequence borrows from a place** (`holdLentToSeq`): its consumer runs between
-  the callee's statements.
+  the callee's statements. **Both, on a bare argument beside a `mut`** that can hold it or the
+  box it is read from (`holdBareBesideMut`): `f(ys, ys)` with `(xs: []T, m: mut []T)` — a bare
+  parameter is borrowed without a retain, and `m = [...]` would free it under the callee.
 - **Both, on a read of a mutable global** — a module-level `var` (or `let mut`), by its name, a
   field or element of it, or through its namespace (`mutableGlobal`, `holdGlobalPlace`), where
   it is borrowed. A global owns what it holds and the backend releases it when the global is
@@ -142,7 +147,9 @@ as a reference, so otherwise `CBuffer { ptr: unsafe { &xs[0] }, len: 3 }` frees 
 
 **A call whose result carries a raw pointer pins every name in its receiver and arguments**
 (`notePointerHandedOut`, by the result's type through `holdsRawPointer`): `let p = xs.data()` is
-`&xs[0]` by another name. A temporary has nothing to pin, and lasts its statement.
+`&xs[0]` by another name. A temporary has nothing to pin, so **a `let` binding such a pointer
+keeps its statement's temporaries** to the end of its scope (`KeptTemps`, `keepPointeeTemps`; the
+backend's `keepStmtTemps` moves them into the scope's frame): `let p = word(7).cstring_ptr()`.
 
 **A pinned binder pins what it borrows from** (`pinThroughBinders`, after both walks): a
 comprehension clause's or `for` loop's element pins its source's names, and a `match` arm's,

@@ -162,6 +162,9 @@ func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr, flushTail 
 			// since the tail may itself be the escaping block value. A temp produced on
 			// this statement's start block is released at `block` (where the statement
 			// ends) so it outlives a later use across a branch; see flushStmtTemps.
+			if vds, isDecl := stmt.(*ast.VarDeclStmt); isDecl && l.ownership().KeepsTemps(vds) {
+				l.keepStmtTemps(stmtStart, block)
+			}
 			if i != last || flushTail {
 				if err := l.flushStmtTemps(stmtStart, block); err != nil {
 					return nil, nil, err

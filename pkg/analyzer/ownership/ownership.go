@@ -127,6 +127,16 @@ type Table struct {
 	// write the place source was read from, so what the loop variable borrows can be released
 	// under it. The backend makes the variable an owning binding for each iteration.
 	HeldLoopVars map[ast.Expression]bool
+	// KeptTemps[decl]: the binding holds a raw pointer a call in its initializer handed back,
+	// which may point into a temporary of the initializer (`let p = word(7).cstring_ptr()`).
+	// The backend keeps the statement's temporaries to the end of the binding's scope, as it
+	// would a named argument (notePointerHandedOut), rather than releasing them at the `;`.
+	KeptTemps map[*ast.VarDeclStmt]bool
+}
+
+// KeepsTemps reports whether decl's initializer's temporaries live to the end of its scope.
+func (t *Table) KeepsTemps(decl *ast.VarDeclStmt) bool {
+	return t != nil && t.KeptTemps[decl]
 }
 
 // ShouldRetain reports whether e's value must be retained when produced.
@@ -683,6 +693,7 @@ func newAnalyzer(symTable *symbols.SymbolTable, tt *typetable.TypeTable, subst m
 			ReuseTarget:     map[ast.Expression]bool{},
 			HeldOperands:    map[ast.Expression][]ast.Expression{},
 			HeldLoopVars:    map[ast.Expression]bool{},
+			KeptTemps:       map[*ast.VarDeclStmt]bool{},
 		},
 		writing: map[string]int{},
 	}
@@ -1134,6 +1145,27 @@ func (a *analyzer) notePointerHandedOut(call *ast.FunctionCallExpr, into map[str
 	}
 }
 
+// keepPointeeTemps marks a binding whose raw pointer a call in its initializer handed back
+// (KeptTemps): `let p = unsafe { word(7).cstring_ptr() }` points into `word(7)`, a temporary
+// released at the statement's end, before anything reads through `p`. A named argument is
+// pinned by notePointerHandedOut; a temporary has no name, so the statement's temporaries are
+// kept to the end of the binding's scope instead. By the result's type, as that pin is, so a
+// handle read out of a temporary keeps it a little longer and is otherwise unchanged.
+func (a *analyzer) keepPointeeTemps(decl *ast.VarDeclStmt) {
+	t, ok := a.typeOf(decl.Value)
+	if !ok || !holdsRawPointer(t, a.symTable, decl.GetLocation()) {
+		return
+	}
+	ast.WalkExpr(decl.Value, nil, func(e ast.Expression) bool {
+		if call, isCall := e.(*ast.FunctionCallExpr); isCall {
+			if ct, recorded := a.typeOf(call); recorded && holdsRawPointer(ct, a.symTable, call.GetLocation()) {
+				a.table.KeptTemps[decl] = true
+			}
+		}
+		return !a.table.KeptTemps[decl]
+	})
+}
+
 // pinThroughBinders carries a pin from a binding that only borrows part of another value to
 // that value. `[c in s_items | unsafe { c.data() }]` pins `c`, a borrowed element of
 // `s_items`, and it is `s_items` that last-use frees — at the comprehension, its last
@@ -1275,6 +1307,7 @@ func (a *analyzer) stmt(s ast.AstNode) {
 	case *ast.VarDeclStmt:
 		// A managed binding owns its initializer (+1); a non-managed one borrows.
 		a.expr(s.Value, a.bindingOwnsManaged(s))
+		a.keepPointeeTemps(s)
 	case *ast.VarReassignmentStmt:
 		a.expr(s.Value, a.ownsManaged(s.Value))
 	case *ast.LValueAssignmentStmt:
@@ -1454,6 +1487,14 @@ func namespacedMutableGlobal(symTable *symbols.SymbolTable, bound []map[string]b
 // Such storage can be freed under a pointer to it, by whatever replaces the box or grows the
 // array. A field of a stack struct, or an element of a fixed-size array, is the root's own.
 func ReachedThroughBox(e ast.Expression, tt *typetable.TypeTable, symTable *symbols.SymbolTable) bool {
+	_, reached := BoxReached(e, tt, symTable)
+	return reached
+}
+
+// BoxReached is the type of the box whose storage the place path e ends in — the nearest
+// managed value on its way in (`ys` for `ys[0]`, `w` for `w.host.n` with `w` shared) — and
+// false for storage no box holds.
+func BoxReached(e ast.Expression, tt *typetable.TypeTable, symTable *symbols.SymbolTable) (types.Type, bool) {
 	for x, ok := ast.PlaceObject(e); ok; x, ok = ast.PlaceObject(x) {
 		t, recorded := tt.Get(x)
 		if !recorded {
@@ -1471,10 +1512,10 @@ func ReachedThroughBox(e ast.Expression, tt *typetable.TypeTable, symTable *symb
 			t = resolved
 		}
 		if IsManaged(t) {
-			return true
+			return t, true
 		}
 	}
-	return false
+	return nil, false
 }
 
 // isMutableData is a top-level binding the backend gives storage (a global, not a function)
@@ -1572,11 +1613,121 @@ func (a *analyzer) holdLoopSource(source ast.Expression, runs ...ast.Expression)
 		return
 	}
 	written := writes(root)
-	a.table.HeldLoopVars[source] = written
+	a.table.HeldLoopVars[source] = written || a.writesBySecondName(source, t, runs)
 	if a.ownsManaged(source) && (written || yields(runs) || ReachedThroughBox(source, a.tt, a.symTable)) {
 		a.table.Retain[source] = true
 		a.table.ReleaseTemp[source] = true
 	}
+}
+
+// writesBySecondName reports whether the body can release an element of the box a `[]T` walk
+// reads by a name other than the walk's root, so the loop variable, a borrow of that element,
+// must be held for the iteration (HeldLoopVars). `var zs = ys` makes two names for one box:
+//
+//   - a write through a value of the walked type, rooted anywhere: `zs[0] = s`, `h.items[0] += …`;
+//   - a call handed such a value, or one holding it, as receiver or argument (`zs.clear()`,
+//     `reset(zs)`), unless it's a builtin method that writes nothing;
+//   - for a source rooted at a mutable global or reached through a box — which any name can
+//     reach, the global's by any function — any call that runs the program's code (`poke()`).
+//
+// It doesn't see a local sharing a global's box written by a callee through the global, which
+// no walk of this function shows (todo.md). A fixed-size array has no box to share.
+func (a *analyzer) writesBySecondName(source ast.Expression, t types.Type, runs []ast.Expression) bool {
+	walked, ok := types.StripNewtype(resolveNamedType(t, a.symTable, source.GetLocation())).(types.DynamicArrayType)
+	if !ok {
+		return false
+	}
+	reachable := RootedAtMutableGlobal(source, a.symTable, a.bound) || ReachedThroughBox(source, a.tt, a.symTable)
+	holdsWalked := func(e ast.Expression) bool {
+		et, ok := a.typeOf(e)
+		return ok && CanHold(et, walked, a.symTable, e.GetLocation())
+	}
+	throughWalked := func(e ast.Expression) bool {
+		for x, ok := ast.PlaceObject(e); ok; x, ok = ast.PlaceObject(x) {
+			if xt, recorded := a.typeOf(x); recorded && sameType(xt, walked, a.symTable, x.GetLocation()) {
+				return true
+			}
+		}
+		return false
+	}
+	found := false
+	for _, r := range runs {
+		ast.WalkExpr(r, func(s ast.Statement) bool {
+			if s, ok := s.(*ast.LValueAssignmentStmt); ok && throughWalked(s.Target) {
+				found = true
+			}
+			return !found
+		}, func(x ast.Expression) bool {
+			switch x := x.(type) {
+			case *ast.MathAssignOpExpr:
+				found = found || throughWalked(x.Left)
+			case *ast.AddressOfExpr:
+				found = found || throughWalked(x.Operand)
+			case *ast.FunctionCallExpr:
+				found = found || a.callReachesBox(x, holdsWalked, reachable)
+			}
+			return !found
+		})
+		if found {
+			return true
+		}
+	}
+	return false
+}
+
+// callReachesBox reports whether a call in a walk's body can release the walked box's elements:
+// handed a value holding the walked type, or, where any function can reach the box, running
+// the program's code at all. A builtin method runs none, so it counts only when it writes its
+// receiver.
+func (a *analyzer) callReachesBox(call *ast.FunctionCallExpr, holdsWalked func(ast.Expression) bool, reachable bool) bool {
+	if a.mt.IsBuiltinMethod(call) {
+		m, isDot := call.Function.(*ast.MemberExpr)
+		return isDot && a.mt.BuiltinMethodMutates(call) && holdsWalked(m.Object)
+	}
+	if calleeIsBorrowingBuiltin(call) {
+		return false
+	}
+	if slices.ContainsFunc(lentToCall(call), holdsWalked) {
+		return true
+	}
+	if !reachable {
+		return false
+	}
+	_, isMethod := a.mt.Get(call)
+	return isMethod || a.resolveCallee(call) != nil || a.calleeLambdaType(call) != nil
+}
+
+// sameType compares two types through aliases and newtypes.
+func sameType(x, want types.Type, symTable *symbols.SymbolTable, loc ast.Location) bool {
+	return types.TypesEqual(types.StripNewtype(resolveNamedType(x, symTable, loc)), types.StripNewtype(want))
+}
+
+// CanHold reports whether a value of type t is, or holds, a value of type want: inline, or
+// behind a box (a `[]` of them, a `shared` struct's field) — whether a name of type t can be a
+// second name for want's storage. Bounded, since a recursive type's walk never ends otherwise.
+func CanHold(t, want types.Type, symTable *symbols.SymbolTable, loc ast.Location) bool {
+	return canHold(t, want, symTable, loc, 0)
+}
+
+func canHold(t, want types.Type, symTable *symbols.SymbolTable, loc ast.Location, depth int) bool {
+	if t == nil || depth > 6 {
+		return false
+	}
+	if sameType(t, want, symTable, loc) {
+		return true
+	}
+	resolved := types.StripNewtype(resolveNamedType(t, symTable, loc))
+	if p, isGeneric := resolved.(types.ParameterizedType); isGeneric {
+		if inst, ok := instantiateDecl(p, symTable, loc); ok {
+			resolved = inst
+		}
+	}
+	if d, isArray := resolved.(types.DynamicArrayType); isArray {
+		return canHold(d.ElementType, want, symTable, loc, depth+1)
+	}
+	return eachComponent(resolved, func(_ string, ct types.Type) bool {
+		return canHold(ct, want, symTable, loc, depth+1)
+	})
 }
 
 // lentToCall is what a call's places are: its arguments, and a method's receiver.
@@ -2275,7 +2426,11 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 	// pointer it had just handed out. A receiver has never been a use; making it one is a
 	// liveness change with its own consequences, not part of stopping a leak.
 	var taken []ast.Expression
+	var lent []lentArgument
 	if member, isDot := e.Function.(*ast.MemberExpr); isDot {
+		if methodSig != nil && len(methodSig.Parameters) > 0 {
+			lent = append(lent, lentArgument{member.Object, methodSig.Parameters[0].Borrow})
+		}
 		switch {
 		case methodSig != nil && len(methodSig.Parameters) > 0 && paramOwnsArgument(methodSig.Parameters[0].Borrow):
 			a.expr(member.Object, true)
@@ -2309,10 +2464,20 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 		if argOwns {
 			taken = append(taken, arg)
 		}
+		switch {
+		case builtinTransfers || builtinBorrows:
+		case lam != nil && i < len(lam.Parameters):
+			lent = append(lent, lentArgument{arg, lam.Parameters[i].TypeModifier})
+		case methodSig != nil && i+1 < len(methodSig.Parameters):
+			lent = append(lent, lentArgument{arg, methodSig.Parameters[i+1].Borrow})
+		case calleeType != nil && i < len(calleeType.Parameters):
+			lent = append(lent, lentArgument{arg, calleeType.Parameters[i].Borrow})
+		}
 	}
 	if len(taken) > 0 {
 		a.holdOperands(e, taken)
 	}
+	a.holdBareBesideMut(lent)
 	a.holdLentToSeq(e)
 
 	if !a.ownsManaged(e) {
@@ -2545,6 +2710,47 @@ func calleeIsOwningBuiltin(e *ast.FunctionCallExpr) bool {
 
 // paramOwnsArgument mirrors the typechecker's predicate (assignable.go): only an `own`
 // parameter adopts its argument.
+// lentArgument is one of a call's arguments, its receiver included, with its parameter's mode.
+type lentArgument struct {
+	expr ast.Expression
+	mode types.TypeModifier
+}
+
+// holdBareBesideMut holds a bare argument holding a managed value, read from storage, when the
+// same call takes a `mut` argument that can hold a box: retained as it is read and released
+// after the statement, as a scrutinee is (holdScrutinee). A bare parameter is a value, which
+// the callee borrows without a retain, and the `mut` can release it under the callee: `f(ys,
+// ys)` with `(xs: []T, m: mut []T)` and `m = [...]`, `map.insert(k, args[i])`'s map holding
+// what `args` holds, `self.open(self.state.focus)` rewriting the focus. Held, it is the value
+// the call was given, whatever the callee writes. Only such calls pay: the `mut` must be able
+// to hold the value or the box it is read from (CanHold), which a `mut` scalar never can.
+func (a *analyzer) holdBareBesideMut(args []lentArgument) {
+	var muts []types.Type
+	for _, arg := range args {
+		if t, ok := a.typeOf(arg.expr); ok && arg.mode == types.Mut && OwnsManaged(t, a.symTable, arg.expr.GetLocation()) {
+			muts = append(muts, t)
+		}
+	}
+	if len(muts) == 0 {
+		return
+	}
+	for _, arg := range args {
+		if arg.mode != "" || !rootedAtBinding(arg.expr) || !a.ownsManaged(arg.expr) {
+			continue
+		}
+		// What the `mut` can release: the value itself, or the box it is read out of.
+		t, _ := a.typeOf(arg.expr)
+		box, inBox := BoxReached(arg.expr, a.tt, a.symTable)
+		if slices.ContainsFunc(muts, func(m types.Type) bool {
+			loc := arg.expr.GetLocation()
+			return CanHold(m, t, a.symTable, loc) || (inBox && CanHold(m, box, a.symTable, loc))
+		}) {
+			a.table.Retain[arg.expr] = true
+			a.table.ReleaseTemp[arg.expr] = true
+		}
+	}
+}
+
 func paramOwnsArgument(mod types.TypeModifier) bool {
 	return mod == types.Own
 }
