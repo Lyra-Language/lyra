@@ -1012,6 +1012,9 @@ func (tc *TypeChecker) inferDotCallFromType(calleeName string, lambdaType *types
 		// The declared width must hold the literal, exactly as at a free-function call.
 		tc.checkLiteralRange(
 			fmt.Sprintf("%s: argument %d", calleeName, i+1), arg, paramType)
+		if param.Borrow == types.Ref && types.IsByRefParam(param.Borrow, paramType) {
+			tc.lend(arg, calleeName, false)
+		}
 		if param.Borrow == types.Mut {
 			tc.checkMutArgument(calleeName, i+1, "", arg, paramType)
 		}

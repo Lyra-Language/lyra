@@ -1742,6 +1742,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 // A copied scalar is no exception (09/27): a `mut` scalar is by reference like any
 // other (types.IsByRefParam), so `checkbox("x", true)` has nowhere to write.
 func (tc *TypeChecker) checkMutArgument(calleeName string, position int, paramName string, arg ast.Expression, paramType types.Type) {
+	tc.lend(arg, calleeName, true)
 	if m, decl, ok := tc.namespacedPlace(arg); ok {
 		if !decl.CanMutateInterior() {
 			tc.addError(arg.GetLocation(), SeverityError,
@@ -1823,6 +1824,7 @@ func (tc *TypeChecker) checkExclusiveMutableBorrow(calleeName string, lambda *as
 		if !types.IsByRefParam(mode, tc.resolveType(param.Type, param.GetLocation())) {
 			continue // `own` transfers a copy; a bare parameter or a `ref` scalar is a value
 		}
+		tc.lend(arg, calleeName, mode == types.Mut)
 		p, ok := tc.placeOf(arg)
 		if !ok {
 			continue // a temporary has no storage to alias
@@ -1908,9 +1910,7 @@ func (tc *TypeChecker) placeOf(expr ast.Expression) (place, bool) {
 			if _, ok := tc.namespacedBinding(e); ok {
 				return rooted(namespacedName(e)), true
 			}
-			objType := tc.stripNewtypeResolving(
-				tc.resolveType(tc.inferExprType(e.Object), e.Object.GetLocation()), e.Object.GetLocation())
-			_, isUnion := objType.(types.UnionType)
+			_, isUnion := tc.placeObjectType(e.Object).(types.UnionType)
 			reversed = append(reversed, placeStep{name: e.Property.Name, wildcard: isUnion})
 		case *ast.TupleIndexExpr:
 			reversed = append(reversed, placeStep{name: strconv.Itoa(e.Index)})
@@ -1923,6 +1923,23 @@ func (tc *TypeChecker) placeOf(expr ast.Expression) (place, bool) {
 		}
 		expr = object
 	}
+}
+
+// placeObjectType is the type of a place's object, for telling a union's member from a
+// field. Inferred while checking; once a statement is checked (the lyra-W032 sweep) the
+// scope it was checked in is gone, so only what was recorded is read — inferring then
+// would report `self` and a desugared temporary as undefined.
+func (tc *TypeChecker) placeObjectType(object ast.Expression) types.Type {
+	var t types.Type
+	if tc.sweepingChecked {
+		t, _ = tc.typeTable.Get(object)
+	} else {
+		t = tc.inferExprType(object)
+	}
+	if t == nil {
+		return nil
+	}
+	return tc.stripNewtypeResolving(tc.resolveType(t, object.GetLocation()), object.GetLocation())
 }
 
 // placeOverlaps reports whether two places may share storage: the same root, and one

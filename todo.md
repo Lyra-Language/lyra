@@ -1062,7 +1062,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   error now says a type parameter is lowercase and gives the list fixed (`<R>` is `<r>`).
   **[OPEN]** the errors the parser's recovery leaves after it — "unknown type \"R\"",
   "unknown type \"Renderer\"" — still follow it.
-- **[OPEN] A value copied before a call that changes it** — `(s, proceed(s, then))`, with `s` passed `mut`, copies `s` first and drops what the call did, silently (Vega's Don't Save did nothing, 11/02). Warn when an aggregate is read and then passed `mut` later in the same tuple or argument list.
+- **[DONE 11/11] A value copied before a call that changes it warns `lyra-W032`**, in a call, tuple,
+  array, constructor or struct literal (COMPLETED.md, 11/11). **[OPEN]** Vega's 14 `(s, ask(s, …))`
+  sites warn: `ask` writes `s.prompt`, which those copies drop and nothing reads.
 - **[DONE 11/11] `==` on a type holding a function value is refused where it is written**, naming
   the path to the function (COMPLETED.md, 11/11).
 

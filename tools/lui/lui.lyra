@@ -1983,7 +1983,8 @@ impl Writer {
       },
       None => {
         if tab_markup.len() == 0 { return Err("${t.line}: <TabBar> needs tabs={…} or <Tab>s") }
-        self.listed(self.making_of("tabs", tab_markup, indent)?, indent)
+        let items = self.making_of("tabs", tab_markup, indent)?
+        self.listed(items, indent)
       },
     }
     var fields = [
@@ -2109,7 +2110,8 @@ impl Writer {
       },
       None => {
         if column_markup.len() == 0 { return Err("${t.line}: <Table> needs columns={…} or <TableColumn>s") }
-        self.listed(self.making_of("columns", column_markup, indent)?, indent)
+        let items = self.making_of("columns", column_markup, indent)?
+        self.listed(items, indent)
       },
     }
     let rows = match t.code_attr("rows") {
@@ -2117,7 +2119,10 @@ impl Writer {
         if row_markup.len() > 0 { return Err("${t.line}: <Table> takes rows={…} or <TableRow>s, not both") }
         code
       },
-      None => self.listed(self.making_of("rows", row_markup, indent)?, indent),
+      None => {
+        let items = self.making_of("rows", row_markup, indent)?
+        self.listed(items, indent)
+      },
     }
     let resize = match attr_named(t.attrs, "on_resize") {
       None => return Err("${t.line}: <Table> needs on_resize"),

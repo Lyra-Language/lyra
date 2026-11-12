@@ -99,10 +99,12 @@ type TypeChecker struct {
 	// place (inferGenericCall), because a type variable mentioned only in a callee's
 	// return type cannot be solved from arguments and the context is the only thing that
 	// knows it. A stack rather than a field: an initializer may contain another call.
-	expectedTypes  []types.Type
-	instantiations *typetable.InstantiationTable // generic call site -> the specialization it resolves to (instantiate.go); the backend monomorphizes from it
-	inferring      map[ast.Expression]bool       // expression nodes whose inference is on the stack right now; the cycle guard in inferExprType
-	resolvingTypes map[string]bool               // type names whose resolution is on the stack right now; the alias-cycle guard in resolveType
+	expectedTypes   []types.Type
+	instantiations  *typetable.InstantiationTable   // generic call site -> the specialization it resolves to (instantiate.go); the backend monomorphizes from it
+	inferring       map[ast.Expression]bool         // expression nodes whose inference is on the stack right now; the cycle guard in inferExprType
+	lentArguments   map[ast.Expression]lentArgument // arguments passed to a `mut` or `ref` parameter (lend), for lyra-W032
+	sweepingChecked bool                            // a sweep over checked statements is running: read recorded types, infer none (placeObjectType)
+	resolvingTypes  map[string]bool                 // type names whose resolution is on the stack right now; the alias-cycle guard in resolveType
 	// stampedDecls are the declarations whose nested type names have been given their
 	// resolved identity (stampDeclaredNames). Once each: the walk rewrites the
 	// declaration in place, and a second pass would be work with nothing to do.

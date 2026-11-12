@@ -25,6 +25,26 @@ at an empty folder. Its ROM first differed from the full toolchain's by 12 KB, w
 neither the stripping nor the objects: 185 panic messages carry the absolute path of their std
 file, so where lyra sits changes the ROM (todo.md). Built from the same place, it is identical.
 
+### 11/11/26 — A copy taken before a later operand changes it: `lyra-W032`
+
+**`(s, proceed(s, then))` returned the state from before the call**, with `s` passed `mut`:
+operands run left to right, so the tuple's `s` is a copy taken first (Vega's Don't Save, 11/02).
+That is the rule, so the fix is a warning where it is written. `checkMutArgument` and the
+borrow checks record each argument they lend (`lend`); a sweep after each statement, on the
+`checkUnpinnedNullPtrs` model, walks every operand list — a call's arguments, a tuple's or
+constructor's elements, an array's, a struct literal's fields as written — and warns at an
+operand that is a place on its own, taken by value, when a later operand passes an overlapping
+place `mut` outside a lambda (`placeOf`, `placeOverlaps`).
+
+**A `ref` argument is not a copy**: `look(s, bump(s))` reads the new `s`, since the borrow sees
+the write, so a lent operand is skipped. A computed value (`s.n + 1`) is too, since it reads as
+taken then. Across 109 programs it fired 17 times. lui's three were method receivers,
+`self.listed(self.making_of(…)?, indent)`: `listed` reads only a field `making_of` leaves
+alone, but the receiver is the same hazard (`s.render(s.step())`), so they bind the call first
+now and the rule stays uniform; all 13 `.lui` files generate the same. Vega's 14 are
+`(s, ask(s, …))`, each dropping the `s.prompt` that `ask` sets, which nothing reads yet (todo.md).
+`TestCopiedBeforeMut_IsReportedAtTheCopy`, `…_IsQuietWhereNothingIsLost`.
+
 ### 11/11/26 — A namespaced global as a place; `==` refused on a function value
 
 **`lib.queue[0] = 1` said `undefined identifier "lib"`**, though `lib.queue.push(1)` worked. The

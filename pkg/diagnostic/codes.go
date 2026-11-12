@@ -1375,4 +1375,11 @@ const (
 	// a nested lambda — or would not be safe: a generator or `async` function, whose frame
 	// outlives the call that lent it.
 	CodeLargeByValueParam = "lyra-W031"
+
+	// CodeCopiedBeforeMut: an operand that is a place on its own (`s`, `s.doc`) is copied
+	// before a later operand of the same call, tuple, array or struct literal changes that
+	// place through a `mut` argument — `(s, proceed(s, then))` holds `s` as it was. Operands
+	// run left to right, so this is the rule, but it reads as the opposite and drops the
+	// call's work silently. Binding the call's result first is the fix.
+	CodeCopiedBeforeMut = "lyra-W032"
 )
