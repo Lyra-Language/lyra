@@ -196,7 +196,11 @@ let dock_part<e> = pure (
     Node {
       kind: flow,
       tag: "DockSplit",
-      children: [expanded::<e>(first, split.at), edge, expanded::<e>(second, 1.0 - split.at)],
+      children: [
+        expanded::<e>(first, split.at),
+        edge,
+        expanded::<e>(second, 1.0 - split.at)
+      ],
     }
   },
 }
@@ -218,7 +222,9 @@ pub let dock_select = pure (tree: DockTree, key: string) -> DockTree => match tr
   DockTabs(group) =>
     if group.keys.contains(key) { DockTabs(DockGroup { group | selected: key }) } else { tree },
   DockSplit(split) =>
-    DockSplit(DockSplitSpec { split | parts: [part in split.parts | dock_select(part, key)] }),
+    DockSplit(DockSplitSpec {
+      split | parts: [part in split.parts | dock_select(part, key)]
+    }),
 }
 
 /// `tree` without the panel `key`: its group shows the tab beside it where it was shown, a
@@ -295,7 +301,9 @@ pub let dock_reordered = pure (tree: DockTree, key: string, to: i64) -> DockTree
       ] })
     },
     DockSplit(split) =>
-      DockSplit(DockSplitSpec { split | parts: [part in split.parts | dock_reordered(part, key, to)] }),
+      DockSplit(DockSplitSpec {
+        split | parts: [part in split.parts | dock_reordered(part, key, to)]
+      }),
   }
 
 /// `tree` with the tab `drop` docks moved where it was dropped.
@@ -382,7 +390,9 @@ let renamed = pure (tree: DockTree, from: string, to: string) -> DockTree => mat
     selected: if group.selected == from { to } else { group.selected },
   }),
   DockSplit(split) =>
-    DockSplit(DockSplitSpec { split | parts: [part in split.parts | renamed(part, from, to)] }),
+    DockSplit(DockSplitSpec {
+      split | parts: [part in split.parts | renamed(part, from, to)]
+    }),
 }
 
 /// The path of the group holding `key`, if one does.

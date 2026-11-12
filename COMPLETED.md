@@ -25,6 +25,25 @@ at an empty folder. Its ROM first differed from the full toolchain's by 12 KB, w
 neither the stripping nor the objects: 185 panic messages carry the absolute path of their std
 file, so where lyra sits changes the ROM (todo.md). Built from the same place, it is identical.
 
+### 11/11/26 — lyrafmt breaks a line a list already broke around
+
+A long line ending in a comma is one element of a list a line apiece, and `widest_list` chose
+that list, which planned nothing: `foo(a, b),` never broke its own arguments. The line's last
+comma is passed over now. That alone, as todo.md had it, then broke such lines badly in about
+a quarter of the 112 places it reached, by choosing the outermost list left:
+
+- **an arm's pattern**, `Changed(` ⏎ `k,` ⏎ `c` ⏎ `) => (…)`, and `let (` ⏎ `bytes,` ⏎ … ⏎ `) =`.
+  A pattern's lists are passed over: what's long is what follows.
+- **a call inside an inline block**, `{ for child in children { draw(` ⏎ … ⏎ `) } }`. A block
+  or struct literal opening and closing on the line is broken first when it encloses the list,
+  or sits beside it (`outermost_block`): its contents on a line of their own, as written by
+  hand. Not where the list is a declaration's parameters, which keep breaking before the body
+  (`TestExample_LyrafmtBreaksAfterArrow`'s `=> { a + b }`).
+
+The repo reformatted in 40 files. `TestExample_LyrafmtBreaksTheLineNotItsList` has a case for
+each rule, each formatting differently under the lyrafmt before, and checks its own output
+is left alone.
+
 ### 11/11/26 — Turned and sized sprites on the Genesis, pre-rendered
 
 **The VDP neither turns nor scales, so Vega draws each declared angle and size ahead**, into

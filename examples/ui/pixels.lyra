@@ -320,7 +320,9 @@ let view = pure (state: State) -> Node<Event> => row([
   column([
     palette(state.color),
     text("${state.side}×${state.side}, ${state.zoom}×"),
-    row([button("−", Zoomed(-1)), button("+", Zoomed(1))]).with_style(Style { gap: Some(6.0) }),
+    row([button("−", Zoomed(-1)), button("+", Zoomed(1))]).with_style(Style {
+      gap: Some(6.0)
+    }),
     button("Clear", Cleared),
   ]).with_style(Style { padding: Some(insets(12.0)), gap: Some(10.0) }),
   expanded(canvas(state)),
@@ -331,7 +333,12 @@ let view = pure (state: State) -> Node<Event> => row([
 let canvas = pure (state: State) -> Node<Event> => {
   let source = PictureSource {
     key: "canvas",
-    image: Image { width: state.side, height: state.side, argb: state.pixels, pixelated: true },
+    image: Image {
+      width: state.side,
+      height: state.side,
+      argb: state.pixels,
+      pixelated: true
+    },
     revision: state.revision,
   }
   painted::<Event>(

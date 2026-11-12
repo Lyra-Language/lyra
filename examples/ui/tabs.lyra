@@ -53,7 +53,10 @@ let main = () -> u8 => {
     window_overflow: OverflowVisible,
   }
   let start = State {
-    docs: [Doc { name: "Home", key: "home" }, ...[i in 1..<4 | Doc { name: "Document ${i}", key: "doc ${i}" }]],
+    docs: [
+      Doc { name: "Home", key: "home" },
+      ...[i in 1..<4 | Doc { name: "Document ${i}", key: "doc ${i}" }]
+    ],
     made: 3
   }
   if let Some(script) = args.value("--script") {
@@ -170,7 +173,10 @@ let view = pure (s: State) -> Node<Event> => column([
     // Keyed: its place moves as tabs are added, and the focus stays on it.
     after: [button("+", Added).keyed("add")],
   }),
-  padding(insets(20.0), text(if s.docs.len() > 0 { s.docs[s.selected].name } else { "nothing open" })),
+  padding(
+    insets(20.0),
+    text(if s.docs.len() > 0 { s.docs[s.selected].name } else { "nothing open" })
+  ),
 ])
 
 /// `laid` — the window as the host last laid it out — drawn without showing it, and written to

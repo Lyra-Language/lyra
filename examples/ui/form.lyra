@@ -123,12 +123,32 @@ let view = pure (theme: Theme, state: Form) -> Node<FormEvent> =>
   themed(theme, sheet(theme), [
     column([
       text("Sign up").with_class("title"),
-      labelled("Name", text_input(FieldSpec { value: state.name, placeholder: "Ada Lovelace", on_edit: NameEdited })),
-      labelled("Email", text_input(FieldSpec { value: state.email, placeholder: "ada@example.com", on_edit: EmailEdited })),
+      labelled(
+        "Name",
+        text_input(FieldSpec {
+          value: state.name,
+          placeholder: "Ada Lovelace",
+          on_edit: NameEdited
+        })
+      ),
+      labelled(
+        "Email",
+        text_input(FieldSpec {
+          value: state.email,
+          placeholder: "ada@example.com",
+          on_edit: EmailEdited
+        })
+      ),
       checkbox("Send me the newsletter", state.newsletter, NewsletterToggled),
       row([
         text("Volume").with_class("label"),
-        expanded(slider(SliderSpec { value: state.volume, min: 0.0, max: 10.0, step: 1.0, on_change: VolumeChanged })),
+        expanded(slider(SliderSpec {
+          value: state.volume,
+          min: 0.0,
+          max: 10.0,
+          step: 1.0,
+          on_change: VolumeChanged
+        })),
         text("${i64(state.volume.round())}").with_class("value"),
       ]).with_style(Style { gap: Some(12.0) }),
       row([button("Submit", Submitted)]),
@@ -162,9 +182,15 @@ let verdict = pure (state: Form) -> string => {
 
 /// The screen's rules, in `theme`'s colours.
 let sheet = pure (theme: Theme) -> Sheet => Sheet { rules: [
-  Rule { selector: ".page", style: Style { padding: Some(insets(24.0)), gap: Some(16.0) } },
+  Rule {
+    selector: ".page",
+    style: Style { padding: Some(insets(24.0)), gap: Some(16.0) }
+  },
   Rule { selector: "Text.title", style: Style { font_size: Some(24.0) } },
-  Rule { selector: ".label", style: Style { color: Some(theme.colors.muted), font_size: Some(13.0) } },
+  Rule {
+    selector: ".label",
+    style: Style { color: Some(theme.colors.muted), font_size: Some(13.0) }
+  },
   Rule { selector: ".value", style: Style { color: Some(theme.colors.muted) } },
   Rule { selector: ".result", style: Style { color: Some(theme.colors.accent) } },
 ] }

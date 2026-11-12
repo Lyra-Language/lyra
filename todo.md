@@ -957,10 +957,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/02] lyrafmt is idempotent on a broken `=>`**: a planned break now indents as a
   written one does, and a `=>` sharing its line with its brace explodes the brace instead
   (COMPLETED.md, 11/02).
-- **[OPEN] lyrafmt leaves a long line whose last token is a comma**: that comma belongs to an
-  exploded list, `widest_list` picks that list and has nothing to add, so `foo(a, b),` never
-  breaks its own arguments. Skipping a line's last comma fixes it and reformats 37 of lyra's
-  234 formatted files.
+- **[DONE 11/11] lyrafmt breaks a long line ending in a comma**, and breaks an inline block or
+  struct literal before a list beside or inside it, never an arm's pattern (COMPLETED.md, 11/11).
 - **[DONE 11/11] lyrafmt indents a comment before a list's closer with the list**, and a
   struct's newline-separated fields each at the field level (COMPLETED.md, 11/11).
 - **[OPEN] `ui.sdl3`'s platform half is untested.** Nothing headless sends it input: bind

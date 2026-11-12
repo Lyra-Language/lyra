@@ -183,7 +183,9 @@ impl HashMap<k, v> {
     let hash = hash_key(key)
     match self.find_index(key, hash) {
       Some(i) => match self.slots[i] {
-        Some(e) => { self.slots[i] = Some(Entry { hash: hash, key: key, value: f(e.value) }) },
+        Some(e) => {
+          self.slots[i] = Some(Entry { hash: hash, key: key, value: f(e.value) })
+        },
         None => {},
       },
       None => {

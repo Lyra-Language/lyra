@@ -363,7 +363,9 @@ let shared = pure (how: Justify, free: f32, count: i64, gap: f32) -> (f32, f32) 
     JustifyAround =>
       if free > 0.0 { (free / n / 2.0, gap + free / n) } else { (free / 2.0, gap) },
     JustifyEvenly =>
-      if free > 0.0 { (free / (n + 1.0), gap + free / (n + 1.0)) } else { (free / 2.0, gap) },
+      if free > 0.0 {
+        (free / (n + 1.0), gap + free / (n + 1.0))
+      } else { (free / 2.0, gap) },
     _ => (0.0, gap),
   }
 }
@@ -476,7 +478,16 @@ let intrinsic_width<e> = (
     Pictured(_, natural) => natural.w,
     Measured(Some(w), _) => w,
     Flow(Horizontal, _, _) =>
-      children_width(node, least, true, styled.within, fonts, ui, id, shrunk) + style.gap * gaps,
+      children_width(
+        node,
+        least,
+        true,
+        styled.within,
+        fonts,
+        ui,
+        id,
+        shrunk
+      ) + style.gap * gaps,
     Flexbox => {
       let along_row = style.flex_direction == FlexRow || style.flex_direction == FlexRowReverse
       if least && shrunk && along_row {
@@ -502,7 +513,9 @@ let intrinsic_width<e> = (
     Gridbox =>
       grid_intrinsic_width(node.children, style, least, styled.within, fonts, ui, id),
     Scrolls(Horizontal, _) =>
-      if least { 0.0 } else { children_width(node, least, false, styled.within, fonts, ui, id, shrunk) },
+      if least {
+        0.0
+      } else { children_width(node, least, false, styled.within, fonts, ui, id, shrunk) },
     // A popup lends its anchor's width, and a modal what it is over: what floats from them,
     // open or not, takes none.
     PopsUp(_, _, _) => if node.children.len() == 0 { 0.0 } else {

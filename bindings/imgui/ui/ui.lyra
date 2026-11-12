@@ -981,8 +981,12 @@ impl Node<e> {
         seen(self)
       },
       // Its own sheet in place of the enclosing one: selectors stop at the boundary.
-      Component(own, children) => { for child in children { draw(child, own, seen, events) } },
-      Fragment(children) => { for child in children { draw(child, sheet, seen, events) } },
+      Component(own, children) => {
+        for child in children { draw(child, own, seen, events) }
+      },
+      Fragment(children) => {
+        for child in children { draw(child, sheet, seen, events) }
+      },
     }
 
   /// A field's label right-aligned in a `column` that wide, on its controls' line, and its

@@ -190,7 +190,11 @@ let parse_tzif = pure (name: string, data: []u8) -> Maybe<TimeZone> => {
     types.push(ZoneType {
       offset: read_int(data, base, 4),
       is_dst: data[base + 4] != 0,
-      abbreviation: read_designation(data, chars_at + i64(data[base + 5]), chars_at + head.charcnt),
+      abbreviation: read_designation(
+        data,
+        chars_at + i64(data[base + 5]),
+        chars_at + head.charcnt
+      ),
     })
   }
   if types.len() == 0 { return None }

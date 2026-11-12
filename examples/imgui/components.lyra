@@ -224,7 +224,10 @@ let check_sheets = () -> i64 => {
     ],
   }
   let boxes = Sheet {
-    rules: [StyleRule { selector: "Checkbox", style: Style { background: Some(col32(40, 110, 60)) } }],
+    rules: [StyleRule {
+      selector: "Checkbox",
+      style: Style { background: Some(col32(40, 110, 60)) }
+    }],
   }
   let yes = buttons.style_for("Button", "danger", Style {})
   f += verify(
@@ -281,7 +284,10 @@ let record = (node: Node<Event>) -> void => {
   let fill = color_convert_float4_to_u32(get_style().colors(COL_BUTTON))
   drawn.push(Drawn {
     label: label,
-    center: Vec2 { x: (top_left.x + bottom_right.x) / 2.0, y: (top_left.y + bottom_right.y) / 2.0 },
+    center: Vec2 {
+      x: (top_left.x + bottom_right.x) / 2.0,
+      y: (top_left.y + bottom_right.y) / 2.0
+    },
     left: top_left.x,
     right: bottom_right.x,
     top: top_left.y,

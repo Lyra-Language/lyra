@@ -301,7 +301,11 @@ pub let blended = pure (
       Computed { into | box_shadow: mix_shadows(from.box_shadow, to.box_shadow, p) },
     "background-image" => Computed {
       into |
-      background_gradient: mix_gradient(from.background_gradient, to.background_gradient, p),
+      background_gradient: mix_gradient(
+        from.background_gradient,
+        to.background_gradient,
+        p
+      ),
     },
     "filter" => Computed { into | filter_blur: mix(from.filter_blur, to.filter_blur, p) },
     "backdrop-filter" =>

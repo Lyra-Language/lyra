@@ -77,7 +77,13 @@ pub let menu_bar<e> = pure (menus: []Menu<e>) -> Node<e> => {
   Node {
     kind: kind,
     tag: "MenuBar",
-    children: [m in menus | opener::<e>(text::<e>(m.label), m.entries, FloatBelow, true, "MenuTitle")],
+    children: [m in menus | opener::<e>(
+      text::<e>(m.label),
+      m.entries,
+      FloatBelow,
+      true,
+      "MenuTitle"
+    )],
   }
 }
 
@@ -280,7 +286,10 @@ let same_entries<e> = pure (a: []MenuEntry<e>, b: []MenuEntry<e>) -> bool => {
   for i in 0..<a.len() {
     let same = match (a[i], b[i]) {
       (MenuItemEntry(x), MenuItemEntry(y)) =>
-        x.label == y.label && x.shortcut == y.shortcut && x.enabled == y.enabled && x.checked == y.checked,
+        x.label == y.label &&
+        x.shortcut == y.shortcut &&
+        x.enabled == y.enabled &&
+        x.checked == y.checked,
       (Submenu(l1, e1), Submenu(l2, e2)) => l1 == l2 && same_entries(e1, e2),
       (MenuSeparator, MenuSeparator) => true,
       _ => false,

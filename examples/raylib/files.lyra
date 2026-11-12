@@ -208,7 +208,10 @@ let run_checks = () -> u8 => {
     copy_file("${SCRATCH}/nope", "${SCRATCH}/x.txt"), false)
   failures += check(
     "rename_file",
-    rename_file("${SCRATCH}/c.txt", "${SCRATCH}/r.txt") && file_exists("${SCRATCH}/r.txt"),
+    rename_file(
+      "${SCRATCH}/c.txt",
+      "${SCRATCH}/r.txt"
+    ) && file_exists("${SCRATCH}/r.txt"),
     true
   )
   // **The one that raylib gets wrong**: its `FileMove` copies and returns -1 either way,

@@ -122,7 +122,14 @@ data Event = Opened(i64) | Closed | Changed(i64, Color)
 let update = pure (s: State, e: Event) -> (State, []Command<Event>) => match e {
   Opened(k) => (State { s | open: k }, []),
   Closed => (State { s | open: -1 }, []),
-  Changed(k, c) => (State { s | colors: [i in 0..<s.colors.len() | if i == k { (s.colors[i].0, c) } else { s.colors[i] }] }, []),
+  Changed(k, c) => (
+    State {
+      s | colors: [i in 0..<s.colors.len() | if i == k {
+        (s.colors[i].0, c)
+      } else { s.colors[i] }]
+    },
+    []
+  ),
 }
 
 /// A row a colour: its name, its swatch, and it as `ui.color` writes it and in OKLCH.
@@ -130,7 +137,13 @@ let view = pure (s: State) -> Node<Event> => padding(insets(20.0), column([
   k in 0..<s.colors.len() |
     row([
       sized(Some(110.0), None, [text(s.colors[k].0)]),
-      swatch(s.colors[k].1, s.open == k, Opened(k), (c: Color) -> Event => Changed(k, c), Closed),
+      swatch(
+        s.colors[k].1,
+        s.open == k,
+        Opened(k),
+        (c: Color) -> Event => Changed(k, c),
+        Closed
+      ),
       text("${color_text(s.colors[k].1)}   ${oklch_text(s.colors[k].1)}"),
     ]).aligned(MainStart, CrossCenter).with_style(Style { gap: Some(14.0) })
 ]).with_style(Style { gap: Some(12.0) }))

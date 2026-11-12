@@ -126,7 +126,11 @@ let update = pure (state: State, event: Event) -> (State, []Command<Event>) =>
   match event {
     // A popup's own button opens it, and closes it again.
     Toggled(name) => (
-      State { state | open: if state.open == name { "" } else { name }, recent: false, log: [...state.log, "toggled ${name}"] },
+      State {
+        state | open: if state.open == name { "" } else { name },
+        recent: false,
+        log: [...state.log, "toggled ${name}"]
+      },
       []
     ),
     Dismissed =>
@@ -146,12 +150,22 @@ let typefaces = pure () -> []string => [i in 0..<60 | "Typeface ${i + 1}"]
 let view = pure (state: State) -> Node<Event> => themed::<Event>(light_theme(), sheet(), [
   padding(insets(12.0), column([
     row([
-      popup(button("File", Toggled("file")), state.open == "file", file_menu(state), Dismissed),
+      popup(
+        button("File", Toggled("file")),
+        state.open == "file",
+        file_menu(state),
+        Dismissed
+      ),
       select(SelectSpec { options: typefaces(), selected: state.font, on_change: Font }),
     ]).with_style(Style { gap: Some(12.0) }),
     expanded(sized(None, None)),
     row([
-      popup(button("More", Toggled("more")), state.open == "more", more_menu(), Dismissed),
+      popup(
+        button("More", Toggled("more")),
+        state.open == "more",
+        more_menu(),
+        Dismissed
+      ),
     ]).aligned(MainEnd, CrossStart),
   ])),
 ])
@@ -163,7 +177,10 @@ let file_menu = pure (state: State) -> Node<Event> => menu([
   popup(
     button("Recent ▸", RecentToggled),
     state.recent,
-    menu([button("notes.txt", Did("open notes.txt")), button("todo.md", Did("open todo.md"))]),
+    menu([
+      button("notes.txt", Did("open notes.txt")),
+      button("todo.md", Did("open todo.md"))
+    ]),
     RecentDismissed,
     FloatBeside
   ),

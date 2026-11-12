@@ -48,7 +48,11 @@ let main = () -> u8 => {
   }
   let start = State {
     notes: [
-      Note { title: "Groceries", id: "groceries", color: Color { r: 0xF2, g: 0xC1, b: 0x4E } },
+      Note {
+        title: "Groceries",
+        id: "groceries",
+        color: Color { r: 0xF2, g: 0xC1, b: 0x4E }
+      },
       Note { title: "Ideas", id: "ideas", color: Color { r: 0x5D, g: 0x8C, b: 0xD6 } },
     ],
     made: 0,

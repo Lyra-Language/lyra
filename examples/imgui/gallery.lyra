@@ -194,7 +194,10 @@ let check = () -> u8 => {
   let shown = get_style_color_vec4(COL_TEXT)
   let stored = get_style().colors(COL_TEXT)
   failures += verify(
-    near(shown.x, stored.x) && near(shown.y, stored.y) && near(shown.z, stored.z) && near(shown.w, stored.w),
+    near(
+      shown.x,
+      stored.x
+    ) && near(shown.y, stored.y) && near(shown.z, stored.z) && near(shown.w, stored.w),
     "the text colour through its pointer is the style's"
   )
   failures += verify(

@@ -118,14 +118,30 @@ let main = () -> void => {
               Keyboard(Left) => { mx -= 1 },
               Keyboard(Right) => { mx += 1 },
               // Keys zoom about the marker, since a keypress has no pointer of its own.
-              Keyboard(PageUp) => { view = zoom_at(view, fcols, frows, left, top, mx, my, 1.0 / ZOOM_STEP) },
-              Keyboard(PageDown) => { view = zoom_at(view, fcols, frows, left, top, mx, my, ZOOM_STEP) },
+              Keyboard(PageUp) => {
+                view = zoom_at(view, fcols, frows, left, top, mx, my, 1.0 / ZOOM_STEP)
+              },
+              Keyboard(PageDown) => {
+                view = zoom_at(view, fcols, frows, left, top, mx, my, ZOOM_STEP)
+              },
               Keyboard(Char c) => { running = i64(c) != 113 },
               Mouse(m) => match m.button {
                 // Wheel up zooms *out*, matching the direction chosen for this viewer.
                 // Swap the two factors to invert it.
-                WheelUp => { view = view.zoom_at(fcols, frows, left, top, m.col, m.row, 1.0 / ZOOM_STEP) },
-                WheelDown => { view = view.zoom_at(fcols, frows, left, top, m.col, m.row, ZOOM_STEP) },
+                WheelUp => {
+                  view = view.zoom_at(
+                    fcols,
+                    frows,
+                    left,
+                    top,
+                    m.col,
+                    m.row,
+                    1.0 / ZOOM_STEP
+                  )
+                },
+                WheelDown => {
+                  view = view.zoom_at(fcols, frows, left, top, m.col, m.row, ZOOM_STEP)
+                },
                 _ => { mx = m.col; my = m.row }
               },
               _ => {}

@@ -18,7 +18,11 @@ pub let window_buttons<e> = pure () -> Node<e> => {
   Node {
     kind: kind,
     tag: "WindowButtons",
-    children: [b in [MinimizeButton, MaximizeButton, CloseButton] | window_control::<e>(b)],
+    children: [b in [
+      MinimizeButton,
+      MaximizeButton,
+      CloseButton
+    ] | window_control::<e>(b)],
   }
 }
 
@@ -40,8 +44,14 @@ let window_glyph<e> = pure (b: WindowButton, maximized: bool) -> Node<e> => {
     MinimizeButton => sized::<e>(Some(10.0), Some(1.0)).with_part("glyph"),
     MaximizeButton => if maximized {
       stack::<e>([
-        positioned::<e>(Edges { left: Some(2.0), top: Some(0.0) }, sized::<e>(Some(7.0), Some(7.0)).with_part("frame")),
-        positioned::<e>(Edges { left: Some(0.0), top: Some(2.0) }, sized::<e>(Some(7.0), Some(7.0)).with_part("frame")),
+        positioned::<e>(
+          Edges { left: Some(2.0), top: Some(0.0) },
+          sized::<e>(Some(7.0), Some(7.0)).with_part("frame")
+        ),
+        positioned::<e>(
+          Edges { left: Some(0.0), top: Some(2.0) },
+          sized::<e>(Some(7.0), Some(7.0)).with_part("frame")
+        ),
         sized::<e>(Some(9.0), Some(9.0)),
       ])
     } else {

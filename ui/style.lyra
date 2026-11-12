@@ -500,9 +500,18 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
       padding: Some(insets_xy(14.0, 6.0)),
     },
   },
-  Rule { selector: "Button:hover", style: Style { background: Some(shade(c.accent, 0.88)) } },
-  Rule { selector: "Button:active", style: Style { background: Some(shade(c.accent, 0.75)) } },
-  Rule { selector: "Button:disabled", style: Style { background: Some(faded(c.muted, 0.25)) } },
+  Rule {
+    selector: "Button:hover",
+    style: Style { background: Some(shade(c.accent, 0.88)) }
+  },
+  Rule {
+    selector: "Button:active",
+    style: Style { background: Some(shade(c.accent, 0.75)) }
+  },
+  Rule {
+    selector: "Button:disabled",
+    style: Style { background: Some(faded(c.muted, 0.25)) }
+  },
   Rule {
     selector: "Checkbox::box",
     style: Style {
@@ -534,7 +543,12 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
   // A radio button: a circle, holding the accent's dot while chosen.
   Rule {
     selector: "Radio::circle",
-    style: Style { background: Some(c.surface), border_color: Some(c.border), border_width: Some(CHECK_BORDER), radius: Some(9.0) },
+    style: Style {
+      background: Some(c.surface),
+      border_color: Some(c.border),
+      border_width: Some(CHECK_BORDER),
+      radius: Some(9.0)
+    },
   },
   Rule {
     selector: "Radio::chosen",
@@ -546,26 +560,48 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
       padding: Some(insets(4.0)),
     },
   },
-  Rule { selector: "Radio::dot", style: Style { background: Some(c.accent), radius: Some(5.0) } },
+  Rule {
+    selector: "Radio::dot",
+    style: Style { background: Some(c.accent), radius: Some(5.0) }
+  },
   // A disclosure's header: quiet until the pointer is over it, its arrow the muted colour.
-  Rule { selector: "Disclosure", style: Style { padding: Some(insets_xy(4.0, 4.0)), radius: Some(4.0) } },
-  Rule { selector: "Disclosure:hover", style: Style { background: Some(faded(c.text, 0.06)) } },
+  Rule {
+    selector: "Disclosure",
+    style: Style { padding: Some(insets_xy(4.0, 4.0)), radius: Some(4.0) }
+  },
+  Rule {
+    selector: "Disclosure:hover",
+    style: Style { background: Some(faded(c.text, 0.06)) }
+  },
   Rule { selector: "Disclosure::arrow", style: Style { background: Some(c.muted) } },
   // A progress bar: a thin track, filled with the accent.
   Rule {
     selector: "Progress",
-    style: Style { height: Some(6.0), radius: Some(3.0), background: Some(faded(c.text, 0.12)) },
+    style: Style {
+      height: Some(6.0),
+      radius: Some(3.0),
+      background: Some(faded(c.text, 0.12))
+    },
   },
-  Rule { selector: "Progress::fill", style: Style { background: Some(c.accent), radius: Some(3.0) } },
+  Rule {
+    selector: "Progress::fill",
+    style: Style { background: Some(c.accent), radius: Some(3.0) }
+  },
   Rule { selector: "Separator::line", style: Style { background: Some(c.border) } },
-  Rule { selector: "Separator::label", style: Style { color: Some(c.muted), font_size: Some(12.0) } },
+  Rule {
+    selector: "Separator::label",
+    style: Style { color: Some(c.muted), font_size: Some(12.0) }
+  },
   // What is dragged to resize — a split's edge, a table's column's — lit under the pointer.
   Rule {
     selector: "SplitEdge:hover, SplitEdge:active, ColumnEdge:hover, ColumnEdge:active",
     style: Style { background: Some(faded(c.accent, 0.3)) },
   },
   // A number field: its label muted, its buttons quiet beside the field.
-  Rule { selector: "NumberField::label", style: Style { color: Some(c.muted), padding: Some(insets_xy(2.0, 0.0)) } },
+  Rule {
+    selector: "NumberField::label",
+    style: Style { color: Some(c.muted), padding: Some(insets_xy(2.0, 0.0)) }
+  },
   Rule {
     selector: "NumberField::minus, NumberField::plus",
     style: Style {
@@ -581,17 +617,39 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
   // A table: framed, its header shaded, every other row faintly, the selected one in the accent.
   Rule {
     selector: "Table",
-    style: Style { background: Some(c.surface), border_color: Some(c.border), border_width: Some(1.0), radius: Some(6.0) },
+    style: Style {
+      background: Some(c.surface),
+      border_color: Some(c.border),
+      border_width: Some(1.0),
+      radius: Some(6.0)
+    },
   },
-  Rule { selector: "Table::header", style: Style { background: Some(faded(c.text, 0.05)) } },
+  Rule {
+    selector: "Table::header",
+    style: Style { background: Some(faded(c.text, 0.05)) }
+  },
   Rule { selector: "Table::rule", style: Style { background: Some(c.border) } },
-  Rule { selector: "TableRow.odd", style: Style { background: Some(faded(c.text, 0.03)) } },
-  Rule { selector: "TableRow:hover", style: Style { background: Some(faded(c.text, 0.07)) } },
-  Rule { selector: "TableRow:checked", style: Style { background: Some(faded(c.accent, 0.2)) } },
+  Rule {
+    selector: "TableRow.odd",
+    style: Style { background: Some(faded(c.text, 0.03)) }
+  },
+  Rule {
+    selector: "TableRow:hover",
+    style: Style { background: Some(faded(c.text, 0.07)) }
+  },
+  Rule {
+    selector: "TableRow:checked",
+    style: Style { background: Some(faded(c.accent, 0.2)) }
+  },
   // A dock: each group framed, and where a tab being docked would land lit in the accent.
   Rule {
     selector: "DockGroup",
-    style: Style { background: Some(c.surface), border_color: Some(c.border), border_width: Some(1.0), radius: Some(6.0) },
+    style: Style {
+      background: Some(c.surface),
+      border_color: Some(c.border),
+      border_width: Some(1.0),
+      radius: Some(6.0)
+    },
   },
   Rule {
     selector: "DockPreview",
@@ -606,7 +664,10 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
     selector: "Slider::track",
     style: Style { background: Some(c.border), radius: Some(2.0) },
   },
-  Rule { selector: "Slider::fill", style: Style { background: Some(c.accent), radius: Some(2.0) } },
+  Rule {
+    selector: "Slider::fill",
+    style: Style { background: Some(c.accent), radius: Some(2.0) }
+  },
   Rule {
     selector: "Slider::thumb",
     style: Style {
@@ -628,9 +689,18 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
   },
   Rule { selector: "TextInput:focus", style: Style { border_color: Some(c.accent) } },
   Rule { selector: "TextInput::placeholder", style: Style { color: Some(c.muted) } },
-  Rule { selector: "TextInput::selection", style: Style { background: Some(faded(c.accent, 0.3)) } },
+  Rule {
+    selector: "TextInput::selection",
+    style: Style { background: Some(faded(c.accent, 0.3)) }
+  },
   Rule { selector: "TextInput::caret", style: Style { background: Some(c.text) } },
-  Rule { selector: "TextInput:disabled", style: Style { background: Some(faded(c.muted, 0.25)), color: Some(faded(c.muted, 0.8)) } },
+  Rule {
+    selector: "TextInput:disabled",
+    style: Style {
+      background: Some(faded(c.muted, 0.25)),
+      color: Some(faded(c.muted, 0.8))
+    }
+  },
   Rule {
     selector: "Select",
     style: Style {
@@ -661,7 +731,10 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
     selector: "Select::option",
     style: Style { padding: Some(insets_xy(8.0, 4.0)), radius: Some(4.0) },
   },
-  Rule { selector: "Select::option:checked", style: Style { background: Some(faded(c.accent, 0.15)) } },
+  Rule {
+    selector: "Select::option:checked",
+    style: Style { background: Some(faded(c.accent, 0.15)) }
+  },
   Rule {
     selector: "Select::option:hover",
     style: Style { background: Some(c.accent), color: Some(rgb(0xFFFFFF)) },
@@ -695,41 +768,87 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
   },
   Rule {
     selector: "MenuItem",
-    style: Style { padding: Some(Insets { top: 4.0, right: 10.0, bottom: 4.0, left: 4.0 }), radius: Some(4.0) },
+    style: Style {
+      padding: Some(Insets { top: 4.0, right: 10.0, bottom: 4.0, left: 4.0 }),
+      radius: Some(4.0)
+    },
   },
   Rule {
     selector: "MenuItem:hover, MenuItem:focus-visible, MenuItem:open",
     style: Style { background: Some(c.accent), color: Some(rgb(0xFFFFFF)) },
   },
-  Rule { selector: "MenuItem:disabled", style: Style { color: Some(faded(c.text, 0.4)) } },
+  Rule {
+    selector: "MenuItem:disabled",
+    style: Style { color: Some(faded(c.text, 0.4)) }
+  },
   Rule { selector: "MenuItem::shortcut", style: Style { opacity: Some(0.6) } },
-  Rule { selector: "MenuItem::arrow", style: Style { background: Some(faded(c.text, 0.6)) } },
+  Rule {
+    selector: "MenuItem::arrow",
+    style: Style { background: Some(faded(c.text, 0.6)) }
+  },
   Rule { selector: "MenuSeparator", style: Style { background: Some(c.border) } },
   // A tab bar: quiet tabs on the page, the selected one raised on the surface; each × faint
   // until the pointer is over it.
-  Rule { selector: "TabBar", style: Style { gap: Some(2.0), padding: Some(insets(2.0)) } },
+  Rule {
+    selector: "TabBar",
+    style: Style { gap: Some(2.0), padding: Some(insets(2.0)) }
+  },
   Rule {
     selector: "Tab",
-    style: Style { padding: Some(insets_xy(10.0, 5.0)), radius: Some(6.0), color: Some(faded(c.text, 0.75)) },
+    style: Style {
+      padding: Some(insets_xy(10.0, 5.0)),
+      radius: Some(6.0),
+      color: Some(faded(c.text, 0.75))
+    },
   },
   Rule { selector: "Tab:hover", style: Style { background: Some(faded(c.text, 0.06)) } },
   Rule {
     selector: "Tab:checked",
-    style: Style { background: Some(c.surface), color: Some(c.text), border_color: Some(c.border), border_width: Some(1.0) },
+    style: Style {
+      background: Some(c.surface),
+      color: Some(c.text),
+      border_color: Some(c.border),
+      border_width: Some(1.0)
+    },
   },
-  Rule { selector: "TabClose", style: Style { padding: Some(insets_xy(4.0, 0.0)), radius: Some(3.0), opacity: Some(0.45) } },
-  Rule { selector: "TabClose:hover", style: Style { background: Some(faded(c.text, 0.12)), opacity: Some(1.0) } },
+  Rule {
+    selector: "TabClose",
+    style: Style {
+      padding: Some(insets_xy(4.0, 0.0)),
+      radius: Some(3.0),
+      opacity: Some(0.45)
+    }
+  },
+  Rule {
+    selector: "TabClose:hover",
+    style: Style { background: Some(faded(c.text, 0.12)), opacity: Some(1.0) }
+  },
   // The more-tabs button: its arrow quiet as a select's, lit while the pointer is over it or
   // its menu is open.
-  Rule { selector: "TabsMore", style: Style { padding: Some(insets_xy(8.0, 6.0)), radius: Some(6.0) } },
-  Rule { selector: "TabsMore:hover, TabsMore:open", style: Style { background: Some(faded(c.text, 0.08)) } },
+  Rule {
+    selector: "TabsMore",
+    style: Style { padding: Some(insets_xy(8.0, 6.0)), radius: Some(6.0) }
+  },
+  Rule {
+    selector: "TabsMore:hover, TabsMore:open",
+    style: Style { background: Some(faded(c.text, 0.08)) }
+  },
   Rule { selector: "TabsMore::arrow", style: Style { background: Some(c.muted) } },
   // The window's own buttons on a drawn title bar: quiet until the pointer is over one, close
   // red then, as on every desktop.
-  Rule { selector: "WindowButton:hover", style: Style { background: Some(faded(c.text, 0.08)) } },
-  Rule { selector: "WindowButton.close:hover", style: Style { background: Some(rgb(0xE81123)), color: Some(rgb(0xFFFFFF)) } },
+  Rule {
+    selector: "WindowButton:hover",
+    style: Style { background: Some(faded(c.text, 0.08)) }
+  },
+  Rule {
+    selector: "WindowButton.close:hover",
+    style: Style { background: Some(rgb(0xE81123)), color: Some(rgb(0xFFFFFF)) }
+  },
   Rule { selector: "WindowButton::glyph", style: Style { background: Some(c.text) } },
-  Rule { selector: "WindowButton::frame", style: Style { border_color: Some(c.text), border_width: Some(1.0) } },
+  Rule {
+    selector: "WindowButton::frame",
+    style: Style { border_color: Some(c.text), border_width: Some(1.0) }
+  },
   // A swatch: its colour framed as a field is; its picker a raised panel, as a menu is.
   Rule {
     selector: "Swatch",
@@ -741,7 +860,10 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
       border_width: Some(1.0),
     },
   },
-  Rule { selector: "Swatch:hover, Swatch:focus", style: Style { border_color: Some(c.accent) } },
+  Rule {
+    selector: "Swatch:hover, Swatch:focus",
+    style: Style { border_color: Some(c.accent) }
+  },
   Rule { selector: "ColorPatch", style: Style { radius: Some(3.0) } },
   // A tooltip: small text on a raised panel, no wider than a short paragraph.
   Rule {
@@ -755,13 +877,22 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
       padding: Some(insets_xy(6.0, 3.0)),
       font_size: Some(12.0),
       max_width: Some(320.0),
-      box_shadow: Some([BoxShadow { x: 0.0, y: 2.0, blur: 6.0, spread: 0.0, color: faded(c.text, 0.15) }]),
+      box_shadow: Some([BoxShadow {
+        x: 0.0,
+        y: 2.0,
+        blur: 6.0,
+        spread: 0.0,
+        color: faded(c.text, 0.15)
+      }]),
     },
   },
   // A modal: the window dimmed under it, a margin to its edges, and its dialog a raised panel.
   Rule {
     selector: "ModalScrim",
-    style: Style { background: Some(faded(rgb(0x000000), 0.35)), padding: Some(insets(24.0)) },
+    style: Style {
+      background: Some(faded(rgb(0x000000), 0.35)),
+      padding: Some(insets(24.0))
+    },
   },
   Rule {
     selector: "Dialog",
@@ -772,7 +903,13 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
       border_width: Some(1.0),
       radius: Some(10.0),
       padding: Some(insets(20.0)),
-      box_shadow: Some([BoxShadow { x: 0.0, y: 10.0, blur: 30.0, spread: 0.0, color: faded(rgb(0x000000), 0.3) }]),
+      box_shadow: Some([BoxShadow {
+        x: 0.0,
+        y: 10.0,
+        blur: 30.0,
+        spread: 0.0,
+        color: faded(rgb(0x000000), 0.3)
+      }]),
     },
   },
   Rule {
@@ -783,7 +920,13 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
       border_color: Some(c.border),
       border_width: Some(1.0),
       radius: Some(8.0),
-      box_shadow: Some([BoxShadow { x: 0.0, y: 4.0, blur: 12.0, spread: 0.0, color: faded(c.text, 0.18) }]),
+      box_shadow: Some([BoxShadow {
+        x: 0.0,
+        y: 4.0,
+        blur: 12.0,
+        spread: 0.0,
+        color: faded(c.text, 0.18)
+      }]),
     },
   },
 ]
@@ -801,8 +944,14 @@ pub let scrollbar_rules = pure (c: Palette) -> []Rule => [
     selector: "ScrollThumb",
     style: Style { background: Some(faded(c.text, 0.32)), radius: Some(4.0) },
   },
-  Rule { selector: "ScrollThumb:hover", style: Style { background: Some(faded(c.text, 0.5)) } },
-  Rule { selector: "ScrollThumb:active", style: Style { background: Some(faded(c.text, 0.6)) } },
+  Rule {
+    selector: "ScrollThumb:hover",
+    style: Style { background: Some(faded(c.text, 0.5)) }
+  },
+  Rule {
+    selector: "ScrollThumb:active",
+    style: Style { background: Some(faded(c.text, 0.6)) }
+  },
 ]
 
 /// A checkbox's border, the corner radius of its box, and the gap between a ticked box's

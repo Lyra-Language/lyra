@@ -835,7 +835,11 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
   }),
   PopsUp(open, side, dismissed) => PopsUp(open, side, f(dismissed)),
   Modal(open, dismissed) => Modal(open, f(dismissed)),
-  Opens(spec) => Opens(MenuSpec { entries: mapped_entries(spec.entries, f), side: spec.side, in_bar: spec.in_bar }),
+  Opens(spec) => Opens(MenuSpec {
+    entries: mapped_entries(spec.entries, f),
+    side: spec.side,
+    in_bar: spec.in_bar
+  }),
   Spelled(chord) => Spelled(chord),
   TabStrip => TabStrip,
   WindowControl(button) => WindowControl(button),
@@ -1174,7 +1178,10 @@ pub let layout_cached<e> = (
       ui |
       viewport: Viewport {
         ui.viewport |
-        size: Size { w: if c.bounded_w() { c.max_w } else { 0.0 }, h: if c.bounded_h() { c.max_h } else { 0.0 } },
+        size: Size {
+          w: if c.bounded_w() { c.max_w } else { 0.0 },
+          h: if c.bounded_h() { c.max_h } else { 0.0 }
+        },
       },
     }
   }
@@ -1226,10 +1233,20 @@ let float_spot = pure (anchor: Anchor, box: Rect, size: Size, window: Size) -> P
   match anchor.side {
     FloatBelow => Point {
       x: within_edges(box.x, size.w, window.w),
-      y: flipped(box.y + box.h + anchor.gap, box.y - anchor.gap - size.h, size.h, window.h),
+      y: flipped(
+        box.y + box.h + anchor.gap,
+        box.y - anchor.gap - size.h,
+        size.h,
+        window.h
+      ),
     },
     FloatBeside => Point {
-      x: flipped(box.x + box.w + anchor.gap, box.x - anchor.gap - size.w, size.w, window.w),
+      x: flipped(
+        box.x + box.w + anchor.gap,
+        box.x - anchor.gap - size.w,
+        size.w,
+        window.w
+      ),
       y: within_edges(box.y, size.h, window.h),
     },
     FloatPointer(at) => Point {
@@ -1391,11 +1408,17 @@ let kept_draft<e> = pure (kind: Kind<e>, laid: Kind<e>) -> Kind<e> => match kind
 /// from its entries — so a layout from the cache is refreshed through them too.
 let laid_children<e> = pure (node: Node<e>) -> []Node<e> => match node.kind {
   PopsUp(_, _, _) =>
-    if node.children.len() > 1 { [node.children[0], popup_holder(node.children[1])] } else { node.children },
+    if node.children.len() > 1 {
+      [node.children[0], popup_holder(node.children[1])]
+    } else { node.children },
   Modal(_, _) =>
-    if node.children.len() > 1 { [node.children[0], modal_scrim(node.children[1])] } else { node.children },
+    if node.children.len() > 1 {
+      [node.children[0], modal_scrim(node.children[1])]
+    } else { node.children },
   Opens(spec) =>
-    if node.children.len() > 0 { [node.children[0], menu_list::<e>(spec.entries)] } else { node.children },
+    if node.children.len() > 0 {
+      [node.children[0], menu_list::<e>(spec.entries)]
+    } else { node.children },
   // Its glyph's events are none, so whichever glyph it shows refreshes alike.
   WindowControl(button) => [window_glyph::<e>(button, false)],
   _ => node.children,
@@ -1531,7 +1554,9 @@ let same_kind<e> = (a: Kind<e>, b: Kind<e>, theme: Theme) -> bool => match (a, b
   (Editable(f1), Editable(f2)) =>
     f1.value == f2.value && f1.placeholder == f2.placeholder && f1.draft == f2.draft,
   (Choosing(s1), Choosing(s2)) =>
-    s1.selected == s2.selected && s1.options == s2.options && s1.separators == s2.separators,
+    s1.selected == s2.selected &&
+    s1.options == s2.options &&
+    s1.separators == s2.separators,
   (PopsUp(open1, side1, _), PopsUp(open2, side2, _)) => open1 == open2 && side1 == side2,
   (Modal(open1, _), Modal(open2, _)) => open1 == open2,
   (Opens(m1), Opens(m2)) =>
@@ -1542,7 +1567,10 @@ let same_kind<e> = (a: Kind<e>, b: Kind<e>, theme: Theme) -> bool => match (a, b
   (ColorAxis(a1), ColorAxis(a2)) => a1.channel == a2.channel && a1.color == a2.color,
   (ColorPatch(c1), ColorPatch(c2)) => c1 == c2,
   (Tabbed(t1), Tabbed(t2)) =>
-    t1.index == t2.index && t1.selected == t2.selected && t1.closable == t2.closable && t1.movable == t2.movable,
+    t1.index == t2.index &&
+    t1.selected == t2.selected &&
+    t1.closable == t2.closable &&
+    t1.movable == t2.movable,
   (Flexbox, Flexbox) => true,
   (Gridbox, Gridbox) => true,
   // What a painter draws is asked at paint, not kept with the layout: its box lays out alike.
@@ -1686,7 +1714,10 @@ let lay_fresh<e> = (
     ColorAxis(spec) => Body::<e> { size: inner.constrain(axis_size(spec.channel)) },
     // All the room it is given, as a painter's.
     ColorPatch(_) => Body::<e> {
-      size: inner.constrain(Size { w: if inner.bounded_w() { inner.max_w } else { 0.0 }, h: if inner.bounded_h() { inner.max_h } else { 0.0 } }),
+      size: inner.constrain(Size {
+        w: if inner.bounded_w() { inner.max_w } else { 0.0 },
+        h: if inner.bounded_h() { inner.max_h } else { 0.0 }
+      }),
     },
     Spelled(chord) => {
       let block = fonts.lay_out(
@@ -1739,7 +1770,9 @@ let lay_fresh<e> = (
       h: (body.size.h - port.h).max(0.0)
     }
     offset = Point {
-      x: if ox == OverflowClip { 0.0 } else { (held.scroll_x ?? start.x).clamp(0.0, spare.w) },
+      x: if ox == OverflowClip {
+        0.0
+      } else { (held.scroll_x ?? start.x).clamp(0.0, spare.w) },
       y: if oy == OverflowClip { 0.0 } else if style.scroll_follow && held.following {
         // At its end it stays there, however far the content grew.
         spare.h
@@ -1757,8 +1790,20 @@ let lay_fresh<e> = (
       x: ox,
       y: oy,
       track: track,
-      thumb_x: within.compute("ScrollThumb", with_state("", "${id}#thumb-x", ui), "", Style {}, bar_rules),
-      thumb_y: within.compute("ScrollThumb", with_state("", "${id}#thumb-y", ui), "", Style {}, bar_rules),
+      thumb_x: within.compute(
+        "ScrollThumb",
+        with_state("", "${id}#thumb-x", ui),
+        "",
+        Style {},
+        bar_rules
+      ),
+      thumb_y: within.compute(
+        "ScrollThumb",
+        with_state("", "${id}#thumb-y", ui),
+        "",
+        Style {},
+        bar_rules
+      ),
       narrowest: narrowest,
       marks: marks_under(ui, id),
     })
@@ -1837,8 +1882,14 @@ let asked_below<e> = pure (
 /// Scroll element's axis `OverflowAuto` where its style says nothing else.
 let overflows<e> = pure (kind: Kind<e>, style: ref Computed) -> (Overflow, Overflow) =>
   match kind {
-    Scrolls(Horizontal, _) => (if style.overflow_x == OverflowVisible { OverflowAuto } else { style.overflow_x }, style.overflow_y),
-    Scrolls(Vertical, _) => (style.overflow_x, if style.overflow_y == OverflowVisible { OverflowAuto } else { style.overflow_y }),
+    Scrolls(Horizontal, _) => (
+      if style.overflow_x == OverflowVisible { OverflowAuto } else { style.overflow_x },
+      style.overflow_y
+    ),
+    Scrolls(Vertical, _) => (
+      style.overflow_x,
+      if style.overflow_y == OverflowVisible { OverflowAuto } else { style.overflow_y }
+    ),
     _ => (style.overflow_x, style.overflow_y),
   }
 
@@ -2205,7 +2256,9 @@ let lay_select<e> = (
       tag: "Option",
       part: "option",
       key: "${i}",
-      children: [text::<e>(spec.options[i]).with_style(Style { font_family: option_family(spec, i) })],
+      children: [text::<e>(spec.options[i]).with_style(Style {
+        font_family: option_family(spec, i)
+      })],
     })
   }
   // Scrolling where it is longer than the window has room for (`ui.interact` keeps the

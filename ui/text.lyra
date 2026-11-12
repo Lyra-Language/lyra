@@ -523,7 +523,11 @@ impl Fonts {
     TextBlock {
       face: orders[0][0],
       size: font.size,
-      lines: [TextLine { glyphs: placed, width: f32(last) * advance, advance: f32(last) * advance }],
+      lines: [TextLine {
+        glyphs: placed,
+        width: f32(last) * advance,
+        advance: f32(last) * advance
+      }],
       width: f32(last) * advance,
     }
   }

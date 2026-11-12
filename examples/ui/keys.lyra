@@ -84,7 +84,11 @@ let main = () -> u8 => {
     window_overflow: OverflowVisible,
     shortcuts: [Shortcuts {
       of: (_: State) -> []Shortcut<Event> => [
-        Shortcut { key: Character('k'), mods: Modifiers { primary: true }, event: Cleared },
+        Shortcut {
+          key: Character('k'),
+          mods: Modifiers { primary: true },
+          event: Cleared
+        },
       ],
     }],
   }

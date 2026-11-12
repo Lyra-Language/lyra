@@ -172,7 +172,12 @@ let view = pure (state: State) -> Node<Event> => {
   themed::<Event>(light_theme(), Sheet {}, [
     padding(insets(8.0), column([
       bar,
-      expanded(dock(state.tree, (k: string) -> DockPanel<Event> => panel(state, k), Arranged, Closed)),
+      expanded(dock(
+        state.tree,
+        (k: string) -> DockPanel<Event> => panel(state, k),
+        Arranged,
+        Closed
+      )),
     ]).aligned(MainStart, CrossStretch).with_style(Style { gap: Some(8.0) })),
   ])
 }

@@ -669,13 +669,22 @@ let plan_breaks = (bytes: []u8, leaves: []Leaf, cols: []i64, lines: []i64,
       // it is the cheapest fix there is — one break, and both halves fit — so a
       // declaration whose *body* is the long part keeps its parameter list on one line.
       // Whatever fires, the line is done for this pass; the next pass sees what it did
-      // and decides again from the widths it actually produced.
+      // and decides again from the widths it actually produced. **A block or struct
+      // literal the line opens and closes comes before a list beside or inside it**
+      // (outermost_block), except a declaration's parameters, which break before its body.
       if break_arrow(bytes, leaves, inside, in_interp, cols, widest[line], i, last,
         continued) {
         planned = true
       } else {
         let chosen = widest_list(leaves, inside, in_interp, closer_of, i, last)
-        if chosen >= 0 {
+        let block = outermost_block(leaves, in_interp, closer_of, inside, i, last)
+        // A declaration's parameters break before its body does, which keeps `=> { a + b }`.
+        let parameters = chosen >= 0 && leaves[chosen].parent.ends_with("parameter_list")
+        let block_first = block >= 0 && !parameters &&
+          nesting(inside, block) <= nesting(inside, chosen)
+        if chosen >= 0 && block_first {
+          if explode(bytes, leaves, inside, closer_of, block, breaks) { planned = true }
+        } else if chosen >= 0 {
           if explode(bytes, leaves, inside, closer_of, chosen, breaks) { planned = true }
         } else if break_chain(
           bytes,
@@ -1009,9 +1018,17 @@ let widest_list = pure (
   var best_depth = 0
   for i in from..<=to {
     if leaves[i].kind != "," || in_interp[i] { continue }
+    // **A line's last comma is its list's, already exploded**: `foo(a, b),` is one element
+    // of a list a line apiece, and choosing that list again plans nothing, so the line's own
+    // arguments never broke (11/11). The list that can still shorten it is one inside.
+    if i == to { continue }
     let owner = inside[i]
     if owner < 0 || closer_of[owner] < 0 { continue }
     if leaves[owner].kind == `${` || opens_type_arguments(leaves[owner]) { continue }
+    // **Nor a pattern's**: `Changed(k, c) => …` exploded into `Changed(` ⏎ `k,` ⏎ `c` ⏎ `) =>`,
+    // and `let (bytes, writes) = …` likewise, which shortens nothing worth it — what's long is
+    // what follows, and it is the list or chain there that should break (11/11).
+    if leaves[owner].parent.ends_with("_pattern") { continue }
     let depth = nesting(inside, owner)
     if best < 0 || depth < best_depth {
       best = owner
@@ -1020,6 +1037,45 @@ let widest_list = pure (
   }
   best
 }
+
+/// The outermost block on a line that opens and closes on it — a `match` arm's `=> { … }`,
+/// an `if`'s or a loop's `{ … }`, a struct literal's `{ … }` — or -1.
+///
+/// **A long line holding one is broken there first**, before a list beside it or inside it
+/// (11/11): `Fragment(children) => { for child in children { draw(child, s, seen, events) } },`
+/// exploded `draw`'s arguments mid-block, `{ draw(` ⏎ … ⏎ `) }`, and an arm's pattern beside
+/// its block, `Component(` ⏎ `own,` ⏎ … ⏎ `) => { … }`. Its contents on a line of their own
+/// are what a block written by hand looks like, and the next pass breaks them if still long.
+let outermost_block = pure (
+  leaves: []Leaf,
+  in_interp: []bool,
+  closer_of: []i64,
+  inside: []i64,
+  from: i64,
+  to: i64
+) -> i64 => {
+  var best = 0 - 1
+  var best_depth = 0
+  for i in from..<=to {
+    if leaves[i].kind != "{" || in_interp[i] || !is_body(leaves[i].parent) { continue }
+    let closer = closer_of[i]
+    if closer < 0 || closer > to || closer == i + 1 { continue }
+    let depth = nesting(inside, i)
+    if best < 0 || depth < best_depth {
+      best = i
+      best_depth = depth
+    }
+  }
+  best
+}
+
+/// Whether a `{` of this parent holds a line's worth on its own: a block's statements, or a
+/// struct literal's fields — `Style { font_family: option_family(spec, i) }` is better as its
+/// field on a line than as the call's arguments split inside the braces. Not an import list
+/// or a type's fields, which are lists of names.
+let is_body = pure (k: string) -> bool =>
+  k == "block" || k == "loop_body" || k == "while_body" || k == "for_in_body" ||
+  k == "struct_body" || k == "anonymous_struct_literal"
 
 /// Whether a token opens a type-argument or type-parameter list — `Result<t, e>`,
 /// `let f<t, e>`, `sum::<i64>`, `impl From<A> for B` — as opposed to a `<` that compares.

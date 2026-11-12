@@ -315,7 +315,9 @@ let print_expr = pure (expr: shared Expr, depth: i64, show_loc: bool) -> string 
       ) ++
         scalar("Constructor", value.constructor, depth + 1)
       match value.value {
-        Some(v) => { out = out ++ node_field("Value", print_expr(v, depth + 2, show_loc), depth + 1) },
+        Some(v) => {
+          out = out ++ node_field("Value", print_expr(v, depth + 2, show_loc), depth + 1)
+        },
         None => {},
       }
       out ++ close(depth)
@@ -581,7 +583,9 @@ let print_for_in_loop = pure (
   )
   if for_in.key != "" { out = out ++ scalar("Key", for_in.key, depth + 1) }
   match for_in.key_type {
-    Some(t) => { out = out ++ node_field("KeyType", print_type(t, depth + 2, show_loc), depth + 1) },
+    Some(t) => {
+      out = out ++ node_field("KeyType", print_type(t, depth + 2, show_loc), depth + 1)
+    },
     None => {},
   }
   if for_in.label != "" { out = out ++ scalar("Label", for_in.label, depth + 1) }
@@ -765,7 +769,13 @@ let print_pattern = pure (
   show_loc: bool
 ) -> string =>
   match pattern {
-    IdentifierPattern(identifier) => print_named("IdentifierPattern", identifier, Some(identifier.location), depth, show_loc),
+    IdentifierPattern(identifier) => print_named(
+      "IdentifierPattern",
+      identifier,
+      Some(identifier.location),
+      depth,
+      show_loc
+    ),
     DataPattern(def) => print_data_pattern(def, depth, show_loc),
     LiteralPattern(def) =>
       header_unnamed("LiteralPattern", Some(def.location), depth, show_loc) ++
@@ -1199,7 +1209,11 @@ let loc_line = pure (loc: Maybe<Location>, depth: i64, show_loc: bool) -> string
   if !show_loc { "" } else {
     match loc {
       Some(at) =>
-        scalar("Loc", "${at.start_line}:${at.start_col}-${at.end_line}:${at.end_col}", depth),
+        scalar(
+          "Loc",
+          "${at.start_line}:${at.start_col}-${at.end_line}:${at.end_col}",
+          depth
+        ),
       None => "",
     }
   }

@@ -40,7 +40,10 @@ pub let number_field<e> = pure (
     on_edit: (typed: string) -> e => on_change(
       (typed.trim().parse_f64() ?? spec.value).clamp(spec.min, spec.max)
     ),
-    on_step: Some((n: i64) -> e => on_change(on_step(spec.value + f64(n) * spec.step, spec))),
+    on_step: Some((n: i64) -> e => on_change(on_step(
+      spec.value + f64(n) * spec.step,
+      spec
+    ))),
   }).with_part("field").labelled(spec.label)
   let minus = button::<e>(
     "−",
@@ -62,7 +65,9 @@ pub let number_field<e> = pure (
     [Node { kind: kind, tag: "Scrub", part: "label", children: [text::<e>(spec.label)] }]
   }
   component::<e>("NumberField", Sheet {}, [
-    row::<e>([...label, expanded::<e>(field), minus, plus]).with_style(Style { gap: Some(4.0) }),
+    row::<e>([...label, expanded::<e>(field), minus, plus]).with_style(Style {
+      gap: Some(4.0)
+    }),
   ])
 }
 

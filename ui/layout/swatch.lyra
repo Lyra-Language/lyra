@@ -50,7 +50,11 @@ pub let swatch<e> = pure (
     kind: kind,
     tag: "Swatch",
     label: color_text(color),
-    children: [sized::<e>(Some(22.0), Some(22.0), [Node { kind: patch, tag: "ColorPatch" }])],
+    children: [sized::<e>(
+      Some(22.0),
+      Some(22.0),
+      [Node { kind: patch, tag: "ColorPatch" }]
+    )],
   }
   popup(face, open, color_picker(color, on_change, alpha, below), on_dismiss)
 }
@@ -212,7 +216,10 @@ let paint_axis = (ops: mut []DrawOp, spec: AxisSpec<e>, hue: f32, box: Rect) -> 
       checkerboard(ops, box)
       ops.push(GradientFill(box, corners, Gradient {
         kind: LinearGradient(90.0),
-        stops: [ColorStop { color: Color { spec.color | a: 0 } }, ColorStop { color: Color { spec.color | a: 255 } }],
+        stops: [
+          ColorStop { color: Color { spec.color | a: 0 } },
+          ColorStop { color: Color { spec.color | a: 255 } }
+        ],
       }))
     },
   }

@@ -2383,7 +2383,10 @@ let ui_kind = pure (tag: string) -> Maybe<(UiShape, []string)> => match tag {
   "Column" => Some((ShapeLine("column"), ["main", "cross"])),
   "Stack" => Some((ShapePile, [])),
   "Expanded" => Some((ShapeWrap("expanded"), ["flex"])),
-  "Positioned" => Some((ShapeWrap("positioned"), ["left", "top", "right", "bottom", "width", "height"])),
+  "Positioned" => Some((
+    ShapeWrap("positioned"),
+    ["left", "top", "right", "bottom", "width", "height"]
+  )),
   "Padding" =>
     Some((ShapeWrap("padding"), ["all", "x", "y", "top", "right", "bottom", "left"])),
   "Align" => Some((ShapeWrap("align"), ["at"])),
@@ -2394,14 +2397,20 @@ let ui_kind = pure (tag: string) -> Maybe<(UiShape, []string)> => match tag {
   "Checkbox" => Some((ShapeLabelled("checkbox"), ["checked", "on_toggle"])),
   "Slider" => Some((ShapeBare("slider"), ["value", "min", "max", "step", "on_change"])),
   "Select" =>
-    Some((ShapeBare("select"), ["options", "selected", "on_change", "separators", "option_families"])),
+    Some((
+      ShapeBare("select"),
+      ["options", "selected", "on_change", "separators", "option_families"]
+    )),
   "Popup" => Some((ShapeTwo("popup"), ["open", "on_dismiss", "side"])),
   "Modal" => Some((ShapeTwo("modal"), ["open", "on_dismiss"])),
   "Splitter" => Some((ShapeTwo("splitter"), ["at", "on_drag", "axis", "least"])),
   "Picture" =>
     Some((ShapeBare("picture"), ["name", "image", "revision", "width", "height"])),
   "NumberField" =>
-    Some((ShapeLabelled("number_field"), ["value", "min", "max", "step", "decimals", "on_change"])),
+    Some((
+      ShapeLabelled("number_field"),
+      ["value", "min", "max", "step", "decimals", "on_change"]
+    )),
   "RadioGroup" =>
     Some((ShapeBare("radio_group"), ["options", "selected", "on_change", "axis"])),
   "Radio" => Some((ShapeLabelled("radio"), ["chosen", "on_choose"])),
@@ -2420,7 +2429,10 @@ let ui_kind = pure (tag: string) -> Maybe<(UiShape, []string)> => match tag {
   "MenuButton" => Some((ShapeMenus("menu_button"), ["title", "face"])),
   "TabBar" => Some((ShapeTabs, ["tabs", "selected", "on_select", "on_close", "on_move"])),
   "Swatch" =>
-    Some((ShapeBare("swatch"), ["color", "open", "on_open", "on_change", "on_dismiss", "opaque"])),
+    Some((
+      ShapeBare("swatch"),
+      ["color", "open", "on_open", "on_change", "on_dismiss", "opaque"]
+    )),
   "ColorPicker" => Some((ShapeBare("color_picker"), ["color", "on_change", "opaque"])),
   "WindowButtons" => Some((ShapeBare("window_buttons"), [])),
   "Flex" => Some((ShapeLayout("flex"), FLEX_ATTRIBUTES)),
@@ -2508,7 +2520,14 @@ let layout_declaration = pure (
       ("column", "FlexColumn"),
       ("column-reverse", "FlexColumnReverse"),
     ])),
-    "flex_wrap" => one(name, word_of(name, value, [("nowrap", "NoWrap"), ("wrap", "Wrap"), ("wrap-reverse", "WrapReverse")])),
+    "flex_wrap" => one(
+      name,
+      word_of(
+        name,
+        value,
+        [("nowrap", "NoWrap"), ("wrap", "Wrap"), ("wrap-reverse", "WrapReverse")]
+      )
+    ),
     "justify_content" => one(name, word_of(name, value, JUSTIFY_WORDS)),
     "align_content" =>
       one(name, word_of(name, value, [...JUSTIFY_WORDS, ("stretch", "JustifyStretch")])),
@@ -2925,11 +2944,17 @@ impl Moves {
         Ok(Moves { self | properties: names, given: true })
       },
       "transition_duration" =>
-        Ok(Moves { self | durations: [item in items | time_of("transition-duration", item)?], given: true }),
+        Ok(Moves {
+          self | durations: [item in items | time_of("transition-duration", item)?],
+          given: true
+        }),
       "transition_timing_function" =>
         Ok(Moves { self | timings: [item in items | timing_of(item)?], given: true }),
       "transition_delay" =>
-        Ok(Moves { self | delays: [item in items | time_of("transition-delay", item)?], given: true }),
+        Ok(Moves {
+          self | delays: [item in items | time_of("transition-delay", item)?],
+          given: true
+        }),
       _ => Err("no style property ${name.replace("_", "-")} in ui; a transition is transition, transition-property, transition-duration, transition-timing-function or transition-delay"),
     }
   }
@@ -3450,21 +3475,40 @@ let element_kind = pure (tag: string) -> Maybe<Kind> => {
     "Combo" => Some(Kind {
       attrs_struct: "ComboAttrs",
       text_field: "",
-      attrs: [Field { name: "label", kind: Str }, Field { name: "preview", kind: Str }, id, class, style],
+      attrs: [
+        Field { name: "label", kind: Str },
+        Field { name: "preview", kind: Str },
+        id,
+        class,
+        style
+      ],
       required: ["label", "preview"],
       holds: true,
     }),
     "Selectable" => Some(Kind {
       attrs_struct: "SelectableAttrs",
       text_field: "label",
-      attrs: [Field { name: "selected", kind: Flag }, Field { name: "on_select", kind: Any }, id, class, style],
+      attrs: [
+        Field { name: "selected", kind: Flag },
+        Field { name: "on_select", kind: Any },
+        id,
+        class,
+        style
+      ],
       required: ["label", "on_select"],
       holds: false,
     }),
     "Radio" => Some(Kind {
       attrs_struct: "RadioAttrs",
       text_field: "label",
-      attrs: [Field { name: "selected", kind: Flag }, Field { name: "on_select", kind: Any }, id, enabled, class, style],
+      attrs: [
+        Field { name: "selected", kind: Flag },
+        Field { name: "on_select", kind: Any },
+        id,
+        enabled,
+        class,
+        style
+      ],
       required: ["label", "on_select"],
       holds: false,
     }),
@@ -3568,12 +3612,29 @@ let element_kind = pure (tag: string) -> Maybe<Kind> => {
     "Text" => Some(Kind {
       attrs_struct: "TextAttrs",
       text_field: "text",
-      attrs: [Field { name: "disabled", kind: Flag }, Field { name: "wrapped", kind: Flag }, class, style],
+      attrs: [
+        Field { name: "disabled", kind: Flag },
+        Field { name: "wrapped", kind: Flag },
+        class,
+        style
+      ],
       required: ["text"],
       holds: false,
     }),
-    "Separator" => Some(Kind { attrs_struct: "", text_field: "", attrs: [], required: [], holds: false }),
-    "SeparatorText" => Some(Kind { attrs_struct: "", text_field: "label", attrs: [], required: [], holds: false }),
+    "Separator" => Some(Kind {
+      attrs_struct: "",
+      text_field: "",
+      attrs: [],
+      required: [],
+      holds: false
+    }),
+    "SeparatorText" => Some(Kind {
+      attrs_struct: "",
+      text_field: "label",
+      attrs: [],
+      required: [],
+      holds: false
+    }),
     _ => None,
   }
 }

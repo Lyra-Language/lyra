@@ -494,7 +494,12 @@ let frame_of = (renderer: GpuRenderer, window: Window, ops: []DrawOp) -> Frame =
             quad: g.at.scaled(scale),
             color: color,
             kind: 1,
-            uv: (g.texels.x / tw, g.texels.y / th, (g.texels.x + g.texels.w) / tw, (g.texels.y + g.texels.h) / th),
+            uv: (
+              g.texels.x / tw,
+              g.texels.y / th,
+              (g.texels.x + g.texels.w) / tw,
+              (g.texels.y + g.texels.h) / th
+            ),
           })
         }
       },
@@ -505,8 +510,18 @@ let frame_of = (renderer: GpuRenderer, window: Window, ops: []DrawOp) -> Frame =
           quad: at.scaled(scale),
           kind: 1,
           // The texture times the colour: its alpha the opacity.
-          color: Color { r: 255, g: 255, b: 255, a: u8((opacity.clamp(0.0, 1.0) * 255.0).round()) },
-          uv: (texels.x / tw, texels.y / th, (texels.x + texels.w) / tw, (texels.y + texels.h) / th),
+          color: Color {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: u8((opacity.clamp(0.0, 1.0) * 255.0).round())
+          },
+          uv: (
+            texels.x / tw,
+            texels.y / th,
+            (texels.x + texels.w) / tw,
+            (texels.y + texels.h) / th
+          ),
         })
       },
       PushClip(at, radii) => {

@@ -752,7 +752,9 @@ impl Host<s, e> {
           })
           self.main_placed(at, platform)
         } else { self.moved(k, at, platform) },
-        WindowPlaced(_) => if k > 0 { self.moved(k, at, platform) } else { self.main_placed(at, platform) },
+        WindowPlaced(_) => if k > 0 {
+          self.moved(k, at, platform)
+        } else { self.main_placed(at, platform) },
         AppearanceChanged(look) => {
           for j in 0..<self.windows.len() { self.windows[j].dirty = true }
           self.heard(at, platform, (sub) => match sub {
@@ -813,7 +815,10 @@ impl Host<s, e> {
       // A key the system's own menu bar holds is the bar's: AppKit chooses its item, and SDL
       // hears the key as well.
       let barred = match input {
-        KeyPressed(key, mods) => self.native_menus && self.native_chords.any((c) => c.key == key && chord_matches(c.mods, mods)),
+        KeyPressed(key, mods) => self.native_menus && self.native_chords.any((c) => c.key == key && chord_matches(
+          c.mods,
+          mods
+        )),
         _ => false,
       }
       // A shortcut is the program's before any element hears the key.
@@ -838,7 +843,10 @@ impl Host<s, e> {
       for button in self.windows[k].ui.take_window_buttons() {
         match button {
           MinimizeButton => platform.change_window(id, ToMinimized),
-          MaximizeButton => platform.change_window(id, if platform.window_state(id).maximized { ToRestored } else { ToMaximized }),
+          MaximizeButton => platform.change_window(
+            id,
+            if platform.window_state(id).maximized { ToRestored } else { ToMaximized }
+          ),
           CloseButton => {
             if k == 0 {
               self.running = false
@@ -1253,7 +1261,9 @@ impl Host<s, e> {
     for sub in (self.app.subscriptions)(self.state) {
       match sub {
         EveryFrame(_) => { wait = sooner(wait, FRAME_MS) },
-        Every(period, _) => { wait = sooner(wait, self.last_fired(period, now) + period - now) },
+        Every(period, _) => {
+          wait = sooner(wait, self.last_fired(period, now) + period - now)
+        },
         _ => {},
       }
     }

@@ -250,8 +250,14 @@ let material_from = pure (doc: JsonValue, m: JsonValue) -> MaterialParams => {
     emissive_r: number_at(emissive, 0, 0.0),
     emissive_g: number_at(emissive, 1, 0.0),
     emissive_b: number_at(emissive, 2, 0.0),
-    emissive_strength: number_or(member(member(ext, "KHR_materials_emissive_strength"), "emissiveStrength"), 1.0),
-    transmission: number_or(member(member(ext, "KHR_materials_transmission"), "transmissionFactor"), 0.0),
+    emissive_strength: number_or(
+      member(member(ext, "KHR_materials_emissive_strength"), "emissiveStrength"),
+      1.0
+    ),
+    transmission: number_or(
+      member(member(ext, "KHR_materials_transmission"), "transmissionFactor"),
+      0.0
+    ),
     clearcoat: number_or(member(coat, "clearcoatFactor"), 0.0),
     clearcoat_roughness: number_or(member(coat, "clearcoatRoughnessFactor"), 0.0),
     alpha_mode: alpha_mode_of(member(m, "alphaMode").as_text().unwrap_or("OPAQUE")),
@@ -374,7 +380,14 @@ pub let load_images = (path: string) -> Maybe<[]ImageBytes> => {
           }
         }
       },
-      None => out.push(ImageBytes { mime: mime, bytes: view_bytes(doc, buffers, member(image, "bufferView").as_int().unwrap_or(0 - 1)) }),
+      None => out.push(ImageBytes {
+        mime: mime,
+        bytes: view_bytes(
+          doc,
+          buffers,
+          member(image, "bufferView").as_int().unwrap_or(0 - 1)
+        )
+      }),
     }
   }
   Some(out)

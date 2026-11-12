@@ -120,7 +120,8 @@ impl Animation {
     mirrored: bool = false,
     angle: i16 = 0,
     size: i16 = 100
-  ) -> void => art.draw_frame(self.sprite, x, y, self.frame_in(art, tick), mirrored, angle, size)
+  ) -> void =>
+    art.draw_frame(self.sprite, x, y, self.frame_in(art, tick), mirrored, angle, size)
 }
 
 impl Entity {
@@ -155,7 +156,15 @@ impl Entity {
     let (sx, sy) = view.on_screen(self.x(), self.y())
     // Off the screen, its sprites would wrap round onto it.
     if visible(sx, sy, self.kind.width, self.kind.height) {
-      self.animation.play_with(art, sx, sy, self.tick, self.mirrored, self.angle, self.size)
+      self.animation.play_with(
+        art,
+        sx,
+        sy,
+        self.tick,
+        self.mirrored,
+        self.angle,
+        self.size
+      )
     }
     self.tick = self.tick.wrapping_add(1)
     self.drawn = true

@@ -145,10 +145,28 @@ data Event = Chose(string) | StatusBar | Zoom(i64) | OpenAsked | Opened(Maybe<st
 let update = pure (state: State, event: Event) -> (State, []Command<Event>) =>
   match event {
     Chose(what) => (State { state | chosen: [...state.chosen, what] }, []),
-    StatusBar => (State { state | status_bar: !state.status_bar, chosen: [...state.chosen, "status bar"] }, []),
-    Zoom(by) => (State { state | zoom: state.zoom + by, chosen: [...state.chosen, "zoom ${state.zoom + by}"] }, []),
+    StatusBar => (
+      State {
+        state | status_bar: !state.status_bar,
+        chosen: [...state.chosen, "status bar"]
+      },
+      []
+    ),
+    Zoom(by) => (
+      State {
+        state | zoom: state.zoom + by,
+        chosen: [...state.chosen, "zoom ${state.zoom + by}"]
+      },
+      []
+    ),
     // The system's open dialog; the program goes on while it is open.
-    OpenAsked => (state, [ChooseFile(FileDialog { filters: [("Text", "txt;md"), ("All files", "*")] }, Opened)]),
+    OpenAsked => (
+      state,
+      [ChooseFile(
+        FileDialog { filters: [("Text", "txt;md"), ("All files", "*")] },
+        Opened
+      )]
+    ),
     Opened(path) => (State { state | chosen: [...state.chosen, match path {
       Some(p) => "opened ${p}",
       None => "open cancelled",
@@ -183,7 +201,12 @@ let menus = pure (state: State) -> []Menu<Event> => [
   Menu {
     label: "Edit",
     entries: [
-      MenuItemEntry(MenuItem { label: "Undo", on_select: Chose("undo"), shortcut: Some(Chord { key: Character('z'), mods: Modifiers { primary: true } }), enabled: false }),
+      MenuItemEntry(MenuItem {
+        label: "Undo",
+        on_select: Chose("undo"),
+        shortcut: Some(Chord { key: Character('z'), mods: Modifiers { primary: true } }),
+        enabled: false
+      }),
       MenuSeparator,
       item("Cut", Chose("cut"), Some('x'), false),
       item("Copy", Chose("copy"), Some('c'), false),
@@ -193,8 +216,18 @@ let menus = pure (state: State) -> []Menu<Event> => [
   Menu {
     label: "View",
     entries: [
-      MenuItemEntry(MenuItem { label: "Status Bar", on_select: StatusBar, checked: state.status_bar }),
-      Submenu("Zoom", [item("Zoom In", Zoom(1), Some('='), false), item("Zoom Out", Zoom(-1), Some('-'), false)]),
+      MenuItemEntry(MenuItem {
+        label: "Status Bar",
+        on_select: StatusBar,
+        checked: state.status_bar
+      }),
+      Submenu(
+        "Zoom",
+        [
+          item("Zoom In", Zoom(1), Some('='), false),
+          item("Zoom Out", Zoom(-1), Some('-'), false)
+        ]
+      ),
     ],
   },
 ]

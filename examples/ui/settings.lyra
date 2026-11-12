@@ -128,7 +128,12 @@ let meter = pure (level: f32) -> Node<void> => component("Meter", METER, [
   stack([
     sized(Some(METER_WIDTH), Some(6.0)).with_part("track"),
     positioned(
-      Edges { left: Some(0.0), top: Some(0.0), width: Some(METER_WIDTH * level), height: Some(6.0) },
+      Edges {
+        left: Some(0.0),
+        top: Some(0.0),
+        width: Some(METER_WIDTH * level),
+        height: Some(6.0)
+      },
       sized(None, None).with_part("fill")
     ),
   ]),
@@ -162,17 +167,26 @@ let toggle = pure (on: bool) -> Node<void> => component("Toggle", TOGGLE, [
 /// A switch's own rules: a round pill and a white knob.
 const TOGGLE: Sheet = Sheet { rules: [
   Rule { selector: "SizedBox", style: Style { radius: Some(10.0) } },
-  Rule { selector: ".knob", style: Style { radius: Some(8.0), background: Some(Color { r: 255, g: 255, b: 255 }) } },
+  Rule {
+    selector: ".knob",
+    style: Style { radius: Some(8.0), background: Some(Color { r: 255, g: 255, b: 255 }) }
+  },
 ] }
 
 /// The screen's rules, in `theme`'s colours.
 let sheet = pure (theme: Theme) -> Sheet => {
   let c = theme.colors
   Sheet { rules: [
-    Rule { selector: ".page", style: Style { padding: Some(insets(24.0)), gap: Some(16.0) } },
+    Rule {
+      selector: ".page",
+      style: Style { padding: Some(insets(24.0)), gap: Some(16.0) }
+    },
     Rule { selector: "Text.title", style: Style { font_size: Some(26.0) } },
     Rule { selector: ".heading", style: Style { font_size: Some(17.0) } },
-    Rule { selector: ".muted", style: Style { color: Some(c.muted), font_size: Some(13.0) } },
+    Rule {
+      selector: ".muted",
+      style: Style { color: Some(c.muted), font_size: Some(13.0) }
+    },
     Rule { selector: ".value", style: Style { color: Some(c.muted) } },
     Rule {
       selector: ".card",

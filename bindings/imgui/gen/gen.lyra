@@ -608,7 +608,10 @@ let read_function = pure (f: JsonValue, api: Api) -> Outcome => {
       }
       Bound([
         Function { wrapper | params: trailing_defaults(plain) },
-        Function { wrapper | name: "${base}_closable", params: trailing_defaults(closable) },
+        Function {
+          wrapper | name: "${base}_closable",
+          params: trailing_defaults(closable)
+        },
       ])
     },
   }

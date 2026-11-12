@@ -216,14 +216,20 @@ let collect_statement = (node: Node, source: Source) -> Maybe<Stmt> => {
     "var_reassignment" => collect_var_reassignment(node, source),
     "break_statement" => collect_break(node, source),
     "continue_statement" =>
-      Some(ContinueStmt(Continue { location: source.location_of(node), label: jump_label(node, source) })),
+      Some(ContinueStmt(Continue {
+        location: source.location_of(node),
+        label: jump_label(node, source)
+      })),
     "expression_statement" => {
       // The statement wraps one expression; if that expression is a kind this slice does
       // not know, the statement is not collected either — a wrapper around nothing is a
       // node this did not understand, not an empty one.
       if node.named_child_count() > 0 {
         return match collect_expr(node.named_child(0), source) {
-          Some(expr) => Some(ExpressionStmt(ExprStmt { location: source.location_of(node), expression: expr })),
+          Some(expr) => Some(ExpressionStmt(ExprStmt {
+            location: source.location_of(node),
+            expression: expr
+          })),
           None => None,
         }
       }
@@ -477,7 +483,10 @@ let collect_generic_params = (node: Node, source: Source) -> []GenericParam => {
   for child in list.named_children() {
     if child.kind() == "generic_parameter" {
       match child.field("name") {
-        Some(n) => params.push(GenericParam { location: source.location_of(child), name: n.text(source.bytes) }),
+        Some(n) => params.push(GenericParam {
+          location: source.location_of(child),
+          name: n.text(source.bytes)
+        }),
         None => {},
       }
     }
@@ -642,7 +651,10 @@ let collect_pattern = (node: Node, source: Source) -> Maybe<shared Pattern> => {
       return collect_pattern(node.named_child(0), source)
     },
     "identifier" =>
-      return Some(IdentifierPattern(Identifier { location: source.location_of(node), name: node.text(source.bytes) })),
+      return Some(IdentifierPattern(Identifier {
+        location: source.location_of(node),
+        name: node.text(source.bytes)
+      })),
     "data_pattern" => {
       let name_node = node.field("name")?
       return Some(DataPattern(DataPatternDef {
@@ -673,11 +685,20 @@ let collect_pattern = (node: Node, source: Source) -> Maybe<shared Pattern> => {
       },
     })),
     "tuple_pattern" =>
-      return Some(TuplePattern(PatternList { location: source.location_of(node), elements: collect_pattern_list(node, source) })),
+      return Some(TuplePattern(PatternList {
+        location: source.location_of(node),
+        elements: collect_pattern_list(node, source)
+      })),
     "array_pattern" =>
-      return Some(ArrayPattern(PatternList { location: source.location_of(node), elements: collect_pattern_list(node, source) })),
+      return Some(ArrayPattern(PatternList {
+        location: source.location_of(node),
+        elements: collect_pattern_list(node, source)
+      })),
     "or_pattern" =>
-      return Some(OrPattern(PatternList { location: source.location_of(node), elements: collect_pattern_list(node, source) })),
+      return Some(OrPattern(PatternList {
+        location: source.location_of(node),
+        elements: collect_pattern_list(node, source)
+      })),
     "rest_pattern" => return Some(RestPattern(Rest {
       location: source.location_of(node),
       identifier: match node.field("identifier") {
@@ -710,8 +731,14 @@ let collect_literal_pattern = (node: Node, source: Source) -> shared Pattern => 
     if child.kind() == "char_literal" {
       return match collect_character(child, source) {
         CharacterLiteralExpr(lit) =>
-          LiteralPattern(LiteralPatternDef { location: source.location_of(node), value: quote_rune(lit.value) }),
-        _ => LiteralPattern(LiteralPatternDef { location: source.location_of(node), value: node.text(source.bytes) }),
+          LiteralPattern(LiteralPatternDef {
+            location: source.location_of(node),
+            value: quote_rune(lit.value)
+          }),
+        _ => LiteralPattern(LiteralPatternDef {
+          location: source.location_of(node),
+          value: node.text(source.bytes)
+        }),
       }
     }
   }
@@ -839,7 +866,10 @@ let collect_struct_pattern_rename = (
   Some(StructPatternField {
     location: source.location_of(node),
     name: name.text(source.bytes),
-    pattern: Some(IdentifierPattern(Identifier { location: source.location_of(new_name), name: new_name.text(source.bytes) })),
+    pattern: Some(IdentifierPattern(Identifier {
+      location: source.location_of(new_name),
+      name: new_name.text(source.bytes)
+    })),
   })
 }
 
@@ -868,11 +898,18 @@ let collect_expr = (node: Node, source: Source) -> Maybe<shared Expr> =>
     // A lambda met as an expression carries whatever modifiers it was written with; only
     // a declaration can hand it more.
     "lambda_expr" => Some(collect_lambda(node, source, false, false)),
-    "identifier" => Some(IdentifierExpr(Identifier { location: source.location_of(node), name: node.text(source.bytes) })),
+    "identifier" => Some(IdentifierExpr(Identifier {
+      location: source.location_of(node),
+      name: node.text(source.bytes)
+    })),
     // A const name is a **kind of its own**, so nothing here reads the spelling to decide
     // — `MAX` is const because the grammar said so, not because it is upper case.
     "const_identifier" =>
-      Some(IdentifierExpr(Identifier { location: source.location_of(node), is_const: true, name: node.text(source.bytes) })),
+      Some(IdentifierExpr(Identifier {
+        location: source.location_of(node),
+        is_const: true,
+        name: node.text(source.bytes)
+      })),
     "binary_expr" => collect_binary(node, source),
     "call_expr" => collect_call(node, source),
     "block" => Some(collect_block(node, source)),
@@ -1034,7 +1071,11 @@ let collect_call = (node: Node, source: Source) -> Maybe<shared Expr> => {
       (payload) => FunctionCallExpr(FunctionCall {
         location: location,
         arguments: arguments,
-        function: MemberExpr(MemberAccess { location: callee_location, object: payload, property: method }),
+        function: MemberExpr(MemberAccess {
+          location: callee_location,
+          object: payload,
+          property: method
+        }),
         generic_arguments: generic_arguments,
       })
     ))
@@ -1074,7 +1115,9 @@ let collect_arguments = (node: Node, source: Source) -> []shared Expr => {
 /// both were dropped here, as they were there.
 let collect_argument = (node: Node, source: Source) -> Maybe<shared Expr> =>
   match node.kind() {
-    "value" => if node.named_child_count() > 0 { collect_expr(node.named_child(0), source) } else { None },
+    "value" => if node.named_child_count() > 0 {
+      collect_expr(node.named_child(0), source)
+    } else { None },
     "named_argument" => match node.field("value") {
       Some(value) => collect_argument(value, source),
       None => match node.field("wildcard") {
@@ -1091,7 +1134,10 @@ let collect_argument = (node: Node, source: Source) -> Maybe<shared Expr> =>
 let refused_argument = pure (location: Location) -> shared Expr =>
   FunctionCallExpr(FunctionCall {
     location: location,
-    arguments: [StringLiteralExpr(StringLiteral { location: location, value: "refused call argument" })],
+    arguments: [StringLiteralExpr(StringLiteral {
+      location: location,
+      value: "refused call argument"
+    })],
     function: IdentifierExpr(Identifier { location: location, name: "panic" }),
   })
 
@@ -1130,13 +1176,23 @@ let optional_chain = pure (
         pattern: DataPattern(DataPatternDef {
           location: location,
           name: "Some",
-          pattern: Some(TuplePattern(PatternList { location: location, elements: [binding] })),
+          pattern: Some(TuplePattern(PatternList {
+            location: location,
+            elements: [binding]
+          })),
         }),
       },
       MatchArm {
-        body: DataConstructorExpr(ConstructorValue { location: location, constructor: "None" }),
+        body: DataConstructorExpr(ConstructorValue {
+          location: location,
+          constructor: "None"
+        }),
         guard: None,
-        pattern: DataPattern(DataPatternDef { location: location, name: "None", pattern: None }),
+        pattern: DataPattern(DataPatternDef {
+          location: location,
+          name: "None",
+          pattern: None
+        }),
       },
     ],
     optional_chain: true,
@@ -1346,7 +1402,10 @@ let collect_parameter = (node: Node, source: Source) -> Maybe<Parameter> => {
       },
       None => None,
     },
-    pattern: IdentifierPattern(Identifier { location: source.location_of(pattern_node), name: pattern_node.text(source.bytes) }),
+    pattern: IdentifierPattern(Identifier {
+      location: source.location_of(pattern_node),
+      name: pattern_node.text(source.bytes)
+    }),
     type_annotation: match node.field("type") {
       Some(declared) => collect_type(declared, source),
       None => None,
@@ -1374,15 +1433,27 @@ let collect_type = (node: Node, source: Source) -> Maybe<shared TypeNode> => {
     // every other primitive takes its name from the source text. Reading the text here
     // gave `bool`, which no golden could see — none of the ones matching uses a boolean
     // annotation — and the differential test did (09/24).
-    "boolean_type" => Some(PrimitiveType(Identifier { location: source.location_of(node), name: "boolean" })),
+    "boolean_type" => Some(PrimitiveType(Identifier {
+      location: source.location_of(node),
+      name: "boolean"
+    })),
     "signed_integer_type" | "unsigned_integer_type" | "float_type" | "string_type"
-      | "rune_type" => Some(PrimitiveType(Identifier { location: source.location_of(node), name: node.text(source.bytes) })),
+      | "rune_type" => Some(PrimitiveType(Identifier {
+        location: source.location_of(node),
+        name: node.text(source.bytes)
+      })),
     // A name the program declared. The collector records what was written and does not
     // look it up — resolution is the typechecker's, which is what "unresolved" says.
     "user_defined_type_name" =>
-      Some(UnresolvedType(Identifier { location: source.location_of(node), name: node.text(source.bytes) })),
+      Some(UnresolvedType(Identifier {
+        location: source.location_of(node),
+        name: node.text(source.bytes)
+      })),
     // A variable the enclosing declaration bound.
-    "generic_type" => Some(GenericType(Identifier { location: source.location_of(node), name: node.text(source.bytes) })),
+    "generic_type" => Some(GenericType(Identifier {
+      location: source.location_of(node),
+      name: node.text(source.bytes)
+    })),
     // `(i64, i64)` written inside another type — the same node a packed data payload
     // carries, and named `?` for the same reason: an unnamed tuple answers that when
     // asked for its name.

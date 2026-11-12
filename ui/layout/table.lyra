@@ -44,7 +44,12 @@ pub let table<e> = pure (
     ]).with_part("heading"))
     x += heading.width
     edges.push(positioned::<e>(
-      Edges { left: Some(x), top: Some(0.0), bottom: Some(0.0), width: Some(COLUMN_EDGE) },
+      Edges {
+        left: Some(x),
+        top: Some(0.0),
+        bottom: Some(0.0),
+        width: Some(COLUMN_EDGE)
+      },
       column_edge(i, heading.width, on_resize)
     ))
     x += COLUMN_EDGE

@@ -863,7 +863,10 @@ let translate = (event: Event, held: u16, per_point: f32) -> Maybe<InputEvent> =
       i64(clicks)
     )),
     SdlMouseUp(button, x, y) =>
-      Some(PointerUp(pointer_button(button), Point { x: x * per_point, y: y * per_point })),
+      Some(PointerUp(
+        pointer_button(button),
+        Point { x: x * per_point, y: y * per_point }
+      )),
     // The content moves as the system's scroll views move theirs: with natural scrolling on,
     // the way the fingers go. Shift turns a wheel's turn across, as every platform's do.
     SdlMouseWheel(x, y, flipped) => {

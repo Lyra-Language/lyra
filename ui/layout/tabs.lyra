@@ -103,7 +103,9 @@ let tab_node<e> = pure (spec: TabsSpec<e>, i: i64) -> Node<e> => {
     tag: "Tab",
     key: t.key,
     label: t.label,
-    children: [row::<e>([expanded::<e>(label), ...close]).with_style(Style { gap: Some(6.0) })],
+    children: [row::<e>([expanded::<e>(label), ...close]).with_style(Style {
+      gap: Some(6.0)
+    })],
   }
 }
 

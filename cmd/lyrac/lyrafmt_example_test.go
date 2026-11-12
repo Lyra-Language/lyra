@@ -720,3 +720,60 @@ func TestExample_LyrafmtClosesUpParentheses(t *testing.T) {
 		t.Errorf("formatted:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+// **What a long line breaks, when a list already broke around it** (11/11). A line ending in
+// a comma is one element of a list a line apiece, and choosing that list again planned
+// nothing, so `foo(a, b),` never broke its own arguments: the last comma is passed over. That
+// let the outermost list on such a line be chosen instead, which was often an arm's pattern
+// (`Changed(` ⏎ `k,` ⏎ …) or a call inside an inline block (`{ draw(` ⏎ … ⏎ `) }`), so a pattern's
+// lists are passed over too, and a block or struct literal opening and closing on the line is
+// broken first: its contents on a line of their own, as one is written by hand.
+func TestExample_LyrafmtBreaksTheLineNotItsList(t *testing.T) {
+	t.Parallel()
+	bin := buildLyrafmt(t)
+	cases := []struct{ name, src, want string }{
+		{
+			"a line ending in its list's comma breaks its own arguments",
+			"let all = () -> []i64 => [\n  combine_these_values(first_value_name, second_value_name, third_value_name, fourth_value_name),\n  2,\n]\n",
+			"let all = () -> []i64 => [\n  combine_these_values(\n    first_value_name,\n    second_value_name,\n    third_value_name,\n    fourth_value_name\n  ),\n  2,\n]\n",
+		},
+		{
+			"a long line breaks at its inline block first, not inside it",
+			"let walk = (node: Tree) -> void => match node {\n  Fragment(children) => { for child in children { draw_the_child(child, sheet, seen, events) } },\n  Leaf => {},\n}\n",
+			"let walk = (node: Tree) -> void => match node {\n  Fragment(children) => {\n    for child in children { draw_the_child(child, sheet, seen, events) }\n  },\n  Leaf => {},\n}\n",
+		},
+		{
+			"an arm's pattern stays whole; what follows it breaks",
+			"let step = (s: State, e: Event) -> (State, i64) => match e {\n  Changed(k, c) => (State { s | colors: recolor_every_swatch(s.colors, k, c), open: k, closed: false }, 0),\n  Closed => (s, 1),\n}\n",
+			"let step = (s: State, e: Event) -> (State, i64) => match e {\n  Changed(k, c) => (\n    State { s | colors: recolor_every_swatch(s.colors, k, c), open: k, closed: false },\n    0\n  ),\n  Closed => (s, 1),\n}\n",
+		},
+		{
+			"a struct literal holds its field on a line, not the call's arguments",
+			"let style = (spec: Spec, i: i64) -> Node => {\n  text_of(spec).with_style(Style { family: family_of_this_option(spec, i, the_default_family_name) })\n}\n",
+			"let style = (spec: Spec, i: i64) -> Node => {\n  text_of(spec).with_style(Style {\n    family: family_of_this_option(spec, i, the_default_family_name)\n  })\n}\n",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "in.lyra")
+			if err := os.WriteFile(path, []byte(c.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, err := command(t, bin, path).Output()
+			if err != nil {
+				t.Fatalf("formatting: %v", err)
+			}
+			if string(got) != c.want {
+				t.Errorf("formatted:\n%s\nwant:\n%s", got, c.want)
+			}
+			// What it wrote, it leaves alone.
+			if err := os.WriteFile(path, got, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			again, err := command(t, bin, path).Output()
+			if err != nil || string(again) != string(got) {
+				t.Errorf("formatting its own output changed it:\n%s", again)
+			}
+		})
+	}
+}
