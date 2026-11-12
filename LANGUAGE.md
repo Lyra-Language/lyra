@@ -321,6 +321,14 @@ A `let`/`var`, a `for` variable or a pattern binding may take a name already in 
 - **`loop { … }` with no `break` that leaves it is `never`**, so a function with a return type may end in one. `while` and `for` can finish, and a function with a return type that ends in one is refused.
 - **A literal condition warns `lyra-W027`**: `if true`, `if false`, `while false` (the body never runs), and `while true`, whose message names `loop { … }` — it has a condition, so it can finish as far as types are concerned, and a function ending in it is refused where `loop { … }` is not.
 
+### `return`
+
+- **A `return` with no value is a void function's** (and a generator's, which it ends): in a
+  function declared to return a value it is refused, at the body's top level and nested in an
+  `if`, a loop or a `match` arm alike — `if done { return }` in a `-> (Studio, []Work)`
+  function must say what it returns. Until 11/11 it was accepted, and the caller read whatever
+  the return slot held.
+
 ### Patterns
 
 - **One meaning in every position** — a `match` arm, `if let`, `while let`, `let`, `let … else` and a parameter. A literal, range or regex at any depth is checked against the type in its position by the rule a `match` on that type applies.

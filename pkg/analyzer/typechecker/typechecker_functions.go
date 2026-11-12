@@ -499,7 +499,8 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 			switch s := stmt.(type) {
 			case *ast.ReturnStmt:
 				if s.Value == nil {
-					continue // bare return – void compatibility is not checked yet
+					tc.checkBareReturn(funcName, s, declaredReturn)
+					continue
 				}
 				tc.checkReturnValue(funcName, s.Value, s.GetLocation(), declaredReturn)
 			case *ast.ExpressionStmt:
@@ -1987,8 +1988,14 @@ func placeOverlaps(a, b place) (overlap, uncertain bool) {
 // stamping the top-level ones have always had — the single definition that function's
 // doc comment exists to preserve.
 func (tc *TypeChecker) checkReturnStmt(s *ast.ReturnStmt) {
-	if s == nil || s.Value == nil {
-		return // a bare `return`; void compatibility is not checked yet
+	if s == nil {
+		return
+	}
+	if s.Value == nil {
+		if tc.enclosingRet != nil {
+			tc.checkBareReturn(tc.enclosingFuncName, s, tc.resolveTypeIfKnown(tc.enclosingRet.Type, s.GetLocation()))
+		}
+		return
 	}
 	if tc.enclosingRet == nil {
 		// A `return` outside any function, already reported by
@@ -2007,6 +2014,28 @@ func (tc *TypeChecker) checkReturnStmt(s *ast.ReturnStmt) {
 	// signature pass and must not be reported twice.
 	declared := tc.resolveTypeIfKnown(tc.enclosingRet.Type, s.GetLocation())
 	tc.checkReturnValue(tc.enclosingFuncName, s.Value, s.GetLocation(), declared)
+}
+
+// checkBareReturn refuses a `return` with no value in a function that returns one: it
+// left the function with nothing where its caller reads a value. Until 11/11 it was
+// accepted, and what the caller read was whatever the return slot held — Vega's
+// `run_command`, returning `(Studio, []Work)`, handed back a freed studio from an arm
+// written `if same { return }` (a use-after-free ASan found). A void function, one whose
+// return type is inferred, and a generator (`-> Seq<t>`, which a bare `return` ends) take
+// one; `never` takes none, but that is the divergence checks', not this.
+func (tc *TypeChecker) checkBareReturn(funcName string, s *ast.ReturnStmt, declared types.Type) {
+	if declared == nil || isVoidType(declared) {
+		return
+	}
+	if _, isSeq := seqElementType(declared); isSeq {
+		return
+	}
+	if p, ok := declared.(types.PrimitiveType); ok && p.Name == "never" {
+		return
+	}
+	tc.addError(s.GetLocation(), SeverityError,
+		"%s: a `return` with no value in a function returning %s; return one (`return …`)",
+		funcName, types.Source(declared))
 }
 
 // checkBuiltinMutatesReceiver enforces the mutability rule for a builtin method that

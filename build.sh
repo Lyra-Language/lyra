@@ -107,6 +107,19 @@ if [[ "$(uname)" == "Darwin" ]]; then
     ar rcs "$OUT/lib/$platform/lib/liblyra-audio.a" "$OUT/lib/$platform/audio.o"
     rm -f "$OUT/lib/$platform/audio.o"
   done
+  # And for Linux where `tools/sdl3-linux.sh` has built its SDL3, by `zig cc` for the glibc
+  # lyrac links against (platform.go's `glibcVersion`) — archived by `zig ar`: the Mac's `ar`
+  # gives ELF objects no symbol table.
+  for pair in "linux-arm64:aarch64-linux-gnu.2.36" "linux-x86_64:x86_64-linux-gnu.2.36"; do
+    IFS=: read -r platform triple <<<"$pair"
+    [[ -d "$OUT/lib/$platform/lib" ]] || continue
+    zig="${LYRA_ZIG:-zig}"
+    command -v "$zig" >/dev/null 2>&1 || continue
+    "$zig" cc -O2 -std=c11 -target "$triple" -c "$ROOT/bindings/audio/audio.c" -o "$OUT/lib/$platform/audio.o"
+    rm -f "$OUT/lib/$platform/lib/liblyra-audio.a"
+    "$zig" ar rcs "$OUT/lib/$platform/lib/liblyra-audio.a" "$OUT/lib/$platform/audio.o"
+    rm -f "$OUT/lib/$platform/audio.o"
+  done
 fi
 
 # **lyrafmt is built when it can be**, and skipped with a note when it cannot. The

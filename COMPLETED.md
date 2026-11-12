@@ -9,6 +9,80 @@ Newest first.
 
 ## Dated log
 
+### 11/12/26 — A 68000 branch past 32 KB: a `jmp`, not an llc crash
+
+A function past 32 KB could stop llc with "Cannot relax the instruction, value does not fit"
+(the hero's `main`, 44 KB at `-O2`, once 13 `follow_path`s were inlined into it, 11/10). llc
+selects every branch short (`bra.s`, `b<cc>.s`) and the assembler backend relaxes it as
+layout measures it: to `.w`, then to `.l` — but the 32-bit displacement is the 68020's, and
+on the 68000 and 68010 the backend had nothing past 16 bits. **Patch 0006** gives it a far
+form for those CPUs: `bra.w` becomes `jmp` to the absolute address (`4ef9` and an
+`R_68K_32`, which `pkg/rom` already resolves), and `b<cc>.w` the opposite condition over
+that `jmp` (`bne.s .+8; jmp target` for a `beq`), 8 bytes. Where it lives decided itself:
+the alternative, LLVM's BranchRelaxation pass, needs every instruction's size before
+emission, and the M68k backend has none (`getInstSizeInBytes` is unimplemented); the
+assembler already measures, and already relaxes the 8- to 16-bit step. An unresolved
+target, which went to the 68020's `.l` on any CPU, now takes the `jmp` on a 68000 too.
+
+**Checked**: `TestGenesis_ABranchFurtherThanAWordReaches` runs a loop of two 36 KB blocks
+on Sheliak — a forward `bne` past the first each round, the back edge over both — and
+fails with the crash when the patch is reverted and llc rebuilt; MC's `branch-far.s`
+checks the encodings on the 68000 and 68010, and the 68020's `branch32.s` still passes. A
+program with no far branch is unchanged: the hero's ROM is byte for byte the same.
+`step_path` stays `@noinline`, for size — the 44 KB was the same step many times over. The
+five M68k CodeGen tests that fail (register spills, the overflow multiplies, 175472,
+link/unlink) fail without it too: their checked output predates 0001–0005.
+
+### 11/11/26 — A `return` with no value in a function returning one is refused
+
+`checkBlockReturn` and `checkReturnStmt` both passed a bare `return` with "void compatibility
+is not checked yet", so `if n > 0 { return }` in a `-> i64` function compiled, and the caller
+read whatever the return slot held. Vega found it as a use-after-free: two Console menu arms
+written `if same { return }` in `run_command`, which returns `(Studio, []Work)`, handed back a
+freed studio, and the check binary trapped in `malloc` two checks later. ASan through a `--cc`
+wrapper named the retain of the freed box; a dozen-line entry file over Vega's own `next`
+reproduced it, and removing statements one at a time left the `return`. `checkBareReturn` now
+refuses it, at the top level and nested, outside a void function or a generator. Nothing in
+the repo, Vega, Sheliak or Termina had one. `TestTypeCheck_ABareReturnNeedsAVoidFunction`.
+
+### 11/11/26 — `std.game`: smooth art, and a screen that fills the window by showing more
+
+`std.game.screen` was pixel art only: nearest-neighbour, scaled by whole numbers, and a window
+opened at three times the screen (a 1920 × 1080 game's was 5760 wide). Now `set_look(Smooth)`
+filters the art, `set_fit(Expand)` keeps the size `open` was given as the least shown and grows
+the screen along the window's longer side (`expanded`, pure; `refit` each frame), with
+`Camera.resize_view` keeping a view centred and its zone where it was; the window opens high
+density and within the display's room. **A tile set's art is laid out with a gutter**, each
+tile's edge copied a pixel out, so smooth filtering never samples a neighbour — laid out always,
+so `set_look` may come after loading; a pixelated frame is byte for byte what it was (the
+walker's, Vega's heroes'). Vega gives sprite sheets the same gap and colours their transparent
+pixels from their edge, so smooth sprites have no dark fringe.
+`TestRun_GameScreenExpandsAndLooksSmooth`.
+
+**And an art scale** (11/12), after the hero at 1920 × 1080 drew its whole 640 × 384 world in the
+screen's top-left corner, whatever the fit: a larger screen showed more pixels, not larger art.
+`set_art_scale(k)` is SDL's render scale under the presentation, with `width()`/`height()` and
+the planes' culling in the art's pixels: the hero at 1920 × 1080 and 5 is its 384 × 216 frame
+with each pixel 5 × 5 but for a turning star, drawn turned at full resolution. A world smaller
+than the view is now centred in it rather than left in the corner.
+
+### 11/11/26 — `std.game` games built for Linux from a Mac, and played headless in Docker
+
+`--target linux-*` built command-line programs; a game could not link, as nothing built SDL3
+for Linux. **`tools/sdl3-linux.sh` builds it in Debian 12**, the glibc `zig cc` links against,
+static with its X11, Wayland and audio back ends loaded at run time. Two traps on the way, both
+silent until the link: GCC's arm64 atomics call libgcc's `__aarch64_cas4_sync`, which zig
+lacks (`-mno-outline-atomics`), and the Mac's `ar` writes an ELF archive with no symbol table
+lld can read (`zig ar`).
+
+**`lyrac run --target linux-*` runs the program as if here**: the directories a run names
+mounted at their own paths and SDL's variables passed in, so `SDL_VIDEO_DRIVER=dummy` and a
+`--ppm` in `$TMPDIR` play it headless and leave its frame on the Mac — the walker's and Vega's
+modern hero's frames are the Mac's byte for byte (both draw with SDL's software renderer). The
+container was mounted at `/lyra` and given no environment before, so a path in the arguments
+named nothing inside it. A stopped run kills its named container: a kill reached the docker
+client, never the program. `TestTarget_LinksSDL3ForLinuxAndPlaysHeadless`.
+
 ### 11/11/26 — The Genesis toolchain a release carries: `lyrac m68k-bundle`
 
 **A release could not build a Genesis game** without the 420 MB, hours-long M68k LLVM build.

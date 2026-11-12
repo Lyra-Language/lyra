@@ -153,6 +153,45 @@ func TestTarget_RunsOnLinux(t *testing.T) {
 	}
 }
 
+// A program over `bindings.sdl3` links SDL3 built for Linux (tools/sdl3-linux.sh) and plays
+// headless in Docker as Vega's Run plays a Linux game: SDL's variables reach it
+// (`SDL_VIDEO_DRIVER=dummy`, so its video starts with no display), and a file it is told to
+// write in the temporary directory is there afterwards, on this machine (dockerCommand).
+func TestTarget_LinksSDL3ForLinuxAndPlaysHeadless(t *testing.T) {
+	requireLinuxCross(t)
+	build := filepath.Join(repoRoot(t), "build")
+	if _, err := os.Stat(filepath.Join(build, "lib", "linux-arm64", "lib", "libSDL3.a")); err != nil {
+		t.Skip("no SDL3 for linux-arm64; tools/sdl3-linux.sh builds it")
+	}
+	setenv(t, "LYRA_STD", build)
+	setenv(t, "SDL_VIDEO_DRIVER", "dummy")
+	src := filepath.Join(t.TempDir(), "version.lyra")
+	if err := os.WriteFile(src, []byte(`import bindings.sdl3
+import std.io.{ write_file }
+
+let main = () -> u8 => {
+  let started = sdl3.init(sdl3.INIT_VIDEO)
+  let args = program_args()
+  let wrote = write_file(args[1], "from ${sdl3.platform()}")
+  println("SDL ${sdl3.version() / 1000000}, video ${started}, wrote ${wrote}")
+  5
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "said.txt")
+	stdout, stderr, code := captureRun(t, "run", "--target", "linux-arm64", src, "--", out)
+	if code != 5 {
+		t.Fatalf("exit %d, want the program's 5; %s", code, stderr)
+	}
+	if got := strings.TrimSpace(stdout); got != "SDL 3, video true, wrote true" {
+		t.Errorf("the program printed %q", got)
+	}
+	if said, err := os.ReadFile(out); err != nil || string(said) != "from Linux" {
+		t.Errorf("the file it wrote in the temporary directory reads %q (%v); want %q", said, err, "from Linux")
+	}
+}
+
 // requireSimulator skips where there is no Xcode with an iOS Simulator to run in.
 func requireSimulator(t *testing.T) {
 	t.Helper()

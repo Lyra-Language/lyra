@@ -774,8 +774,8 @@ impl Entity {
   }
 
   /// [follow_path]'s step, for an entity on the move. Never inlined: a scene follows each of
-  /// its entities' paths, and a loop of them unrolled with this in every copy made the hero's
-  /// `main` longer than a 68000's branch reaches.
+  /// its entities' paths, and a loop of them unrolled with this in every copy is the same step
+  /// many times over — 13 of them made the hero's `main` 44 KB (11/10).
   @noinline
   let step_path<const K: i64, const W: i64> = (
     self: mut,

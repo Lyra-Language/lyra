@@ -513,6 +513,88 @@ let main = () -> u8 => {
 	}
 }
 
+// A screen filling the window by showing more (`Expand`) grows along the window's longer
+// side, and a camera told the new size (`resize_view`) stays centred where it was, its zone
+// moved by half the growth, never past the world — and a world smaller than the view is
+// centred in it. At an art scale the screen's size is counted in the art's pixels. Played headless, the window is the screen's
+// own size, so nothing grows: a smooth look draws the tiles exactly as a pixelated one at 1:1,
+// each from its own pixels inside its gutter.
+func TestRun_GameScreenExpandsAndLooksSmooth(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	src := filepath.Join(t.TempDir(), "main.lyra")
+	if err := os.WriteFile(src, []byte(`import std.game.screen
+import std.game.screen.{ Expand, Smooth }
+import std.game.camera.{ Camera }
+import std.game.planes
+import std.game.sprites
+
+const CELLS: [2]u32 = #[1, 2]
+
+let main = () -> u8 => {
+  if screen.expanded(1920, 1080, 2560, 1080) != (2560, 1080) { return 1 }
+  if screen.expanded(1920, 1080, 1920, 1440) != (1920, 1440) { return 2 }
+  if screen.expanded(1920, 1080, 3840, 2160) != (1920, 1080) { return 3 }
+  if screen.expanded(384, 216, 1000, 1000) != (384, 384) { return 4 }
+  var view = Camera { x: 400.0, y: 0.0, world_width: 2000.0, world_height: 300.0, view_width: 300.0, view_height: 200.0 }
+  view.zone = view.thirds()
+  view.resize_view(400.0, 300.0)
+  if view.x < 349.5 || view.x > 350.5 || view.y > 0.5 { return 5 }
+  if view.zone.left < 149.5 || view.zone.left > 150.5 || view.zone.bottom < 182.5 || view.zone.bottom > 183.5 { return 6 }
+  view.resize_view(2400.0, 300.0)
+  if view.x > -199.5 || view.x < -200.5 { return 7 }
+  // A world smaller than the view is centred in it, from the start and as it follows.
+  let small = Camera { world_width: 100.0, world_height: 50.0, view_width: 300.0, view_height: 200.0 }.kept_inside()
+  if small.x > -99.5 || small.x < -100.5 || small.y > -74.5 || small.y < -75.5 { return 10 }
+  var follows = small
+  follows.follow(10.0, 10.0, 8.0, 8.0)
+  if follows.x > -99.5 || follows.x < -100.5 { return 11 }
+
+  if !screen.open("smooth", 32, 16) { return 8 }
+  screen.set_fit(Expand)
+  screen.set_look(Smooth)
+  if screen.width() != 32 || screen.height() != 16 { return 9 }
+  // The art at 2: the screen shows half as many of its pixels each way.
+  screen.set_art_scale(2)
+  if screen.width() != 16 || screen.height() != 8 { return 12 }
+  screen.set_art_scale(1)
+  var tiles: [768]u32 = #[0; 768]
+  for row in 0..<16 {
+    for column in 0..<16 {
+      tiles[row * 48 + 16 + column] = 0xFF00FF00
+      tiles[row * 48 + 32 + column] = if column < 8 { 0xFF000000 } else { 0xFFFFFFFF }
+    }
+  }
+  screen.load_tiles(3, tiles, 0, 16)
+  planes.write_plane(planes.PLANE_B, CELLS, 2)
+  while screen.running() {
+    sprites.clear()
+    screen.show()
+  }
+  screen.close()
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	frame := playGame(t, src, "--frames", "1")
+	green, white, black := [3]byte{0, 255, 0}, [3]byte{255, 255, 255}, [3]byte{0, 0, 0}
+	for _, c := range []struct {
+		x, y int
+		want [3]byte
+		what string
+	}{
+		{0, 0, green, "tile 1's first pixel"},
+		{15, 15, green, "tile 1's last, beside tile 2's black"},
+		{16, 0, black, "tile 2's first, beside tile 1's green"},
+		{31, 15, white, "tile 2's last"},
+	} {
+		if got := frame.at(c.x, c.y); got != c.want {
+			t.Errorf("%s: (%d, %d) is %v, want %v", c.what, c.x, c.y, got, c.want)
+		}
+	}
+}
+
 // examples/game/walker.lyra played as Vega's checks play a game: headless (SDL's dummy
 // driver, the software renderer), 30 frames holding right, the last written as a PPM. The
 // backdrop shows in the field's border, grass in plane B, and the hero — the screen's

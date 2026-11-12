@@ -55,6 +55,13 @@
 #     unsigned word — an element's size in `xs[i]`), and __mulsi3 for the rest
 #     (M68kTargetLowering::LowerMUL, the SMUL16/UMUL16 nodes; 11/11, found profiling the
 #     hero's frame). TestGenesis_MultipliesOfEveryShapeAgreeWithTheHost checks every shape.
+#   - 0006: a branch further than 16 bits has no form on the 68000 and 68010 (the 32-bit
+#     displacement is the 68020's), and the assembler backend stopped at one with "Cannot
+#     relax the instruction, value does not fit" — any function past 32 KB could (the
+#     hero's `main`, 11/10). It now relaxes `bra.w` into `jmp` to the absolute address and
+#     `b<cc>.w` into the opposite condition over that `jmp` (BRAfar, B<cc>far; 11/12).
+#     TestGenesis_ABranchFurtherThanAWordReaches runs one; MC/M68k/Relaxations/branch-far.s
+#     encodes them. Not yet reported upstream.
 #
 # Move the pin deliberately, and rerun lyrac's Genesis tests with SHELIAK set when you do.
 # Needs cmake and ninja (`brew install cmake ninja`). About 20 minutes on 12 cores; a

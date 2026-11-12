@@ -150,10 +150,13 @@ var platformPkgFlags = func(p target.Platform, pkg string) ([]string, error) {
 	return strings.Fields(string(out)), nil
 }
 
-// buildHint says how to build pkg for p, where lyra knows: SDL3 for iOS.
+// buildHint says how to build pkg for p, where lyra knows: SDL3 for iOS and for Linux.
 func buildHint(p target.Platform, pkg string) string {
 	if pkg == "sdl3" && p.OS == "ios" {
 		return "; tools/sdl3-ios.sh builds SDL3 for iOS"
+	}
+	if pkg == "sdl3" && p.OS == "linux" {
+		return "; tools/sdl3-linux.sh builds SDL3 for Linux"
 	}
 	return ""
 }
@@ -176,19 +179,61 @@ func runCommand(p target.Platform, exe string, args []string) (*exec.Cmd, error)
 		}
 		return exec.Command("xcrun", append([]string{"simctl", "spawn", device, abs}, args...)...), nil
 	case target.Docker:
-		abs, err := filepath.Abs(exe)
-		if err != nil {
-			return nil, err
-		}
-		docker := []string{"run", "--rm", "-i", "--platform", "linux/" + dockerArch(p),
-			"-v", filepath.Dir(abs) + ":/lyra", linuxImage(), "/lyra/" + filepath.Base(abs)}
-		return exec.Command("docker", append(docker, args...)...), nil
+		return dockerCommand(p, exe, args)
 	case target.Device:
 		return nil, fmt.Errorf("a program for %s is built here, not run: only an app runs on a device — "+
 			"a program over SDL3 is one (std.game's games)", p.Name)
 	default:
 		return nil, fmt.Errorf("a program for %s is built here, not run", p.Name)
 	}
+}
+
+// dockerCommand runs exe with args in a Linux container, as if here: **the directories a run
+// names are mounted at their own paths** — the program's (its `art/` beside it), the working
+// directory it starts in, and the temporary directory (`--ppm`, `--wav` and Vega's play files
+// are written there) — so a path in args means the same inside. **SDL's and Lyra's variables
+// go in** (`SDL_*`, `LYRA_*`, `TZ`): `SDL_VIDEODRIVER=dummy` is how a game is played headless,
+// as Vega's Run and checks play a Linux one. **The container is named, and a stopped run ends
+// it** (stopApp): a kill reaches lyrac and the docker client, never the program.
+func dockerCommand(p target.Platform, exe string, args []string) (*exec.Cmd, error) {
+	abs, err := filepath.Abs(exe)
+	if err != nil {
+		return nil, err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	name := fmt.Sprintf("lyrac-run-%d", os.Getpid())
+	docker := []string{"run", "--rm", "-i", "--name", name, "--platform", "linux/" + dockerArch(p)}
+	mounted := map[string]bool{}
+	for _, dir := range []string{filepath.Dir(abs), cwd, os.TempDir()} {
+		dir = filepath.Clean(dir)
+		if !mounted[dir] && !mountedUnder(dir, mounted) {
+			mounted[dir] = true
+			docker = append(docker, "-v", dir+":"+dir)
+		}
+	}
+	docker = append(docker, "-w", cwd)
+	for _, kv := range os.Environ() {
+		key, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(key, "SDL_") || (strings.HasPrefix(key, "LYRA_") && key != "LYRA_STD") || key == "TZ" {
+			docker = append(docker, "-e", key)
+		}
+	}
+	docker = append(append(docker, linuxImage(), abs), args...)
+	stopApp = func() { _ = exec.Command("docker", "kill", name).Run() }
+	return exec.Command("docker", docker...), nil
+}
+
+// mountedUnder reports whether dir is inside a directory already mounted.
+func mountedUnder(dir string, mounted map[string]bool) bool {
+	for m := range mounted {
+		if strings.HasPrefix(dir, m+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // linuxImage is the container a Linux program runs in: `$LYRA_LINUX_IMAGE`, else Debian 12,

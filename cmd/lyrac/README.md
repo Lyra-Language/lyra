@@ -87,13 +87,17 @@ aarch64-linux-gnu.2.36` (`$LYRA_ZIG`, else the PATH) for Linux. The triple is pa
 written in the IR (clang normalises and warns). Libraries are `<root>/lib/<platform>/` and its
 `lib/`, and a `pkg:` is answered by the platform's own `.pc` files there (`PKG_CONFIG_LIBDIR`,
 `--static --libs`, in full — SDL3 for iOS brings its frameworks; `platformPkgFlags`), never
-this machine's. `tools/sdl3-ios.sh` installs SDL3 for iOS and the Simulator so. `run --target` runs through the platform's runner (`runCommand`):
+this machine's. `tools/sdl3-ios.sh` installs SDL3 for iOS and the Simulator so, and
+`tools/sdl3-linux.sh` for Linux. `run --target` runs through the platform's runner (`runCommand`):
 
 - `ios-simulator`: `xcrun simctl spawn <device> <exe> args`, the device `$LYRA_SIMULATOR`,
   else the first booted, else the first iPhone available, booted and left booted;
-- `linux-*`: `docker run --rm -i --platform linux/<arch> -v <dir>:/lyra <image>`, the image
-  `$LYRA_LINUX_IMAGE`, else `debian:bookworm-slim` (glibc 2.36, what programs are linked
-  against);
+- `linux-*`: `docker run --rm -i --name lyrac-run-<pid> --platform linux/<arch> <image>
+  <exe> args` (`dockerCommand`), the program's directory, the working directory and the
+  temporary directory mounted at their own paths so a path in its arguments means the same
+  inside, `SDL_*`, `LYRA_*` and `TZ` passed in, and the container killed when the run is
+  stopped; the image `$LYRA_LINUX_IMAGE`, else `debian:bookworm-slim` (glibc 2.36, what
+  programs are linked against);
 - `ios`: an app installed and launched on a connected iPhone or iPad (`device.go`); a
   command-line program is refused, since only an app runs there.
 

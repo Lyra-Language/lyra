@@ -878,6 +878,48 @@ let main = () -> void => {
 	}
 }
 
+// A function past 32 KB, its branches further than a 68000's `bra.w`/`b<cc>.w` reach: llc
+// stopped with "Cannot relax the instruction, value does not fit" (the hero's `main`, 11/10),
+// where it now branches round with a `jmp` (tools/llvm-m68k-patches/0006). Two blocks of
+// some 36 KB in a loop: a forward `bne` past the first, taken each round, and the back edge
+// over both. Green when the loop ran its three rounds and the second block's last write
+// stands.
+func TestGenesis_ABranchFurtherThanAWordReaches(t *testing.T) {
+	t.Parallel()
+	genesisToolchainOrSkip(t)
+	const writes = 3000
+	var block strings.Builder
+	for k := 1; k <= writes; k++ {
+		fmt.Fprintf(&block, "    unsafe { cell().write_volatile(zero + %d) }\n", k)
+	}
+	out := genesisProgram(t, "far", `import std.genesis.vdp
+import std.genesis.pad
+
+let cell = pure () -> ^mut u16 => unsafe { pointer_at(0xFF8000) }
+
+let main = () -> void => {
+  vdp.init()
+  pad.init()
+  vdp.display_on()
+  let zero = pad.read(1)
+  var rounds: u16 = 0
+  loop {
+    if zero != 0 {
+`+block.String()+`    }
+`+block.String()+`    rounds += 1
+    if rounds == 3 { break }
+  }
+  let ok = rounds == 3 && unsafe { cell().read_volatile() } == zero + `+fmt.Sprint(writes)+`
+  // Green when right, blue when wrong; the runtime's panic screen is red.
+  vdp.set_color(0, 0, if ok { vdp.rgb(0, 7, 0) } else { vdp.rgb(0, 0, 7) })
+  loop {}
+}
+`)
+	if got := runROM(t, out, "60", "").dominant(); got != "00ff00" {
+		t.Errorf("the screen is %s, want green", got)
+	}
+}
+
 // TestGenesis_ArithmeticHelpersAgreeWithTheHost runs the runtime's own 32-bit division and
 // 32- and 64-bit multiplies (runtime.c, `divu` and `mulu` where compiler-rt's C was some
 // thousands of cycles each) on operands of every width — divisors under 16 bits and past

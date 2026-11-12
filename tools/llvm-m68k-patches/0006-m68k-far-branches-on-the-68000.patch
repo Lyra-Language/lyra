@@ -1,0 +1,199 @@
+diff --git a/llvm/lib/Target/M68k/M68kInstrControl.td b/llvm/lib/Target/M68k/M68kInstrControl.td
+index b22b3a3ba..6f06df609 100644
+--- a/llvm/lib/Target/M68k/M68kInstrControl.td
++++ b/llvm/lib/Target/M68k/M68kInstrControl.td
+@@ -237,6 +237,38 @@ def BRA32 : MxBra<MxBrTarget32, (descend 0b1111, 0b1111),
+ 
+ def : Pat<(br bb:$target), (BRA8 MxBrTarget8:$target)>;
+ 
++// Far branches, for the CPUs without a 32-bit displacement (the 68000 and 68010). A
++// displacement past 16 bits has no branch form there, so the assembler backend relaxes a
++// 16-bit branch into one of these: `bra` into `jmp` to the absolute target, and `b<cc>`
++// into the opposite condition stepping over that `jmp`. Never selected; made only by
++// relaxation, after layout has measured the displacement.
++let isBranch = 1, isTerminator = 1, isBarrier = 1, isCodeGenOnly = 1 in
++def BRAfar : MxInst<(outs), (ins MxBrTarget32:$dst), "jmp\t$dst", []> {
++  let Inst =
++    (ascend
++      (descend 0b0100, 0b1110, 0b11, MxEncAddrMode_abs<"dst", true>.EA),
++      MxEncAddrMode_abs<"dst", true>.Supplement
++    );
++}
++
++let isBranch = 1, isTerminator = 1, Uses = [CCR], isCodeGenOnly = 1 in
++class MxBccFar<string cc, string inverse>
++    : MxInst<(outs), (ins MxBrTarget32:$dst), "b"#inverse#"\t.+8\n\tjmp\t$dst", []> {
++  // The 8-bit displacement 6 steps over the 6-byte `jmp` (from the branch's PC + 2).
++  let Inst =
++    (ascend
++      (descend 0b0110, !cast<MxEncCondOp>("MxCC"#inverse).Value, 0b00000110),
++      (descend 0b0100, 0b1110, 0b11, MxEncAddrMode_abs<"dst", true>.EA),
++      MxEncAddrMode_abs<"dst", true>.Supplement
++    );
++}
++
++foreach pair = [["cc", "cs"], ["cs", "cc"], ["ls", "hi"], ["hi", "ls"],
++                ["lt", "ge"], ["ge", "lt"], ["eq", "ne"], ["ne", "eq"],
++                ["mi", "pl"], ["pl", "mi"], ["gt", "le"], ["le", "gt"],
++                ["vc", "vs"], ["vs", "vc"]] in
++  def B#pair[0]#"far" : MxBccFar<pair[0], pair[1]>;
++
+ /// -------------------------------------------------
+ ///  F  E  D  C  B  A  9  8 | 7  6  5  4  3  2  1  0
+ /// -------------------------------------------------
+diff --git a/llvm/lib/Target/M68k/MCTargetDesc/M68kAsmBackend.cpp b/llvm/lib/Target/M68k/MCTargetDesc/M68kAsmBackend.cpp
+index e4cd9e2d2..b30d84662 100644
+--- a/llvm/lib/Target/M68k/MCTargetDesc/M68kAsmBackend.cpp
++++ b/llvm/lib/Target/M68k/MCTargetDesc/M68kAsmBackend.cpp
+@@ -105,7 +105,7 @@ void M68kAsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
+ /// MI—Minus            VC—Overflow clear
+ ///                     LE—Less than or equal
+ /// NE—Not equal        VS—Overflow set
+-static unsigned getRelaxedOpcodeBranch(unsigned Op) {
++static unsigned getRelaxedOpcodeBranch(unsigned Op, bool Far) {
+   switch (Op) {
+   default:
+     return Op;
+@@ -142,49 +142,50 @@ static unsigned getRelaxedOpcodeBranch(unsigned Op) {
+   case M68k::Bvs8:
+     return M68k::Bvs16;
+ 
+-  // 16 -> 32
++  // 16 -> 32, or 16 -> far where there is no 32-bit displacement (the 68000
++  // and 68010): `jmp` to the absolute target, or the opposite condition over one.
+   case M68k::BRA16:
+-    return M68k::BRA32;
++    return Far ? M68k::BRAfar : M68k::BRA32;
+   case M68k::Bcc16:
+-    return M68k::Bcc32;
++    return Far ? M68k::Bccfar : M68k::Bcc32;
+   case M68k::Bls16:
+-    return M68k::Bls32;
++    return Far ? M68k::Blsfar : M68k::Bls32;
+   case M68k::Blt16:
+-    return M68k::Blt32;
++    return Far ? M68k::Bltfar : M68k::Blt32;
+   case M68k::Beq16:
+-    return M68k::Beq32;
++    return Far ? M68k::Beqfar : M68k::Beq32;
+   case M68k::Bmi16:
+-    return M68k::Bmi32;
++    return Far ? M68k::Bmifar : M68k::Bmi32;
+   case M68k::Bne16:
+-    return M68k::Bne32;
++    return Far ? M68k::Bnefar : M68k::Bne32;
+   case M68k::Bge16:
+-    return M68k::Bge32;
++    return Far ? M68k::Bgefar : M68k::Bge32;
+   case M68k::Bcs16:
+-    return M68k::Bcs32;
++    return Far ? M68k::Bcsfar : M68k::Bcs32;
+   case M68k::Bpl16:
+-    return M68k::Bpl32;
++    return Far ? M68k::Bplfar : M68k::Bpl32;
+   case M68k::Bgt16:
+-    return M68k::Bgt32;
++    return Far ? M68k::Bgtfar : M68k::Bgt32;
+   case M68k::Bhi16:
+-    return M68k::Bhi32;
++    return Far ? M68k::Bhifar : M68k::Bhi32;
+   case M68k::Bvc16:
+-    return M68k::Bvc32;
++    return Far ? M68k::Bvcfar : M68k::Bvc32;
+   case M68k::Ble16:
+-    return M68k::Ble32;
++    return Far ? M68k::Blefar : M68k::Ble32;
+   case M68k::Bvs16:
+-    return M68k::Bvs32;
++    return Far ? M68k::Bvsfar : M68k::Bvs32;
+   }
+ }
+ 
+-static unsigned getRelaxedOpcode(unsigned Opcode) {
++static unsigned getRelaxedOpcode(unsigned Opcode, bool Allows32BitBranch) {
+   // NOTE there will be some relaxations for PCD and ARD mem for x20
+-  return getRelaxedOpcodeBranch(Opcode);
++  return getRelaxedOpcodeBranch(Opcode, !Allows32BitBranch);
+ }
+ 
+ bool M68kAsmBackend::mayNeedRelaxation(unsigned Opcode, ArrayRef<MCOperand>,
+                                        const MCSubtargetInfo &STI) const {
+   // Branches can always be relaxed in either mode.
+-  return getRelaxedOpcode(Opcode) != Opcode;
++  return getRelaxedOpcode(Opcode, Allows32BitBranch) != Opcode;
+ 
+   // NOTE will change for x20 mem
+ }
+@@ -198,7 +199,9 @@ bool M68kAsmBackend::fixupNeedsRelaxationAdvanced(const MCFragment &,
+     return true;
+   int64_t Value = static_cast<int64_t>(UnsignedValue);
+ 
+-  if (!isInt<32>(Value) || (!Allows32BitBranch && !isInt<16>(Value)))
++  // Past 16 bits a 32-bit displacement takes it, or without one (the 68000 and
++  // 68010) a far branch, whose `jmp` takes an absolute address.
++  if (!isInt<32>(Value))
+     llvm_unreachable("Cannot relax the instruction, value does not fit");
+ 
+   // Relax if the value is too big for a (signed) i8
+@@ -224,7 +227,7 @@ bool M68kAsmBackend::fixupNeedsRelaxationAdvanced(const MCFragment &,
+ // we can relax?
+ void M68kAsmBackend::relaxInstruction(MCInst &Inst,
+                                       const MCSubtargetInfo &STI) const {
+-  unsigned RelaxedOp = getRelaxedOpcode(Inst.getOpcode());
++  unsigned RelaxedOp = getRelaxedOpcode(Inst.getOpcode(), Allows32BitBranch);
+   assert(RelaxedOp != Inst.getOpcode());
+   Inst.setOpcode(RelaxedOp);
+ }
+diff --git a/llvm/test/MC/M68k/Relaxations/branch-far.s b/llvm/test/MC/M68k/Relaxations/branch-far.s
+new file mode 100644
+index 000000000..078ee1772
+--- /dev/null
++++ b/llvm/test/MC/M68k/Relaxations/branch-far.s
+@@ -0,0 +1,47 @@
++; RUN: llvm-mc -triple=m68k --mcpu=M68000 -motorola-integers -filetype=obj < %s \
++; RUN:     | llvm-objdump -dr - | FileCheck %s
++; RUN: llvm-mc -triple=m68k --mcpu=M68010 -motorola-integers -filetype=obj < %s \
++; RUN:     | llvm-objdump -dr - | FileCheck %s
++
++; Without a 32-bit displacement (the 68000 and 68010), a branch past 16 bits
++; becomes a `jmp` to the absolute address (4e f9 + R_68K_32), and a conditional
++; one takes the opposite condition over that `jmp` (displacement 6).
++
++; CHECK-LABEL: <TIGHT>:
++TIGHT:
++	; CHECK: bra  $7ffe
++	bra	.LBB0_2
++	.space 0x7ffc  ; a displacement of 0x7ffe from the branch's PC + 2
++.LBB0_2:
++	rts
++
++; CHECK-LABEL: <FAR_BRA>:
++FAR_BRA:
++	; CHECK:      4e f9 <unknown>
++	; CHECK-NEXT: 00 00 <unknown>
++	; CHECK-NEXT: R_68K_32 .text+0x10008
++	bra	.LBB1_2
++	.space 0x8000
++.LBB1_2:
++	rts
++
++; CHECK-LABEL: <FAR_BEQ>:
++FAR_BEQ:
++	; CHECK:      66 06 bne $6
++	; CHECK-NEXT: 4e f9 <unknown>
++	; CHECK-NEXT: 00 00 <unknown>
++	; CHECK-NEXT: R_68K_32 .text+0x18012
++	beq	.LBB2_2
++	.space 0x8000
++.LBB2_2:
++	rts
++
++; CHECK-LABEL: <FAR_BACK>:
++FAR_BACK:
++	; CHECK:      64 06 bcc $6
++	; CHECK-NEXT: 4e f9 <unknown>
++	; CHECK-NEXT: 00 00 <unknown>
++	; CHECK-NEXT: R_68K_32 .text+0x18012
++	.space 0x8000
++	bcs	.LBB2_2
++	rts

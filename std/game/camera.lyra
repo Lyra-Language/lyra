@@ -19,7 +19,9 @@ module std.game.camera
 //!
 //! **The camera moves only when it must**: what it follows is free inside the camera's
 //! [Zone], a rectangle of the screen, and the view moves when it crosses the zone's edge —
-//! just enough to keep it there — and never past the world's edges. The view is kept at
+//! just enough to keep it there — and never past the world's edges. **A world smaller than
+//! the view is centred in it**, the backdrop round it, rather than left in its top-left
+//! corner. The view is kept at
 //! whole pixels, so the planes and sprites scroll together without shimmering.
 //!
 //! **A plane holds the whole map** (`std.game.planes`), so scrolling is only telling the
@@ -89,6 +91,40 @@ impl Camera {
     )
   }
 
+  /// The view made `width` × `height` — the screen's, when it fills the window by showing
+  /// more (`screen.Expand`, whose size changes with the window): kept centred where it was,
+  /// its zone moved by half the growth so it stays where it was in the screen's middle, and
+  /// never past the world's edges. Nothing changes at the size it has. Once an update, before
+  /// [follow].
+  pub let resize_view = (self: mut, width: f32, height: f32) -> void => {
+    let dw = width - self.view_width
+    let dh = height - self.view_height
+    if dw.abs() < 0.5 && dh.abs() < 0.5 { return }
+    let zoned = self.zone.right > self.zone.left || self.zone.bottom > self.zone.top
+    self.x = inside(self.x - dw / 2.0, width, self.world_width)
+    self.y = inside(self.y - dh / 2.0, height, self.world_height)
+    self.view_width = width
+    self.view_height = height
+    if zoned {
+      let sx = whole(dw / 2.0)
+      let sy = whole(dh / 2.0)
+      self.zone = Zone {
+        left: self.zone.left + sx,
+        top: self.zone.top + sy,
+        right: self.zone.right + sx,
+        bottom: self.zone.bottom + sy,
+      }
+    }
+  }
+
+  /// The view kept inside the world — a world smaller than the view centred in it — as
+  /// [follow] keeps it: where a camera starts that nothing has followed yet.
+  pub let kept_inside = pure (self) -> Camera => Camera {
+    self |
+    x: inside(self.x, self.view_width, self.world_width),
+    y: inside(self.y, self.view_height, self.world_height),
+  }
+
   /// The view as a layer scrolling at `fx`, `fy` of its speed sees the world (1.0 with it,
   /// 0.0 fixed to the screen): for a parallax plane or sprite.
   pub let parallaxed = pure (self, fx: f32, fy: f32) -> Camera =>
@@ -139,7 +175,8 @@ impl Camera {
 
 /// One axis of [follow]: the view's start `at` moved so `from`..`from + size` stays
 /// between `low` and `high` on the screen, then kept inside `world`, at a whole pixel.
-/// Something bigger than the zone is centred on it.
+/// Something bigger than the zone is centred on it; a world smaller than the view is centred
+/// in it ([inside]).
 let along = pure (
   at: f32,
   from: f32,
@@ -157,8 +194,15 @@ let along = pure (
   } else if from + size > at + high {
     moved = from + size - high
   }
-  whole(moved.clamp(0.0, (world - screen).max(0.0)))
+  inside(moved, screen, world)
 }
+
+/// A view's start `at`, `screen` long, kept inside `world` at a whole pixel — or, for a world
+/// shorter than the view, the world centred in it, the view starting before the world's 0.
+let inside = pure (at: f32, screen: f32, world: f32) -> f32 =>
+  if world < screen {
+    whole((world - screen) / 2.0)
+  } else { whole(at.clamp(0.0, world - screen)) }
 
 /// The whole number at or below `v`, still an `f32`.
 let whole = pure (v: f32) -> f32 => f32(v.floor())

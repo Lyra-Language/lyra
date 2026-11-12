@@ -648,7 +648,16 @@ libraries are `<root>/lib/<platform>/`, and a `pkg:` is the platform's own `.pc`
 (`platformPkgFlags`: `--static --libs`, frameworks and all), never the machine's.
 **`tools/sdl3-ios.sh`** builds SDL3 for iOS and the Simulator into `build/lib/ios*/`: a
 pinned, SHA-checked release, static, without HIDAPI (whose CoreBluetooth would need a usage
-string in every app). **An iOS program over SDL3 is an app** (`app.go`): SDL starts on iOS
+string in every app). **`tools/sdl3-linux.sh`** builds SDL3 for Linux into
+`build/lib/linux-*/` from a Mac, in a Debian 12 container (glibc 2.36, what `zig cc` links
+against): static, its desktop back ends `dlopen`ed at run time, its arm64 atomics inline
+(GCC's outline ones are libgcc's, which zig lacks); `build.sh` then builds `bindings.audio`
+there with `zig cc` and `zig ar` (the Mac's `ar` gives ELF objects no symbol table). **A Linux
+program runs in Docker as if here** (`dockerCommand`): the program's directory, the working
+directory and the temporary directory mounted at their own paths, `SDL_*`/`LYRA_*`/`TZ`
+passed in, and the container named so a stopped run ends it (`stopApp`) — so
+`SDL_VIDEO_DRIVER=dummy … --ppm $TMPDIR/f.ppm` plays a game headless, as Vega's Run on Linux
+does. **An iOS program over SDL3 is an app** (`app.go`): SDL starts on iOS
 only inside UIKit's application, so the backend emits the entry as `lyra_main`
 (`Backend.EntrySymbol`) and `runtime/ios/main.c`'s `main` hands it to `SDL_RunApp`, exiting
 with its status; lyrac writes `<name>.app` (program, `Info.plist` with `UILaunchScreen` —
@@ -740,7 +749,10 @@ of Markdown.
   call to `__mulsi3`, where the 68000's `muls.w`/`mulu.w` (16 × 16 → 32) do it in one or
   two — now one word multiply where both operands fit a word, shifts and adds for a
   constant of at most three bits, two for one word operand (an element's size), and the
-  call only for the rest (0005, `TestGenesis_MultipliesOfEveryShapeAgreeWithTheHost`).
+  call only for the rest (0005, `TestGenesis_MultipliesOfEveryShapeAgreeWithTheHost`);
+  and a branch past 16 bits, which the 68000 has no form for, stopped llc ("Cannot relax the
+  instruction") — now a `jmp` to the absolute address, a `b<cc>` the opposite condition over
+  one (0006, `TestGenesis_ABranchFurtherThanAWordReaches`), so a function may pass 32 KB.
   **The runtime's `__muldi3` takes a sign-extended pair as a signed 32 × 32** — what LLVM
   makes of a checked `i32` multiply, Lyra's `*`: one `muls` for two words. **llc writes
   objects without assembling text**, so an instruction the 68000 lacks reaches the ROM
@@ -782,8 +794,10 @@ of Markdown.
   offline or without SDL3. **And `build/lib/liblyra-gpu.a`** (`bindings/gpu/build.sh`): `ui.gpu`'s
   renderer over SDL_GPU on macOS, a stub elsewhere (whose `create` answers `None`).
 - **`tools/llvm-z80.sh`** (not run by `build.sh`) builds our own LLVM Z80 target, `tools/llvm-z80/Z80`, in `~/Dev/llvm-z80`: what `lyrac build` uses for `target = "sms"` or `"gg"` (`cmd/lyrac/z80.go`, `llvm.NewForZ80`), linked by `pkg/rom/z80.go` with `runtime/sms/runtime.ll`, which goes through llc alone. `tools/llvm-z80/README.md` has its conventions and what is missing, `tools/llvm-z80/test/run.py` and `fuzz.py` test it on Sheliak's Z80 core against the host compiler, and `go test ./cmd/lyrac -run SMS` runs Lyra programs on `smscheck`. **Every runtime helper needs a test**: LLVM's libcall signatures are not C's (`memset` takes an `i8`).
-- **`tools/sdl3-ios.sh`** (not run by `build.sh`, as `llvm-m68k.sh` is not) builds SDL3 for
-  `--target ios|ios-simulator` into `build/lib/<platform>/`.
+- **`tools/sdl3-ios.sh`** and **`tools/sdl3-linux.sh`** (not run by `build.sh`, as
+  `llvm-m68k.sh` is not) build SDL3 for `--target ios|ios-simulator` and
+  `linux-arm64|linux-x86_64` into `build/lib/<platform>/`; `build.sh` builds
+  `liblyra-audio.a` into each one there.
 - **`build.sh` also builds `lyrafmt`** when a C compiler, `libtree-sitter` and the sibling
   `tree-sitter-lyra` checkout are present, and skips it with a note otherwise. It lands
   beside `lyra-lsp`, which is where the server looks for it (`cmd/lyra-lsp/formatting.go`)
@@ -804,7 +818,19 @@ of Markdown.
   `move_in_with`; **an entity lands and jumps** — `on_floor` set when a move in a map stops a
   fall, `jump()` leaving a floor at the kind's `jump_speed`, `move_kept_in(width, height)` moving through anything but out of a world that size (a level whose map has no collision), and `blocked_by(solid)` backing an entity its move took into another off it along the way it came (standing on it when falling; a solid that moved carries an entity resting on it and pushes one in its way — into the map or another solid, too: `in_map`/`in_map_with` (the map as `move_in`/`move_in_with` take it, one-way colliders not counted) say whether it is inside the map, and `squeezed` is a scene's generated `block()`'s answer; `was_x`/`was_y` are where each move started, set by `spawn` too, `meets_at` is `meets` elsewhere), alike on `std.genesis.entity` and
   `std.sms.entity` (`entity_test.go`'s `TestRun_EntitiesLandAndJump`); **an entity follows a path** — `give_path(path, when_seen)`, `start_path()`, `stop_path()` (off it, before a game puts it elsewhere), `follow_path(points, waits)` at the path's speed or its kind's top speed, standing at a path's pauses, stopping, looping, going back and forth or leaving at the end (`path_finished`) — over points Vega bakes `PATH_STEP` (4) pixels apart, so a step is a shift and a multiply on every runtime (`TestRun_EntitiesFollowPaths`); **a console kind's `reach`** (written by Vega: its colliders' box on any frame; `NO_REACH` by hand) lets `meets` pass over a pair far apart without placing a collider (`TestRun_EntitiesMeetByReach`); **entities come in pools** — `alive` (an entity out of play meets nothing, is not blocked, follows no path and the game's generated `draw` skips it), `KIND.waiting()` for a pool's places, `despawn()`, and on any `[N]Entity` `spawn_at(x, y)` (the index, or -1 when all are in play), `in_play()`, `move_all()` (`TestRun_EntityPools`); **drawing is `std.<runtime>.art`** — a module apart from `entity` because it needs the camera, and the Master System's camera reaches its VDP, which a host program cannot build (so its SMS half is checked, not run, here): `Step`, the `Art` trait a game's art implements (`step`, `draw_frame`, `frame_shape`; Vega's `GameArt`), and `frame_in`/`finished`/`play_with` on an `Animation`, `play_with`/`draw_with`/`draw_once_with`/`follow_path_seen` on an `Entity`, and `draw_all_with`/`play_all_with`/`play_out_with`/`despawn_off_screen` on a pool (`TestRun_EntitiesDrawThroughArt`, `TestRun_ArtDrawsGrownTurnedAndParallax`); **how the screen fills the window** is `screen.set_fit` (`Whole`, the default,
-  by whole numbers; `Letterbox`; `Stretch`; `Crop`, SDL's overscan): screen, pad, planes, sprites, camera, collision, entity — the first std
+  by whole numbers; `Letterbox`; `Stretch`; `Crop`, SDL's overscan; `Expand`, the size `open`
+  was given the least shown and the screen grown along the window's longer side, so
+  `screen.width()`/`height()` change with the window and a camera follows by
+  `Camera.resize_view`), **how its art is scaled** `screen.set_look` (`Pixelated`, the default,
+  nearest-neighbour; `Smooth`, filtered, for art drawn at a high resolution), **how large**
+  `screen.set_art_scale(k)` (SDL's render scale under the presentation: a 1920 × 1080 screen
+  at 5 shows 384 × 216 of the world at full resolution, `width()`/`height()` then in the art's
+  pixels); **a world smaller than the view is centred in it** (`std.game.camera`'s `inside`,
+  `Camera.kept_inside` where a camera starts — the Genesis's camera keeps the corner, its
+  planes wrapping); a tile set's art
+  is laid out with a pixel's gutter round each tile copied from its edge (`tile_picture`), so
+  a smooth tile never takes its neighbour's colour, and the window opens high density, at most
+  three times the screen and within the display's room (`window_size`): screen, pad, planes, sprites, camera, collision, entity — the first std
   module to import `bindings`; its pure half mirrors the Genesis tests case for case and its
   screen is played headless by `--frames`/`--ppm`/`--hold` under SDL's dummy driver, both in
   `cmd/lyrac/game_test.go`; a `Sprite` also fades, tints, turns, grows and draws as light —

@@ -25,7 +25,15 @@ module std.game.screen
 //!
 //! **How the screen fills the window** is the game's choice ([set_fit]): by whole numbers, the
 //! default, with borders where the window's shape or size leaves them; or as large as fits; or
-//! stretched to fill it; or filling it with the edges cut off.
+//! stretched to fill it; or filling it with the edges cut off; or **filling it by showing more**
+//! (`Expand`): the size [open] was given is the least the game shows, and the screen grows
+//! along whichever side the window is longer, so [width] and [height] change with the window.
+//!
+//! **How the art is scaled is the game's choice too** ([set_look]): `Pixelated`, the default,
+//! nearest-neighbour — pixel art stays sharp; or `Smooth`, filtered — for art drawn at a high
+//! resolution, which is drawn at the display's real pixels (the window is high density). A
+//! tile set's art is laid out with a pixel's border round each tile, copied from its edge, so a
+//! smooth tile never takes colour from its neighbour in the art.
 //!
 //! **Drawn between updates** ([blend]): a sprite that says where it was the update before
 //! (`sprites.came_from` — Vega's entities do) and a plane scrolled this update are drawn that
@@ -37,7 +45,7 @@ module std.game.screen
 //! **The frame is composed in the Genesis's order** ([show]): the backdrop; plane B's cells,
 //! then plane A's (the window in its rows), then the sprites; then the planes' cells in
 //! front, and the sprites in front. Pixel art stays sharp: the screen is scaled by whole
-//! numbers into the window, nearest-neighbour.
+//! numbers into the window, nearest-neighbour, unless the game says otherwise.
 //!
 //! **Played without anyone at it**, as Sheliak plays a ROM: `--frames N` stops after N
 //! frames, one update each, at scale 1; `--ppm FILE` writes the last as a binary PPM, at the
@@ -65,6 +73,7 @@ import bindings.sdl3.{
   WINDOW_RESIZABLE,
   WINDOW_FULLSCREEN,
   WINDOW_HIGH_PIXEL_DENSITY,
+  usable_display_size,
   HINT_ORIENTATIONS,
   set_hint,
   pref_path,
@@ -78,7 +87,9 @@ import bindings.sdl3.{
   PRESENT_STRETCH,
   PRESENT_OVERSCAN,
   SCALE_NEAREST,
+  SCALE_LINEAR,
   set_default_scale_mode,
+  set_texture_scale_mode,
   Color,
   rgb,
   Rect,
@@ -150,12 +161,14 @@ pub let open = (title: string, width: i64, height: i64) -> bool => {
     println("SDL could not start: ${last_error()}")
     return false
   }
-  let scale = if limit > 0 { 1 } else { WINDOW_SCALE }
-  let flags = if phone { WINDOW_FULLSCREEN | WINDOW_HIGH_PIXEL_DENSITY } else { WINDOW_RESIZABLE }
+  let (opened_w, opened_h) = if limit > 0 {
+    (width, height)
+  } else { window_size(width, height) }
+  let flags = if phone { WINDOW_FULLSCREEN | WINDOW_HIGH_PIXEL_DENSITY } else { WINDOW_RESIZABLE | WINDOW_HIGH_PIXEL_DENSITY }
   let Some(w) = create_window(
     title,
-    i32(width * scale),
-    i32(height * scale),
+    i32(opened_w),
+    i32(opened_h),
     flags
   ) else {
     println("could not open a window: ${last_error()}")
@@ -170,19 +183,32 @@ pub let open = (title: string, width: i64, height: i64) -> bool => {
   }
   r.set_logical_presentation(i32(width), i32(height), presentation(fitting))
   r.set_vsync(limit <= 0)
-  set_default_scale_mode(r, SCALE_NEAREST)
+  set_default_scale_mode(r, scale_mode(looking))
   window = Some(w)
   renderer = Some(r)
+  design_width = width
+  design_height = height
   screen_width = width
   screen_height = height
+  refit()
   last_ns = i64(ticks_ns())
   owed_ns = 0
   true
 }
 
-/// The screen's size, in pixels.
-pub let width = () -> i64 => screen_width
-pub let height = () -> i64 => screen_height
+/// The screen's size in the art's pixels — what a game's world and camera count in: what
+/// [open] was given, over the art scale ([set_art_scale]), the last pixel's part counted —
+/// or, filling the window by showing more (`Expand`), that grown to the window's shape, which
+/// can change from one frame to the next.
+pub let width = () -> i64 => (screen_width + art_scale - 1) / art_scale
+pub let height = () -> i64 => (screen_height + art_scale - 1) / art_scale
+
+/// Draw the planes and sprites `scale` times their art's size (1 to 16): a screen opened at
+/// 1920 × 1080 with the art at 5 shows what a 384 × 216 one shows, at the screen's full
+/// resolution — so a sprite turned or grown, or drawn smooth, is drawn in the screen's own
+/// pixels. [width] and [height] are then in the art's pixels, as the game moves in them.
+/// Once after [open], or whenever the game likes.
+pub let set_art_scale = (scale: i64) -> void => { art_scale = scale.clamp(1, 16) }
 
 /// Whether the game goes on: the events since the last frame handled — gamepads come and
 /// go, the window closed or Escape ends it — and, played with `--frames`, frames still to
@@ -209,6 +235,7 @@ pub let running = () -> bool => {
     let (w, h) = r.output_size()
     pad.set_touch_area(f32(w), f32(h))
   }
+  refit()
   !quitting && (limit <= 0 || frame < limit)
 }
 
@@ -250,15 +277,43 @@ pub data Fit =
   | Stretch
   /// Filling the window, its shape kept: no borders, its edges cut off where they spill over.
   | Crop
+  /// Filling the window by showing more: the size [open] was given is the least shown, and
+  /// the screen grows along whichever side the window is longer — [width] and [height] are
+  /// then the window's shape, at that scale. A game whose camera follows it (`std.game.camera`'s
+  /// `resize_view`) sees more of its world in a wider window.
+  | Expand
 
 /// Fill the window as `fit` says — once after [open], or whenever the game likes.
 pub let set_fit = (fit: Fit) -> void => {
   fitting = fit
+  screen_width = design_width
+  screen_height = design_height
   if let Some(r) = renderer { r.set_logical_presentation(
     i32(screen_width),
     i32(screen_height),
     presentation(fit)
   ) }
+  refit()
+}
+
+/// How the art is scaled ([set_look]).
+pub data Look =
+  /// Nearest-neighbour: every pixel of the art a sharp square, however large. The default.
+  | Pixelated
+  /// Filtered: art drawn at a high resolution scaled smoothly — down to a small window, up
+  /// to a large one.
+  | Smooth
+
+/// Scale the art as `look` says: the art loaded already and all loaded after. Once after
+/// [open], or whenever the game likes.
+pub let set_look = (look: Look) -> void => {
+  looking = look
+  let mode = scale_mode(look)
+  if let Some(r) = renderer { set_default_scale_mode(r, mode) }
+  for art in tile_art {
+    if let Some(t) = art { set_texture_scale_mode(t, mode) }
+  }
+  if let Some(t) = sprite_art { set_texture_scale_mode(t, mode) }
 }
 
 /// The colour behind everything, where no cell or sprite is.
@@ -276,8 +331,12 @@ pub let load_tiles<const N: i64> = (
   palette: i64 = 0,
   tile_size: i64 = 8
 ) -> bool => {
-  if palette < 0 || palette >= PALETTES || tile_size <= 0 { return false }
-  let Some(t) = picture(columns * tile_size, pixels) else { return false }
+  if palette < 0 || palette >= PALETTES || tile_size <= 0 || columns <= 0 { return false }
+  let wide = columns * tile_size
+  if pixels.len() % wide != 0 { return false }
+  let Some(t) = tile_picture([p in pixels | p], wide, columns, tile_size) else {
+    return false
+  }
   use_tiles(t, columns, palette, tile_size)
   true
 }
@@ -290,8 +349,15 @@ pub let load_tiles_file = (
   tile_size: i64 = 8
 ) -> bool => {
   if palette < 0 || palette >= PALETTES || tile_size <= 0 { return false }
-  let Some((t, wide)) = picture_file(name) else { return false }
-  use_tiles(t, wide / tile_size, palette, tile_size)
+  let Some((pixels, wide)) = picture_file_pixels(name) else { return false }
+  let columns = wide / tile_size
+  if columns <= 0 { return false }
+  // A width not whole tiles: each row cut to the tiles it holds.
+  let used = columns * tile_size
+  let rows = pixels.len() / wide
+  let kept = [i in 0..<(rows * used) | pixels[(i / used) * wide + i % used]]
+  let Some(t) = tile_picture(kept, used, columns, tile_size) else { return false }
+  use_tiles(t, columns, palette, tile_size)
   true
 }
 
@@ -323,10 +389,13 @@ pub let show = () -> void => {
   let t = blend()
   // Played headless by frames, the frames' own time, so a frame is the same every run.
   planes.step_tiles(if limit > 0 { frame * 1000 / 60 } else { i64(ticks_ns()) / 1000000 })
+  // The art drawn its scale's times larger: SDL's scale under the screen's presentation.
+  r.set_scale(f32(art_scale), f32(art_scale))
   draw_planes(r, false, t)
   draw_sprites(r, false, t)
   draw_planes(r, true, t)
   draw_sprites(r, true, t)
+  r.set_scale(1.0, 1.0)
   frame += 1
   if limit > 0 && frame == limit && ppm_path != "" && !write_ppm(r, ppm_path) {
     println("could not write ${ppm_path}")
@@ -356,8 +425,63 @@ pub let close = () -> u8 => {
 
 // ── Beneath ──────────────────────────────────────────────────────────────────────────
 
-/// The window opens at this many times the screen; resizing it keeps whole-number scaling.
+/// The window opens at this many times the screen, at most — less where the display's room
+/// is smaller ([window_size]); resizing it keeps whole-number scaling.
 const WINDOW_SCALE: i64 = 3
+
+/// The share of the display's room for windows a window may open at.
+const DISPLAY_SHARE: f32 = 0.9
+
+/// A tile's border in its art, each side ([tile_picture]).
+const GUTTER: i64 = 1
+
+/// The size the window opens at for a screen `width` × `height`: [WINDOW_SCALE] times it, or
+/// the largest whole number of times that fits the display's room — or, for a screen larger
+/// than that room, the screen scaled down to fit it.
+let window_size = (width: i64, height: i64) -> (i64, i64) => {
+  let Some((dw, dh)) = usable_display_size() else {
+    return (width * WINDOW_SCALE, height * WINDOW_SCALE)
+  }
+  let room = (f32(dw) * DISPLAY_SHARE / f32(width)).min(f32(dh) * DISPLAY_SHARE / f32(height))
+  let scale = if room >= 1.0 { f32(room.floor().min(WINDOW_SCALE).max(1)) } else { room }
+  ((f32(width) * scale).floor().max(1), (f32(height) * scale).floor().max(1))
+}
+
+/// SDL's scale mode for `look`.
+let scale_mode = pure (look: Look) -> i32 => match look {
+  Pixelated => SCALE_NEAREST,
+  Smooth => SCALE_LINEAR,
+}
+
+/// The screen's size made the window's shape again when it fills the window by showing more
+/// (`Expand`): the size [open] was given grown along the window's longer side. Each frame, in
+/// [running]; nothing changes in a window of the screen's own shape, or played headless.
+let refit = () -> void => {
+  if fitting != Expand { return }
+  let Some(r) = renderer else { return }
+  let (ow, oh) = r.output_size()
+  let (w, h) = expanded(design_width, design_height, i64(ow), i64(oh))
+  if w == screen_width && h == screen_height { return }
+  screen_width = w
+  screen_height = h
+  r.set_logical_presentation(i32(w), i32(h), presentation(fitting))
+}
+
+/// A screen of at least `width` × `height` grown along one side to the shape of a window
+/// `out_w` × `out_h` — its arithmetic, pure so it can be tested.
+pub let expanded = pure (
+  width: i64,
+  height: i64,
+  out_w: i64,
+  out_h: i64
+) -> (i64, i64) => {
+  if out_w <= 0 || out_h <= 0 { return (width, height) }
+  if out_w * height > out_h * width {
+    ((height * out_w + out_h / 2) / out_h, height)
+  } else {
+    (width, (width * out_h + out_w / 2) / out_w)
+  }
+}
 
 /// The palettes a cell may name.
 const PALETTES: i64 = 16
@@ -368,6 +492,12 @@ var screen_width: i64 = 0
 /// A tile's side, in pixels, as [load_tiles] was given it.
 var tile_side: i64 = 8
 var fitting: Fit = Whole
+/// The art's pixels' size on the screen ([set_art_scale]).
+var art_scale: i64 = 1
+var looking: Look = Pixelated
+/// The size [open] was given: the least shown when filling the window by showing more.
+var design_width: i64 = 0
+var design_height: i64 = 0
 var screen_height: i64 = 0
 var backdrop: Color = rgb(0, 0, 0)
 var tile_art: []Maybe<Texture> = [None; PALETTES]
@@ -436,6 +566,62 @@ let picture<const N: i64> = (width: i64, pixels: ref [N]u32) -> Maybe<Texture> =
 /// The PNG file `name` as a texture, and its width; or `None`, having said why.
 let picture_file = (name: string) -> Maybe<(Texture, i64)> => {
   let Some(r) = renderer else { return None }
+  let Some((pixels, wide)) = picture_file_pixels(name) else { return None }
+  match create_texture(r, wide, pixels.len() / wide, pixels) {
+    Some(t) => Some((t, wide)),
+    None => None,
+  }
+}
+
+/// A tile set's art, `width` pixels wide in `columns` tiles `side` pixels square, as a
+/// texture with a pixel's border round each tile copied from the tile's edge ([GUTTER]): a
+/// smooth look samples past a tile's edge, which would otherwise take its neighbour's colour.
+let tile_picture = (
+  pixels: []u32,
+  width: i64,
+  columns: i64,
+  side: i64
+) -> Maybe<Texture> => {
+  let Some(r) = renderer else { return None }
+  let rows = pixels.len() / width / side
+  if rows <= 0 { return None }
+  let cell = side + 2 * GUTTER
+  let out_w = columns * cell
+  let out_h = rows * cell
+  let laid = [i in 0..<(out_w * out_h) | gutter_pixel(
+    pixels,
+    width,
+    side,
+    cell,
+    i % out_w,
+    i / out_w
+  )]
+  create_texture(r, out_w, out_h, laid)
+}
+
+/// The pixel at (`x`, `y`) of a tile set's art laid out with gutters: its tile's pixel
+/// nearest, the border taking the edge's.
+let gutter_pixel = pure (
+  pixels: ref []u32,
+  width: i64,
+  side: i64,
+  cell: i64,
+  x: i64,
+  y: i64
+) -> u32 => {
+  let tx = (x % cell - GUTTER).clamp(0, side - 1)
+  let ty = (y % cell - GUTTER).clamp(0, side - 1)
+  pixels[((y / cell) * side + ty) * width + (x / cell) * side + tx]
+}
+
+/// Where tile `tile`'s pixels start in its art, laid out with gutters ([tile_picture]).
+let tile_at = (tile: i64) -> (i64, i64) => {
+  let cell = tile_side + 2 * GUTTER
+  ((tile % tile_columns) * cell + GUTTER, (tile / tile_columns) * cell + GUTTER)
+}
+
+/// The PNG file `name`'s pixels, `0xAARRGGBB`, and its width; or `None`, having said why.
+let picture_file_pixels = (name: string) -> Maybe<([]u32, i64)> => {
   let path = "${base_path().unwrap_or("")}${name}"
   let Some(bytes) = read_bytes(path) else {
     println("cannot read ${path}")
@@ -448,11 +634,7 @@ let picture_file = (name: string) -> Maybe<(Texture, i64)> => {
     },
     Ok(png) => {
       let rgba = png.rgba
-      let pixels = [i in 0..<png.width * png.height | argb_at(rgba, i * 4)]
-      match create_texture(r, png.width, png.height, pixels) {
-        Some(t) => Some((t, png.width)),
-        None => None,
-      }
+      Some(([i in 0..<png.width * png.height | argb_at(rgba, i * 4)], png.width))
     },
   }
 }
@@ -479,16 +661,17 @@ let use_sprites = (t: own Texture) -> void => {
 /// front, or those behind; each scrolled `t` of the way from the update before ([blend]).
 let draw_planes = (r: Renderer, front: bool, t: f32) -> void => {
   let window_bottom = planes.rows_in_window() * tile_side
-  draw_plane(r, scrolled(planes.plane(planes.PLANE_B), t), front, 0, screen_height)
+  let bottom = height()
+  draw_plane(r, scrolled(planes.plane(planes.PLANE_B), t), front, 0, bottom)
   for k in planes.FIRST_LAYER..<planes.plane_count() {
-    draw_plane(r, scrolled(planes.plane(k), t), front, 0, screen_height)
+    draw_plane(r, scrolled(planes.plane(k), t), front, 0, bottom)
   }
   draw_plane(
     r,
     scrolled(planes.plane(planes.PLANE_A), t),
     front,
     window_bottom,
-    screen_height
+    bottom
   )
   if window_bottom > 0 {
     let w = planes.plane(planes.WINDOW)
@@ -514,7 +697,7 @@ let draw_plane = (r: Renderer, p: Plane, front: bool, top: i64, bottom: i64) -> 
   let sx = p.x.floor()
   let sy = p.y.floor()
   let first_column = (sx / tile_side).max(0)
-  let last_column = ((sx + screen_width - 1) / tile_side).min(p.width - 1)
+  let last_column = ((sx + width() - 1) / tile_side).min(p.width - 1)
   let first_row = ((sy + top) / tile_side).max(0)
   let last_row = ((sy + bottom - 1) / tile_side).min(rows - 1)
   for row in first_row..<=last_row {
@@ -530,9 +713,10 @@ let draw_plane = (r: Renderer, p: Plane, front: bool, top: i64, bottom: i64) -> 
       if from >= to { continue }
       let flip_y = (word & FLIP_Y) != 0
       let cut = if flip_y { y + tile_side - to } else { from - y }
+      let (ax, ay) = tile_at(tile)
       let source = Rect {
-        x: f32((tile % tile_columns) * tile_side),
-        y: f32((tile / tile_columns) * tile_side + cut),
+        x: f32(ax),
+        y: f32(ay + cut),
         w: f32(tile_side),
         h: f32(to - from),
       }
@@ -561,7 +745,7 @@ let draw_laid_out = (r: Renderer, p: Plane, layout: Layout, front: bool) -> void
       let (bx, by) = layout.box_of(column, row)
       let left = bx - sx
       let base = by + layout.cell_height - layout.block_height * tile_side - sy
-      if left >= screen_width || base >= screen_height { continue }
+      if left >= width() || base >= height() { continue }
       if left + layout.block_width * tile_side <= 0 || base + layout.block_height * tile_side <= 0 { continue }
       let Some(art) = tile_art[i64((word & PALETTE_MASK) >> PALETTE_SHIFT)] else { continue }
       let flip_x = (word & FLIP_X) != 0
@@ -571,9 +755,10 @@ let draw_laid_out = (r: Renderer, p: Plane, layout: Layout, front: bool) -> void
           let across = if flip_x { layout.block_width - 1 - tx } else { tx }
           let down = if flip_y { layout.block_height - 1 - ty } else { ty }
           let tile = planes.shown_tile(first + across + down * layout.set_columns)
+          let (ax, ay) = tile_at(tile)
           let source = Rect {
-            x: f32((tile % tile_columns) * tile_side),
-            y: f32((tile / tile_columns) * tile_side),
+            x: f32(ax),
+            y: f32(ay),
             w: f32(tile_side),
             h: f32(tile_side),
           }
@@ -726,4 +911,5 @@ let presentation = pure (fit: Fit) -> i32 => match fit {
   Letterbox => PRESENT_LETTERBOX,
   Stretch => PRESENT_STRETCH,
   Crop => PRESENT_OVERSCAN,
+  Expand => PRESENT_LETTERBOX,
 }

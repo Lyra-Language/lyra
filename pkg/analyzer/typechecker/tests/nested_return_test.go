@@ -84,3 +84,54 @@ let g = (n: i64) -> Maybe<i64> => {
 		})
 	}
 }
+
+// A `return` with no value is refused in a function that returns one, at the body's top
+// level and nested alike, and taken where there is no value to give: a void function (or a
+// generator, which it ends). Until 11/11 it was accepted, and the caller
+// read whatever the return slot held — a freed value, in the Vega studio that found it.
+func TestTypeCheck_ABareReturnNeedsAVoidFunction(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		source string
+		errors []string
+	}{
+		{
+			"top level, a scalar",
+			`let f = (n: i64) -> i64 => {
+  return
+}`,
+			[]string{"f: a `return` with no value in a function returning i64; return one (`return …`)"},
+		},
+		{
+			"nested in a match arm, a tuple",
+			`let f = (n: i64) -> (i64, bool) => {
+  match n {
+    0 => {
+      if n == 0 { return }
+    },
+    _ => {},
+  }
+  (n, true)
+}`,
+			[]string{"f: a `return` with no value in a function returning (i64, bool); return one (`return …`)"},
+		},
+		{
+			"a void function",
+			`let f = (n: i64) -> void => {
+  if n > 0 { return }
+}`,
+			nil,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res := parseCollectAndCheck(t, c.source, false)
+			if c.errors == nil {
+				assertNoErrors(t, res)
+			} else {
+				assertErrorsAre(t, res, c.errors...)
+			}
+		})
+	}
+}

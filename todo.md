@@ -22,11 +22,9 @@ not a formality.
   shifts and adds, or two word multiplies where it can be (patch 0005), and the runtime's
   `__muldi3` takes a checked multiply's sign-extended pair as a signed 32 × 32
   (COMPLETED.md 11/11).
-- **[BUG] A 68000 function past 32 KB can crash llc** ("Cannot relax the instruction, value
-  does not fit"): a branch the 68000 cannot reach with `bra.w` has no longer form on it, and
-  the M68k backend does not branch round with a `jmp`. The hero's `main` is 44 KB at `-O2`
-  and builds only while its far branches stay within reach; 13 inlined `follow_path`s
-  broke it (11/10), fixed for now by `@noinline`.
+- **[DONE 11/12] A 68000 function past 32 KB crashed llc**: a branch past `bra.w`'s reach is
+  now a `jmp` to the absolute address, a `b<cc>` the opposite condition over one (patch
+  0006; COMPLETED.md 11/12).
 
 - **[DONE 11/10] A `const` table lent by `ref`**: a negative integer in an element now folds
   to static data, and a table left inlined (an element arithmetic) is lent as a temporary
@@ -1392,9 +1390,11 @@ sets V on every add. What stands between that and a ROM:
 target, 10/11). In order:
 
 - **[DONE 10/12] A target descriptor and `--target`** — `pkg/target`'s platforms; iOS, the
-  Simulator and Linux built from a Mac and the suite run on each (COMPLETED.md 10/12). Left
-  for the platforms that need them: `<root>/lib/<platform>/` is searched but nothing builds
-  into it yet, and the bindings' C halves are built for the machine alone.
+  Simulator and Linux built from a Mac and the suite run on each (COMPLETED.md 10/12). SDL3
+  and `bindings.audio` are built into `<root>/lib/<platform>/` for iOS, the Simulator and
+  Linux (`tools/sdl3-*.sh`, `build.sh`; COMPLETED.md 11/11). Left: the other bindings' C
+  halves (`ui.sdl3`'s wake, hit test and dialog, `menubar`, `imgui`) per platform, so a `ui`
+  program builds for them too.
 - **[OPEN] iOS** — SDL3 for iOS links (`tools/sdl3-ios.sh`), and a program over it is an app
   started through `SDL_RunApp`, playing in the Simulator frame for frame as on the Mac, full
   screen with an on-screen pad, and signed for and run on an iPhone (10/12: installed,

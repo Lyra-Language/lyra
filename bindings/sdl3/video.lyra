@@ -222,6 +222,24 @@ pub let on_a_display = (x: i32, y: i32) -> bool => {
   x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h
 }
 
+@symbol("SDL_GetPrimaryDisplay")
+unsafe extern sdl_get_primary_display: () -> u32
+
+@symbol("SDL_GetDisplayUsableBounds")
+unsafe extern sdl_get_display_usable_bounds: (display: u32, rect: ^mut ScreenRect) -> bool
+
+/// The primary display's room for windows — its bounds less the menu bar, the dock or a
+/// taskbar — as a width and height in screen coordinates; `None` where SDL cannot say (before
+/// `init`, or with no display).
+pub let usable_display_size = () -> Maybe<(i64, i64)> => {
+  let display = unsafe { sdl_get_primary_display() }
+  if display == 0 { return None }
+  var r = ScreenRect { x: 0, y: 0, w: 0, h: 0 }
+  if !unsafe { sdl_get_display_usable_bounds(display, &mut r) } { return None }
+  if r.w <= 0 || r.h <= 0 { return None }
+  Some((i64(r.w), i64(r.h)))
+}
+
 /// How large the window's content should be drawn: the pixel density of a high-density
 /// display times the scale the user chose for it (Windows' 150%, say). An interface laid
 /// out in its own units draws at this many pixels a unit. `1.0` if SDL cannot say.
