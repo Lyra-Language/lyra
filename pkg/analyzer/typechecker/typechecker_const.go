@@ -70,6 +70,24 @@ func floatBuiltinCallShape(call *ast.FunctionCallExpr) (string, []ast.Expression
 	return "", nil, false
 }
 
+// namespacedConst reports whether e is `ns.NAME`, ns a namespace this file imports and NAME a
+// `const` its module declares — the module-qualified spelling of a const reference.
+func (tc *TypeChecker) namespacedConst(e *ast.MemberExpr) bool {
+	ns, ok := e.Object.(*ast.IdentifierExpr)
+	if !ok || tc.symTable == nil {
+		return false
+	}
+	if _, shadowed := tc.scope.Lookup(ns.Name); shadowed {
+		return false
+	}
+	path, ok := tc.symTable.NamespaceIn(tc.symTable.ModuleOfFile[e.GetLocation().File], ns.Name)
+	if !ok {
+		return false
+	}
+	decl, ok := tc.symTable.BindingIn(path, e.Property.Name)
+	return ok && decl.IsConstant()
+}
+
 // verifyConstBuiltinCalls is the second half of the float-builtin arm, run once the whole
 // program has been inferred: every call the constancy walk accepted by *name* is asked
 // whether it actually resolved to a compiler builtin, and refused if it did not.
@@ -177,6 +195,17 @@ func (tc *TypeChecker) firstNonConstant(expr ast.Expression) (ast.Expression, bo
 			if decl, ok := sym.(*ast.VarDeclStmt); ok && decl.IsConstant() {
 				return nil, true
 			}
+		}
+		return expr, false
+
+	case *ast.MemberExpr:
+		// **Another module's `const`, through its namespace, is a `const`**: `const WIDTH =
+		// assets.SCREEN_WIDTH` is as constant as `SCREEN_WIDTH` imported bare. Refused as "a
+		// member access" until 11/11, so Vega's starter game wrote `assets.SCREEN_WIDTH` at
+		// every use instead. Only a namespace this file imports, naming that module's `const`
+		// and no local shadowing it; a field or anything else stays refused.
+		if tc.namespacedConst(e) {
+			return nil, true
 		}
 		return expr, false
 

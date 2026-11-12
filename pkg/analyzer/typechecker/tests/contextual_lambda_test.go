@@ -236,7 +236,7 @@ let app<b> = (n: i64, f: (i64) -> b) -> b => f(n)
 `
 	cases := map[string]struct{ src, want string }{
 		"a fixed spelling stays fixed": {app + `let w = () -> i64 => { var xs = app(1, (x) => #[x]); xs.push(2); 0 }`,
-			"member access on non-struct type [1]i64"},
+			"[1]i64 has no method \"push\""},
 		// The context settles `b` to `[]string` before the lambda is elaborated (09/15), so the
 		// mismatch is reported where it is: at the lambda's own return.
 		"another element type": {app + `let w = (n: i64) -> []string => app(n, (x) => [x])`,

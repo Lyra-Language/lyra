@@ -964,7 +964,8 @@ target = "genesis"
     read with `read_volatile`. `examples/genesis/vblank.lyra` counts frames in one;
     `walker.lyra` shows its sprites from one, and its main loop waits on the count.
 - **A `const` holds what can be known before the program runs**: literals, other
-  `const`s, arithmetic and conversions of them, array/tuple/struct literals of them, and
+  `const`s — another module's through its namespace too (`assets.SCREEN_WIDTH`, 11/11) —
+  arithmetic and conversions of them, array/tuple/struct literals of them, and
   **data constructors** — bare (`None`, `Left`) or of a constant payload (`Some(3)`,
   `#[Left, Jump(12)]`). Anything computed at run time is `lyra-E012`.
 - **A `const` fixed array of literals is data** (`#[…]`, `#[v; n]`, nested, and of structs

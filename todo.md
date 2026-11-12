@@ -510,13 +510,11 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Language surface
 
-- **[OPEN] A `const` cannot be another module's `const`**: `const WIDTH: i64 = assets.SCREEN_WIDTH`
-  is `lyra-E012` ("a member access is not constant"). A qualified constant is as constant as a
-  bare one; Vega's starter game uses `assets.SCREEN_WIDTH` at each use instead.
+- **[DONE 11/11] A `const` may be another module's `const`** through its namespace: `const
+  WIDTH = assets.SCREEN_WIDTH` (COMPLETED.md, 11/11). Vega's starter game can name it once now.
 
-- **[OPEN] A type error leaves a misleading `lyra-E007` behind it**: `(x * f64(n)).floor()` with
-  `x: f32` reports `pure function calls impure function "floor"` before the real E001 (f32 and
-  f64), and on up through every pure caller. A method on an operand that failed should charge nothing.
+- **[DONE 11/11] A method on an operand that failed charges nothing**, so a type error leaves no
+  `lyra-E007` cascade behind it (COMPLETED.md, 11/11).
 
 - **[DONE 10/19] `if let … { } else if … { }` parses**, `else if let` too, and an `if`'s
   `else` may be an `if let`. (COMPLETED.md, 10/19.)
@@ -1167,8 +1165,7 @@ annotations.
   result carries a raw pointer pins what it borrowed, as `&xs[0]` does (COMPLETED.md, 11/02).
 - **[DONE 11/11] A `let` binding a pointer keeps its initializer's temporaries** to its scope's end:
   `let p = word(7).cstring_ptr()` (COMPLETED.md, 11/11). Left: a pointer *reassigned* out of a
-  temporary (`p = word(8).cstring_ptr()`), and `.data()` on a temporary or a parameter, refused as
-  "member access on non-struct type".
+  temporary (`p = word(8).cstring_ptr()`).
 
 ## Const generics — a value as a type parameter
 

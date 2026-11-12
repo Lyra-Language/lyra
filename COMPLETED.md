@@ -9,6 +9,23 @@ Newest first.
 
 ## Dated log
 
+### 11/11/26 — Three small front-end fixes
+
+- **`.data()` on a temporary or a parameter worked all along.** todo.md said it was refused,
+  from a reproduction without `import std.ffi`, where `data` lives; what was wrong was the
+  message, "member access on non-struct type []u8", which read as though arrays had no
+  methods. A method missing on any receiver now says `[]u8 has no method "data"`, as one on a
+  string or a struct did. Naming `std.ffi` would need the modules a program never loaded,
+  which nothing here searches.
+- **Another module's `const` is a `const`**: `const WIDTH = assets.SCREEN_WIDTH` was E012's "a
+  member access is not constant". `firstNonConstant` takes `ns.NAME` when `ns` is a namespace
+  this file imports and `NAME` that module's `const`; a private one is still its one E028, a
+  `var` still E012 (`TestQualifiedConst`).
+- **A method on an operand that failed charges nothing**: `(x * f64(n)).floor()` with `x:
+  f32` reported "pure function calls impure function floor" ahead of the type error, and again
+  at every pure caller. `inferMemberCall` marks the call unresolved when its receiver had no
+  type, the marker that already stopped the cascade for an undefined name.
+
 ### 11/11/26 — Four use-after-frees through a second name
 
 Each read freed memory under ASan, and each was a name the compiler didn't see the storage by.

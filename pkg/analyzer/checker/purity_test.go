@@ -1221,6 +1221,17 @@ let render = pure (v: f64) -> i64 => shade(v)`)
 	assertPurityCount(t, errs, 0)
 }
 
+// **A method on an operand that failed charges nothing either** (11/11): `(x * f64(n))`
+// with `x: f32` is refused, so `.floor()` finds no method, and charged every effect it was
+// "pure function calls impure function floor" at that line and again at `twice`, ahead of
+// the one error that said what was wrong.
+func TestPurity_AFailedReceiverIsNotAPurityCascade(t *testing.T) {
+	errs := checkPurity(t, `
+let scale = pure (x: f32, n: i64) -> i64 => i64((x * f64(n)).floor())
+let twice = pure (x: f32) -> i64 => scale(x, 2) * 2`)
+	assertPurityCount(t, errs, 0)
+}
+
 // The suppression is per *call*, not per function: a pure function with both an
 // undefined callee and a real violation still reports the real one.
 func TestPurity_UndefinedCalleeDoesNotMaskARealViolation(t *testing.T) {

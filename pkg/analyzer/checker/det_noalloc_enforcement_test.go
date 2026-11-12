@@ -105,9 +105,11 @@ func TestDet_ThreadedSeed_Ok(t *testing.T) {
 }
 
 // Ambient randomness breaks `pure` too (Rand ∈ PurityEffects), reported by the
-// fine-grained per-op walk as E007 rather than the E016 bound check.
+// fine-grained per-op walk as E007 rather than the E016 bound check. `random_seed()`, the
+// builtin every ambient form reaches: it read `Random.global()`, a type that doesn't exist,
+// and passed only because a call on an undefined receiver was charged every effect (11/11).
 func TestPure_AmbientRandom_Violates(t *testing.T) {
-	src := `let roll = pure (n: i64) -> i64 => { Random.global() }`
+	src := `let roll = pure (n: i64) -> u64 => { random_seed() }`
 	assertBoundError(t, checkPurity(t, src), "lyra-E007")
 }
 

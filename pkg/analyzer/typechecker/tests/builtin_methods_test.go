@@ -60,3 +60,11 @@ func TestBuiltin_UnknownMethodOnPrimitive(t *testing.T) {
 	res := parseCollectAndCheck(t, "let a: i8 = 1\nlet b = a.frobnicate(1)\n", false)
 	assertErrorsAre(t, res, `i8 has no method "frobnicate"`)
 }
+
+// A method missing on an array, a tuple or a `Maybe` is a missing method too (11/11). It said
+// "member access on non-struct type []u8", which read as though arrays had no methods, for
+// `xs.data()` written without `import std.ffi`.
+func TestBuiltin_UnknownMethodOnAnArray(t *testing.T) {
+	res := parseCollectAndCheck(t, "let xs: []u8 = [1, 2]\nlet p = xs.data()\nlet t = (1, 2).swap()\n", false)
+	assertErrorsAre(t, res, `[]u8 has no method "data"`, `(i64, i64) has no method "swap"`)
+}

@@ -1458,6 +1458,11 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		tc.withoutExpectedType(func() { objType = tc.inferExprType(member.Object) })
 	}
 	if objType == nil {
+		// The receiver has been refused already, so no method was found and none will be:
+		// the call charges nothing (SetUnresolvedCallee). Charged every effect instead, a
+		// type error in `(x * f64(n)).floor()` with `x: f32` was reported first as "pure
+		// function calls impure function floor", and again at every pure caller (11/11).
+		tc.typeTable.SetUnresolvedCallee(call)
 		return nil
 	}
 	objType = tc.resolveType(objType, member.Object.GetLocation())
@@ -1705,11 +1710,14 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		// so report the missing method rather than "non-struct type".
 		tc.addError(member.GetLocation(), SeverityError, "%s has no method %q%s", t, methodName, hint)
 	default:
+		// A method call on anything else — an array, a `Maybe`, a tuple — is a missing method
+		// too. It said "member access on non-struct type []u8", which reads as though arrays
+		// had no methods at all, for `xs.data()` written without `import std.ffi` (11/11).
 		if objType != nil {
 			if hint == "" {
 				hint = tc.maybeReceiverHint(objType, member.GetLocation())
 			}
-			tc.addError(member.GetLocation(), SeverityError, "member access on non-struct type %s%s", objType, hint)
+			tc.addError(member.GetLocation(), SeverityError, "%s has no method %q%s", types.Source(promoteToDefault(objType)), methodName, hint)
 		}
 	}
 	return nil
