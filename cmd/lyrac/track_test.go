@@ -17,8 +17,8 @@ func TestRun_GameTrackIsHeardInStereo(t *testing.T) {
 		t.Skip("no SDL3")
 	}
 	root := repoRoot(t)
-	if _, err := os.Stat(filepath.Join(root, "build", "lib", "liblyra-audio.a")); err != nil {
-		t.Skip("no build/lib/liblyra-audio.a: run ./build.sh")
+	if !archiveRunsHere(filepath.Join(root, "build", "lib", "liblyra-audio.a")) {
+		t.Skip("no build/lib/liblyra-audio.a built for this platform: run ./build.sh")
 	}
 	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()
@@ -123,8 +123,8 @@ func TestRun_GameSongStopsTheMusicTrack(t *testing.T) {
 		t.Skip("no SDL3")
 	}
 	root := repoRoot(t)
-	if _, err := os.Stat(filepath.Join(root, "build", "lib", "liblyra-audio.a")); err != nil {
-		t.Skip("no build/lib/liblyra-audio.a: run ./build.sh")
+	if !archiveRunsHere(filepath.Join(root, "build", "lib", "liblyra-audio.a")) {
+		t.Skip("no build/lib/liblyra-audio.a built for this platform: run ./build.sh")
 	}
 	setenv(t, "LYRA_STD", root)
 	dir := t.TempDir()

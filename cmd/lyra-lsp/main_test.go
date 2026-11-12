@@ -19,5 +19,9 @@ func TestMain(m *testing.M) {
 			panic(err)
 		}
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	if lyrafmtDir != "" {
+		os.RemoveAll(lyrafmtDir)
+	}
+	os.Exit(code)
 }

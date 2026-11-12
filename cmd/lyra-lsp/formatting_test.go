@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,35 +18,47 @@ import (
 // linker — the same gate cmd/lyrac's lyrafmt test uses.
 func buildLyrafmt(t *testing.T) string {
 	t.Helper()
+	bin, skip, err := buildLyrafmtIn(t.TempDir())
+	if skip != "" {
+		t.Skip(skip)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bin
+}
+
+// buildLyrafmtIn is buildLyrafmt into dir: the binary, or why the machine can't build one
+// (skip), or what went wrong.
+func buildLyrafmtIn(dir string) (bin, skip string, err error) {
 	clang, err := exec.LookPath("clang")
 	if err != nil {
-		t.Skip("clang not found on PATH")
+		return "", "clang not found on PATH", nil
 	}
 	libdir, err := exec.Command("pkg-config", "--variable=libdir", "tree-sitter").Output()
 	if err != nil {
-		t.Skip("the tree-sitter runtime is not installed; brew install tree-sitter")
+		return "", "the tree-sitter runtime is not installed; brew install tree-sitter", nil
 	}
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
-		t.Fatal("cannot locate this test file")
+		return "", "", fmt.Errorf("cannot locate this test file")
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
 	grammar := filepath.Join(root, "..", "tree-sitter-lyra", "src")
 	if _, err := os.Stat(filepath.Join(grammar, "parser.c")); err != nil {
-		t.Skip("tree-sitter-lyra is not checked out beside lyra")
+		return "", "tree-sitter-lyra is not checked out beside lyra", nil
 	}
-	dir := t.TempDir()
 	for _, src := range []string{"parser.c", "scanner.c"} {
 		obj := filepath.Join(dir, strings.TrimSuffix(src, ".c")+".o")
 		if out, err := exec.Command(clang, "-O1", "-std=c11", "-c", filepath.Join(grammar, src), "-I", grammar, "-o", obj).CombinedOutput(); err != nil {
-			t.Fatalf("compiling %s: %v\n%s", src, err, out)
+			return "", "", fmt.Errorf("compiling %s: %v\n%s", src, err, out)
 		}
 	}
 	if out, err := exec.Command("ar", "rcs", filepath.Join(dir, "libtree-sitter-lyra.a"),
 		filepath.Join(dir, "parser.o"), filepath.Join(dir, "scanner.o")).CombinedOutput(); err != nil {
-		t.Fatalf("archiving the grammar: %v\n%s", err, out)
+		return "", "", fmt.Errorf("archiving the grammar: %v\n%s", err, out)
 	}
-	bin := filepath.Join(dir, "lyrafmt")
+	bin = filepath.Join(dir, "lyrafmt")
 	build := exec.Command("go", "run", "./cmd/lyrac", "build", "-o", bin,
 		filepath.Join(root, "examples", "lyrafmt", "lyrafmt.lyra"))
 	build.Dir = root
@@ -53,9 +66,9 @@ func buildLyrafmt(t *testing.T) string {
 		"LYRA_STD="+root,
 		"LIBRARY_PATH="+dir+string(os.PathListSeparator)+strings.TrimSpace(string(libdir)))
 	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building lyrafmt: %v\n%s", err, out)
+		return "", "", fmt.Errorf("building lyrafmt: %v\n%s", err, out)
 	}
-	return bin
+	return bin, "", nil
 }
 
 // A buffer the rules have something to say about comes back as one edit covering the whole

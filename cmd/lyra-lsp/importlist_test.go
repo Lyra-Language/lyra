@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -202,9 +203,10 @@ func openForDiagnostics(t *testing.T, h *servertest.Harness, dir, name, source s
 	return uri, diags
 }
 
-// lyrafmtForTest is the lyrafmt build.sh built beside the server, or "" — the formatting
-// half of these checks is skipped without one (formatting_test.go builds its own; these
-// tests ask only that the edit is one lyrafmt would keep).
+// lyrafmtForTest is a lyrafmt that runs here, or "" — the formatting half of these checks is
+// skipped without one. `$LYRA_FMT`, then the one build.sh built beside the server if it runs:
+// under ./asan.sh that is the Mac's, mounted into Linux, which can't. Otherwise one is built for
+// the package's run, as formatting_test.go builds its own (sharedLyrafmt).
 func lyrafmtForTest(t *testing.T) string {
 	t.Helper()
 	if env := os.Getenv("LYRA_FMT"); env != "" {
@@ -213,11 +215,45 @@ func lyrafmtForTest(t *testing.T) string {
 	bin, err := filepath.Abs(filepath.Join("..", "..", "build", "lyrafmt"))
 	if err == nil {
 		if _, err := exec.LookPath(bin); err == nil {
-			return bin
+			if _, runs := runLyrafmt(bin, "let a = 1\n"); runs {
+				return bin
+			}
 		}
 	}
-	t.Log("no build/lyrafmt: the lyrafmt check is skipped (run ./build.sh)")
-	return ""
+	shared := sharedLyrafmt()
+	if shared.err != nil {
+		t.Fatal(shared.err)
+	}
+	if shared.skip != "" {
+		t.Logf("the lyrafmt check is skipped: %s", shared.skip)
+	}
+	return shared.bin
+}
+
+// lyrafmtBuild is a lyrafmt built once for this package's tests, in lyrafmtDir, which TestMain
+// removes when they end.
+type lyrafmtBuild struct {
+	bin, skip string
+	err       error
+}
+
+var (
+	lyrafmtOnce  sync.Once
+	lyrafmtBuilt lyrafmtBuild
+	lyrafmtDir   string
+)
+
+func sharedLyrafmt() lyrafmtBuild {
+	lyrafmtOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "lyra-lsp-lyrafmt-")
+		if err != nil {
+			lyrafmtBuilt.err = err
+			return
+		}
+		lyrafmtDir = dir
+		lyrafmtBuilt.bin, lyrafmtBuilt.skip, lyrafmtBuilt.err = buildLyrafmtIn(dir)
+	})
+	return lyrafmtBuilt
 }
 
 // applyTextEdits applies LSP edits — multi-line ones included — to an ASCII source, as a

@@ -83,7 +83,7 @@ func TestRun_ImGuiExamplesCheckHeadless(t *testing.T) {
 	if code != 0 || strings.Contains(stdout+stderr, "warning") {
 		t.Fatalf("checking the gallery exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
-	if !imguiArchiveRunsHere(filepath.Join(root, "build", "lib", "liblyra-imgui.a")) {
+	if !archiveRunsHere(filepath.Join(root, "build", "lib", "liblyra-imgui.a")) {
 		t.Skip("no build/lib/liblyra-imgui.a built for this platform — run ./build.sh")
 	}
 	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
@@ -105,10 +105,11 @@ func TestRun_ImGuiExamplesCheckHeadless(t *testing.T) {
 	}
 }
 
-// imguiArchiveRunsHere reports whether the archive at path exists and holds this platform's
+// archiveRunsHere reports whether the archive at path exists and holds this platform's
 // objects: `./asan.sh` mounts the Mac's build/ into a Linux container, where a Mach-O archive
-// is there and links nothing.
-func imguiArchiveRunsHere(path string) bool {
+// is there and links nothing. Every test needing one of build.sh's archives asks it, rather
+// than whether the file exists.
+func archiveRunsHere(path string) bool {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return false
