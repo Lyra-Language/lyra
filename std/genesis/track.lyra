@@ -38,7 +38,10 @@ impl Track {
   /// Play it from its start: the music in place of any music (and any song), or a voice in
   /// place of any voice.
   pub let play = (self) -> void =>
-    sound.start_track(Sample { first: self.first, length: self.length, rate: self.rate, loop_at: self.loop_from }, self.voice)
+    sound.start_track(
+      Sample { first: self.first, length: self.length, rate: self.rate, loop_at: self.loop_from },
+      self.voice
+    )
 }
 
 /// The music stopped, if one plays.

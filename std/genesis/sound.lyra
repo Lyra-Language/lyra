@@ -126,7 +126,12 @@ pub let use_track_bytes<const T: i64> = (pcm: ref [T]u8) -> void => {
 /// music in place of the music track and any song.
 pub let start_track = (t: Sample, voice: bool) -> void => {
   track_starts = track_starts.wrapping_add(1)
-  let started = TrackPlay { sample: t, on: t.length > 0, start: track_starts, step: track_step(t.rate) }
+  let started = TrackPlay {
+    sample: t,
+    on: t.length > 0,
+    start: track_starts,
+    step: track_step(t.rate)
+  }
   if voice {
     voice_track = started
   } else {
@@ -141,7 +146,8 @@ pub let stop_track = (voice: bool) -> void => {
 }
 
 /// Whether the voice track, or the music track, is playing.
-pub let track_playing = (voice: bool) -> bool => if voice { voice_track.on } else { music_track.on }
+pub let track_playing = (voice: bool) -> bool =>
+  if voice { voice_track.on } else { music_track.on }
 
 /// [update], and the song playing's tick under the effects — a channel an effect is
 /// playing on the effect's (`std.chips.music`): once each vertical blank. `tables` is the
@@ -169,7 +175,8 @@ pub let update_music_sampled<const N: i64, const P: i64, const S: i64, const E: 
 ) -> void => {
   let before = held_by(player)
   let effect_writes = effects_frame(steps, patches)
-  let (bytes, writes) = music.frame(tables, before | held_by(player) | track_holds(), music_psg, music_fm)
+  let holds = before | held_by(player) | track_holds()
+  let (bytes, writes) = music.frame(tables, holds, music_psg, music_fm)
   for i in 0..<bytes { write(music_psg[i]) }
   follow_chosen(effect_samples, samples, music.dac)
   // The Z80 stopped only while what was made is copied to it: a byte copied a byte.
@@ -250,18 +257,27 @@ impl TrackPlay {
 
   /// It as the DAC plays it.
   let dac = pure (self) -> Dac =>
-    Dac { sample: self.sample, rate: u32(self.sample.rate), level: 15, playing: true, note: self.start }
+    Dac {
+      sample: self.sample,
+      rate: u32(self.sample.rate),
+      level: 15,
+      playing: true,
+      note: self.start
+    }
 }
 
 /// The driver's step through a sample at `rate` bytes a second: 65536ths of a byte an output.
 let track_step = pure (rate: u16) -> u32 => ((u32(rate) << 16) / Z80_RATE).max(1)
 
 /// FM 6 held for the song while a track plays: it is lent to the DAC.
-let track_holds = () -> u16 => if voice_track.on || music_track.on { u16(1) << u16(FM_CHANNEL) } else { 0 }
+let track_holds = () -> u16 =>
+  if voice_track.on || music_track.on { u16(1) << u16(FM_CHANNEL) } else { 0 }
 
 /// The writes [follow_chosen] asked for, to the driver's queue after the effects'.
 let queue_tracks = () -> void => {
-  for i: i16 in 0..<i16(track_writes) { queue_fm(track_fm[i * 3], track_fm[i * 3 + 1], track_fm[i * 3 + 2]) }
+  for i: i16 in 0..<i16(track_writes) {
+    queue_fm(track_fm[i * 3], track_fm[i * 3 + 1], track_fm[i * 3 + 2])
+  }
   track_writes = 0
 }
 

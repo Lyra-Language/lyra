@@ -76,7 +76,8 @@ impl Decoder {
   }
 
   /// Its place moved to frame `frame` (0 its start): whether it could be.
-  pub let seek = (self: ref, frame: i64) -> bool => unsafe { lyra_audio_seek(self.handle, frame) } != 0
+  pub let seek = (self: ref, frame: i64) -> bool =>
+    unsafe { lyra_audio_seek(self.handle, frame) } != 0
 }
 
 @symbol("lyra_audio_open")
