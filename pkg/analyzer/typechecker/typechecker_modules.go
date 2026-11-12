@@ -99,6 +99,47 @@ func (tc *TypeChecker) moduleMemberType(m *ast.MemberExpr) (typ types.Type, fn *
 	return nil, nil, true
 }
 
+// namespacedBinding is the top-level `let`, `var` or `const` that `lib.name` names when lib is
+// a namespace this file imported: the storage a write through `lib.queue[0] = v` lands in.
+// A binding or parameter named like the namespace hides it, as moduleMemberType asks.
+func (tc *TypeChecker) namespacedBinding(m *ast.MemberExpr) (*ast.VarDeclStmt, bool) {
+	id, ok := m.Object.(*ast.IdentifierExpr)
+	if !ok {
+		return nil, false
+	}
+	if _, shadowed := tc.scope.Lookup(id.Name); shadowed {
+		return nil, false
+	}
+	if _, isParam := tc.paramTypes[id.Name]; isParam {
+		return nil, false
+	}
+	imp, ok := tc.symTable.NamespaceImport(m.GetLocation().File, id.Name)
+	if !ok || !tc.symTable.ModuleDeclares(imp.Path, m.Property.Name) {
+		return nil, false
+	}
+	decl, ok := tc.symTable.BindingIn(imp.Path, m.Property.Name)
+	return decl, ok && decl != nil
+}
+
+// namespacedPlace walks a place path back to the `lib.name` it starts at, when that names
+// another module's binding. Such a path has no identifier root of its own: `lib` is a
+// namespace, and asking it the binding questions (or inferring it) reported
+// `undefined identifier "lib"` at every write through one (11/11).
+func (tc *TypeChecker) namespacedPlace(place ast.Expression) (*ast.MemberExpr, *ast.VarDeclStmt, bool) {
+	for x, ok := place, true; ok; x, ok = ast.PlaceObject(x) {
+		m, isMember := x.(*ast.MemberExpr)
+		if !isMember {
+			continue
+		}
+		if _, isName := m.Object.(*ast.IdentifierExpr); !isName {
+			continue
+		}
+		decl, found := tc.namespacedBinding(m)
+		return m, decl, found
+	}
+	return nil, nil, false
+}
+
 // namespaceOverloads resolves `alias.name` to the module's overload set when alias names
 // an imported module and name is overloaded there on its receiver. handled is true when it
 // was one — with a nil set when the members are not visible here, the error reported.

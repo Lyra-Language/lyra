@@ -25,6 +25,30 @@ at an empty folder. Its ROM first differed from the full toolchain's by 12 KB, w
 neither the stripping nor the objects: 185 panic messages carry the absolute path of their std
 file, so where lyra sits changes the ROM (todo.md). Built from the same place, it is identical.
 
+### 11/11/26 — A namespaced global as a place; `==` refused on a function value
+
+**`lib.queue[0] = 1` said `undefined identifier "lib"`**, though `lib.queue.push(1)` worked. The
+writability and readonly-field walks asked the path's root identifier their questions, and the
+root of `lib.queue[0]` is `lib`, a namespace that is no value. They now stop at `lib.queue`
+(`namespacedPlace`) and ask the module's binding: interior writes need a `var` or a `let mut`, a
+whole reassignment a `var`. Four copies of that rule needed the case — the assignment, `&mut`,
+a mutating builtin's receiver and a `mut` argument — and the assignment's was folded into the
+`&mut` one, which it already duplicated line for line. The `mut`-argument overlap check
+(`placeOf`) inferred the path's objects too, and now roots one at `lib.queue`.
+
+Past the front end, **a `mut` argument and `&mut` reached a copy**: `namesStorage` called a
+namespaced path a temporary, so `rename(lib.at)` renamed a stack copy and `&mut lib.count`
+pointed at one. It is the global's slot now (`namespaceGlobalSlot`), in `lvalueAddress` and as an
+owning root, so an overwritten string is released. `TestExec_WritesThroughANamespace` runs
+every shape under ASan, and `TestNamespacedPlace_TheBindingDecides` the refusals.
+
+**`==` on a type holding a function value** checked clean and failed in the backend with no
+position (Vega's `Work`, 11/02). `functionHeldBy` walks the operand's type as layout does,
+each aggregate from its declaration and a generic one instantiated, and the refusal names the
+path: `Work holds a function value (run: () -> void)`, `jobs[…].run`, `Some.0`. An `Eq` impl for
+the type itself is asked first; a nested type's is not, because the backend's structural
+comparison never asks it either. Nothing in the workspace tripped it.
+
 ### 11/11/26 — lyrafmt breaks a line a list already broke around
 
 A long line ending in a comma is one element of a list a line apiece, and `widest_list` chose

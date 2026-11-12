@@ -123,6 +123,13 @@ func isAddressable(e ast.Expression) bool {
 // because "may this be mutated" must have one answer: a `&mut` that outran the assignment
 // rule would be a way to mutate a `let` by taking a pointer to it first.
 func (tc *TypeChecker) requireMutableRoot(target ast.Expression, what string) {
+	// `lib.queue[0]`: the binding is the other module's, reached through its namespace.
+	if m, decl, ok := tc.namespacedPlace(target); ok {
+		if !decl.CanMutateInterior() {
+			tc.addInteriorImmutableError(m.GetLocation(), namespacedName(m), decl.BindingKind)
+		}
+		return
+	}
 	root := rootIdentifier(target)
 	if root == nil {
 		return
@@ -147,4 +154,9 @@ func (tc *TypeChecker) requireMutableRoot(target ast.Expression, what string) {
 			tc.addInteriorImmutableError(root.GetLocation(), root.Name, decl.BindingKind)
 		}
 	}
+}
+
+// namespacedName spells `lib.name` as the program wrote it, for a diagnostic.
+func namespacedName(m *ast.MemberExpr) string {
+	return m.Object.(*ast.IdentifierExpr).Name + "." + m.Property.Name
 }

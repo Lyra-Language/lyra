@@ -1852,28 +1852,13 @@ func (tc *TypeChecker) checkDerefAssignment(stmt *ast.DerefAssignmentStmt) {
 // holds for one and not the other is a rule that depends on spelling.
 func (tc *TypeChecker) checkLValueWritable(target ast.Expression) {
 	// Enforce mutability of the root binding first; this is the point of the
-	// statement form and should be reported even if the value doesn't type-check.
-	if root := rootIdentifier(target); root != nil {
-		if root.IsConst {
-			tc.addImmutableBindingError(root.GetLocation(), root.Name, ast.BindingConst)
-		} else if mod, ok := tc.paramMods[root.Name]; ok && tc.paramAt(root.Name, root.GetLocation()) {
-			// The path is rooted at a function parameter. The `ref`/`mut`/`own`
-			// modifier governs whether its interior may be mutated: a bare or
-			// `ref` parameter is an immutable borrow, while `mut` (mutable borrow)
-			// and `own` (owned local) both permit interior mutation. Checked
-			// before the scope lookup because a parameter shadows any outer
-			// binding of the same name — and only where no local shadows *it*
-			// (paramAt, mirroring IdentifierExpr resolution).
-			if !paramAllowsInteriorMutation(mod) {
-				tc.addParamImmutableError(root.GetLocation(), root.Name, mod)
-			}
-		} else if tc.patternBound[root.Name] && tc.paramAt(root.Name, root.GetLocation()) {
-			tc.addPatternBindingImmutableError(root.GetLocation(), root.Name)
-		} else if sym, ok := tc.lookupAt(root.Name, root.GetLocation()); ok {
-			if decl, ok := sym.(*ast.VarDeclStmt); ok && !decl.CanMutateInterior() {
-				tc.addInteriorImmutableError(root.GetLocation(), root.Name, decl.BindingKind)
-			}
-		}
+	// statement form and should be reported even if the value doesn't type-check. The
+	// rule is requireMutableRoot's, which `&mut` asks too; a namespaced global written
+	// whole (`lib.count = 0`) is a reassignment, and needs a `var`.
+	if m, decl, ok := tc.namespacedPlace(target); ok && m == target && !decl.IsMutable() {
+		tc.addImmutableBindingError(m.GetLocation(), namespacedName(m), decl.BindingKind)
+	} else {
+		tc.requireMutableRoot(target, "assignment")
 	}
 
 	// A path through a pointer — `p^.x`, `p.offset(i)^.y` — writes the pointee, so the
@@ -2046,6 +2031,10 @@ func (tc *TypeChecker) checkFrozenFieldPath(target ast.Expression) {
 	for {
 		switch e := target.(type) {
 		case *ast.MemberExpr:
+			// `lib.queue`: another module's binding, the start of the path, not a field.
+			if _, ok := tc.namespacedBinding(e); ok {
+				return
+			}
 			objType := tc.resolveType(tc.inferExprType(e.Object), e.Object.GetLocation())
 			if f, ok := structFieldByName(objType, e.Property.Name); ok && f.Frozen {
 				tc.addError(e.GetLocation(), SeverityError,
@@ -2348,6 +2337,8 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 		}
 		if !areEqualityCompatible(leftType, rightType) {
 			tc.addIncompatibleTypesError(expr, string(expr.Operator), leftType, rightType)
+		} else if tc.reportFunctionEquality(expr, leftType) || tc.reportFunctionEquality(expr, rightType) {
+			return
 		} else {
 			// The float warning is *advice*, so it is emitted alongside the width
 			// propagation rather than instead of it. It sat on an `else if` until

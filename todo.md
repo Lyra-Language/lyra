@@ -1016,8 +1016,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   (COMPLETED.md, 11/11). Left: a parameter walked while a callee writes the global it came from.
 - **[DONE 11/11] A bare argument beside a `mut` is held for the call**, so `f(ys, ys)` reads the
   array it was given (COMPLETED.md, 11/11).
-- **[OPEN] `lib.queue[0] = 1` and `lib.add(lib.queue[0])` say `undefined identifier "lib"`.** A
-  namespaced global is readable and `lib.queue.push(1)` works, but not as a place. A message at least.
+- **[DONE 11/11] A global reached through a namespace is a place**: `lib.queue[0] = 1`, a field,
+  a whole reassignment, `+=`, a `mut` argument and `&mut` write the module's own (COMPLETED.md, 11/11).
 - **[OPEN] A `Seq` beside another clause** (`[n in ns, i in upto(n) | i]`) is still refused,
   though the comprehension can now grow. It would need a `compSource` over `lowerSeqConsume`.
 - **[DONE 09/29] A field, an element or a parenthesized expression is a comprehension
@@ -1063,7 +1063,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   **[OPEN]** the errors the parser's recovery leaves after it — "unknown type \"R\"",
   "unknown type \"Renderer\"" — still follow it.
 - **[OPEN] A value copied before a call that changes it** — `(s, proceed(s, then))`, with `s` passed `mut`, copies `s` first and drops what the call did, silently (Vega's Don't Save did nothing, 11/02). Warn when an aggregate is read and then passed `mut` later in the same tuple or argument list.
-- **[OPEN] `==` on a type holding a function value passes `lyrac check`** — it is refused only by the backend ("structural equality on … is not implemented"); the typechecker should refuse it with a position (Vega's `Work`, 11/02).
+- **[DONE 11/11] `==` on a type holding a function value is refused where it is written**, naming
+  the path to the function (COMPLETED.md, 11/11).
 
 ## Functional / imperative blend
 

@@ -179,6 +179,7 @@ Each of these produces something that looks like it works. Other docs cite them 
    | is that sharing observable? | `ownership.SharesMutableState` |
    | substitute type variables | `types.Substitute` |
    | a node's children | `ast.WalkStmt`/`ast.WalkExpr` (`…Children` skips the node) |
+   | a place rooted at another module's global (`lib.queue[0]`), whose root identifier is a namespace | `namespacedPlace` (typechecker: ask the binding, never infer `lib`); `namespaceGlobalSlot` (backend: its storage) |
    | statement expressions ownership must see | `ownership.analyzer.stmt` — **all** statement kinds |
    | rewrite expressions in place | `ast.RewriteStmt`/`ast.RewriteExpr` |
    | see through a newtype | `stripNewtypeResolving` (typechecker); `stripNewtype` (backend — aliases too) |

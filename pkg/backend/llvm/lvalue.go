@@ -153,7 +153,12 @@ func (l *lowerer) lvalueRootIsOwning(e ast.Expression) bool {
 				return false
 			}
 			return l.slotIsOwning(slot)
-		case *ast.MemberExpr, *ast.IndexExpr, *ast.TupleIndexExpr:
+		case *ast.MemberExpr:
+			if slot, ok := l.namespaceGlobalSlot(t); ok {
+				return l.slotIsOwning(slot)
+			}
+			e = t.Object
+		case *ast.IndexExpr, *ast.TupleIndexExpr:
 			e, _ = ast.PlaceObject(t)
 		case *ast.DerefExpr:
 			// A path through a pointer (`p^.s = v`) ends at storage `&mut` or `data_mut()`
@@ -354,14 +359,18 @@ func (l *lowerer) lowerReceiverAndArguments(block *ir.Block, receiver ast.Expres
 }
 
 // namesStorage reports whether the path e ends at a slot this function can address, or at a
-// pointer: not a temporary, and not a name reached through a namespace, which lvalueAddress
-// doesn't walk.
+// pointer: not a temporary. Another module's global reached through its namespace
+// (`lib.at.x`) is a slot; its const, lowered at each use, is not.
 func (l *lowerer) namesStorage(e ast.Expression) bool {
 	for x, ok := e, true; ok; x, ok = ast.PlaceObject(x) {
 		switch x := x.(type) {
 		case *ast.IdentifierExpr:
 			_, found := l.slotFor(x.Name, x.GetLocation())
 			return found
+		case *ast.MemberExpr:
+			if _, found := l.namespaceGlobalSlot(x); found {
+				return true
+			}
 		case *ast.DerefExpr:
 			return true
 		}
@@ -422,6 +431,11 @@ func (l *lowerer) lvalueAddressRaw(block *ir.Block, e ast.Expression) (lvalueLoc
 		return lvalueLoc{ptr: slot, ty: lyraType}, block, nil
 
 	case *ast.MemberExpr:
+		// `lib.queue`: the root of the path is another module's global, whose slot it names.
+		if slot, ok := l.namespaceGlobalSlot(t); ok {
+			lyraType, _ := l.recordedType(t)
+			return lvalueLoc{ptr: slot, ty: lyraType}, block, nil
+		}
 		return l.memberFieldAddress(block, t)
 
 	case *ast.IndexExpr:

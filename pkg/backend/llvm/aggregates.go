@@ -323,18 +323,15 @@ func (l *lowerer) lowerRecordBaseField(block *ir.Block, base value.Value, idx in
 // FunctionCallExpr whose callee is the MemberExpr — so this is field access only.
 func (l *lowerer) lowerMemberExpr(block *ir.Block, e *ast.MemberExpr) (value.Value, *ir.Block, error) {
 	if decl, ok := l.namespaceBinding(e); ok {
-		// `pad.LEFT`: the module's const or global — keyed from the declaration's own
-		// location, so it is that module's binding (rule 9), and never a local of this
-		// function that happens to share the name.
-		key := l.funcKey(decl.Name, decl.GetLocation())
-		if g, isGlobal := l.globals[key]; isGlobal {
+		// `pad.LEFT`: the module's global, or its const.
+		if g, isGlobal := l.namespaceGlobalSlot(e); isGlobal {
 			elem, err := slotElemType(g)
 			if err != nil {
 				return nil, nil, err
 			}
 			return block.NewLoad(elem, g), block, nil
 		}
-		if cd, isConst := l.consts[key]; isConst && cd.Value != nil {
+		if cd, isConst := l.consts[l.funcKey(decl.Name, decl.GetLocation())]; isConst && cd.Value != nil {
 			return l.lowerExpr(block, cd.Value)
 		}
 		return nil, nil, fmt.Errorf("llvm: %s.%s has no storage or value", e.Object.(*ast.IdentifierExpr).Name, decl.Name)
@@ -933,6 +930,19 @@ func (l *lowerer) namespaceFunction(e *ast.MemberExpr) (string, bool) {
 		return "", false
 	}
 	return key, true
+}
+
+// namespaceGlobalSlot is the storage of the global `m.X` names — what a read loads and a
+// write through it (`lib.queue[0] = v`, `lib.count = 0`) addresses — keyed from the
+// declaration's own location, so it is that module's binding (rule 9), and never a local of
+// this function that happens to share the name.
+func (l *lowerer) namespaceGlobalSlot(e *ast.MemberExpr) (value.Value, bool) {
+	decl, ok := l.namespaceBinding(e)
+	if !ok {
+		return nil, false
+	}
+	g, ok := l.globals[l.funcKey(decl.Name, decl.GetLocation())]
+	return g, ok
 }
 
 // namespaceBinding is the declaration `m.X` names when m is an imported module's namespace

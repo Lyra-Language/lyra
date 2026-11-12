@@ -1742,6 +1742,14 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 // A copied scalar is no exception (09/27): a `mut` scalar is by reference like any
 // other (types.IsByRefParam), so `checkbox("x", true)` has nowhere to write.
 func (tc *TypeChecker) checkMutArgument(calleeName string, position int, paramName string, arg ast.Expression, paramType types.Type) {
+	if m, decl, ok := tc.namespacedPlace(arg); ok {
+		if !decl.CanMutateInterior() {
+			tc.addError(arg.GetLocation(), SeverityError,
+				"%s: argument %d (%s): cannot pass immutable binding %q to a `mut` parameter (declare it `var`, or take the parameter by value)",
+				calleeName, position, paramName, namespacedName(m))
+		}
+		return
+	}
 	root := rootIdentifier(arg)
 	if root == nil {
 		tc.addError(arg.GetLocation(), SeverityError,
@@ -1884,15 +1892,22 @@ func (p place) String() string {
 // from a binding — a temporary, or a deref, which ends a path at storage a pointer names.
 func (tc *TypeChecker) placeOf(expr ast.Expression) (place, bool) {
 	var reversed []placeStep
+	rooted := func(root string) place {
+		steps := make([]placeStep, len(reversed))
+		for i, s := range reversed {
+			steps[len(reversed)-1-i] = s
+		}
+		return place{root: root, steps: steps}
+	}
 	for {
 		switch e := expr.(type) {
 		case *ast.IdentifierExpr:
-			steps := make([]placeStep, len(reversed))
-			for i, s := range reversed {
-				steps[len(reversed)-1-i] = s
-			}
-			return place{root: e.Name, steps: steps}, true
+			return rooted(e.Name), true
 		case *ast.MemberExpr:
+			// `lib.queue`: another module's binding is the root, spelt as written.
+			if _, ok := tc.namespacedBinding(e); ok {
+				return rooted(namespacedName(e)), true
+			}
 			objType := tc.stripNewtypeResolving(
 				tc.resolveType(tc.inferExprType(e.Object), e.Object.GetLocation()), e.Object.GetLocation())
 			_, isUnion := objType.(types.UnionType)
@@ -1998,6 +2013,12 @@ func (tc *TypeChecker) checkBuiltinMutatesReceiver(recv types.Type, name string,
 		_, mutates = seqElementType(recv) // a step moves the sequence's cursor
 	}
 	if !mutates {
+		return
+	}
+	if m, decl, ok := tc.namespacedPlace(member.Object); ok {
+		if !decl.CanMutateInterior() {
+			tc.addInteriorImmutableError(m.GetLocation(), namespacedName(m), decl.BindingKind)
+		}
 		return
 	}
 	root := rootIdentifier(member.Object)

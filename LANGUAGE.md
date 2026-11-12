@@ -345,6 +345,7 @@ impl Add for Vec2 { (_+_) = (self, o) => Vec2 { x: self.x + o.x, y: self.y + o.y
 
 - `+ - * / % << >> & | ~`, prefix `-`/`~`, and compound assignments dispatch by **method name**; the trait name is the author's. Two traits providing one operator for one type is an ambiguity at the operator.
 - `Eq`/`Ord` own the comparisons (`<` and `<=>` must agree); `(_==_)` as a method name is `lyra-E039`. The prelude marks them `@builtin(Eq)`/`@builtin(Ord)` — found by identity, so a user `trait Ord` is ordinary.
+- **A function value has no equality**, and neither has a type holding one by value — a field, an element, a tuple position or a payload, `Maybe<() -> void>` included — unless an `Eq` impl for that type says what equality means. `==`/`!=` on one is refused where it is written, naming the path to the function (`run: () -> void`, `Some.0`); a nested type's own impl does not count, since the structural comparison never asks it.
 - A primitive (unstripped) is never routed through an impl: `impl Add for i64` is inert; a nominal `type` over a scalar **is** routed.
 - An operator is a call for `pure`/`det`/`noalloc`.
 - Inert with a warning: `&&`/`||`, `!`, `**`, suffix `_++`/`_--`.
@@ -988,7 +989,10 @@ target = "genesis"
 - `import lib.{ listed }` admits `listed` only — no other exports, no types, no traits.
 - `import lib` binds `lib.x` and no bare names. An alias binds only its local name. `lib.x`
   reaches a function, a type, **and a `const` or top-level `let`/`var`** (`pad.LEFT`,
-  `vdp.SCREEN_WIDTH`) — the last was "no member" until 09/30.
+  `vdp.SCREEN_WIDTH`) — the last was "no member" until 09/30. **A global reached so is a
+  place** (11/11): `lib.queue[0] = v`, `lib.at.x += 1`, `lib.count = 0`, a `mut` argument
+  and `&mut lib.count` write the module's own, under its own binding's rule — interior
+  writes need a `var` or a `let mut`, a whole reassignment a `var`.
 - **And its constructors and types, in every position** (10/29): `shapes.Circle(2)`,
   `shapes.Circle 2`, `shapes.Dot`, `shapes.Pt { x: 1 }`, `shapes.Circle(r) =>`, `let
   shapes.Wrap(v) = b else { … }`, `xs.map(shapes.Circle)`, and as a type `p: shapes.Pt`,

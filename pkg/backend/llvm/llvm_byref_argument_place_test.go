@@ -208,8 +208,8 @@ let add = (x: mut i64, n: i64) -> void => {
 	}
 }
 
-// A receiver reached through a namespace isn't a path lvalueAddress walks, so it is lowered in its
-// turn, as it always was.
+// A receiver reached through a namespace is the module's global, found after the arguments as a
+// local receiver is (namesStorage).
 func TestExec_ABuiltinsReceiverThroughANamespace(t *testing.T) {
 	t.Parallel()
 	got := buildAndRunModulesASan(t, map[string]string{
@@ -226,5 +226,55 @@ let main = () -> u8 => {
 	})
 	if got != 3 {
 		t.Errorf("got %d, want 3", got)
+	}
+}
+
+// A write through a namespace lands in the module's global (11/11): an element, a field, the
+// whole global, a compound assignment, a `mut` argument and `&mut`. Each said `undefined
+// identifier "lib"` before, and the `mut` argument and `&mut` reached a copy. The managed
+// ones release what they replace, which ASan would see read again if they released wrongly.
+func TestExec_WritesThroughANamespace(t *testing.T) {
+	t.Parallel()
+	got := buildAndRunModulesASan(t, map[string]string{
+		"lib.lyra": `module lib
+pub struct Point { x: i64, name: string }
+pub var queue: []i64 = [0]
+pub var names: []string = ["a", "b"]
+pub var at = Point { x: 1, name: "p" }
+pub var count = 0
+pub let mut grow: []i64 = [1]
+pub let add = (x: i64) -> void => queue.push(x)
+`,
+		"app.lyra": `import lib
+
+let bump = (xs: mut []i64) -> void => xs.push(1)
+let rename = (p: mut lib.Point) -> void => { p.name = "renamed ${p.x}" }
+
+let main = () -> u8 => {
+  lib.queue[0] = 5
+  lib.add(lib.queue[0])
+  if lib.queue.len() != 2 || lib.queue[1] != 5 { return 1 }
+  lib.names[0] = "x ${lib.count}"
+  lib.names = ["n", "m ${lib.count}"]
+  if lib.names[1] != "m 0" { return 2 }
+  lib.at.name = "q ${lib.count}"
+  lib.at.x += 4
+  if lib.at.x != 5 || lib.at.name != "q 0" { return 3 }
+  lib.at = lib.Point { x: 9, name: "r ${lib.count}" }
+  lib.count = 3
+  lib.count += 1
+  lib.grow[0] = 7
+  if lib.at.x != 9 || lib.at.name != "r 0" || lib.count != 4 || lib.grow[0] != 7 { return 4 }
+  bump(lib.grow)
+  rename(lib.at)
+  if lib.grow.len() != 2 || lib.at.name != "renamed 9" { return 5 }
+  let p = unsafe { &mut lib.count }
+  unsafe { p^ = 11 }
+  if lib.count != 11 { return 6 }
+  0
+}`,
+	})
+	if got != 0 {
+		t.Errorf("exit %d: check %d failed", got, got)
 	}
 }
