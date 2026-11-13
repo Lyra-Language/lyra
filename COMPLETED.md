@@ -9,6 +9,27 @@ Newest first.
 
 ## Dated log
 
+### 11/13/26 — `parse_strict`: a whole line, every flag declared
+
+Sheliak's three command-line programs each hand-rolled an argument loop, because neither of
+std's parsers fit. `parse_args` reads the whole line but takes an undeclared flag for a
+switch. `parse_command` refuses one but stops at the first operand. Each loop had a hole of
+its own:
+- `sheliak` called a valued flag at the end with no value an "unknown argument", and took a
+  `-x` with one dash for a ROM.
+- `smscheck` read flag/value pairs after the ROM, ignored a misspelt flag and dropped a trailing
+  one, so a check could run without the `--hold` it was given.
+- `statetest` took `--frames N` only in first place.
+
+**`std.collections.parse_strict(args, switches, valued)`** reads the whole line with every
+flag declared. Flags go anywhere among the operands, a valued one takes the next argument
+whatever it looks like, and an undeclared flag, or a valued one with nothing after it, is an
+`Err` naming it. `--` ends the flags and a bare `-` is an operand, as in the other two. It and
+`parse_command` are one private loop (`parse_declared`) told whether the first operand ends
+the flags, so `parse_command`'s test passes unchanged. The three programs use it, and every
+caller's invocation still runs: Vega's, lyrac's Master System tests and Sheliak's
+`tests/state.sh`. The website's CLI guide has a section on it.
+
 ### 11/13/26 — `Empty - 1` says it is not a subtraction
 
 Juxtaposition takes a negated operand, so `Err -1` is `Err(-1)`, and so is `Empty - 1`, even

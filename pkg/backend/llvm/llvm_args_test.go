@@ -158,3 +158,66 @@ let main = () -> void => {
 		t.Fatalf("stdout:\n%s\nwant:\n%s", out, want)
 	}
 }
+
+// `parse_strict` reads the whole line as `parse_args` does — a flag after an operand is a
+// flag, in any order — and refuses what it does not know as `parse_command` does: what
+// Sheliak's programs hand-rolled before it (11/13), and what neither of the others gives.
+func TestExec_ParseStrictReadsTheWholeLineAndRefusesTheUnknown(t *testing.T) {
+	t.Parallel()
+	src := `import std.collections.{ parse_strict }
+let main = () -> u8 => {
+  let a = match parse_strict(program_args(), ["--save"], ["--frames", "--ppm"]) {
+    Ok(a) => a,
+    Err(why) => {
+      println("error: ${why}")
+      return 2
+    },
+  }
+  println("switches=[${a.switches.join(",")}] frames=${a.value("--frames").unwrap_or("-")} ppm=${a.value("--ppm").unwrap_or("-")} rest=[${a.positional.join(" ")}]")
+  0
+}`
+	bin := preludeBinary(t, src)
+	for _, c := range []struct {
+		name string
+		args []string
+		want string
+		code int
+	}{
+		{"nothing at all", nil, "switches=[] frames=- ppm=- rest=[]\n", 0},
+		// Flags before, between and after the operands, the operands kept in order.
+		{"flags anywhere", []string{"a.bin", "--frames", "60", "b.bin", "--save", "--ppm", "out.ppm", "c.bin"},
+			"switches=[--save] frames=60 ppm=out.ppm rest=[a.bin b.bin c.bin]\n", 0},
+		{"a flag first", []string{"--frames", "40", "x.bin", "y.bin"},
+			"switches=[] frames=40 ppm=- rest=[x.bin y.bin]\n", 0},
+		// `--` ends the flags, unkept; everything after it is an operand.
+		{"-- ends the flags", []string{"a.bin", "--", "--save", "-x"},
+			"switches=[] frames=- ppm=- rest=[a.bin --save -x]\n", 0},
+		{"a bare - is an operand", []string{"-", "--save"},
+			"switches=[--save] frames=- ppm=- rest=[-]\n", 0},
+		// A valued flag takes the next argument whatever it looks like.
+		{"a value that looks like a flag", []string{"--ppm", "--save", "a.bin"},
+			"switches=[] frames=- ppm=--save rest=[a.bin]\n", 0},
+		{"the last value wins", []string{"--frames", "1", "--frames", "2"},
+			"switches=[] frames=2 ppm=- rest=[]\n", 0},
+		// Where parse_args would make these a switch and say nothing.
+		{"an unknown option after an operand", []string{"a.bin", "--frams", "60"},
+			"error: unknown option --frams\n", 2},
+		{"an unknown short option", []string{"-v", "a.bin"},
+			"error: unknown option -v\n", 2},
+		{"a valued option with no value", []string{"a.bin", "--frames"},
+			"error: --frames needs a value\n", 2},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			out, err := command(bin, c.args...).Output()
+			code := 0
+			if exit, ok := err.(*exec.ExitError); ok {
+				code = exit.ExitCode()
+			} else if err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if string(out) != c.want || code != c.code {
+				t.Fatalf("args %q: exit %d, stdout:\n%s\nwant exit %d:\n%s", c.args, code, out, c.code, c.want)
+			}
+		})
+	}
+}

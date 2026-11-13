@@ -597,9 +597,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   take no attributes; the mark would need the grammar to admit them there.
 - **[DONE 11/09] `parse_args` cannot stop at a command** — `parse_command(args, switches,
   valued)` stops at the first operand or `--`; Termina moved onto it (COMPLETED.md, 11/09).
-- **[OPEN] A strict whole-line argument parse.** Sheliak's `sheliak` hand-rolls a loop taking
-  flags between operands and refusing unknown ones, which `parse_args` (lenient) and
-  `parse_command` (stops at the first operand) do not cover; `smscheck` and `statetest` too.
+- **[DONE 11/13] A strict whole-line argument parse** — `parse_strict(args, switches,
+  valued)`: flags anywhere among the operands, each declared; Sheliak's `sheliak`,
+  `smscheck` and `statetest` use it (COMPLETED.md 11/13).
 - **[DONE 11/09] A deflate compressor** — `std.compress.deflate`/`zlib_deflate`, and
   `write_png` filters and deflates its rows (COMPLETED.md, 11/09).
 - **[DONE 10/19] Markup for `bindings.imgui.ui`** — `.lui` files generated into Lyra by

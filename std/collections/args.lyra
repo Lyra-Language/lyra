@@ -1,6 +1,7 @@
 module std.collections
 //! The program's arguments, parsed: `ProgramArgs` over the prelude's `program_args`, by
-//! `parse_args` for a whole line or `parse_command` for the flags before a command.
+//! `parse_args` for a whole line, `parse_strict` for a whole line whose every flag is
+//! declared, or `parse_command` for the flags before a command.
 
 /// The program's arguments, sorted into the three kinds a command line carries.
 ///
@@ -122,36 +123,39 @@ pub let parse_command = pure (
   args: []string,
   switches: []string,
   valued: []string
-) -> Result<ProgramArgs, string> => {
-  var parsed = ProgramArgs {
-    program: if args.len() > 0 { args[0] } else { "" },
-    switches: [],
-    options: HashMap.new::<string, string>(),
-    positional: [],
-  }
-  var i = 1
-  while i < args.len() {
-    let arg = args[i]
-    if arg == "--" {
-      i += 1
-      break
-    }
-    // The first operand is the command; a bare `-` is one, as `parse_args` reads it.
-    if !arg.starts_with("-") || arg == "-" { break }
-    if valued.holds(arg) {
-      if i + 1 >= args.len() { return Err("${arg} needs a value") }
-      parsed.options.insert(arg, args[i + 1])
-      i += 2
-    } else if switches.holds(arg) {
-      parsed.switches.push(arg)
-      i += 1
-    } else {
-      return Err("unknown option ${arg}")
-    }
-  }
-  parsed.positional = args.slice(i, args.len())
-  Ok(parsed)
-}
+) -> Result<ProgramArgs, string> => parse_declared(args, switches, valued, true)
+
+/// Parses a whole line whose every flag is declared: flags anywhere among the operands —
+/// `sheliak game.bin --frames 60 --ppm out.ppm` — in any order, and everything else an
+/// operand, kept in order. Strict as `parse_command` is: `switches` take no value, `valued`
+/// the argument after them whatever it looks like, and an undeclared flag, or a valued one
+/// with nothing after it, is an `Err` naming it — where `parse_args` would take a misspelt
+/// flag for a switch and say nothing. `--` ends the flags, every argument after it an
+/// operand, and a bare `-` (standard input) is one.
+///
+/// `args[0]` is the program, so a program passes `program_args()`.
+///
+/// ```
+/// import std.collections.{ parse_strict }
+///
+/// let main = () -> u8 => {
+///   let args = match parse_strict(program_args(), ["--save"], ["--frames", "--ppm"]) {
+///     Ok(a) => a,
+///     Err(why) => {
+///       println("tool: ${why}")
+///       return 2
+///     },
+///   }
+///   let frames = args.value("--frames").unwrap_or("60")
+///   for rom in args.positional { println("${rom} for ${frames} frames") }
+///   0
+/// }
+/// ```
+pub let parse_strict = pure (
+  args: []string,
+  switches: []string,
+  valued: []string
+) -> Result<ProgramArgs, string> => parse_declared(args, switches, valued, false)
 
 impl ProgramArgs {
   /// Whether `flag` was written, as a switch or with a value.
@@ -169,4 +173,47 @@ impl []string {
     for x in self { if x == s { return true } }
     false
   }
+}
+
+// The declared flags of `args` (past `args[0]`): `parse_command`'s when `stop` — the first
+// operand ends them, it and all after it `positional` untouched — and `parse_strict`'s when
+// not, every operand kept and the flags read to the end. `--` ends them either way, unkept.
+let parse_declared = pure (
+  args: []string,
+  switches: []string,
+  valued: []string,
+  stop: bool
+) -> Result<ProgramArgs, string> => {
+  var parsed = ProgramArgs {
+    program: if args.len() > 0 { args[0] } else { "" },
+    switches: [],
+    options: HashMap.new::<string, string>(),
+    positional: [],
+  }
+  var i = 1
+  while i < args.len() {
+    let arg = args[i]
+    if arg == "--" {
+      i += 1
+      break
+    }
+    // An operand; a bare `-` is one, as `parse_args` reads it. For `parse_command` the
+    // first is the command, and ends the flags.
+    if !arg.starts_with("-") || arg == "-" {
+      if stop { break }
+      parsed.positional.push(arg)
+      i += 1
+    } else if valued.holds(arg) {
+      if i + 1 >= args.len() { return Err("${arg} needs a value") }
+      parsed.options.insert(arg, args[i + 1])
+      i += 2
+    } else if switches.holds(arg) {
+      parsed.switches.push(arg)
+      i += 1
+    } else {
+      return Err("unknown option ${arg}")
+    }
+  }
+  for rest in args.slice(i, args.len()) { parsed.positional.push(rest) }
+  Ok(parsed)
 }
