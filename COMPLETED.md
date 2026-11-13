@@ -9,6 +9,25 @@ Newest first.
 
 ## Dated log
 
+### 11/12/26 — E098 sees a call through a function value
+
+`via(zs[0], h)` with `via` calling `h.on_use()`, a field holding `grow`, passed E098 and read
+freed memory under ASan: the summary followed calls it could resolve, and a field's value
+resolves to nothing. **A function gets into a struct, a global or a collection only by
+escaping**, so a call through a function value — a local or parameter, a global `var`, a
+field, any other expression — may run every function that escaped: every lambda not a
+top-level declaration's value, and every function named other than as a callee. The call's
+argument count narrows that to the escaped functions of its arity. A global `var` holding a
+function resolves by name to its first value, so a call of one counts as through a value too.
+
+Generous, and still free: in Vega 1,131 bodies may now write a global (56 before), through
+1,008 escaped functions and 628 calls through values; 19 lent arguments were asked and all 59
+globals they could write were ruled out by type, and Termina's 27 the same. The workspace's
+109 programs draw no E098. `TestWrittenGlobalBorrow_ThroughAFunctionValue` holds a field, a
+reassigned global and an element (each fails with the edges taken out — an element written at
+the call was caught by the older rule, so the test builds the array first) and an arity that
+rules the value out.
+
 ### 11/12/26 — Storage lent to a call that can grow the global it shares: `lyra-E098`
 
 `var zs = g; via(zs[0])`, where `via` pushes onto `g`, read freed memory under ASan: after

@@ -163,7 +163,11 @@ func (c *globalBorrows) writtenGlobal(e *ast.FunctionCallExpr, args []lentArg) {
 			continue
 		}
 		if !asked {
-			written = c.writes.of(c.calleeBodies(e, true))
+			bodies := c.calleeBodies(e, true)
+			if c.writes.callsThroughValue(e, c.calleeBodies(e, false), c.bound) {
+				bodies = append(bodies, c.writes.escapedOfArity(len(e.Arguments))...)
+			}
+			written = c.writes.of(bodies)
 			asked = true
 		}
 		for _, decl := range written {

@@ -280,7 +280,10 @@ argument; `ownership.MutableGlobalRoot`) and the bodies it may run (every functi
 called or not, a namespaced one included; every lambda written in it; every method its calls,
 operators and `?` conversions dispatch to, a bound's every candidate), closed to a fixed point. A
 call is asked the union over its callee and the function values written or named at it
-(`calleeBodies(e, true)`); a function value reached any other way is not seen.
+(`calleeBodies(e, true)`). A call through a function value (`indirectCall`: a local or
+parameter, a global `var` holding one, a field, any other expression) may run every *escaped*
+function of its arity — every lambda not a top-level declaration's value, and every function
+named other than as a callee (`escaped`, `escapedOfArity`).
 
 ## `captured_assignment.go` (`lyra-E024`)
 

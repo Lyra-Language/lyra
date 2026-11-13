@@ -91,6 +91,65 @@ func TestWrittenGlobalBorrow_IsRefused(t *testing.T) {
 	}
 }
 
+// A call through a function value — a field, a reassigned global, an element — may run any
+// function that escaped as a value taking as many parameters: `grow`, named here, is one. The
+// field's case read freed memory under ASan (11/12). Arity tells one apart: a hook taking an
+// `i64` can't be `grow`.
+func TestWrittenGlobalBorrow_ThroughAFunctionValue(t *testing.T) {
+	const lib = `module main
+var g = ["a ${1}"]
+let grow = () -> void => { g.push("grown ${2}") }
+struct Hooks { on_use: () -> void }
+struct Counted { on_use: (i64) -> void }
+var hook: () -> void = () => {}
+let by_field = (s: ref string, h: Hooks) -> i64 => {
+  h.on_use()
+  "${s}".len()
+}
+let by_global = (s: ref string) -> i64 => {
+  hook()
+  "${s}".len()
+}
+let by_element = (s: ref string, hs: []() -> void) -> i64 => {
+  for h in hs { h() }
+  "${s}".len()
+}
+let by_count = (s: ref string, h: Counted) -> i64 => {
+  h.on_use(1)
+  "${s}".len()
+}
+`
+	cases := []struct {
+		name, body string
+		want       int
+	}{
+		{"a struct's field", `let h = Hooks { on_use: grow }
+  var zs = g
+  let n = by_field(zs[0], h)`, 1},
+		{"a global reassigned", `hook = grow
+  var zs = g
+  let n = by_global(zs[0])`, 1},
+		{"an element of an array", `let hs = [grow]
+  var zs = g
+  let n = by_element(zs[0], hs)`, 1},
+		{"a value of another arity", `let keep = grow
+  let h = Counted { on_use: (n: i64) => println("${n}") }
+  var zs = g
+  let n = by_count(zs[0], h)`, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			src := lib + `let main = () -> void => {
+  ` + c.body + `
+}
+`
+			if got := writtenGlobalBorrows(t, map[string]string{"main.lyra": src}); got != c.want {
+				t.Errorf("got %d lyra-E098, want %d", got, c.want)
+			}
+		})
+	}
+}
+
 // Another module's global, grown by a function of that module called through its namespace.
 func TestWrittenGlobalBorrow_AnotherModulesGlobal(t *testing.T) {
 	got := writtenGlobalBorrows(t, map[string]string{

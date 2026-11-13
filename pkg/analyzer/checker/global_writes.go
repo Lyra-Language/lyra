@@ -15,16 +15,29 @@ import (
 //
 // **What a body may run** is every function it names (called or not: a function handed on
 // as a value may be called), every lambda written inside it, and every method its calls
-// dispatch to (a `where` bound's every candidate). A function value it is handed is not in
-// its summary but in the caller's: a lambda written at the call, or a named function passed
-// there, is added at the call (calleeBodies). One reached any other way — read out of a
-// struct, a global or a collection — is not seen.
+// dispatch to (a `where` bound's every candidate). A lambda written at the call, or a named
+// function passed there, is added at the call (calleeBodies).
+//
+// **A call through a function value may run any function that escapes as one** — every
+// lambda not a top-level declaration's value, and every function named other than as a
+// callee — taking as many parameters as the call passes arguments (indirectCall). Which
+// value a field, a local, a global or a collection holds no walk can say, and a function
+// can get there only by escaping. The arity is what keeps that from being every function:
+// `self.on_click()` can't run a `(s: ref string) -> i64`.
 type globalWrites struct {
 	c *globalBorrows
 	// direct is what each body writes itself; runs is what it may run.
 	direct map[ast.Expression]map[*ast.VarDeclStmt]bool
 	runs   map[ast.Expression][]ast.Expression
 	closed map[ast.Expression]map[*ast.VarDeclStmt]bool
+	// declared is every lambda a top-level declaration binds: a function, not a value.
+	declared map[*ast.LambdaExpr]bool
+	// escaped is every function that escapes as a value, by body, with its arity.
+	escaped map[ast.Expression]int
+	// indirect is, per body, the arity of each call it makes through a function value.
+	indirect map[ast.Expression][]int
+	// callees is every call's function position, which names a function without its escaping.
+	callees map[ast.Expression]bool
 	// bound is, per enclosing function, every name it binds, as globalBorrows keeps it.
 	bound []map[string]bool
 	// body is the body being walked; nil at the top level.
@@ -33,9 +46,20 @@ type globalWrites struct {
 
 func newGlobalWrites(c *globalBorrows, program *ast.Program) *globalWrites {
 	w := &globalWrites{
-		c:      c,
-		direct: map[ast.Expression]map[*ast.VarDeclStmt]bool{},
-		runs:   map[ast.Expression][]ast.Expression{},
+		c:        c,
+		direct:   map[ast.Expression]map[*ast.VarDeclStmt]bool{},
+		runs:     map[ast.Expression][]ast.Expression{},
+		declared: map[*ast.LambdaExpr]bool{},
+		escaped:  map[ast.Expression]int{},
+		indirect: map[ast.Expression][]int{},
+		callees:  map[ast.Expression]bool{},
+	}
+	for _, node := range program.Statements {
+		if d, ok := node.(*ast.VarDeclStmt); ok {
+			if lam, isFunc := d.Value.(*ast.LambdaExpr); isFunc {
+				w.declared[lam] = true
+			}
+		}
 	}
 	for _, node := range program.Statements {
 		switch s := node.(type) {
@@ -141,6 +165,9 @@ func (w *globalWrites) expr(e ast.Expression) bool {
 		for i := range e.LambdaClauses {
 			bodies = append(bodies, e.LambdaClauses[i].Body)
 		}
+		if !w.declared[e] {
+			w.escape(e)
+		}
 		w.function(lambdaKey(e), e, nil, bodies)
 		return false
 	case *ast.MathAssignOpExpr:
@@ -152,10 +179,16 @@ func (w *globalWrites) expr(e ast.Expression) bool {
 	case *ast.IdentifierExpr:
 		if lam := w.namedFunction(e); lam != nil {
 			w.mayRun(lambdaKey(lam))
+			if !w.callees[e] {
+				w.escape(lam)
+			}
 		}
 	case *ast.MemberExpr:
 		if lam := w.c.namespacedFunction(w.bound, e); lam != nil {
 			w.mayRun(lambdaKey(lam))
+			if !w.callees[e] {
+				w.escape(lam)
+			}
 		}
 	case *ast.TryExpr:
 		if r, ok := w.c.mt.TryConversion(e); ok && r.Method != nil {
@@ -181,11 +214,16 @@ func (w *globalWrites) mayRun(key ast.Expression) {
 // call records what a call may run and what it writes by handing a global on: a `mut`
 // argument or receiver, and a mutating builtin's receiver.
 func (w *globalWrites) call(e *ast.FunctionCallExpr) {
+	w.callees[e.Function] = true
 	if w.body == nil {
 		return
 	}
-	for _, key := range w.c.calleeBodies(e, false) {
+	direct := w.c.calleeBodies(e, false)
+	for _, key := range direct {
 		w.mayRun(key)
+	}
+	if w.callsThroughValue(e, direct, w.bound) {
+		w.indirect[w.body] = append(w.indirect[w.body], len(e.Arguments))
 	}
 	if w.c.mt.BuiltinMethodMutates(e) {
 		if m, ok := e.Function.(*ast.MemberExpr); ok {
@@ -221,8 +259,116 @@ func (w *globalWrites) namedFunction(id *ast.IdentifierExpr) *ast.LambdaExpr {
 	return fn
 }
 
+// escape records that lam is a value something may call through.
+func (w *globalWrites) escape(lam *ast.LambdaExpr) {
+	w.escaped[lambdaKey(lam)] = arity(lam)
+}
+
+// arity is how many parameters a lambda takes, written as clauses or not.
+func arity(lam *ast.LambdaExpr) int {
+	if lam.Body == nil && len(lam.LambdaClauses) > 0 {
+		return len(lam.LambdaClauses[0].Patterns)
+	}
+	return len(lam.Parameters)
+}
+
+// indirectCall reports whether e calls through a function value no walk resolves: a local or
+// parameter, a global holding one, a field (`self.on_click()`), or what another expression
+// evaluates to. A builtin, a constructor and a conversion are none of these; the functions,
+// methods and bounds calleeBodies resolves are asked before this is.
+func (w *globalWrites) indirectCall(e *ast.FunctionCallExpr, bound []map[string]bool) bool {
+	if w.c.mt.IsBuiltinMethod(e) || w.c.symTable == nil {
+		return false
+	}
+	switch f := e.Function.(type) {
+	case *ast.IdentifierExpr:
+		return boundIn(bound, f.Name) || w.heldGlobal(f, bound)
+	case *ast.MemberExpr:
+		if ns, isName := f.Object.(*ast.IdentifierExpr); isName && !boundIn(bound, ns.Name) {
+			if _, isNS := w.c.symTable.NamespaceIn(w.c.symTable.ModuleOfFile[f.GetLocation().File], ns.Name); isNS {
+				return w.heldGlobal(f, bound)
+			}
+		}
+		_, isMethod := w.c.mt.Get(e)
+		return !isMethod
+	}
+	return true
+}
+
+// callsThroughValue reports whether e calls a function value: one nothing resolves, or a
+// global `var` holding one, which resolves to its first value but may hold any later.
+func (w *globalWrites) callsThroughValue(e *ast.FunctionCallExpr, direct []ast.Expression, bound []map[string]bool) bool {
+	if len(direct) > 0 && !w.heldGlobal(e.Function, bound) {
+		return false
+	}
+	return w.indirectCall(e, bound)
+}
+
+// heldGlobal reports whether f names a top-level binding holding a function value (holdsValue),
+// by its own name or through a namespace.
+func (w *globalWrites) heldGlobal(f ast.Expression, bound []map[string]bool) bool {
+	if w.c.symTable == nil {
+		return false
+	}
+	switch f := f.(type) {
+	case *ast.IdentifierExpr:
+		if boundIn(bound, f.Name) {
+			return false
+		}
+		decl, ok := w.c.symTable.BindingIn(w.c.symTable.ModuleOfFile[f.GetLocation().File], f.Name)
+		return ok && holdsValue(decl)
+	case *ast.MemberExpr:
+		ns, isName := f.Object.(*ast.IdentifierExpr)
+		if !isName || boundIn(bound, ns.Name) {
+			return false
+		}
+		path, isNS := w.c.symTable.NamespaceIn(w.c.symTable.ModuleOfFile[f.GetLocation().File], ns.Name)
+		if !isNS {
+			return false
+		}
+		decl, ok := w.c.symTable.BindingIn(path, f.Property.Name)
+		return ok && holdsValue(decl)
+	}
+	return false
+}
+
+// holdsValue is a top-level binding whose value is not a function's own: a `var` or `let`
+// holding a function value, which may be replaced.
+func holdsValue(decl *ast.VarDeclStmt) bool {
+	if decl == nil || decl.Value == nil {
+		return false
+	}
+	_, isFunc := decl.Value.(*ast.LambdaExpr)
+	return !isFunc || decl.BindingKind == ast.BindingVar
+}
+
+func boundIn(bound []map[string]bool, name string) bool {
+	for _, frame := range bound {
+		if frame[name] {
+			return true
+		}
+	}
+	return false
+}
+
+// escapedOfArity is every escaped function taking n parameters.
+func (w *globalWrites) escapedOfArity(n int) []ast.Expression {
+	var out []ast.Expression
+	for key, a := range w.escaped {
+		if a == n {
+			out = append(out, key)
+		}
+	}
+	return out
+}
+
 // close takes each body's summary over everything it may run, to a fixed point.
 func (w *globalWrites) close() {
+	for body, arities := range w.indirect {
+		for _, n := range arities {
+			w.runs[body] = append(w.runs[body], w.escapedOfArity(n)...)
+		}
+	}
 	w.closed = map[ast.Expression]map[*ast.VarDeclStmt]bool{}
 	for key, decls := range w.direct {
 		w.closed[key] = map[*ast.VarDeclStmt]bool{}
