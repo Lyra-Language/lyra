@@ -1021,7 +1021,10 @@ target = "genesis"
 - **A member imported under another name** (`import lib.{ Box as B }`) is that member under
   the new name in every position — a type inside a declaration too (a field `b: B`, a
   payload, `P<i64>` for a generic one), which was "unknown type" at the original's
-  declaration until 10/21. **A constructor is the exception that cannot always be renamed**:
+  declaration until 10/21. A trait too: `import shapes.{ Shape as Figure }`, then `impl
+  Figure for Square`, `where t: Figure`, `trait Solid: Figure` and `Figure::area` all name
+  `Shape`, so the impl satisfies a bound written `Shape` in another module (until 11/13 it
+  satisfied none). **A constructor is the exception that cannot always be renamed**:
   constructors are matched by their own name, so `KeyDown as SdlKeyDown` is refused while the
   module also reaches another constructor named `KeyDown` — its own, or another module's —
   since the two could not be told apart. Rename one where its data type declares it.

@@ -214,6 +214,8 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// name, and the uses it rewrote count the import as used (lyra-W004, below).
 	res.Diagnostics = append(res.Diagnostics, constructorAliasCollisions(program, symTable)...)
 	aliasedConstructorUses := eraseConstructorAliases(program, symTable)
+	// An aliased trait import likewise: an impl, a bound and a path name the trait itself.
+	aliasedTraitUses := eraseTraitAliases(program, symTable)
 	// And a constructor, struct literal or pattern written through a namespace
 	// (`shapes.Circle(2)`) takes its bare name, its module recorded. After the aliases, so
 	// the bare name it leaves is never taken for one.
@@ -451,8 +453,8 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// never writes that module's name, so the syntactic check cannot see the use.
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUnusedImports(program, checker.ImportUse{
 		Modules: tc.UFCSModules(),
-		Names: mergeNameUses(mergeNameUses(mergeNameUses(tc.DispatchedTraits(), aliasedConstructorUses),
-			tc.AliasedTypeUses()), qualifiedUses),
+		Names: mergeNameUses(mergeNameUses(mergeNameUses(mergeNameUses(tc.DispatchedTraits(), aliasedConstructorUses),
+			aliasedTraitUses), tc.AliasedTypeUses()), qualifiedUses),
 		Callees: tc.UFCSCallees(),
 		Exports: func(file, name string) []string {
 			return typechecker.UFCSReachableExporters(symTable, file, name)

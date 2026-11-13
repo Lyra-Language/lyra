@@ -64,10 +64,8 @@ not a formality.
   marks the position) and default methods writing `Self<…>` landed 09/15; a bound receiver
   `t` has no head to apply, and giving it one is higher-kinded type variables, which nothing
   asks for.
-- **[OPEN] An impl written through an aliased trait import doesn't satisfy the bound**
-  (11/13): `import shapes.{ Shape as Figure }`, `impl Figure for Square`, then a
-  `where s: Shape` call gives E036; with the impl in a module the backend reports "no impl of
-  Renderer for it" instead. Bound-call effects (09/28) already go by trait identity.
+- **[DONE 11/13] An impl written through an aliased trait import satisfies the bound** —
+  the alias is erased to the trait's name in every position (COMPLETED.md, 11/13).
 
 ### Modules and tooling
 

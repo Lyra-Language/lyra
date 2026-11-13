@@ -9,6 +9,24 @@ Newest first.
 
 ## Dated log
 
+### 11/13/26 — A trait imported under an alias is the trait
+
+`import shapes.{ Shape as Figure }` then `impl Figure for Square` satisfied no `where s:
+Shape` (lyra-E036), and with the impl in another module the backend found no impl to call.
+Neither was the bound or the path written with the alias: `where s: Figure` and
+`Figure::area` failed against an impl written `Shape`. Resolution was never the problem —
+`declKeyIn` follows an import's alias to the declaration — but an impl is matched to a bound
+by *name*, and the impl carried the spelling it was written with. **The driver now erases a
+trait alias as it does a constructor's** (`eraseTraitAliases`, beside
+`eraseConstructorAliases`): an impl head, every `where` bound (a function's, a lambda's, a
+type's, a trait's, an impl's), a supertrait and a `Trait::method` path take the trait's own
+name before any pass reads them. The import gate reads the names as written (`TypeRefs`), so
+the alias still needs its import; the rewritten uses are handed to lyra-W004, since an impl
+head that says `Shape` after the erasure would otherwise leave `Figure` unused. A bound list
+is shared between a binding and its lambda, so each string is renamed once — twice would
+undo `A as B, B as A`. `TestTraitAlias_IsTheTraitEverywhere` (backend) runs every position
+across three modules; it fails at analysis with the erasure off.
+
 ### 11/13/26 — A Genesis ROM names a trap's file from its root
 
 Each trap's place named its file as the compiler was given it — an absolute path — so the
