@@ -1,0 +1,118 @@
+module std.game.text
+//! Text a modern game draws: a string as sprites, each letter a glyph of a font in the sprite
+//! art (`screen.load_sprites`) — a score, a name, a message.
+//!
+//! ```
+//! import std.game.text
+//! import std.game.text.{ Font }
+//!
+//! let FONT = Font { sheet_y: 64.0, glyph_width: 12.0, glyph_height: 16.0, columns: 16, count: 96 }
+//! text.add(FONT, 8.0, 8.0, "SCORE ${score}", true)   // at the screen's own pixels
+//! ```
+//!
+//! **A font is a grid of glyphs in the sprite art**: `columns` a row from (`sheet_x`,
+//! `sheet_y`), every glyph the same size, the first showing the character `first` (a space,
+//! unless the font says otherwise) and each after it the next — so the printable ASCII is 96
+//! glyphs in six rows of sixteen, and a font of digits alone is ten glyphs from `'0'`. A
+//! character the font has no glyph for takes its place but draws nothing, or its capital where
+//! the font has only capitals; a newline starts a line below the first.
+//!
+//! **Text at the screen's own pixels** (`unscaled`) is drawn sharp over art the screen scales
+//! up (`screen.set_art_scale`), its place counted in `screen.full_width()` × `full_height()`,
+//! from a font drawn at the screen's resolution: the HUD of a 1080p game whose world is pixel
+//! art at 5. Unscaled or not, letters are sprites: drawn in front of what is added after them,
+//! and `front` (the default) in front of the planes' front cells too.
+
+import std.game.sprites
+import std.game.sprites.{ Sprite }
+
+/// A font in the sprite art: a grid of glyphs alike in size, in order from `first`.
+pub struct Font {
+  /// Its first glyph's top-left in the sprite art.
+  sheet_x: f32 = 0.0,
+  sheet_y: f32 = 0.0,
+  /// A glyph's size, in the art's pixels.
+  glyph_width: f32,
+  glyph_height: f32,
+  /// Glyphs a row of the grid, and in all.
+  columns: i64,
+  count: i64,
+  /// Pixels between one glyph and the next in the art, across and down: a gutter round each.
+  gap: f32 = 0.0,
+  /// The character the first glyph shows: a space unless said otherwise.
+  first: i64 = 32,
+  /// Pixels between one letter and the next, and one line and the next.
+  spacing: f32 = 0.0,
+  line_spacing: f32 = 0.0,
+}
+
+/// `words` in `font` with its first letter's top-left at (`x`, `y`), added to the sprite list:
+/// at the screen's own pixels when `unscaled`, its colours multiplied by `tint` (`0xRRGGBB`)
+/// and `alpha`. Answers how wide it was drawn — its widest line.
+pub let add = (
+  font: Font,
+  x: f32,
+  y: f32,
+  words: string,
+  unscaled: bool = false,
+  tint: u32 = 0xFFFFFF,
+  alpha: f32 = 1.0,
+  front: bool = true
+) -> f32 => {
+  var across: f32 = 0.0
+  var down: f32 = 0.0
+  for c in words {
+    let code = i64(c)
+    if code == 10 {
+      across = 0.0
+      down += font.glyph_height + font.line_spacing
+      continue
+    }
+    let glyph = font.glyph_of(code)
+    if glyph >= 0 {
+      sprites.add(Sprite {
+        x: x + across,
+        y: y + down,
+        width: font.glyph_width,
+        height: font.glyph_height,
+        sheet_x: font.sheet_x + f32(glyph % font.columns) * (font.glyph_width + font.gap),
+        sheet_y: font.sheet_y + f32(glyph / font.columns) * (font.glyph_height + font.gap),
+        front: front,
+        alpha: alpha,
+        tint: tint,
+        unscaled: unscaled,
+      })
+    }
+    across += font.glyph_width + font.spacing
+  }
+  width(font, words)
+}
+
+/// How wide `words` is in `font`, its widest line: what [add] would draw, to place it — right
+/// against the screen's edge, or in the middle.
+pub let width = pure (font: Font, words: string) -> f32 => {
+  var widest: i64 = 0
+  var letters: i64 = 0
+  for c in words {
+    if i64(c) == 10 {
+      letters = 0
+    } else {
+      letters += 1
+      widest = widest.max(letters)
+    }
+  }
+  if widest == 0 { 0.0 } else {
+    f32(widest) * font.glyph_width + f32(widest - 1) * font.spacing
+  }
+}
+
+impl Font {
+  /// The glyph showing character `code`, or its capital where only that is in the font; -1
+  /// for none.
+  pub let glyph_of = pure (self, code: i64) -> i64 => {
+    let at = code - self.first
+    if at >= 0 && at < self.count { return at }
+    let capital = code - 32 - self.first
+    if code >= 97 && code <= 122 && capital >= 0 && capital < self.count { capital } else { -1 }
+  }
+}

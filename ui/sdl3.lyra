@@ -1138,14 +1138,16 @@ impl Renderer for SdlRenderer {
         break
       }
     }
+    // Its own copy, which [written] writes parts into in place.
+    let kept = Image { image | argb: [...image.argb] }
     if index == self.live.len() {
       self.textures.push(texture)
       self.live.push(true)
-      self.images.push(image)
+      self.images.push(kept)
     } else {
       self.textures[index] = texture
       self.live[index] = true
-      self.images[index] = image
+      self.images[index] = kept
     }
     for k, other in self.others {
       let copy = made_texture(other.canvas, image)
@@ -1255,12 +1257,14 @@ let made_texture = (canvas: Canvas, image: Image) -> Maybe<Texture> => {
   Some(texture)
 }
 
-/// `image` with `patch` written into it at `area` — what a texture holds after an update.
-let written = pure (image: Image, area: PixelRect, patch: Image) -> Image => {
+/// `image` with `patch` written into it at `area` — what a texture holds after an update: in
+/// place, `image` being the renderer's own copy.
+let written = (image: Image, area: PixelRect, patch: Image) -> Image => {
   if area.x == 0 && area.y == 0 && patch.width == image.width && patch.height == image.height {
-    return Image { patch | pixelated: image.pixelated }
+    return Image { patch | argb: [...patch.argb], pixelated: image.pixelated }
   }
-  var argb = [...image.argb]
+  // In place: the renderer's own copy (`upload`), so a small part costs itself alone.
+  var argb = image.argb
   for row in 0..<patch.height {
     let y = i64(area.y) + row
     if y < 0 || y >= image.height { continue }

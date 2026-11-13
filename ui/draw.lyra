@@ -105,10 +105,68 @@ pub struct Image {
 /// host keeps one texture a key and writes it again only when the revision moves — a program
 /// that changes the pixels moves it — so a view can name the same picture every frame for
 /// nothing (`ui.layout`'s `picture` and `PaintPicture`, `ui.text`'s [GlyphAtlas]).
+///
+/// **A large picture's pixels may be made only when they are needed** (`made`): its `image`
+/// then gives its size with no pixels, and the host calls `made` the first time the key is
+/// drawn and when its revision moves — so a view naming a 4096-pixel picture every frame does
+/// not colour sixteen million pixels every frame.
+///
+/// **A picture changed in a small part may say which** (`patches`, and `made_in` for that
+/// part's pixels): a host holding it as of a revision the patches lead on from writes only
+/// their rectangles — a stroke on a 4096-pixel picture costs the stroke, not the picture.
 pub struct PictureSource {
   key: string,
   image: Image,
   revision: i64 = 0,
+  /// Its pixels, `image.width` × `image.height`, made when the host needs them; `None` when
+  /// `image` holds them.
+  made: Maybe<() -> []u32> = None,
+  /// The latest changes, oldest first: each takes the picture from one revision to the next
+  /// within its rectangle. A host follows them from the revision it holds to `revision`;
+  /// where they do not lead there, it takes the whole picture again.
+  patches: []PicturePatch = [],
+  /// The pixels of the rectangle (x, y, width, height), row by row, as of `revision` — what
+  /// a host writes for a patch. `None`: a change costs the whole picture.
+  made_in: Maybe<(i64, i64, i64, i64) -> []u32> = None,
+}
+
+/// One change to a picture ([PictureSource]'s `patches`): from revision `from` to `to`, its
+/// pixels changed only inside the rectangle at (`x`, `y`), `width` × `height` — none at all
+/// where that is empty (another picture was the one changed).
+pub struct PicturePatch {
+  from: i64,
+  to: i64,
+  x: i64 = 0,
+  y: i64 = 0,
+  width: i64 = 0,
+  height: i64 = 0,
+}
+
+impl PictureSource {
+  /// Its image, its pixels made where it makes them ([PictureSource]'s `made`).
+  pub let pixels = (self) -> Image => match self.made {
+    Some(make) => Image { self.image | argb: make() },
+    None => self.image,
+  }
+
+  /// The rectangles to write to take it from revision `held` to its own, each as
+  /// (x, y, width, height), empty ones left out — or `None` where its patches do not lead
+  /// from `held` to `revision`, or it cannot make a part ([PictureSource]'s `made_in`).
+  pub let patched_from = pure (self, held: i64) -> Maybe<[](i64, i64, i64, i64)> => {
+    if self.made_in.is_none() { return None }
+    var reached = held
+    var areas: [](i64, i64, i64, i64) = []
+    for p in self.patches {
+      if p.from != reached { continue }
+      reached = p.to
+      let x0 = p.x.max(0)
+      let y0 = p.y.max(0)
+      let x1 = (p.x + p.width).min(self.image.width)
+      let y1 = (p.y + p.height).min(self.image.height)
+      if x1 > x0 && y1 > y0 { areas.push((x0, y0, x1 - x0, y1 - y0)) }
+    }
+    if reached == self.revision { Some(areas) } else { None }
+  }
 }
 
 /// A texture a renderer holds, named by the number its `upload` answered.

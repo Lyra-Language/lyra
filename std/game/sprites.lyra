@@ -20,7 +20,8 @@ module std.game.sprites
 //! **What a console's sprites cannot do**, a modern one can, each a field with a default that
 //! draws it as it is: see through it (`alpha`), colour it (`tint`), turn it (`angle`), grow it
 //! (`scale`, about its middle), and make it light rather than paint (`additive`: its colours
-//! add to what is beneath — a glow, a spark, fire).
+//! add to what is beneath — a glow, a spark, fire). And draw at the screen's own pixels over
+//! art the screen scales up (`unscaled`): a HUD, or text (`std.game.text`), kept sharp.
 //!
 //! **A sprite may say where it was the update before** ([came_from]), and the screen draws it
 //! between there and here by how far the clock is between updates (`screen.blend`), so
@@ -52,6 +53,10 @@ pub struct Sprite {
   scale: f32 = 1.0,
   /// Light rather than paint: its colours, times its alpha, added to what is beneath.
   additive: bool = false,
+  /// At the screen's own pixels rather than the art's: not grown by `screen.set_art_scale`,
+  /// its place and size counted in `screen.full_width()` × `full_height()` — a HUD or text
+  /// drawn sharp over art scaled up, from art drawn at the screen's resolution.
+  unscaled: bool = false,
   /// Where it was on the screen the update before, when `was_there` ([came_from]): it is
   /// drawn between there and (`x`, `y`).
   was_x: f32 = 0.0,

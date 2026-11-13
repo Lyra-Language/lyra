@@ -3777,7 +3777,7 @@ let describe = pure (at: Maybe<Point>) -> string => match at {
 func TestRun_UiPictures(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.backend.{ Renderer }
-import ui.draw.{ Size, Point, Rect, Image, TextureId, PictureSource, Picture }
+import ui.draw.{ Size, Point, Rect, Image, TextureId, PictureSource, PicturePatch, Picture }
 import ui.text.{ fonts_new, glyph_atlas }
 import ui.interact.{ ui_new }
 import ui.style.{ Style }
@@ -3790,6 +3790,8 @@ struct Counting {
   updates: i64 = 0,
   releases: i64 = 0,
   next: i64 = 0,
+  /// The last update's place and size.
+  last: string = "",
 }
 
 impl Renderer for Counting {
@@ -3800,6 +3802,7 @@ impl Renderer for Counting {
   }
   update = (self, id, at, image) => {
     self.updates += 1
+    self.last = "${at.x},${at.y} ${image.width}x${image.height} of ${image.argb.len()}"
     true
   }
   release = (self, id) => { self.releases += 1 }
@@ -3839,6 +3842,55 @@ let main = () -> u8 => {
       println("painted: texels ${texels.w}x${texels.h} into ${at.x},${at.y} ${at.w}x${at.h} at ${opacity}")
     }
   }
+  // A picture whose pixels are made when needed: made for its first frame and for a new
+  // revision, not for a frame naming the same revision.
+  for revision in [1, 1, 2] {
+    let lazy = PictureSource {
+      key: "lazy",
+      image: Image { width: 2, height: 1, argb: [] },
+      revision: revision,
+      made: Some(() -> []u32 => {
+        makes += 1
+        [0xFF000000, 0xFFFFFFFF]
+      }),
+    }
+    let shows = (_: PaintArea) -> []PaintOp =>
+      [PaintPicture(lazy, Rect { w: 2.0, h: 1.0 }, Rect { w: 20.0, h: 10.0 }, 1.0)]
+    let laid_lazy = ui.frame_within(column::<i64>([sized_painter(shows)]), tight(Size { w: 100.0, h: 100.0 }), fonts, cache)
+    let _ = paint(laid_lazy, Point {}, 1.0, fonts, atlas, r)
+  }
+  println("made: ${makes} times for three frames of two revisions")
+  // A picture whose patches say what changed: the first frame makes it whole; patches leading
+  // from the revision held write their rectangles alone (an empty one nothing); a gap in them
+  // makes it whole again.
+  let changes: [](i64, []PicturePatch) = [
+    (1, []),
+    (3, [PicturePatch { from: 1, to: 2, x: 2, y: 3, width: 1, height: 2 }, PicturePatch { from: 2, to: 3 }]),
+    (4, [PicturePatch { from: 2, to: 3, x: 0, y: 0, width: 8, height: 8 }, PicturePatch { from: 3, to: 4, x: 6, y: 6, width: 4, height: 4 }]),
+    (6, [PicturePatch { from: 5, to: 6, x: 0, y: 0, width: 1, height: 1 }]),
+  ]
+  for (revision, patches) in changes {
+    let updates = r.updates
+    let patched = PictureSource {
+      key: "patched",
+      image: Image { width: 8, height: 8, argb: [] },
+      revision: revision,
+      made: Some(() -> []u32 => {
+        wholes += 1
+        [0; 64]
+      }),
+      patches: patches,
+      made_in: Some((x: i64, y: i64, width: i64, height: i64) -> []u32 => {
+        parts += 1
+        [0; width * height]
+      }),
+    }
+    let shows = (_: PaintArea) -> []PaintOp =>
+      [PaintPicture(patched, Rect { w: 8.0, h: 8.0 }, Rect { w: 8.0, h: 8.0 }, 1.0)]
+    let laid_patched = ui.frame_within(column::<i64>([sized_painter(shows)]), tight(Size { w: 100.0, h: 100.0 }), fonts, cache)
+    let _ = paint(laid_patched, Point {}, 1.0, fonts, atlas, r)
+    println("revision ${revision}: ${wholes} whole, ${parts} parts, ${r.updates - updates} updates, the last ${r.last}")
+  }
   // The fills: a 4x2 picture stretched, cut to cover a square, and tiled at two pixels a point;
   // a single pixel tiled, its tile doubled until there are few enough.
   let wide = PictureSource { key: "wide", image: Image { width: 4, height: 2, argb: [0, 0, 0, 0, 0, 0, 0, 0] } }
@@ -3849,6 +3901,13 @@ let main = () -> u8 => {
   fill("a pixel tiled", picture_fill(dot, FitTile, Rect { w: 400.0, h: 300.0 }, radius(0.0), 1.0, 2.0))
   0
 }
+
+/// How many times the lazy picture's pixels were made.
+var makes: i64 = 0
+
+/// How many times the patched picture's pixels were made whole, and in part.
+var wholes: i64 = 0
+var parts: i64 = 0
 
 /// How many pictures a fill draws, the first one's texels and place, and whether it is clipped.
 let fill = (name: string, ops: []PaintOp) -> void => {
@@ -3877,6 +3936,11 @@ a new revision, same size: 1 uploads, 1 updates, 0 releases, 1 kept
 a new revision, a new size: 2 uploads, 1 updates, 1 releases, 1 kept
 not named: 2 uploads, 1 updates, 2 releases, 0 kept
 painted: texels 1x2 into 5,5 10x20 at 0.5
+made: 2 times for three frames of two revisions
+revision 1: 1 whole, 0 parts, 0 updates, the last 0,0 2x1 of 2
+revision 3: 1 whole, 1 parts, 1 updates, the last 2,3 1x2 of 2
+revision 4: 1 whole, 2 parts, 1 updates, the last 6,6 2x2 of 4
+revision 6: 2 whole, 2 parts, 1 updates, the last 0,0 8x8 of 64
 stretched: 1, the first texels 0,0 4x2 into 100x50, rounded true
 covering a square: 1, the first texels 1,0 2x2 into 100x100, rounded true
 tiled: 2500, the first texels 0,0 4x2 into 2x1, rounded false

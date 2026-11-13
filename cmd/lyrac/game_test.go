@@ -916,6 +916,73 @@ let main = () -> u8 => {
 	}
 }
 
+// A HUD over art the screen scales up: at art scale 4 a sprite of 2×2 covers 8×8 of the
+// screen, while one drawn unscaled covers its own 2×2, and text from a font in the sprite art —
+// the glyphs '0' and '1', a pixel wide — is drawn at either: "10" unscaled a pixel a letter,
+// "0" scaled four. The screen counts in both: 6 × 2 of the art, 24 × 8 of its own.
+func TestRun_GameDrawsAHUDAtTheScreensOwnPixels(t *testing.T) {
+	t.Parallel()
+	src := filepath.Join(t.TempDir(), "main.lyra")
+	if err := os.WriteFile(src, []byte(`import std.game.screen
+import std.game.sprites
+import std.game.sprites.{ Sprite }
+import std.game.text
+import std.game.text.{ Font }
+
+let main = () -> u8 => {
+  if !screen.open("hud", 24, 8) { return 2 }
+  screen.set_art_scale(4)
+  if screen.width() != 6 || screen.height() != 2 { return 3 }
+  if screen.full_width() != 24 || screen.full_height() != 8 { return 4 }
+  // 4×2: a red square, then the glyphs '0' (white) and '1' (green), a pixel wide each.
+  var art: [8]u32 = #[0xFFFF0000; 8]
+  art[2] = 0xFFFFFFFF
+  art[6] = 0xFFFFFFFF
+  art[3] = 0xFF00FF00
+  art[7] = 0xFF00FF00
+  screen.load_sprites(4, art)
+  let font = Font { sheet_x: 2, glyph_width: 1, glyph_height: 2, columns: 2, count: 2, first: 48 }
+  if text.width(font, "10\n1") != 2.0 || font.glyph_of(50) != -1 { return 5 }
+  while screen.running() {
+    sprites.clear()
+    let red = Sprite { x: 0, y: 0, width: 2, height: 2, sheet_x: 0, sheet_y: 0 }
+    sprites.add(red)
+    sprites.add(Sprite { red | x: 8, unscaled: true })
+    if (text.add(font, 12, 0, "10", true) - 2.0).abs() > 0.001 { return 6 }
+    text.add(font, 4, 0, "0")
+    screen.show()
+  }
+  screen.close()
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	frame := playGame(t, src, "--frames", "1")
+	red, white, green, black := [3]byte{255, 0, 0}, [3]byte{255, 255, 255}, [3]byte{0, 255, 0}, [3]byte{0, 0, 0}
+	for _, c := range []struct {
+		x, y int
+		want [3]byte
+		what string
+	}{
+		{0, 0, red, "the scaled square's corner"},
+		{7, 7, red, "the scaled square, four times its art"},
+		{8, 0, red, "the unscaled square's corner"},
+		{9, 1, red, "the unscaled square, its own 2×2"},
+		{10, 0, black, "beside the unscaled square"},
+		{8, 2, black, "below the unscaled square"},
+		{12, 1, green, "'1' at a pixel a letter"},
+		{13, 1, white, "'0' after it"},
+		{14, 0, black, "after the unscaled text"},
+		{16, 0, white, "the scaled '0''s corner"},
+		{19, 7, white, "the scaled '0', four times its glyph"},
+		{20, 0, black, "after the scaled text"},
+	} {
+		if got := frame.at(c.x, c.y); got != c.want {
+			t.Errorf("%s: (%d, %d) is %v, want %v", c.what, c.x, c.y, got, c.want)
+		}
+	}
+}
+
 // examples/game/wisps.lyra played headless, 150 frames holding right and down: it runs and
 // shows its screen — the night's dark field, and the wisp gone right and down, its light the
 // brightest thing about it.

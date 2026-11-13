@@ -203,6 +203,12 @@ pub let open = (title: string, width: i64, height: i64) -> bool => {
 pub let width = () -> i64 => (screen_width + art_scale - 1) / art_scale
 pub let height = () -> i64 => (screen_height + art_scale - 1) / art_scale
 
+/// The screen's size in its own pixels — what [open] was given, or grown to the window's
+/// shape (`Expand`), which [width] and [height] are over the art scale: what a sprite drawn
+/// `unscaled` (a HUD, text) counts in.
+pub let full_width = () -> i64 => screen_width
+pub let full_height = () -> i64 => screen_height
+
 /// Draw the planes and sprites `scale` times their art's size (1 to 16): a screen opened at
 /// 1920 × 1080 with the art at 5 shows what a 384 × 216 one shows, at the screen's full
 /// resolution — so a sprite turned or grown, or drawn smooth, is drawn in the screen's own
@@ -389,7 +395,8 @@ pub let show = () -> void => {
   let t = blend()
   // Played headless by frames, the frames' own time, so a frame is the same every run.
   planes.step_tiles(if limit > 0 { frame * 1000 / 60 } else { i64(ticks_ns()) / 1000000 })
-  // The art drawn its scale's times larger: SDL's scale under the screen's presentation.
+  // The art drawn its scale's times larger: SDL's scale under the screen's presentation —
+  // but for a sprite drawn at the screen's own pixels (`unscaled`), which `draw_sprites` sets.
   r.set_scale(f32(art_scale), f32(art_scale))
   draw_planes(r, false, t)
   draw_sprites(r, false, t)
@@ -787,6 +794,8 @@ let draw_sprites = (r: Renderer, front: bool, t: f32) -> void => {
     let (x, y) = list[i].at(t)
     let s = Sprite { list[i] | x: x, y: y }
     if s.front == front && s.alpha > 0.0 && s.scale > 0.0 {
+      let scale = if s.unscaled { 1.0 } else { f32(art_scale) }
+      r.set_scale(scale, scale)
       let source = Rect { x: s.sheet_x, y: s.sheet_y, w: s.width, h: s.height }
       if s.as_drawn() {
         let place = Rect {
@@ -802,6 +811,7 @@ let draw_sprites = (r: Renderer, front: bool, t: f32) -> void => {
     }
     i -= 1
   }
+  r.set_scale(f32(art_scale), f32(art_scale))
 }
 
 /// A sprite faded, tinted, turned, grown or added as light: the sprite art's alpha, colour

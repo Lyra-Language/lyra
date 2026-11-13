@@ -769,7 +769,6 @@ impl GlyphAtlas {
     source: PictureSource,
     renderer: mut r
   ) -> Maybe<TextureId> => {
-    let image = source.image
     if let Some(kept) = self.pictures.get(source.key) {
       let shown_in = if kept.shown_in.contains(self.window) { kept.shown_in } else {
         [...kept.shown_in, self.window]
@@ -781,6 +780,24 @@ impl GlyphAtlas {
         )
         return Some(kept.texture)
       }
+      // A few rectangles changed: write those alone.
+      if kept.width == source.image.width && kept.height == source.image.height {
+        if let Some(areas) = source.patched_from(kept.revision) {
+          if written_in(kept.texture, source, areas, renderer) {
+            self.pictures.insert(
+              source.key,
+              KeptPicture {
+                kept | revision: source.revision,
+                frame: self.frame,
+                shown_in: shown_in
+              }
+            )
+            return Some(kept.texture)
+          }
+        }
+      }
+      // Only now its pixels: a picture that makes them makes them for a new revision alone.
+      let image = source.pixels()
       let same_size = kept.width == image.width && kept.height == image.height
       if same_size && renderer.update(kept.texture, Point {}, image) {
         self.pictures.insert(
@@ -796,6 +813,7 @@ impl GlyphAtlas {
       renderer.release(kept.texture)
       let _ = self.pictures.remove(source.key)
     }
+    let image = source.pixels()
     let Some(texture) = renderer.upload(image) else { return None }
     self.pictures.insert(source.key, KeptPicture {
       texture: texture,
@@ -1057,6 +1075,27 @@ impl GlyphAtlas {
       height: self.size,
       argb: [0x00FFFFFF; self.size * self.size]
     }
+}
+
+/// `areas` of `source` written into its texture `texture` through `renderer`, each made by
+/// its `made_in`; `false` when the renderer took one not — the whole picture is written then.
+let written_in<r> where r: Renderer = (
+  texture: TextureId,
+  source: PictureSource,
+  areas: [](i64, i64, i64, i64),
+  renderer: mut r
+) -> bool => {
+  let Some(make) = source.made_in else { return false }
+  for (x, y, width, height) in areas {
+    let part = Image {
+      width: width,
+      height: height,
+      argb: make(x, y, width, height),
+      pixelated: source.image.pixelated
+    }
+    if !renderer.update(texture, Point { x: f32(x), y: f32(y) }, part) { return false }
+  }
+  true
 }
 
 /// One texture of an atlas: the shelf being filled — its top, how far across it is, and its

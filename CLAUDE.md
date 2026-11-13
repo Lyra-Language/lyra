@@ -825,7 +825,9 @@ of Markdown.
   nearest-neighbour; `Smooth`, filtered, for art drawn at a high resolution), **how large**
   `screen.set_art_scale(k)` (SDL's render scale under the presentation: a 1920 × 1080 screen
   at 5 shows 384 × 216 of the world at full resolution, `width()`/`height()` then in the art's
-  pixels); **a world smaller than the view is centred in it** (`std.game.camera`'s `inside`,
+  pixels); **a HUD at the screen's own pixels** over art scaled up — a `Sprite`'s `unscaled`,
+  placed in `screen.full_width()`/`full_height()`, and `std.game.text`, a string drawn as
+  sprites from a `Font`, a grid of glyphs in the sprite art (`TestRun_GameDrawsAHUDAtTheScreensOwnPixels`); **a world smaller than the view is centred in it** (`std.game.camera`'s `inside`,
   `Camera.kept_inside` where a camera starts — the Genesis's camera keeps the corner, its
   planes wrapping); a tile set's art
   is laid out with a pixel's gutter round each tile copied from its edge (`tile_picture`), so
