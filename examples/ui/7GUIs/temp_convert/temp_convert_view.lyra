@@ -87,11 +87,11 @@ pub let view = pure (s: State) -> Node<Event> =>
     flex([ // temp_convert_view.lui:87
       row([ // temp_convert_view.lui:88
         text("Celsius"), // temp_convert_view.lui:89
-        text_input(FieldSpec { value: s.c_str, on_edit: (value: string) -> Event => CelsiusEdited(value) }).with_class(if s.c_error { "error" } else { "" }).labelled("Celsius"), // temp_convert_view.lui:90
+        text_input(FieldSpec { value: s.c_str, on_edit: CelsiusEdited }).with_class(if s.c_error { "error" } else { "" }).labelled("Celsius"), // temp_convert_view.lui:90
       ]),
       row([ // temp_convert_view.lui:97
         text("Fahrenheit"), // temp_convert_view.lui:98
-        text_input(FieldSpec { value: s.f_str, on_edit: (value: string) -> Event => FahrenheitEdited(value) }).with_class(if s.f_error { "error" } else { "" }).labelled("Fahrenheit"), // temp_convert_view.lui:99
+        text_input(FieldSpec { value: s.f_str, on_edit: FahrenheitEdited }).with_class(if s.f_error { "error" } else { "" }).labelled("Fahrenheit"), // temp_convert_view.lui:99
       ]),
     ]),
   ])

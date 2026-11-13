@@ -72,7 +72,7 @@ pub let update = pure (state: State, event: Event) -> (State, []Command<Event>) 
 pub let view = pure (s: State) -> Node<Event> =>
   component("view", Sheet {}, [
     themed(light_theme(), panels_sheet(light_theme()), [ // panels_view.lui:81
-      splitter(properties(s), sprites(s), s.side, (value: f32) -> Event => Side(value)), // panels_view.lui:82
+      splitter(properties(s), sprites(s), s.side, Side), // panels_view.lui:82
     ]),
   ])
 
@@ -81,11 +81,11 @@ pub let properties = pure (s: State) -> Node<Event> =>
   component("properties", Sheet {}, [
     padding(insets(12.0), column([ // panels_view.lui:91
       separator::<Event>("Sprite"), // panels_view.lui:93
-      number_field(NumberSpec { value: s.width, min: 8.0, max: 64.0, step: 8.0, label: "Width" }, (value: f64) -> Event => Width(value)), // panels_view.lui:94
-      number_field(NumberSpec { value: s.height, min: 8.0, max: 64.0, step: 8.0, label: "Height" }, (value: f64) -> Event => Height(value)), // panels_view.lui:95
-      number_field(NumberSpec { value: s.speed, min: 0.0, max: 10.0, step: 0.25, decimals: 2, label: "Speed" }, (value: f64) -> Event => Speed(value)), // panels_view.lui:96
+      number_field(NumberSpec { value: s.width, min: 8.0, max: 64.0, step: 8.0, label: "Width" }, Width), // panels_view.lui:94
+      number_field(NumberSpec { value: s.height, min: 8.0, max: 64.0, step: 8.0, label: "Height" }, Height), // panels_view.lui:95
+      number_field(NumberSpec { value: s.speed, min: 0.0, max: 10.0, step: 0.25, decimals: 2, label: "Speed" }, Speed), // panels_view.lui:96
       separator::<Event>("Palette"), // panels_view.lui:97
-      radio_group([k in 0..<4 | "Palette ${k}"], s.palette, (value: i64) -> Event => Palette(value)), // panels_view.lui:98
+      radio_group([k in 0..<4 | "Palette ${k}"], s.palette, Palette), // panels_view.lui:98
       disclosure("Collision", s.collision, column([ // panels_view.lui:99
         checkbox("Solid", s.solid, Solid), // panels_view.lui:101
         text("Hit box follows the sprite's size."), // panels_view.lui:102
@@ -106,7 +106,7 @@ pub let sprites = pure (s: State) -> Node<Event> =>
             text("${s.width}"), // panels_view.lui:121
             text("${s.height}"), // panels_view.lui:122
           ]],
-      ], s.selected, (value: i64) -> Event => Select(value), (column: i64, width: f32) -> Event => Resize(column, width))),
+      ], s.selected, Select, Resize)),
     ]).aligned(MainStart, CrossStretch).with_style(Style { gap: Some(8.0) })),
   ])
 

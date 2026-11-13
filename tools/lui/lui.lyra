@@ -34,8 +34,8 @@
 //   component of the same file**, attributes matched to its props by name, its children
 //   passed as a `children: []Node<e>` prop. `<if test={…}>`, `<else>` and
 //   `<for each={x in xs}>` are control flow.
-// - **An input's `on_change={Width}`** — a bare name — is written as the typed lambda
-//   calling it, `(value: i64) -> Ev => Width(value)`; a lambda written out passes through.
+// - **An input's `on_change={Width}`** passes through as written, a constructor or a
+//   function being a function value as a lambda is (`on_change={(v) => Width(v * 2)}`).
 // - **`{…}` is Lyra**, copied through: an attribute (`on_click={yes}`), part of a text or
 //   quoted string (`Reset {n} times`; a text of one `{n}` alone is `"${n}"`, a string
 //   whatever `n` is), or a child node (`{node}`, or `{...nodes}` for an
@@ -960,11 +960,6 @@ impl Writer {
   ) -> Result<string, string> => {
     let wrong = "${a.line}: ${a.name} of <${tag}>"
     match (field.kind, a.value) {
-      (Changes(value_type), Braced(code)) => Ok(if is_bare_name(code) {
-        "(value: ${value_type}) -> ${self.event} => ${code}(value)"
-      } else {
-        code
-      }),
       (Looks, Braced(code)) => {
         self.use("Style")
         Ok(code)
@@ -1529,7 +1524,7 @@ impl Writer {
               fields.push("decimals: ${places}")
             }
             if label != "\"\"" { fields.push("label: ${label}") }
-            "number_field(NumberSpec { ${fields.join(", ")} }, ${self.changes(t, "on_change", "f64")?})"
+            "number_field(NumberSpec { ${fields.join(", ")} }, ${handler(t, "on_change")?})"
           },
           "radio" => {
             let chosen = condition_attr(t, "chosen")?
@@ -1576,7 +1571,7 @@ impl Writer {
               let n = number_attr(t, f)?
               if n.len() > 0 { fields.push("${f}: ${n}") }
             }
-            fields.push("on_change: ${self.changes(t, "on_change", "f32")?}")
+            fields.push("on_change: ${handler(t, "on_change")?}")
             "slider(SliderSpec { ${fields.join(", ")} })"
           },
           "text_input" => {
@@ -1601,7 +1596,7 @@ impl Writer {
             if bare && attr_named(t.attrs, "on_edit").is_none() {
               fields.push("on_edit: (_: string) -> ${self.event} => panic(\"a read-only field raised an edit\")")
             } else {
-              fields.push("on_edit: ${self.changes(t, "on_edit", "string")?}")
+              fields.push("on_edit: ${handler(t, "on_edit")?}")
             }
             "text_input(FieldSpec { ${fields.join(", ")} })"
           },
@@ -1631,9 +1626,9 @@ impl Writer {
               Some(code) => code,
               None => return Err("${t.line}: <Dock> needs panel={…}, a function of a panel's key answering its DockPanel"),
             }
-            let made = "dock(${required(t, "tree")?}, ${panel}, ${self.typed_changes(t, "on_change", "DockTree")?}, ${self.changes(t, "on_close", "string")?})"
+            let made = "dock(${required(t, "tree")?}, ${panel}, ${handler(t, "on_change")?}, ${handler(t, "on_close")?})"
             if attr_named(t.attrs, "on_tear").is_none() { made } else {
-              "${made}.tears_off(${self.typed_changes(t, "on_tear", "DockTear")?})"
+              "${made}.tears_off(${handler(t, "on_tear")?})"
             }
           },
           _ => {
@@ -1673,7 +1668,7 @@ impl Writer {
           }
           return self.ui_modifiers(
             t,
-            "splitter(${items[0].text}, ${items[1].text}, ${at}, ${self.changes(t, "on_drag", "f32")?}${tail})"
+            "splitter(${items[0].text}, ${items[1].text}, ${at}, ${handler(t, "on_drag")?}${tail})"
           )
         }
         let open = condition_attr(t, "open")?
@@ -1806,27 +1801,6 @@ impl Writer {
       return Err("${t.line}: <${t.name}> holds one element")
     }
     Ok(items[0].text)
-  }
-
-  /// An `on_change`-style attribute: a bare name is the lambda calling it.
-  let changes = pure (
-    self,
-    t: Tag,
-    name: string,
-    value_type: string
-  ) -> Result<string, string> => {
-    let Some(a) = attr_named(
-      t.attrs,
-      name
-    ) else { return Err("${t.line}: <${t.name}> needs ${name}") }
-    match a.value {
-      Braced(code) => Ok(if is_bare_name(code) {
-        "(value: ${value_type}) -> ${self.event} => ${code}(value)"
-      } else {
-        code
-      }),
-      _ => Err("${a.line}: ${name} of <${t.name}> takes {…}"),
-    }
   }
 
   /// `children` written as the data `making` names (`"menus"`, `"entries"`, `"tabs"`), at
@@ -1990,44 +1964,15 @@ impl Writer {
     var fields = [
       "tabs: ${tabs}",
       "selected: ${required(t, "selected")?}",
-      "on_select: ${self.changes(t, "on_select", "i64")?}",
-      "on_close: ${self.changes(t, "on_close", "i64")?}",
-      "on_move: ${self.moves(t, "on_move")?}",
+      "on_select: ${handler(t, "on_select")?}",
+      "on_close: ${handler(t, "on_close")?}",
+      "on_move: ${handler(t, "on_move")?}",
     ]
     if after_markup.len() > 0 {
       let after = self.nodes_of(after_markup, "${indent}  ")?
       fields.push("after: ${self.listed(after, indent)}")
     }
     Ok("tab_bar(TabsSpec { ${fields.join(", ")} })")
-  }
-
-  /// A move's attribute: a bare name is the lambda calling it with a place and the place it
-  /// moves to.
-  let moves = pure (self, t: Tag, name: string) -> Result<string, string> => {
-    let Some(a) = attr_named(
-      t.attrs,
-      name
-    ) else { return Err("${t.line}: <${t.name}> needs ${name}") }
-    match a.value {
-      Braced(code) => Ok(if is_bare_name(code) {
-        "(from: i64, to: i64) -> ${self.event} => ${code}(from, to)"
-      } else {
-        code
-      }),
-      _ => Err("${a.line}: ${name} of <${t.name}> takes {…}"),
-    }
-  }
-
-  /// [changes] for a value of a `ui` type, which the module imports when the lambda names it.
-  let typed_changes = (
-    self: mut,
-    t: Tag,
-    name: string,
-    value_type: string
-  ) -> Result<string, string> => {
-    let written = self.changes(t, name, value_type)?
-    if written.starts_with("(value: ${value_type})") { self.use(value_type) }
-    Ok(written)
   }
 
   /// A `<RadioGroup selected={…} on_change={…} axis="horizontal">` and its choices:
@@ -2071,7 +2016,7 @@ impl Writer {
       other =>
         return Err("${t.line}: axis of <RadioGroup> is vertical or horizontal, not ${other}"),
     }
-    Ok("radio_group(${options}, ${required(t, "selected")?}, ${self.changes(t, "on_change", "i64")?}${axis})")
+    Ok("radio_group(${options}, ${required(t, "selected")?}, ${handler(t, "on_change")?}${axis})")
   }
 
   /// A `<Table selected={…} on_select={…} on_resize={…}>`: its columns — `<TableColumn
@@ -2124,16 +2069,7 @@ impl Writer {
         self.listed(items, indent)
       },
     }
-    let resize = match attr_named(t.attrs, "on_resize") {
-      None => return Err("${t.line}: <Table> needs on_resize"),
-      Some(a) => match a.value {
-        Braced(code) => if is_bare_name(code) {
-          "(column: i64, width: f32) -> ${self.event} => ${code}(column, width)"
-        } else { code },
-        _ => return Err("${a.line}: on_resize of <Table> takes {…}"),
-      },
-    }
-    Ok("table(${columns}, ${rows}, ${required(t, "selected")?}, ${self.changes(t, "on_select", "i64")?}, ${resize})")
+    Ok("table(${columns}, ${rows}, ${required(t, "selected")?}, ${handler(t, "on_select")?}, ${handler(t, "on_resize")?})")
   }
 
   /// `<Swatch>`, `<ColorPicker>` and `<WindowButtons/>`: controls of attributes, a colour's
@@ -2159,11 +2095,11 @@ impl Writer {
           },
           None => return Err("${t.line}: <Swatch> needs open"),
         }
-        Ok("swatch(${required(t, "color")?}, ${open}, ${required(t, "on_open")?}, ${self.changes(t, "on_change", "Color")?}, ${required(t, "on_dismiss")?}${tail})")
+        Ok("swatch(${required(t, "color")?}, ${open}, ${required(t, "on_open")?}, ${handler(t, "on_change")?}, ${required(t, "on_dismiss")?}${tail})")
       },
       "color_picker" => {
         self.use("Color")
-        Ok("color_picker(${required(t, "color")?}, ${self.changes(t, "on_change", "Color")?}${tail})")
+        Ok("color_picker(${required(t, "color")?}, ${handler(t, "on_change")?}${tail})")
       },
       _ => Ok("window_buttons::<${self.event}>()"),
     }
@@ -2286,7 +2222,7 @@ impl Writer {
     var fields = [
       "options: ${options}",
       "selected: ${required(t, "selected")?}",
-      "on_change: ${self.changes(t, "on_change", "i64")?}",
+      "on_change: ${handler(t, "on_change")?}",
     ]
     match t.code_attr("separators") {
       Some(code) => {
@@ -2362,6 +2298,17 @@ let condition_attr = pure (t: Tag, name: string) -> Result<string, string> =>
 let required = pure (t: Tag, name: string) -> Result<string, string> =>
   match attr_named(t.attrs, name) {
     Some(a) => Ok(attr_lyra(a.value)),
+    None => Err("${t.line}: <${t.name}> needs ${name}"),
+  }
+
+/// A handler `t` needs (`on_change={Width}`, `on_move={(from, to) => Moved(from, to)}`): the
+/// Lyra in its braces, a constructor or function as it is.
+let handler = pure (t: Tag, name: string) -> Result<string, string> =>
+  match attr_named(t.attrs, name) {
+    Some(a) => match a.value {
+      Braced(code) => Ok(code),
+      _ => Err("${a.line}: ${name} of <${t.name}> takes {…}"),
+    },
     None => Err("${t.line}: <${t.name}> needs ${name}"),
   }
 
@@ -3378,10 +3325,8 @@ struct Field {
 
 /// How an attribute is written: a string (quoted, `{…}` interpolated), any Lyra
 /// (`{…}`), a `Maybe` of one (`{x}` is `Some(x)`), a flag (bare is true), a shortcut
-/// (`"Cmd+Shift+S"`) or a style (`"rounding: 4"`).
-/// A `Changes` attribute is `on_change`: a function of the new value, of the type named; a
-/// bare name (a constructor, a function) becomes the lambda calling it.
-data FieldKind = Str | Any | MaybeOf | Flag | Keys | Looks | Changes(string)
+/// (`"Cmd+Shift+S"`) or a style (`"rounding: 4"`). A handler (`on_change`) is any Lyra.
+data FieldKind = Str | Any | MaybeOf | Flag | Keys | Looks
 
 let element_kind = pure (tag: string) -> Maybe<Kind> => {
   let class = Field { name: "class", kind: Str }
@@ -3524,7 +3469,7 @@ let element_kind = pure (tag: string) -> Maybe<Kind> => {
         Field { name: "label", kind: Str },
         Field { name: "value", kind: Any },
         Field { name: "step", kind: Any },
-        Field { name: "on_change", kind: Changes("i64") },
+        Field { name: "on_change", kind: Any },
         Field { name: "on_commit", kind: MaybeOf },
         id,
         enabled,
@@ -3541,7 +3486,7 @@ let element_kind = pure (tag: string) -> Maybe<Kind> => {
         Field { name: "label", kind: Str },
         Field { name: "value", kind: Str },
         Field { name: "hint", kind: Str },
-        Field { name: "on_change", kind: Changes("string") },
+        Field { name: "on_change", kind: Any },
         Field { name: "on_commit", kind: MaybeOf },
         id,
         enabled,
@@ -3560,7 +3505,7 @@ let element_kind = pure (tag: string) -> Maybe<Kind> => {
         Field { name: "min", kind: Any },
         Field { name: "max", kind: Any },
         Field { name: "format", kind: Str },
-        Field { name: "on_change", kind: Changes("f32") },
+        Field { name: "on_change", kind: Any },
         Field { name: "on_commit", kind: MaybeOf },
         id,
         enabled,
@@ -3577,7 +3522,7 @@ let element_kind = pure (tag: string) -> Maybe<Kind> => {
         Field { name: "label", kind: Str },
         Field { name: "value", kind: Any },
         Field { name: "inputs", kind: Flag },
-        Field { name: "on_change", kind: Changes("u32") },
+        Field { name: "on_change", kind: Any },
         Field { name: "on_commit", kind: MaybeOf },
         id,
         enabled,
@@ -4215,16 +4160,6 @@ let top_level_equals = pure (p: string) -> Maybe<i64> => {
     }
   }
   None
-}
-
-/// Whether `code` is a name alone (`FrameWidth`, `doc.rename`): what `on_change` calls.
-let is_bare_name = pure (code: string) -> bool => {
-  if code.len() == 0 { return false }
-  for i, c in code {
-    let letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
-    if !(letter || (i > 0 && ((c >= '0' && c <= '9') || c == '.'))) { return false }
-  }
-  true
 }
 
 /// Whether the rune before `i` is `c` (`->` is an arrow, not a bracket).

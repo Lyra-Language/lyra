@@ -9,6 +9,20 @@ Newest first.
 
 ## Dated log
 
+### 11/13/26 — lui writes a handler through as written
+
+`on_change={Width}` became `(value: i64) -> Ev => Width(value)`, a lambda typed by the
+element, from when a constructor was not a function value; since 10/19 it is one, so lui now
+writes every handler as its braces hold it — `Width`, `Resize`, `TornOff` — and the five
+places that built the lambda (an attribute's value, `changes`, `typed_changes`, `moves`,
+`<Table>`'s `on_resize`) are one `handler`, the element tables' `Changes(type)` kind folded
+into `Any`. **The lambda had a side effect**: naming `DockTree` and `DockTear` made lui import
+them, and `windows_view.lui`'s script used both without importing them — so the view now
+imports what its script names, as it does every other `ui.layout` name. The nine views that
+changed are regenerated (eight examples and Termina's settings page); every example and
+Termina check clean with no new warning, and Termina's tests pass. Vega has no `.lui` views
+left, so nothing of it changes.
+
 ### 11/13/26 — A trait imported under an alias is the trait
 
 `import shapes.{ Shape as Figure }` then `impl Figure for Square` satisfied no `where s:

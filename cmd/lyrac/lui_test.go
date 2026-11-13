@@ -155,7 +155,7 @@ func TestLui_SliderColorEditAndHint(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Slider(SliderAttrs {",
-		"on_change: (value: f32) -> Ev => Size(value)",
+		"on_change: Size",
 		`format: "%.0f pt"`,
 		"on_commit: Some(SizeDone)",
 		"ColorEdit(ColorEditAttrs {",
@@ -458,7 +458,7 @@ func TestLui_InputsModalAndSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"on_change: (value: i64) -> Ev => Width(value)",
+		"on_change: Width",
 		"on_commit: Some(Done)",
 		"on_change: (text: string) -> Ev => Named(text)",
 		`Slot("preview")`,
@@ -1021,8 +1021,8 @@ func TestLui_UiTargetSelect(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`select(SelectSpec { options: ["One-way ${name}", "Return ${name}", "Open jaw"], selected: s.kind, on_change: (value: i64) -> Ev => Chose(value), separators: [2] })`,
-		`select(SelectSpec { options: s.cities, selected: s.city, on_change: (value: i64) -> Ev => Picked(value), separators: [1] })`,
+		`select(SelectSpec { options: ["One-way ${name}", "Return ${name}", "Open jaw"], selected: s.kind, on_change: Chose, separators: [2] })`,
+		`select(SelectSpec { options: s.cities, selected: s.city, on_change: Picked, separators: [1] })`,
 		`selector: "Select::option:hover"`,
 		"SelectSpec",
 	} {
@@ -1104,7 +1104,7 @@ func TestLui_UiTargetPanelControls(t *testing.T) {
 	dir := t.TempDir()
 	source := `<script target="ui">
   import ui.draw.{ Image, Point }
-  import ui.layout.{ DockPanel, dock_tabs }
+  import ui.layout.{ DockPanel, DockTree, DockTear, dock_tabs }
 
   pub data Ev =
     Width(f64)
@@ -1198,10 +1198,10 @@ func TestLui_UiTargetPanelControls(t *testing.T) {
 	}
 	for _, want := range []string{
 		`picture("canvas", s.image, s.revision, Size { w: 64.0, h: 64.0 }).tooltip("The canvas")`,
-		`number_field(NumberSpec { value: s.width, min: 1.0, max: 64.0, decimals: 0, label: "Width" }, (value: f64) -> Ev => Width(value))`,
-		`number_field(NumberSpec { value: 2.5, step: 0.5, decimals: 1 }, (value: f64) -> Ev => Width(value))`,
-		`radio_group(["Square", "Round"], s.shape, (value: i64) -> Ev => Shape(value), Horizontal)`,
-		`radio_group(s.names, s.shape, (value: i64) -> Ev => Shape(value))`,
+		`number_field(NumberSpec { value: s.width, min: 1.0, max: 64.0, decimals: 0, label: "Width" }, Width)`,
+		`number_field(NumberSpec { value: 2.5, step: 0.5, decimals: 1 }, Width)`,
+		`radio_group(["Square", "Round"], s.shape, Shape, Horizontal)`,
+		`radio_group(s.names, s.shape, Shape)`,
 		`radio("Alone", s.shape == 0, Pick)`,
 		`separator::<Ev>(),`,
 		`separator::<Ev>("Frames")`,
@@ -1211,10 +1211,10 @@ func TestLui_UiTargetPanelControls(t *testing.T) {
 		`TableColumn { title: "Name", width: 120.0 }`,
 		`TableColumn { title: "Size", width: s.at }`,
 		`...[n in s.names | [`,
-		`], s.row, (value: i64) -> Ev => Row(value), (column: i64, width: f32) -> Ev => Resized(column, width))`,
-		`dock(s.tree, panel_of, (value: DockTree) -> Ev => Docked(value), (value: string) -> Ev => Shut(value)).tears_off((value: DockTear) -> Ev => Torn(value))`,
-		`splitter(text("top"), text("bottom"), 80.0, (value: f32) -> Ev => Split(value), Vertical, 20.0)`,
-		`]), s.at, (value: f32) -> Ev => Split(value)), s.open, column([`,
+		`], s.row, Row, Resized)`,
+		`dock(s.tree, panel_of, Docked, Shut).tears_off(Torn)`,
+		`splitter(text("top"), text("bottom"), 80.0, Split, Vertical, 20.0)`,
+		`]), s.at, Split), s.open, column([`,
 		"pub let tool_window = pure (key: string, place: Maybe<Point>) -> WindowSpec => WindowSpec {\n  key: key,\n  place: place,\n  title: \"Tools\",",
 		`selector: "NumberField::minus"`,
 	} {
@@ -1355,14 +1355,14 @@ func TestLui_UiTargetWindowElements(t *testing.T) {
 		`tab_bar(TabsSpec { tabs: [`,
 		`TabSpec { label: "Home", key: "home", closable: false, movable: false }`,
 		`...[d in docs | TabSpec { label: "${d.title}", key: d.id }]`,
-		`on_move: (from: i64, to: i64) -> Ev => Move(from, to), after: [`,
+		`on_move: Move, after: [`,
 		`menu_button(text::<Ev>("☰"), [`,
 		`key: Character(','), mods: Modifiers { primary: true }`,
 		`...flatten([d in docs | [`,
-		`swatch(color, open, Open, (value: Color) -> Ev => Paint(value), Shut)`,
-		`swatch(color, false, Open, (value: Color) -> Ev => Paint(value), Shut, false)`,
-		`swatch(color, false, Open, (value: Color) -> Ev => Paint(value), Shut, !(!open))`,
-		`swatch(color, false, Open, (value: Color) -> Ev => Paint(value), Shut, true, [`,
+		`swatch(color, open, Open, Paint, Shut)`,
+		`swatch(color, false, Open, Paint, Shut, false)`,
+		`swatch(color, false, Open, Paint, Shut, !(!open))`,
+		`swatch(color, false, Open, Paint, Shut, true, [`,
 		`"Below the opacity"`,
 	} {
 		if !strings.Contains(string(generated), want) {
@@ -1712,7 +1712,7 @@ func TestLui_UiTargetReadOnlyField(t *testing.T) {
 	}
 	for _, want := range []string{
 		`text_input(FieldSpec { value: "${count}", read_only: true, on_edit: (_: string) -> Event => panic("a read-only field raised an edit") })`,
-		`text_input(FieldSpec { value: "name", read_only: locked, on_edit: (value: string) -> Event => Typed(value) })`,
+		`text_input(FieldSpec { value: "name", read_only: locked, on_edit: Typed })`,
 	} {
 		if !strings.Contains(string(generated), want) {
 			t.Errorf("the generated module lacks %q:\n%s", want, generated)

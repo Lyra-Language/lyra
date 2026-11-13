@@ -17,6 +17,8 @@
     dock_keys,
     DockPanel,
     DockCenter,
+    DockTree,
+    DockTear,
   }
 
   /// Every panel the studio has, by key.

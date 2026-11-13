@@ -97,9 +97,9 @@ pub let subscriptions = pure (_: State) -> []Subscription<Event> => []
 pub let view = pure (s: State) -> Node<Event> =>
   component_of("view", view_sheet, [
     column([ // flight_booker_view.lui:100
-      select(SelectSpec { options: FLIGHT_TYPES, selected: s.flight_type, on_change: (value: i64) -> Event => FlightTypeSelected(value) }), // flight_booker_view.lui:101
-      text_input(FieldSpec { value: s.flight_1_date_str, on_edit: (value: string) -> Event => Flight1Edited(value) }).with_class(if s.flight_1_error { "error" } else { "" }).labelled("Flight One"), // flight_booker_view.lui:106
-      text_input(FieldSpec { value: s.flight_2_date_str, on_edit: (value: string) -> Event => Flight2Edited(value) }).with_class(if s.flight_2_error { "error" } else { "" }).labelled("Flight Two").disabled_if(s.flight_2_disabled), // flight_booker_view.lui:112
+      select(SelectSpec { options: FLIGHT_TYPES, selected: s.flight_type, on_change: FlightTypeSelected }), // flight_booker_view.lui:101
+      text_input(FieldSpec { value: s.flight_1_date_str, on_edit: Flight1Edited }).with_class(if s.flight_1_error { "error" } else { "" }).labelled("Flight One"), // flight_booker_view.lui:106
+      text_input(FieldSpec { value: s.flight_2_date_str, on_edit: Flight2Edited }).with_class(if s.flight_2_error { "error" } else { "" }).labelled("Flight Two").disabled_if(s.flight_2_disabled), // flight_booker_view.lui:112
       button("Book", BookButtonPressed).disabled_if(s.book_btn_disabled), // flight_booker_view.lui:119
       text("${s.book_message}"), // flight_booker_view.lui:120
     ]),

@@ -73,13 +73,13 @@ pub let view = pure (s: State) -> Node<Event> =>
     Window(WindowAttrs { title: "Settings", style: Style { width: Some(340.0), height: Some(330.0) } }, [ // components_view.lui:75
       Form(FormAttrs { style: Style { gap: Some(10.0) } }, [ // components_view.lui:76
         Field(FieldAttrs { label: "Name" }, [ // components_view.lui:77
-          InputText(InputTextAttrs { label: "##name", id: "field name", hint: "your name", value: s.name, on_change: (value: string) -> Event => Rename(value), on_commit: Some(NameDone) }), // components_view.lui:78
+          InputText(InputTextAttrs { label: "##name", id: "field name", hint: "your name", value: s.name, on_change: Rename, on_commit: Some(NameDone) }), // components_view.lui:78
         ]),
         Field(FieldAttrs { label: "Volume" }, [ // components_view.lui:80
-          Slider(SliderAttrs { label: "##volume", id: "slider volume", value: s.volume, min: 0.0, max: 1.0, format: "%.2f", on_change: (value: f32) -> Event => SetVolume(value), on_commit: Some(VolumeDone), style: Style { width_em: Some(12.0) } }), // components_view.lui:81
+          Slider(SliderAttrs { label: "##volume", id: "slider volume", value: s.volume, min: 0.0, max: 1.0, format: "%.2f", on_change: SetVolume, on_commit: Some(VolumeDone), style: Style { width_em: Some(12.0) } }), // components_view.lui:81
         ]),
         Field(FieldAttrs { label: "Accent" }, [ // components_view.lui:83
-          ColorEdit(ColorEditAttrs { label: "##accent", id: "color accent", value: s.accent, inputs: false, on_change: (value: u32) -> Event => SetAccent(value) }), // components_view.lui:84
+          ColorEdit(ColorEditAttrs { label: "##accent", id: "color accent", value: s.accent, inputs: false, on_change: SetAccent }), // components_view.lui:84
         ]),
       ]),
       SeparatorText("Audio"), // components_view.lui:87

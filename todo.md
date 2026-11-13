@@ -532,9 +532,8 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   `lib.LOUD =>` (COMPLETED.md, 10/30).
 - **[DONE 10/19] A constructor is a function value** (`on_change: Width`), and **a lambda
   in a generic struct field is typed by it**. (COMPLETED.md, 10/19.)
-- **[OPEN] lui can write `on_change={Width}` through** rather than the typed lambda it
-  generates, now that the compiler accepts both; it would also pass a function name (`doc.
-  rename`) as itself. Regenerates Vega's and Termina's views.
+- **[DONE 11/13] lui writes `on_change={Width}` through** as the name written, not a typed
+  lambda calling it (COMPLETED.md, 11/13).
 - **[OPEN] lui: a component wraps its view in a node of its own** (`component(name, Sheet {},
   […])`) even with no `<style>`, so a `<for>` holding an `<if>` makes a component of zero or
   one children (`windows_view.lui`'s `torn_view`). Harmless so far (frames byte-identical);

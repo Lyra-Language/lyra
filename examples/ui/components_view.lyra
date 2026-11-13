@@ -109,11 +109,11 @@ pub let view = pure (s: State) -> Node<Event> =>
           text("Settings").with_class("title"), // components_view.lui:135
           text("Name").with_class("label"), // components_view.lui:136
           row([ // components_view.lui:137
-            expanded(text_input(FieldSpec { value: s.name, placeholder: "your name", on_edit: (value: string) -> Event => Rename(value) }).labelled("Name")), // components_view.lui:138
+            expanded(text_input(FieldSpec { value: s.name, placeholder: "your name", on_edit: Rename }).labelled("Name")), // components_view.lui:138
             button("Save", NameDone), // components_view.lui:141
           ]).with_style(Style { gap: Some(8.0) }),
           text("Volume").with_class("label"), // components_view.lui:143
-          slider(SliderSpec { value: s.volume, min: 0.0, max: 1.0, step: 0.05, on_change: (value: f32) -> Event => SetVolume(value) }).labelled("Volume"), // components_view.lui:144
+          slider(SliderSpec { value: s.volume, min: 0.0, max: 1.0, step: 0.05, on_change: SetVolume }).labelled("Volume"), // components_view.lui:144
           text("Accent").with_class("label"), // components_view.lui:145
           row([ // components_view.lui:146
             swatch(s, 0x3C78D8), // components_view.lui:147

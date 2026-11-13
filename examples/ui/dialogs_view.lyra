@@ -65,7 +65,7 @@ pub let page = pure (s: State) -> Node<Event> =>
       ]).with_style(Style { gap: Some(8.0) }),
       row([ // dialogs_view.lui:71
         text("Title"), // dialogs_view.lui:72
-        expanded(text_input(FieldSpec { value: s.title, on_edit: (value: string) -> Event => Edited(value) })), // dialogs_view.lui:73
+        expanded(text_input(FieldSpec { value: s.title, on_edit: Edited })), // dialogs_view.lui:73
       ]).aligned(MainEnd, CrossCenter).with_style(Style { gap: Some(10.0) }),
       text("${if s.title == s.saved { "Saved" } else { "Edited since it was saved" }}"), // dialogs_view.lui:77
     ]).with_style(Style { gap: Some(12.0) })),
@@ -77,7 +77,7 @@ pub let dialog = pure (s: State) -> Node<Event> =>
     column([ // dialogs_view.lui:84
       text("Save the changes before closing?").with_style(Style { font_size: Some(16.0) }), // dialogs_view.lui:85
       text("Closing without saving loses them."), // dialogs_view.lui:86
-      text_input(FieldSpec { value: s.name, placeholder: "Name", on_edit: (value: string) -> Event => Named(value) }), // dialogs_view.lui:87
+      text_input(FieldSpec { value: s.name, placeholder: "Name", on_edit: Named }), // dialogs_view.lui:87
       row([ // dialogs_view.lui:88
         button("Don’t Save", Discarded), // dialogs_view.lui:89
         expanded(text("")), // dialogs_view.lui:90
