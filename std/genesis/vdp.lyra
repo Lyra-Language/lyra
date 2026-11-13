@@ -69,6 +69,8 @@ pub let init = () -> void => {
   set_address(VSRAM_WRITE, 0)
   for _: u16 in 0..<40 { write_word(0) }
   mode = INIT_REGISTERS[1]
+  line_mode = 0
+  banded = 0
 }
 
 /// Show the planes and sprites (off after [init], so a game can load before anything is
@@ -245,18 +247,52 @@ pub let write_cell = (plane: u16, x: u16, y: u16, word: u16) -> void => {
 }
 
 /// Scroll `plane` (`PLANE_A` or `PLANE_B`) so its pixel (`x`, `y`) is at the screen's
-/// top-left — the whole screen at once, as [init] sets the VDP up. A plane wraps at its
-/// edges, so any position will do.
+/// top-left — the whole screen at once. A plane wraps at its edges, so any position will
+/// do. With line scrolling on ([use_bands]) every line of the plane is given `x`, unless the
+/// plane's lines are its bands', when only `y` is set.
 pub let set_scroll = (plane: u16, x: i16, y: i16) -> void => {
   let which: u16 = if plane == PLANE_A { 0 } else { 2 }
+  let bit: u8 = if plane == PLANE_A { 1 } else { 2 }
   let held = hold_vblank()
-  // Horizontal scroll moves the plane right, so the view at x is a scroll of -x.
-  set_address(VRAM_WRITE, HSCROLL + which)
-  write_word(u16((1024 - (i32(x) & 1023)) & 1023))
+  let word = line_word(i32(x))
+  if line_mode == 0 {
+    set_address(VRAM_WRITE, HSCROLL + which)
+    write_word(word)
+  } else if (banded & bit) == 0 {
+    begin_lines(plane)
+    for _: i16 in 0..<SCREEN_HEIGHT { write_word(word) }
+    end_lines()
+  }
   set_address(VSRAM_WRITE, which)
   write_word(u16(i32(y) & 1023))
   release_vblank(held)
 }
+
+/// Scroll each line of the screen on its own — the VDP's line scroll — and say which
+/// planes' lines a game writes itself ([begin_lines]; `std.genesis.camera`'s
+/// `scroll_bands`), the rest kept whole by [set_scroll]. Both false turns it off, the
+/// planes scrolled whole again by the next [set_scroll]. Once, as a scene starts.
+pub let use_bands = (plane_a: bool, plane_b: bool) -> void => {
+  banded = (if plane_a { 1 } else { 0 }) | (if plane_b { 2 } else { 0 })
+  line_mode = if banded != 0 { 3 } else { 0 }
+  set_register(11, line_mode)
+}
+
+/// Point the data port at line 0 of `plane`'s horizontal scroll, a line a word from there:
+/// [line_word]s for the screen's lines in turn, then [end_lines]. Hold the vertical blank
+/// interrupt around it ([hold_vblank]), as for any run of writes.
+pub let begin_lines = (plane: u16) -> void => {
+  // The table holds plane A's word then plane B's for each line: four bytes a line.
+  set_register(15, 4)
+  set_address(VRAM_WRITE, HSCROLL + (if plane == PLANE_A { 0 } else { 2 }))
+}
+
+/// The data port back to moving two bytes a word, after [begin_lines].
+pub let end_lines = () -> void => set_register(15, 2)
+
+/// The horizontal scroll word showing the plane from its pixel `x` at the screen's left:
+/// the VDP moves a plane right by its scroll, so the view at x is a scroll of -x.
+pub let line_word = pure (x: i32) -> u16 => u16((1024 - (x & 1023)) & 1023)
 
 /// The vertical blank interrupt held off, answering whether it was on — around a run of
 /// writes from the game's loop: an address, then its data. The interrupt's own writes (the
@@ -301,6 +337,11 @@ const INIT_REGISTERS: [19]u8 = #[
 
 /// Register 1 as last set, so turning the display on or off keeps the rest.
 var mode: u8 = 0x04
+
+/// Register 11's scroll modes as [use_bands] set them (3, a line each; 0, the whole screen),
+/// and the planes whose lines the game writes: bit 0 plane A's, bit 1 plane B's.
+var line_mode: u8 = 0
+var banded: u8 = 0
 
 /// The first word of an address command for each memory; the second carries the
 /// address's top two bits and the rest of the code.

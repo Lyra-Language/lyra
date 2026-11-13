@@ -160,6 +160,39 @@ impl Camera {
     _width: i64
   ) -> void => planes.set_scroll(plane, self.x, self.y)
 
+  /// A map into `plane` shown again past each side, scrolled to the view: what bands moving
+  /// apart from the plane want ([scroll_bands]). `std.genesis.camera`'s name; any width
+  /// repeats here, a console's 8, 16, 32 or 64 cells.
+  pub let show_repeating<const N: i64> = (
+    self,
+    plane: i64,
+    cells: ref [N]u32,
+    width: i64
+  ) -> void => {
+    planes.write_plane(plane, cells, width)
+    planes.set_repeats(plane, true)
+    planes.set_scroll(plane, self.x, self.y)
+  }
+
+  /// Keep a repeating map ([show_repeating]) under the view: once a frame, after [follow].
+  pub let scroll_repeating<const N: i64> = (
+    self,
+    plane: i64,
+    _cells: ref [N]u32,
+    _width: i64
+  ) -> void => planes.set_scroll(plane, self.x, self.y)
+
+  /// Each of `plane`'s lines scrolled as `bands` say, by this camera's x (the camera's, not a
+  /// plane's `parallaxed` view); lines no band holds keep the plane's own scroll. `bands` are
+  /// in order down the map, apart; `ticks` counts updates. Once an update, after the plane's
+  /// [scroll_map] or [scroll_repeating] (`planes.scroll_bands`).
+  pub let scroll_bands<const N: i64> = (
+    self,
+    plane: i64,
+    bands: ref [N]planes.Band,
+    ticks: i64
+  ) -> void => planes.scroll_bands(plane, self.x, bands, ticks)
+
   // ── Beneath ──────────────────────────────────────────────────────────────────────────
 
   /// The zone, or the whole view when none was set.

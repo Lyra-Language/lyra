@@ -26,8 +26,9 @@ module std.game.sprites
 //! **A sprite may say where it was the update before** ([came_from]), and the screen draws it
 //! between there and here by how far the clock is between updates (`screen.blend`), so
 //! motion is smooth on a display faster than the game's 60 updates. Each [clear] starts an
-//! update's list and counts it ([updates]); a map shown anew ([snap]) is a jump, which
-//! nothing slides across.
+//! update's list and counts it ([updates]) — and `screen.show` counts a frame's updates no
+//! [clear] counted ([count_update]), a scene drawing no sprites, so nothing slides from an
+//! update long gone; a map shown anew ([snap]) is a jump, which nothing slides across.
 
 /// One sprite: where on the screen, how big, and which part of the sprite art it shows, in
 /// pixels.
@@ -67,6 +68,14 @@ pub struct Sprite {
 /// Start a new list — an update's: nothing is shown until [add]ed.
 pub let clear = () -> void => {
   list = []
+  count_update()
+}
+
+/// Count an update — what [clear] does besides emptying the list, and what `screen.show` does
+/// for a frame whose updates no [clear] counted: a loop drawing no sprites left the count
+/// where it was, and every plane slid from where it was when the count last moved, shaking
+/// further the further it scrolled (the modern hero's overlook, 11/13).
+pub let count_update = () -> void => {
   counted += 1
   jumped = jumping
   jumping = false

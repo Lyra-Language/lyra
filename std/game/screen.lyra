@@ -115,6 +115,7 @@ import std.png.{ read_png }
 import std.game.pad
 import std.game.planes
 import std.game.planes.{
+  Band,
   Layout,
   Plane,
   TILE_MASK,
@@ -250,11 +251,15 @@ pub let running = () -> bool => {
 /// frame is the same on every machine.
 pub let updates_due = () -> i64 => {
   if paused { return 0 }
-  if limit > 0 { return 1 }
+  if limit > 0 {
+    ran_since_show += 1
+    return 1
+  }
   let now = i64(ticks_ns())
   let (steps, owed) = accrue(owed_ns, now - last_ns)
   last_ns = now
   owed_ns = owed
+  ran_since_show += steps
   steps
 }
 
@@ -410,6 +415,11 @@ pub let show = () -> void => {
   }
   if pad.touch_pad_shown() { draw_touch_pad(r) }
   r.present()
+  // Updates ran since the last frame and none counted them (no `sprites.clear`): count one,
+  // so what slides between updates slides from the last of them, not from long before.
+  if ran_since_show > 0 && sprites.updates() == counted_at_show { sprites.count_update() }
+  counted_at_show = sprites.updates()
+  ran_since_show = 0
 }
 
 /// Close the window and release everything: the game's last call. Answers the program's
@@ -522,6 +532,10 @@ var ppm_path: string = ""
 /// The clock: when it was last read, and the time not yet spent on updates.
 var last_ns: i64 = 0
 var owed_ns: i64 = 0
+/// The updates [updates_due] has let run since the last [show], and `sprites.updates()` as
+/// that show left it: a frame whose updates no `sprites.clear` counted is counted by [show].
+var ran_since_show: i64 = 0
+var counted_at_show: i64 = -1
 
 /// `--frames N`, `--ppm FILE` and `--hold BUTTONS`, from the program's arguments — or
 /// `false`, having said what is wrong.
@@ -669,17 +683,11 @@ let use_sprites = (t: own Texture) -> void => {
 let draw_planes = (r: Renderer, front: bool, t: f32) -> void => {
   let window_bottom = planes.rows_in_window() * tile_side
   let bottom = height()
-  draw_plane(r, scrolled(planes.plane(planes.PLANE_B), t), front, 0, bottom)
+  draw_banded(r, planes.plane(planes.PLANE_B), t, front, 0, bottom)
   for k in planes.FIRST_LAYER..<planes.plane_count() {
-    draw_plane(r, scrolled(planes.plane(k), t), front, 0, bottom)
+    draw_banded(r, planes.plane(k), t, front, 0, bottom)
   }
-  draw_plane(
-    r,
-    scrolled(planes.plane(planes.PLANE_A), t),
-    front,
-    window_bottom,
-    bottom
-  )
+  draw_banded(r, planes.plane(planes.PLANE_A), t, front, window_bottom, bottom)
   if window_bottom > 0 {
     let w = planes.plane(planes.WINDOW)
     draw_plane(r, Plane { w | x: 0.0, y: 0.0 }, front, 0, window_bottom)
@@ -692,8 +700,61 @@ let scrolled = (p: Plane, t: f32) -> Plane => {
   Plane { p | x: x, y: y }
 }
 
+/// A plane between screen rows `top` and `bottom` where it shows `t` of the way from the
+/// update before, its bands' lines each where its band puts it ([planes.scroll_bands]): a
+/// band moving as one in a strip, one ramping or rippling a line at a time.
+let draw_banded = (
+  r: Renderer,
+  plane: Plane,
+  t: f32,
+  front: bool,
+  top: i64,
+  bottom: i64
+) -> void => {
+  let p = scrolled(plane, t)
+  if p.bands.len() == 0 {
+    draw_plane(r, p, front, top, bottom)
+    return
+  }
+  let (view_x, ticks) = p.band_view_at(t)
+  let sy = p.y.floor()
+  var line = top
+  for b in p.bands {
+    let from = (b.top.floor() - sy).max(line)
+    let to = ((b.top + b.height).floor() - sy).min(bottom)
+    if to <= from { continue }
+    draw_plane(r, p, front, line, from)
+    if !apart(b.ramp_to, b.speed) && !apart(b.wave, 0.0) {
+      draw_plane(r, Plane { p | x: band_x(b, view_x, ticks, 0.0) }, front, from, to)
+    } else {
+      for l in from..<to {
+        let x = band_x(b, view_x, ticks, f32(l + sy) - b.top)
+        draw_plane(r, Plane { p | x: x }, front, l, l + 1)
+      }
+    }
+    line = to
+  }
+  draw_plane(r, p, front, line, bottom)
+}
+
+/// Where `band`'s line `from` (down from its top) is scrolled to, the camera at `view_x` and
+/// `ticks` updates counted.
+let band_x = pure (band: Band, view_x: f32, ticks: f32, from: f32) -> f32 => {
+  let ramp = if band.height > 1.0 { (band.ramp_to - band.speed) * from / (band.height - 1.0) } else { 0.0 }
+  // Drifting right shows the map from further left.
+  var x = view_x * (band.speed + ramp) - band.drift * ticks
+  if apart(band.wave, 0.0) {
+    let passing = if apart(band.wave_updates, 0.0) {
+      ticks / band.wave_updates
+    } else { 0.0 }
+    let along = if apart(band.wave_lines, 0.0) { from / band.wave_lines } else { 0.0 }
+    x += band.wave * ((passing + along) * 6.2831853).sin()
+  }
+  x
+}
+
 /// A plane's cells that show between screen rows `top` and `bottom`, those in front or
-/// those behind.
+/// those behind — its map again past each side where it repeats.
 let draw_plane = (r: Renderer, p: Plane, front: bool, top: i64, bottom: i64) -> void => {
   if p.width <= 0 || top >= bottom { return }
   if let Some(layout) = p.layout {
@@ -703,13 +764,19 @@ let draw_plane = (r: Renderer, p: Plane, front: bool, top: i64, bottom: i64) -> 
   let rows = p.cells.len() / p.width
   let sx = p.x.floor()
   let sy = p.y.floor()
-  let first_column = (sx / tile_side).max(0)
-  let last_column = ((sx + width() - 1) / tile_side).min(p.width - 1)
+  // A repeating map's columns run on past its edges, each its column mod the width.
+  let first_column = if p.repeats {
+    (sx - sx %% tile_side) / tile_side
+  } else { (sx / tile_side).max(0) }
+  let right = sx + width() - 1
+  let last_column = if p.repeats {
+    (right - right %% tile_side) / tile_side
+  } else { (right / tile_side).min(p.width - 1) }
   let first_row = ((sy + top) / tile_side).max(0)
   let last_row = ((sy + bottom - 1) / tile_side).min(rows - 1)
   for row in first_row..<=last_row {
     for column in first_column..<=last_column {
-      let word = p.cells[row * p.width + column]
+      let word = p.cells[row * p.width + column %% p.width]
       let tile = planes.shown_tile(i64(word & TILE_MASK))
       if tile == 0 || ((word & FRONT) != 0) != front { continue }
       let Some(art) = tile_art[i64((word & PALETTE_MASK) >> PALETTE_SHIFT)] else { continue }
@@ -923,3 +990,7 @@ let presentation = pure (fit: Fit) -> i32 => match fit {
   Crop => PRESENT_OVERSCAN,
   Expand => PRESENT_LETTERBOX,
 }
+
+/// Whether `a` and `b` are more than a hair apart — a band's speeds and ripple, typed by a
+/// person, compared without `==` on floats.
+let apart = pure (a: f32, b: f32) -> bool => (a - b).abs() > 0.0001

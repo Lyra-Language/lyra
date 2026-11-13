@@ -27,6 +27,12 @@ module std.game.planes
 //! and the screen draws it between the two, as it does the sprites (`std.game.sprites`): a
 //! map written anew ([write_plane]) is a jump, and slides from nowhere.
 //!
+//! **A plane's lines may scroll apart**, as the Genesis's line scroll does: [Band]s, strips
+//! of its map each at a speed of its own — drifting, ramping from one speed to another down
+//! the strip (a floor in perspective) or rippling — given each update by [scroll_bands]. A
+//! plane may **repeat across** ([set_repeats]), its map shown again past each side, which
+//! bands moving apart from the plane want; a console needs it for them, this runtime not.
+//!
 //! This module only keeps the planes; `std.game.screen` draws them, so a game's camera and
 //! collision can name these without the window.
 
@@ -75,6 +81,24 @@ pub const FRONT: u32 = 0x20000000
 pub const FLIP_Y: u32 = 0x40000000
 pub const FLIP_X: u32 = 0x80000000
 
+/// A strip of a plane's map scrolling apart from the rest — `height` lines from line `top`
+/// of the map, in its pixels — for [scroll_bands]. Its speeds are the camera's share (1.0
+/// with it, 0.0 fixed), as a plane's parallax: `speed` at its top line, `ramp_to` at its
+/// last, the lines between stepped evenly (the same for none). `drift` moves it on its own,
+/// pixels an update to the right (below 0, the left) — clouds. A ripple moves each line by up to `wave` pixels, a sine
+/// `wave_lines` lines long passing in `wave_updates` updates (0 still; below 0 the other
+/// way). `std.genesis.camera`'s `Band`, in its units.
+pub struct Band {
+  top: f32,
+  height: f32,
+  speed: f32 = 1.0,
+  ramp_to: f32 = 1.0,
+  drift: f32 = 0.0,
+  wave: f32 = 0.0,
+  wave_lines: f32 = 32.0,
+  wave_updates: f32 = 0.0,
+}
+
 /// What a plane holds: its cells row by row, `width` a row, and where its top-left is
 /// scrolled to — the world position at the screen's top-left.
 pub struct Plane {
@@ -89,6 +113,15 @@ pub struct Plane {
   scrolled_in: i64 = -1,
   /// `None` for the tile art's square grid.
   layout: Maybe<Layout> = None,
+  /// Its map shown again past each side ([set_repeats]).
+  repeats: bool = false,
+  /// Its lines' bands, in order down the map ([scroll_bands]), the camera's x they scroll
+  /// by and where it was the update before, and the updates counted for drift and ripples.
+  bands: []Band = [],
+  view_x: f32 = 0.0,
+  was_view_x: f32 = 0.0,
+  ticks: i64 = 0,
+  banded_in: i64 = -1,
 }
 
 /// A cell's bits for palette `p`: `FRONT | planes.palette(2) | tile`.
@@ -110,7 +143,10 @@ pub let write_plane<const N: i64> = (
     all[plane] | cells: [c in cells | c],
     width: width,
     scrolled_in: -1,
-    layout: None
+    layout: None,
+    repeats: false,
+    bands: [],
+    banded_in: -1
   }
   sprites.snap()
 }
@@ -142,6 +178,34 @@ pub let set_scroll = (plane: i64, x: f32, y: f32) -> void => {
     all[plane].x = x
     all[plane].y = y
   }
+}
+
+/// `plane`'s map shown again past each side, or not: what bands moving apart from the plane
+/// want ([scroll_bands]). Once its map is written ([write_plane] takes it back).
+pub let set_repeats = (plane: i64, repeats: bool) -> void => {
+  if plane >= 0 && plane < all.len() { all[plane].repeats = repeats }
+}
+
+/// Each of `plane`'s lines scrolled as `bands` say, the camera's x `view_x` (the camera's,
+/// not the plane's parallax view): lines no band holds keep the plane's own scroll
+/// ([set_scroll]). `bands` are in order down the map, apart; `ticks` counts updates, for
+/// drift and ripples. Once an update, after the plane is scrolled.
+pub let scroll_bands<const N: i64> = (
+  plane: i64,
+  view_x: f32,
+  bands: ref [N]Band,
+  ticks: i64
+) -> void => {
+  if plane < 0 || plane >= all.len() { return }
+  let now = sprites.updates()
+  if all[plane].banded_in != now {
+    let fresh = all[plane].banded_in < 0 || sprites.snapped()
+    all[plane].was_view_x = if fresh { view_x } else { all[plane].view_x }
+    all[plane].banded_in = now
+  }
+  if all[plane].bands.len() != N { all[plane].bands = [b in bands | b] }
+  all[plane].view_x = view_x
+  all[plane].ticks = ticks
 }
 
 /// `plane` laid out as `layout` says, once its map is written.
@@ -223,6 +287,15 @@ impl Layout {
 }
 
 impl Plane {
+  /// The camera's x its bands scroll by and the updates counted, `t` of the way from the
+  /// update before to this one (0 to 1) — the count fractional, so a ripple slides too.
+  pub let band_view_at = (self: ref, t: f32) -> (f32, f32) =>
+    if self.banded_in == sprites.updates() {
+      (self.was_view_x + (self.view_x - self.was_view_x) * t, f32(self.ticks) - 1.0 + t)
+    } else {
+      (self.view_x, f32(self.ticks))
+    }
+
   /// Where it is scrolled to `t` of the way from the update before to this one (0 to 1):
   /// between where it was and where it is when this update scrolled it, else where it is.
   pub let scrolled_at = (self: ref, t: f32) -> (f32, f32) =>

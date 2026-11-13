@@ -808,14 +808,14 @@ of Markdown.
   — so `Format Document` works in both editors without either extension knowing about it.
 - `std/prelude/` is one module across several files (constraints in
   `std/prelude/README.md`). Also: `std/collections/`, `std/json.lyra`, `std/math/`,
-  `std/tui/`, `std/temporal/`, `std/genesis/` (the console's vdp, pad, sprites, camera, collision — a map's tiles' and its own colliders, one-way or not — entity, and sound — `std.chips.effects`' and `std.chips.music`'s bytes to the PSG's port, and the YM2612 given to **a Z80 driver** (`Z80_DRIVER`, hand-assembled, loaded by `sound.init`): it plays the DAC's sample from the cartridge through the bank window, a byte every 312 T-states whichever way through its loop, and makes the YM2612 writes the 68000 queues in its RAM between bytes, spaced so the chip is never written busy; the 68000 takes the Z80's bus once a frame only to copy what it made, the arithmetic done before — held through the music's frame, the sample stuttered every frame — modules —
+  `std/tui/`, `std/temporal/`, `std/genesis/` (the console's vdp, pad, sprites, camera — **bands**, a plane's lines scrolled apart by the VDP's line scroll (`vdp.use_bands`, `Camera.scroll_bands`: a speed, a ramp, a drift and a ripple a band; a map repeating across the plane by `show_repeating`, which bands at their own speed need; the plane holding eight columns past each side of the view for a ripple; `genesis_bands_test.go`, and `std.game`'s the same in `planes.scroll_bands`, `game_bands_test.go`) — collision — a map's tiles' and its own colliders, one-way or not — entity, and sound — `std.chips.effects`' and `std.chips.music`'s bytes to the PSG's port, and the YM2612 given to **a Z80 driver** (`Z80_DRIVER`, hand-assembled, loaded by `sound.init`): it plays the DAC's sample from the cartridge through the bank window, a byte every 312 T-states whichever way through its loop, and makes the YM2612 writes the 68000 queues in its RAM between bytes, spaced so the chip is never written busy; the 68000 takes the Z80's bus once a frame only to copy what it made, the arithmetic done before — held through the music's frame, the sample stuttered every frame — modules —
   Genesis-only, exercised by `examples/genesis` and `cmd/lyrac/genesis_test.go`),
   `std/game/` (the same runtime for every modern platform, on SDL3, in `f32` pixels at a fixed
   60 updates a second — `screen.UPDATES_PER_SECOND` and `UPDATE_MS`, as the consoles'
   `vdp.UPDATES_PER_SECOND` names their frames; a game moves by updates, never a measured time,
   and **is drawn between them** — `screen.blend()`, the clock's fraction to the next update
   (1 under `--frames`), slides a sprite marked `sprites.came_from` and a plane scrolled this
-  update from where the update before had it; `sprites.clear()` counts the updates, a plane
+  update from where the update before had it; `sprites.clear()` counts the updates — and `screen.show` a frame's updates no clear counted (`sprites.count_update`), so a loop drawing no sprites does not slide its planes from long before — a plane
   written anew is a jump (`sprites.snap`), and an entity trails its sprites by `shown_at`;
   **tiles are 8 pixels unless a game says otherwise** — `screen.load_tiles`' `tile_size`, and a
   `tile_size` (default `collision.TILE`) on `hits_map`, `hits_map_moving`, `move_in` and

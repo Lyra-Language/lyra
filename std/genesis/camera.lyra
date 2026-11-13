@@ -34,7 +34,16 @@ module std.genesis.camera
 //! scroll registers then show the view wherever it is, and [scroll_map] writes only the
 //! columns and rows that came into view since the last [follow] — a column and a row a
 //! frame at most at walking speed, done in the vertical blank. A map's cells are its
-//! name-table words, row by row (`vdp.write_plane`'s, and Vega's `assets` tables).
+//! name-table words, row by row (`vdp.write_plane`'s, and Vega's `assets` tables). The
+//! plane holds eight columns either side of the view as well, so a ripple ([Band]) moving
+//! a line by up to [MAX_RIPPLE] pixels shows the map, not what a column held before.
+//!
+//! **A plane's lines may scroll apart** — the VDP's line scroll: [Band]s, strips of its map
+//! each at a speed of its own, drifting, ramping from one speed to another down the strip
+//! (a floor in perspective) or rippling, written each frame by [scroll_bands]. Bands moving
+//! apart from the plane show other columns than its own scroll does, so they need a map that
+//! repeats across the plane — 8, 16, 32 or 64 cells wide — shown by [show_repeating] and
+//! kept by [scroll_repeating]; a ripple alone needs nothing.
 
 import std.genesis.vdp
 
@@ -58,6 +67,28 @@ pub let centred_zone = pure (width: i16, height: i16) -> Zone => Zone {
   right: (vdp.SCREEN_WIDTH + width) / 2,
   bottom: (vdp.SCREEN_HEIGHT + height) / 2,
 }
+
+/// A strip of a plane's map scrolling apart from the rest — `height` lines from line `top`
+/// of the map, in its pixels — for [scroll_bands]. Its speeds are 256ths of the camera's
+/// (256 with it, 0 fixed), as `parallaxed`'s: `speed` at its top line, `ramp_to` at its
+/// last, the lines between stepped evenly (the same for none). `drift` moves it on its own,
+/// in 256ths of a pixel a frame to the right (below 0, the left) — clouds. A ripple moves each line by up to `wave` pixels
+/// (at most [MAX_RIPPLE] on a map that does not repeat), a sine whose phase moves on
+/// `wave_step` a line and `wave_speed` a frame, both in 65536ths of a turn.
+pub struct Band {
+  top: i16,
+  height: i16,
+  speed: i16 = 256,
+  ramp_to: i16 = 256,
+  drift: i16 = 0,
+  wave: i16 = 0,
+  wave_step: u16 = 0,
+  wave_speed: u16 = 0,
+}
+
+/// How far a ripple may move a line of a map that does not repeat: the columns the plane
+/// holds past each side of the view.
+pub const MAX_RIPPLE: i16 = 64
 
 /// Where the view is in a world, and where it was.
 pub struct Camera {
@@ -110,7 +141,9 @@ impl Camera {
     cells: ref [N]u16,
     width: u16
   ) -> void => {
-    let left = cell_of(self.x)
+    // From the margin's first column, before the view's left: wrapping below 0 is a column
+    // past the map's edge, blank, at the plane column it would have.
+    let left = cell_of(self.x).wrapping_sub(MARGIN)
     let top = cell_of(self.y)
     let shift = left % vdp.PLANE_WIDTH
     // Its rows are runs of writes the vertical blank interrupt must not land in.
@@ -120,7 +153,7 @@ impl Camera {
       vdp.set_vram_address(plane + (my % vdp.PLANE_HEIGHT) * vdp.PLANE_WIDTH * 2)
       for column: u16 in 0..<vdp.PLANE_WIDTH {
         // The map column this plane column holds while the view's left is at `left`.
-        let mx = left + (column + vdp.PLANE_WIDTH - shift) % vdp.PLANE_WIDTH
+        let mx = left.wrapping_add((column + vdp.PLANE_WIDTH - shift) % vdp.PLANE_WIDTH)
         vdp.write_word(cell(cells, width, mx, my))
       }
     }
@@ -158,12 +191,15 @@ impl Camera {
       return
     }
     let held = vdp.hold_vblank()
+    // The columns held run from MARGIN before the view's left to MARGIN past its right.
     if left > old_left {
-      for mx: u16 in old_left + VIEW_COLUMNS..<left + VIEW_COLUMNS {
-        write_column(plane, cells, width, mx, top)
+      for k: u16 in 0..<left - old_left {
+        write_column(plane, cells, width, old_left + VIEW_COLUMNS + MARGIN + k, top)
       }
     } else if left < old_left {
-      for mx: u16 in left..<old_left { write_column(plane, cells, width, mx, top) }
+      for k: u16 in 0..<old_left - left {
+        write_column(plane, cells, width, left.wrapping_sub(MARGIN).wrapping_add(k), top)
+      }
     }
     if top > old_top {
       for my: u16 in old_top + VIEW_ROWS..<top + VIEW_ROWS {
@@ -175,6 +211,95 @@ impl Camera {
     vdp.release_vblank(held)
     vdp.set_scroll(plane, self.x, self.y)
   }
+
+  /// A map repeating across `plane` — `width` cells wide, 8, 16, 32 or 64, so the plane's 64
+  /// columns hold it whole each time — and the plane scrolled to the view: what bands moving
+  /// apart from it need ([Band]). Its rows as [show_map] writes them. Once, before
+  /// `vdp.display_on()`.
+  pub let show_repeating<const N: i64> = (
+    self,
+    plane: u16,
+    cells: ref [N]u16,
+    width: u16
+  ) -> void => {
+    let top = cell_of(self.y)
+    let held = vdp.hold_vblank()
+    for row: u16 in 0..<vdp.PLANE_HEIGHT {
+      write_whole_row(plane, cells, width, top + row)
+    }
+    vdp.release_vblank(held)
+    vdp.set_scroll(plane, self.x, self.y)
+  }
+
+  /// Keep a repeating map ([show_repeating]) in `plane` as the view moves: the rows that came
+  /// into view, every column of each, and the plane scrolled to the view. Once a frame, in the
+  /// vertical blank.
+  pub let scroll_repeating<const N: i64> = (
+    self,
+    plane: u16,
+    cells: ref [N]u16,
+    width: u16
+  ) -> void => {
+    let old_top = cell_of(self.last_y)
+    let top = cell_of(self.y)
+    let held = vdp.hold_vblank()
+    if distance(old_top, top) >= VIEW_ROWS {
+      for row: u16 in 0..<vdp.PLANE_HEIGHT {
+        write_whole_row(plane, cells, width, top + row)
+      }
+    } else if top > old_top {
+      for my: u16 in old_top + VIEW_ROWS..<top + VIEW_ROWS {
+        write_whole_row(plane, cells, width, my)
+      }
+    } else if top < old_top {
+      for my: u16 in top..<old_top { write_whole_row(plane, cells, width, my) }
+    }
+    vdp.release_vblank(held)
+    vdp.set_scroll(plane, self.x, self.y)
+  }
+
+  /// Each of `plane`'s lines scrolled as `bands` say, the view's x the camera's (this one,
+  /// not a plane's `parallaxed` view): a line no band holds at `speed` 256ths of it, as the
+  /// plane's own scroll. `plane_y` is where the plane is scrolled down to (its view's y), so
+  /// line l shows the map's line `plane_y + l`; `bands` are in order down the map, apart;
+  /// `ticks` counts frames, for drift and ripples. Once a frame, in the vertical blank,
+  /// after the plane's [scroll_map] or [scroll_repeating], with `vdp.use_bands` saying the
+  /// plane's lines are the game's.
+  pub let scroll_bands<const N: i64> = (
+    self,
+    plane: u16,
+    plane_y: i16,
+    speed: i16,
+    bands: ref [N]Band,
+    ticks: u32
+  ) -> void => {
+    let plain = vdp.line_word((i32(self.x) * i32(speed)) >> 8)
+    let held = vdp.hold_vblank()
+    vdp.begin_lines(plane)
+    var line: i16 = 0
+    var k: i64 = 0
+    while line < vdp.SCREEN_HEIGHT {
+      let y = plane_y + line
+      while k < N && bands[k].top + bands[k].height <= y { k += 1 }
+      if k >= N || bands[k].top > y {
+        // Lines no band holds, to the next band's top or the screen's foot.
+        let until = if k < N {
+          (bands[k].top - plane_y).min(vdp.SCREEN_HEIGHT)
+        } else { vdp.SCREEN_HEIGHT }
+        while line < until {
+          vdp.write_word(plain)
+          line += 1
+        }
+      } else {
+        let until = (bands[k].top + bands[k].height - plane_y).min(vdp.SCREEN_HEIGHT)
+        write_band(bands[k], i32(self.x), y - bands[k].top, until - line, ticks)
+        line = until
+        k += 1
+      }
+    }
+    vdp.end_lines()
+    vdp.release_vblank(held)
+  }
 }
 
 // ── Beneath ──────────────────────────────────────────────────────────────────────────
@@ -182,6 +307,113 @@ impl Camera {
 /// The cells the screen shows at once, a part-cell at each edge included.
 const VIEW_COLUMNS: u16 = 41
 const VIEW_ROWS: u16 = 29
+
+/// The columns a plane holds past each side of the view, for a ripple: [MAX_RIPPLE]'s cells.
+/// The view's 41 and twice this fit the plane's 64.
+const MARGIN: u16 = 8
+
+/// A quarter turn of a sine, from 0 to its top (127), in 64 steps: [sine] makes the rest.
+const QUARTER_SINE: [65]i8 = #[
+  0,
+  3,
+  6,
+  9,
+  12,
+  16,
+  19,
+  22,
+  25,
+  28,
+  31,
+  34,
+  37,
+  40,
+  43,
+  46,
+  49,
+  51,
+  54,
+  57,
+  60,
+  63,
+  65,
+  68,
+  71,
+  73,
+  76,
+  78,
+  81,
+  83,
+  85,
+  88,
+  90,
+  92,
+  94,
+  96,
+  98,
+  100,
+  102,
+  104,
+  106,
+  107,
+  109,
+  111,
+  112,
+  113,
+  115,
+  116,
+  117,
+  118,
+  120,
+  121,
+  122,
+  122,
+  123,
+  124,
+  125,
+  125,
+  126,
+  126,
+  126,
+  127,
+  127,
+  127,
+  127,
+]
+
+/// `lines` of `band`'s words, from its line `from` — the view's x `x`, the frame `ticks`.
+let write_band = (band: Band, x: i32, from: i16, lines: i16, ticks: u32) -> void => {
+  // Where its top line is, in 256ths of a pixel: the camera's share, less the drift so far —
+  // a band drifting right shows the map from further left.
+  let drifted = i32(ticks).wrapping_mul(i32(band.drift))
+  var at = x * i32(band.speed) - drifted
+  // How much further each line down is, for a ramp.
+  let step = if band.ramp_to != band.speed && band.height > 1 {
+    (x * i32(band.ramp_to - band.speed)) / i32(band.height - 1)
+  } else { 0 }
+  at += step * i32(from)
+  if band.wave == 0 {
+    if step == 0 {
+      let word = vdp.line_word(at >> 8)
+      for _: i16 in 0..<lines { vdp.write_word(word) }
+      return
+    }
+    for _: i16 in 0..<lines {
+      vdp.write_word(vdp.line_word(at >> 8))
+      at += step
+    }
+    return
+  }
+  var phase = u16(ticks).wrapping_mul(band.wave_speed).wrapping_add(
+    u16(from).wrapping_mul(band.wave_step)
+  )
+  for _: i16 in 0..<lines {
+    let ripple = (i32(sine(phase >> 8)) * i32(band.wave)) >> 7
+    vdp.write_word(vdp.line_word((at >> 8) + ripple))
+    at += step
+    phase = phase.wrapping_add(band.wave_step)
+  }
+}
 
 /// One axis of [follow]: the view's start `at` moved so `from`..`from + size` stays
 /// between `low` and `high` on the screen, then kept inside `world`. Something bigger than
@@ -239,8 +471,20 @@ let write_column<const N: i64> = (
   }
 }
 
-/// Map row `my` into the plane, the view's columns from `left` — an address set where the
-/// row wraps round the plane's edge.
+/// Map row `my` of a repeating map into the plane: all its 64 columns, map column `c` mod
+/// `width` in column c.
+let write_whole_row<const N: i64> = (
+  plane: u16,
+  cells: ref [N]u16,
+  width: u16,
+  my: u16
+) -> void => {
+  vdp.set_vram_address(plane + (my % vdp.PLANE_HEIGHT) * vdp.PLANE_WIDTH * 2)
+  for c: u16 in 0..<vdp.PLANE_WIDTH { vdp.write_word(cell(cells, width, c % width, my)) }
+}
+
+/// Map row `my` into the plane, the columns held from the margin before `left` to the one
+/// past the view — an address set where the row wraps round the plane's edge.
 let write_row<const N: i64> = (
   plane: u16,
   cells: ref [N]u16,
@@ -249,11 +493,21 @@ let write_row<const N: i64> = (
   left: u16
 ) -> void => {
   let row_start = plane + (my % vdp.PLANE_HEIGHT) * vdp.PLANE_WIDTH * 2
-  for c: u16 in 0..<VIEW_COLUMNS {
-    let mx = left + c
+  let first = left.wrapping_sub(MARGIN)
+  for c: u16 in 0..<VIEW_COLUMNS + 2 * MARGIN {
+    let mx = first.wrapping_add(c)
     if c == 0 || mx % vdp.PLANE_WIDTH == 0 {
       vdp.set_vram_address(row_start + (mx % vdp.PLANE_WIDTH) * 2)
     }
     vdp.write_word(cell(cells, width, mx, my))
   }
+}
+
+/// The sine of `step` 256ths of a turn, at most 127 either way: a quarter turn's table
+/// mirrored and turned over.
+let sine = pure (step: u16) -> i8 => {
+  let k = i64(step & 63)
+  let quarter = step >> 6
+  let rising = if quarter == 0 || quarter == 2 { QUARTER_SINE[k] } else { QUARTER_SINE[64 - k] }
+  if quarter < 2 { rising } else { -rising }
 }
