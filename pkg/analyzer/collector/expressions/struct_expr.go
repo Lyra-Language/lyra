@@ -13,7 +13,7 @@ func collectNamedStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, lo
 	nameNode := cst.Field(node, "struct_name")
 	name := "?"
 	if nameNode != nil {
-		name = ctx.NodeText(nameNode)
+		name = ctx.TypeNameText(nameNode)
 	}
 
 	genericArgumentsNode := cst.Field(node, "generic_arguments")

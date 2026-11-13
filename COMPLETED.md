@@ -9,6 +9,27 @@ Newest first.
 
 ## Dated log
 
+### 11/13/26 — `Self` in an `impl Type` block is the block's type
+
+`let make = () -> Self` in `impl Dice` was refused, "return type mismatch: expected Self, got
+Dice", and `Self { … }` was "undefined struct type". A block's `Self` was the trait's, a type
+variable no block binds. Now it is the type the header names, throughout a member: its
+signature, a local's or a nested lambda's annotation, a composite (`[]Self`, `Maybe<Self>`), a
+struct literal `Self { … }`, a `type`'s constructor `Self(x)`, and the object of an associated
+call, `Self.seeded(n)`.
+
+**It is replaced in the collector**, where the block is erased, so no later pass learns that
+`Self` was written. That is the rule the block keeps (lyra/CLAUDE.md): a member must behave
+exactly as the hand-written function. `Ctx.SelfIs` holds the block's target for the whole
+member. Unlike `InherentTarget` it is not taken by the first declaration, since a nested
+lambda's `Self` means the same type. `parseType` answers the target for `Self`. A name written
+in an expression, struct literal, constructor or the `Self` of `Self.f()`, reads the target's
+head through `Ctx.TypeNameText`, its arguments inferred as for `Box { … }`.
+
+An applied `Self<i64>` in `impl Box<t>` is lyra-E089. The block's type is already applied, and
+`Box<i64>` says it plainly. After the refusal it is taken as `Box<i64>`, so the signature
+raises no second error. Rust refuses the same spelling.
+
 ### 11/13/26 — lui's wrapper round a style-less component stays
 
 The open item said lui wraps a component's view in `component(name, Sheet {}, […])` even

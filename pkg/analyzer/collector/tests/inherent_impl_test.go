@@ -92,6 +92,19 @@ func TestInherentImpl_RefusesWhatIsNotAMethod(t *testing.T) {
 	}
 }
 
+// `Self` is the block's type, already applied, so `Self<i64>` in `impl Box<t>` is refused —
+// once: it is taken as `Box<i64>` after, so nothing else in the signature is reported.
+func TestInherentImpl_AnAppliedSelfIsRefusedOnce(t *testing.T) {
+	errs := parseAndCollectErrors(t, "struct Box<t> { v: t }\nimpl Box<t> {\n  let int = (self) -> Self<i64> => Box { v: 1 }\n}\n")
+	if len(errs) != 1 {
+		t.Fatalf("want one error, got %v", errs)
+	}
+	d, ok := errs[0].(diag.Diagnostic)
+	if !ok || d.Code != diag.CodeInherentMember || !strings.Contains(d.Message, "`Self` in `impl Box<t>` is `Box<t>` itself") {
+		t.Errorf("want lyra-E089 naming Box<t>, got %v", errs[0])
+	}
+}
+
 // A member with no `self` is called through its type's name, so the type must have one to write.
 func TestInherentImpl_AnAssociatedFunctionNeedsATypeName(t *testing.T) {
 	cases := []struct{ name, src, want string }{

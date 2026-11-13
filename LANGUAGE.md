@@ -657,9 +657,15 @@ has to move into a block.
   type: write `self`, or `self: mut` / `self: ref` for the mode — the mode binds to the type, as
   everywhere, so it stays after the colon. **A member with no `self` first is an associated
   function**, called through the type's name (see "Calling on a type name").
+- **`Self` is the block's type** (11/13), throughout a member: `-> Self`, `other: Self`,
+  `[]Self`, `Maybe<Self>`, a local's or a nested lambda's annotation, a struct literal
+  `Self { … }`, a constructor `Self(x)` of a `type`, and `Self.seeded(n)`. In `impl Box<t>` it
+  is `Box<t>`, and a literal's arguments are inferred as for `Box { … }`. Replaced as the member
+  is collected, so it is exactly the type written out.
 - **Refused (`lyra-E089`):** `var`/`let mut`, a non-function, a destructuring or constant,
   a `self` that writes its own type, a member with no `self` in a block whose type has no name
-  to call it through (a type variable, an array, a tuple), and a block below the top level.
+  to call it through (a type variable, an array, a tuple), an applied `Self<i64>` (the block's
+  type is applied already — write `Box<i64>`), and a block below the top level.
 - **Generic targets:** `impl Box<t> { … }` — variables lexical, as a trait impl's. A member
   with no `<…>` list needs none; one that writes a list (`let map<u> = …`) gets the
   target's variables appended after its own, so a turbofish binds what the member wrote

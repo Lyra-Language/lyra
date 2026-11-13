@@ -12,7 +12,7 @@ func collectTupleLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.
 	tupleNameNode := cst.Field(node, "tuple_name")
 	tupleName := "?"
 	if tupleNameNode != nil {
-		tupleName = ctx.NodeText(tupleNameNode)
+		tupleName = ctx.TypeNameText(tupleNameNode)
 	}
 	genericArgumentsNode := cst.Field(node, "generic_arguments")
 	genericArguments := []types.Type(nil)

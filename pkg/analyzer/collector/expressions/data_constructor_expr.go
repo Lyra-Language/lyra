@@ -12,7 +12,7 @@ import (
 func collectNullaryConstructorExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.DataConstructorExpr {
 	return &ast.DataConstructorExpr{
 		ExprBase:    ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-		Constructor: ctx.NodeText(node),
+		Constructor: ctx.TypeNameText(node),
 		Value:       nil,
 	}
 }
@@ -49,7 +49,7 @@ func collectAppliedConstructorExpr(node *sitter.Node, ctx *collector_ctx.Ctx, lo
 	}
 	return &ast.TupleLiteralExpr{
 		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-		Name:     ctx.NodeText(ctorNode),
+		Name:     ctx.TypeNameText(ctorNode),
 		Elements: []ast.Expression{CollectExpression(valueNode, ctx)},
 	}
 }

@@ -108,3 +108,70 @@ let main = () -> void => {
 		t.Errorf("bounded inherent methods gave:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+// `Self` inside an `impl Type` block is the block's type (11/13): in a signature, a local's
+// annotation, a nested lambda's, a composite (`[]Self`, `Maybe<Self>`), a struct literal
+// `Self { … }`, a constructor `Self(x)` of a `type`, and the object of an associated call
+// `Self.seeded(…)` — on a struct, a generic struct, a `type` and a `data` type. It was
+// refused as a mismatch against `Self` until then, in a method as much as an associated
+// function.
+func TestExec_InherentImplSelfIsTheBlocksType(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+
+struct Dice { seed: i64 }
+
+impl Dice {
+  let seeded = (n: i64) -> Self => Self { seed: n }
+  let again = (self) -> Self => Self.seeded(self.seed * 2)
+  let pair = (self, other: Self) -> i64 => self.seed + other.seed
+  let many = (self, n: i64) -> []Self => [k in 0..<n | Self { seed: self.seed + k }]
+  let positive = (self) -> Maybe<Self> => if self.seed > 0 { Some(self) } else { None }
+  let local = (self) -> i64 => {
+    let d: Self = self
+    let f = (x: Self) -> i64 => x.seed + 1
+    f(d)
+  }
+}
+
+struct Box<t> { v: t }
+
+impl Box<t> {
+  let wrap = (v: t) -> Self => Box { v: v }
+  let same = (self) -> Self => self
+}
+
+type Meters = f64
+
+impl Meters {
+  let of = (x: f64) -> Self => Self(x)
+  let twice = (self) -> Self => Self(base(self) * 2.0)
+}
+
+data Shape = Dot | Circle(f64)
+
+impl Shape {
+  let unit = () -> Self => Circle(1.0)
+  let grow = (self) -> Self => match self {
+    Circle(r) => Circle(r * 2.0),
+    Dot => Dot,
+  }
+}
+
+let main = () -> void => {
+  let d = Dice.seeded(4).again()
+  println("${d.seed} ${d.pair(d)} ${d.many(3).len()} ${d.positive().is_some()} ${d.local()}")
+  println("${Box.wrap("boxed").same().v}")
+  println("${base(Meters.of(1.5).twice())}")
+  match Shape.unit().grow() {
+    Circle(r) => println("circle ${r}"),
+    Dot => println("dot"),
+  }
+}
+`
+	want := "8 16 3 true 9\nboxed\n3\ncircle 2"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("Self in impl blocks gave:\n%s\nwant:\n%s", got, want)
+	}
+}

@@ -22,6 +22,10 @@ import (
 // A member with no `self` is an associated function, a top-level function under a name of
 // its own (ast.AssociatedName), called `Person.named("Ada")`.
 //
+// **`Self` is the block's type** throughout a member (Ctx.SelfIs): in its signature, its
+// body's annotations and a struct literal `Self { … }`. It is replaced as it is collected,
+// so it never reaches a pass as anything but the type the header names.
+//
 // Each member is documented by its own `///`, as a top-level `let` is.
 func (c *Collector) collectInherentImpl(node *sitter.Node) []ast.Statement {
 	typeNode := cst.Field(node, "type")
@@ -53,8 +57,10 @@ func (c *Collector) collectInherentImpl(node *sitter.Node) []ast.Statement {
 			continue
 		}
 		c.ctx.InherentTarget = target
+		c.ctx.SelfIs = target
 		stmt := c.CollectStatement(member)
 		c.ctx.InherentTarget = nil
+		c.ctx.SelfIs = nil
 		if stmt == nil {
 			continue
 		}

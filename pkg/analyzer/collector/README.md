@@ -10,6 +10,9 @@ errors)`.
 
 **`impl Type { … }` is erased here** (`inherent_impl.go`): `walkProgram` expands each member
 into the top-level `let` it stands for, with `self` typed, so no later pass sees the block.
+`Self` in a member is the block's type (`Ctx.SelfIs`, set for the whole member): `parseType`
+returns the header's type for it, and a struct literal's, constructor's or associated call's
+name reads it through `Ctx.TypeNameText`.
 
 | Subpackage | Handles |
 |---|---|

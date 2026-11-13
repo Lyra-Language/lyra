@@ -342,6 +342,10 @@ Semantics are in `LANGUAGE.md`; these are the compiler-side traps.
 - The type reaches the member through `Ctx.InherentTarget`, taken (and cleared) at the top
   of `collectIdentifierDeclaration` — before the value, so a nested `let` is local, and
   before registration, since `DeclareOverload` keys on the receiver's type.
+- **`Self` in a member is replaced as it is collected** (`Ctx.SelfIs`, held for the whole
+  member, nested lambdas included): `parseType` answers the block's type, and a name written
+  in an expression (`Self { … }`, `Self(x)`, `Self.f()`) goes through `Ctx.TypeNameText`. A new
+  place reading a type name from expression text must ask it too.
 - Refusals are `lyra-E089`; `collectStatementByKind` reaches the node only below the top
   level, and refuses it there.
 - A member with no `self` is an **associated function**: the same declaration under

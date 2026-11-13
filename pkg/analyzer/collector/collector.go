@@ -991,6 +991,9 @@ func (c *Collector) parseParameterizedType(node *sitter.Node) types.Type {
 	// a concrete argument arrives here, and it is the same type as `Self<a>` — the impl
 	// target's head at those arguments — not a nominal type named "Self".
 	if name == "Self" {
+		if c.ctx.SelfIs != nil {
+			return c.inherentSelf(node, typeArguments)
+		}
 		return types.SelfType{Args: typeArguments}
 	}
 	return types.ParameterizedType{Name: name, TypeArguments: typeArguments}
@@ -1142,7 +1145,32 @@ func (c *Collector) parseSelfType(node *sitter.Node) types.Type {
 			args = append(args, types.GenericType{Name: p.Name})
 		}
 	}
+	if c.ctx.SelfIs != nil {
+		return c.inherentSelf(node, args)
+	}
 	return types.SelfType{Args: args}
+}
+
+// inherentSelf is `Self` inside an `impl Type` block: the block's type, as its header wrote
+// it, recorded as a reference to that type at `Self` (the editor's hover and go-to). An
+// applied `Self<…>` is refused: the block's type is already applied, so `Self<i64>` in
+// `impl Box<t>` could only mean `Box<i64>`, which is clearer written so — and is what it
+// is taken as after the refusal, so the signature raises nothing more.
+func (c *Collector) inherentSelf(node *sitter.Node, args []types.Type) types.Type {
+	target := c.ctx.SelfIs
+	head := c.ctx.SelfIsName()
+	if head != "" {
+		c.table.TypeRefs.Add(head, c.ctx.NodeLocation(node))
+	}
+	if len(args) > 0 {
+		c.ctx.AddErrorCoded(node, diag.SeverityError, diag.CodeInherentMember,
+			"`Self` in `impl %s` is `%s` itself and takes no arguments; write the type, as `%s<…>`",
+			target.Text, target.Text, head)
+		if head != "" {
+			return types.ParameterizedType{Name: head, TypeArguments: args}
+		}
+	}
+	return target.Type
 }
 
 func (c *Collector) parseArrayType(node *sitter.Node, allocation types.AllocationModifier) types.Type {

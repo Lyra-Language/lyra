@@ -569,8 +569,8 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   (COMPLETED.md, 10/29.)
 - **[DONE 11/03] `Type.function()` associated functions**: a member of `impl Type` with no
   `self`, and a trait function through the type it is implemented for. (COMPLETED.md, 11/03.)
-- **[OPEN] `Self` in an `impl Type` block.** `let make = () -> Self` is refused as a mismatch
-  against `Self`, in a method as much as an associated function; it could mean the block's type.
+- **[DONE 11/13] `Self` in an `impl Type` block is the block's type**, in types, struct
+  literals, constructors and `Self.f()` calls (COMPLETED.md 11/13).
 - **[DONE 11/03] std's collections, dates and randomness construct through their types**:
   `HashMap.new()`, `Set.new()`, `Rng.seeded(n)`, `PlainDate.new(…)`, `Duration.days(n)`.
   (COMPLETED.md, 11/03.)

@@ -92,7 +92,34 @@ type Ctx struct {
 	// before the binding is registered — receiver-keyed overloading is decided at
 	// registration, so filling the type in afterwards would be too late.
 	InherentTarget *InherentTarget
+	// SelfIs is what `Self` means while an `impl Type { … }` block's members are collected
+	// — the block's type, in every type and struct literal a member writes, nested lambdas
+	// included. Unlike InherentTarget it is not taken by the first declaration: it holds for
+	// the whole member. Nil elsewhere, where `Self` is a trait's (SelfIsName).
+	SelfIs *InherentTarget
 	Collector
+}
+
+// TypeNameText is the text of a type name written in an expression — a struct literal's
+// (`Self { … }`), a constructor's (`Self(x)`) or an associated call's object (`Self.new()`)
+// — with `Self` inside an `impl Type` block read as the block's type's head (SelfIsName),
+// its arguments inferred as for any literal.
+func (c *Ctx) TypeNameText(node *sitter.Node) string {
+	text := c.NodeText(node)
+	if self := c.SelfIsName(); text == "Self" && self != "" {
+		return self
+	}
+	return text
+}
+
+// SelfIsName is the head of the type `Self` stands for inside an `impl Type` block, and ""
+// outside one.
+func (c *Ctx) SelfIsName() string {
+	if c.SelfIs == nil {
+		return ""
+	}
+	head, _ := types.HeadName(c.SelfIs.Type)
+	return head
 }
 
 // InherentTarget is the type an `impl` block's header names, with its source text for
