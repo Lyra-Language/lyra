@@ -9,6 +9,22 @@ Newest first.
 
 ## Dated log
 
+### 11/13/26 — lui's wrapper round a style-less component stays
+
+The open item said lui wraps a component's view in `component(name, Sheet {}, […])` even
+without a `<style>`, so `torn_view` (a `<for>` holding an `<if>`) is a component of zero or one
+children, and that a component of one element "could be that element". It could not, without
+changing what the program looks like. A component node is a cascade boundary whatever its
+sheet (`ui.layout`'s `Scope` → `in_component`): the enclosing component's scoped sheet
+reaches its top-level elements and no deeper, and a part inside it (`::label`) is looked up
+under its name, not the enclosing component's. Unwrapped, the enclosing sheet would reach
+everything the component holds.
+
+`TestRun_UiCascade` pinned the boundary only for a component with a sheet of its own. It now
+holds a `Plain` component with `Sheet {}`, as lui writes, whose nested text keeps the global
+rule while its top-level text takes the card's. With the wrapper removed, the nested one
+takes the card's rule and the test fails. A comment at lui's emitter says why the wrapper stays.
+
 ### 11/13/26 — A capture passed to a `mut` parameter is lyra-E024
 
 Vega's scene HUD read freed memory (ASan, heap-use-after-free): in `edit(s: mut Studio, n)`,

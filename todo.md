@@ -538,10 +538,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   in a generic struct field is typed by it**. (COMPLETED.md, 10/19.)
 - **[DONE 11/13] lui writes `on_change={Width}` through** as the name written, not a typed
   lambda calling it (COMPLETED.md, 11/13).
-- **[OPEN] lui: a component wraps its view in a node of its own** (`component(name, Sheet {},
-  […])`) even with no `<style>`, so a `<for>` holding an `<if>` makes a component of zero or
-  one children (`windows_view.lui`'s `torn_view`). Harmless so far (frames byte-identical);
-  a component of exactly one element could be that element.
+- **[DONE 11/13] lui's wrapper round a style-less component stays**: a component is a
+  cascade boundary whatever its sheet, so its one element in its place would be styled
+  differently (COMPLETED.md 11/13).
 - **[DONE 10/29] `struct X {}`** — a struct with no fields, taking no space (COMPLETED.md,
   10/29).
 

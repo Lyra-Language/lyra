@@ -655,6 +655,9 @@ impl Writer {
         self.use("component_of")
         "component_of(${quote(c.name)}, ${c.name}_sheet, ${self.listed(items, "  ")})"
       } else {
+        // Wrapped even with no sheet and one element: a component is a cascade boundary, so
+        // the sheet around reaches only its top-level elements and its parts are its own
+        // (`TestRun_UiCascade`'s `Plain`). That element in its place would change its styles.
         self.use("component")
         self.use("Sheet")
         "component(${quote(c.name)}, Sheet {}, ${self.listed(items, "  ")})"

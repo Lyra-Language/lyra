@@ -396,6 +396,10 @@ let main = () -> u8 => {
           column([text("").with_class("deeper")]),
           text("").with_class("dot").with_part("dot"),
         ]),
+        // A component with no sheet is as much a boundary (lui writes one for a component
+        // without a <style>): the card's sheet reaches its top-level element and no deeper.
+        component("Plain", Sheet {}, [column([text("").with_class("plain inside")])]),
+        component("Plain", Sheet {}, [text("").with_class("plain top")]),
       ]),
       // Inherited: colour, font and opacity; not the background. (Columns, which no rule
       // matches.)
@@ -446,6 +450,8 @@ nested: 10 14 1 false
 nested own: 14 14 1 false
 deeper: 6 14 1 false
 dot: 11 14 1 false
+plain inside: 6 14 1 false
+plain top: 10 14 1 false
 parent: 20 14 0.5 true
 child: 20 14 0.5 false
 grandchild: 20 30 0.25 false
