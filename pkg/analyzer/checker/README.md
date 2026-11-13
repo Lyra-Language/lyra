@@ -287,10 +287,13 @@ named other than as a callee (`escaped`, `escapedOfArity`).
 
 ## `captured_assignment.go` (`lyra-E024`)
 
-`CheckCapturedAssignment(program, capturesTable)`: a lambda writing a binding it captured (by
-value, so the write is lost). Covers `n = …`, `n += …`, path writes (walked to the root), and
-`&mut` on a captured binding (own message: take the pointer outside the closure). Only names the
-capture pass recorded. Runs after captures.
+`CheckCapturedAssignment(program, capturesTable, typeTable)`: a lambda writing a binding it
+captured (by value, so the write is lost). Covers `n = …`, `n += …`, path writes (walked to the
+root), `&mut` on a captured binding (own message: take the pointer outside the closure), and a
+captured place passed to a `mut` parameter, a `self: mut` receiver included — the arguments the
+typechecker marks in `checkMutArgument` (`TypeTable.IsMutArgument`). That last was accepted
+until 11/13 and was a use-after-free, not only a lost write: the closure's copy does not retain
+what it holds. Only names the capture pass recorded. Runs after captures.
 
 ## `inert_borrow_modifier.go` (`lyra-W010`)
 

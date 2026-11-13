@@ -4,6 +4,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/captures"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
+	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
 
 // CheckCapturedAssignment (lyra-E024) reports a lambda that assigns to a binding
@@ -29,9 +30,15 @@ import (
 // every binary file read back empty with nothing said anywhere. `&n` is untouched, since
 // reading through it sees exactly what the closure sees.
 //
+// **And a capture passed to a `mut` parameter** (tt.IsMutArgument), the same write made by
+// the callee: `replace(s, k)` or `s.bump()` inside a closure writes the closure's copy of
+// `s`. Accepted until 11/13, it was worse than lost — the copy's managed fields are not
+// retained by the capture, so a callee assigning one (`s.doc = Doc { … }`) released the
+// enclosing binding's value, and the caller read it freed (Vega's scene HUD).
+//
 // It only fires for a name the capture pass actually recorded, so a lambda writing to its
 // own local or parameter is untouched.
-func CheckCapturedAssignment(program *ast.Program, caps *captures.Table) []diag.Diagnostic {
+func CheckCapturedAssignment(program *ast.Program, caps *captures.Table, tt *typetable.TypeTable) []diag.Diagnostic {
 	if caps == nil {
 		return nil
 	}
@@ -50,7 +57,7 @@ func CheckCapturedAssignment(program *ast.Program, caps *captures.Table) []diag.
 			// reported against *it* (the walk reaches it separately), against its own
 			// capture set — which is the right attribution, since it captured from
 			// here in turn.
-			out = append(out, capturedWrites(fn, captured)...)
+			out = append(out, capturedWrites(fn, captured, tt)...)
 		}
 		return true
 	}
@@ -67,7 +74,7 @@ func CheckCapturedAssignment(program *ast.Program, caps *captures.Table) []diag.
 
 // capturedWrites finds assignments inside a lambda whose target is one of the
 // captured names.
-func capturedWrites(fn *ast.LambdaExpr, captured map[string]bool) []diag.Diagnostic {
+func capturedWrites(fn *ast.LambdaExpr, captured map[string]bool, tt *typetable.TypeTable) []diag.Diagnostic {
 	var out []diag.Diagnostic
 	reportWith := func(name string, loc ast.Location, message string) {
 		if !captured[name] {
@@ -96,6 +103,12 @@ func capturedWrites(fn *ast.LambdaExpr, captured map[string]bool) []diag.Diagnos
 			"cannot take `&mut` of \""+name+"\": it is captured from an enclosing scope, and a closure captures by value — "+
 				"the pointer addresses the closure's own copy, so anything written through it is lost. "+
 				"Take the pointer outside the closure, or pass the state in as a parameter")
+	}
+	// The callee's write is the closure's, so the advice is the assignment's.
+	reportArgument := func(name string, loc ast.Location) {
+		reportWith(name, loc,
+			"cannot pass \""+name+"\" to a `mut` parameter: it is captured from an enclosing scope, and a closure captures by value — "+
+				"the callee would write only the closure's own copy. Make the call outside the closure, or pass the state in as a parameter")
 	}
 	onStmt := func(s ast.Statement) bool {
 		switch v := s.(type) {
@@ -127,6 +140,11 @@ func capturedWrites(fn *ast.LambdaExpr, captured map[string]bool) []diag.Diagnos
 		// `&mut n`, and `&mut p.x` rooted at a capture — the same path walk the
 		// assignment case uses, since writing through `&mut p.x` and writing `p.x = v`
 		// reach the same storage. `&n` is not reported: it cannot write.
+		if tt.IsMutArgument(e) {
+			if root, ok := lvalueRootName(e); ok {
+				reportArgument(root, e.GetLocation())
+			}
+		}
 		if v, ok := e.(*ast.AddressOfExpr); ok && v.IsMut {
 			if root, ok := lvalueRootName(v.Operand); ok {
 				reportAddress(root, v.GetLocation())

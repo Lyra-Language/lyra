@@ -18,6 +18,10 @@ not a formality.
 
 ### Backend — LLVM IR
 
+- **[DONE 11/13] A lambda passing a capture to a `mut` parameter freed the caller's storage**
+  — the closure's copy retains nothing, so `replace(s, k)` assigning `s.doc` released the
+  enclosing `s.doc.names`. Refused now as `lyra-E024`, as assigning a capture is (COMPLETED.md
+  11/13).
 - **[DONE 11/11] The M68k backend's multiplies** — an `i32` multiply is `muls.w`/`mulu.w`,
   shifts and adds, or two word multiplies where it can be (patch 0005), and the runtime's
   `__muldi3` takes a checked multiply's sign-extended pair as a signed 32 × 32

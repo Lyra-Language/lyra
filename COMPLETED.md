@@ -9,6 +9,27 @@ Newest first.
 
 ## Dated log
 
+### 11/13/26 — A capture passed to a `mut` parameter is lyra-E024
+
+Vega's scene HUD read freed memory (ASan, heap-use-after-free): in `edit(s: mut Studio, n)`,
+a closure `(k) => { replace(s, k) }` passed its capture of `s` to `replace`, which assigned
+`s.doc = Doc { names: [...] }`. A closure captures by value, and the copy does not retain the
+managed values it holds, so the assignment released the *caller's* `s.doc.names` — and the
+caller read it after. Even without a managed field the write was lost: `c.bump()` or `inc(c)`
+on a captured `var c` left `c` unchanged, with nothing said.
+
+That is the failure lyra-E024 exists for. It refused `n = …`, `n += …`, a path write and
+`&mut n` on a capture, but a call writing through a `mut` parameter is the same write made by
+the callee, and no spelling of it was covered. **Now it is**: the typechecker marks each
+argument `checkMutArgument` accepts (`TypeTable.MarkMutArgument`, cloned with the table so the
+language server's snapshot keeps it), and the E024 pass reports one rooted at a capture — a
+free function's `mut` parameter, a `self: mut` receiver, a field or element of a capture.
+
+The todo entry offered retaining the capture instead. That would have made the write vanish
+safely, which is the silent loss E024 refuses everywhere else. Sweeping lyra, Vega, Sheliak and
+Termina found no other closure doing it (Vega's had been rewritten already). One W032 test
+case, `(s, () => bump(s))`, was a program E024 now refuses, and is gone.
+
 ### 11/13/26 — A pre-push hook runs CI's format check
 
 From d5d92af1 (11/12) to f713da34 (11/13) six pushes went red on one step, `lyrafmt --check .`,

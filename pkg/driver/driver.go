@@ -435,7 +435,7 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// Writing to a captured binding cannot reach the enclosing one (captures are
 	// by value), so it is rejected rather than silently dropped. (The captures
 	// table itself is built earlier, before purity — see above.)
-	res.Diagnostics = append(res.Diagnostics, checker.CheckCapturedAssignment(program, res.Captures)...)
+	res.Diagnostics = append(res.Diagnostics, checker.CheckCapturedAssignment(program, res.Captures, tt)...)
 
 	// Post-typecheck checker passes that already return diag.Diagnostic (they
 	// carry their own severity and Unnecessary/Deprecated tags).

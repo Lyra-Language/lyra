@@ -215,3 +215,101 @@ let main = () -> u8 => {
 		t.Errorf("got %v; want none — nothing is captured here", got)
 	}
 }
+
+// Passing a capture to a `mut` parameter is the same write, made by the callee. It was
+// accepted until 11/13 and freed the caller's storage: the closure's copy of `s` does not
+// retain what it holds, so `replace` assigning `s.doc` released the enclosing `s.doc.names`
+// (Vega's scene HUD; heap-use-after-free under ASan).
+func assertCapturedMutArgument(t *testing.T, src, wantName string) {
+	t.Helper()
+	got := capturedAssignmentErrors(t, src)
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 captured-assignment error, got %d: %v", len(got), got)
+	}
+	if !strings.Contains(got[0].Message, `cannot pass "`+wantName+`" to a `+"`mut`"+` parameter`) {
+		t.Errorf("message should name the binding %q: %q", wantName, got[0].Message)
+	}
+}
+
+const capturedStudio = `
+struct Doc { names: []string }
+struct Studio { doc: Doc, n: i64 }
+let replace = (s: mut Studio, k: i64) -> void => {
+  s.doc = Doc { names: ["a${k}"] }
+}
+`
+
+func TestCapturedMutArgument_ACapturedMutParameter(t *testing.T) {
+	assertCapturedMutArgument(t, capturedStudio+`
+let edit = (s: mut Studio, n: i64) -> void => {
+  let change = (k: i64) -> void => { replace(s, k) }
+  change(n)
+}
+let main = () -> void => {
+  var s = Studio { doc: Doc { names: ["x"] }, n: 0 }
+  edit(s, 3)
+}
+`, "s")
+}
+
+func TestCapturedMutArgument_AMutReceiver(t *testing.T) {
+	assertCapturedMutArgument(t, `
+struct Counter { n: i64 }
+impl Counter {
+  let bump = (self: mut) -> void => { self.n = self.n + 1 }
+}
+let main = () -> void => {
+  var c = Counter { n: 0 }
+  let f = () -> void => { c.bump() }
+  f()
+}
+`, "c")
+}
+
+func TestCapturedMutArgument_ThroughAPath(t *testing.T) {
+	assertCapturedMutArgument(t, `
+struct Counter { n: i64 }
+struct Box { c: Counter }
+let inc = (c: mut Counter) -> void => { c.n = c.n + 1 }
+let main = () -> void => {
+  var b = Box { c: Counter { n: 0 } }
+  let f = () -> void => { inc(b.c) }
+  f()
+}
+`, "b")
+}
+
+// Lent by `ref`, the callee cannot write; the closure's own local is its own storage.
+func TestCapturedMutArgument_WhatIsNotACapturedWriteIsFine(t *testing.T) {
+	cases := map[string]string{
+		"a ref parameter": `
+struct Counter { n: i64 }
+let look = (c: ref Counter) -> i64 => c.n
+let main = () -> void => {
+  let c = Counter { n: 0 }
+  let f = () -> i64 => look(c)
+  println("${f()}")
+}
+`,
+		"its own local": `
+struct Counter { n: i64 }
+let inc = (c: mut Counter) -> void => { c.n = c.n + 1 }
+let main = () -> void => {
+  let f = () -> i64 => {
+    var c = Counter { n: 0 }
+    inc(c)
+    c.n
+  }
+  println("${f()}")
+}
+`,
+	}
+	for name, src := range cases {
+		t.Run(name, func(t *testing.T) {
+			res := driver.Analyze([]byte(src))
+			for _, d := range res.Errors() {
+				t.Errorf("unexpected error: %s", d.Message)
+			}
+		})
+	}
+}

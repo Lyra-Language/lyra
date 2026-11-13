@@ -93,14 +93,14 @@ func TestCopiedBeforeMut_IsReportedAtTheCopy(t *testing.T) {
 }
 
 // Nothing is copied, or nothing the copy holds is written: the read comes after the call, a
-// `ref` argument lends the storage and sees the write, two fields part, the write is in a
-// lambda the list does not run, or the earlier operand is a value computed from the place.
+// `ref` argument lends the storage and sees the write, two fields part, or the earlier
+// operand is a value computed from the place. (A write in a lambda, `(s, () => bump(s))`, is
+// not here: passing a capture to a `mut` parameter is lyra-E024.)
 func TestCopiedBeforeMut_IsQuietWhereNothingIsLost(t *testing.T) {
 	cases := []struct{ name, body string }{
 		{"the read after the call", "  let r = (bump(s), s)"},
 		{"a ref argument", "  let r = look(s, bump(s))"},
 		{"disjoint fields", "  let r = (s.n, nudge(s.at))"},
-		{"a write in a lambda", "  let r = (s, () => bump(s))"},
 		{"a computed value", "  let r = (s.n + 1, bump(s))"},
 		{"a call bound first", "  let w = bump(s)\n  let r = (s, w)"},
 	}

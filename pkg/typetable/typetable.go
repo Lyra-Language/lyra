@@ -46,6 +46,8 @@ type TypeTable struct {
 	defaults map[ast.Expression]bool
 	// constParams marks the reads of a `const` generic parameter as a value (MarkConstParam).
 	constParams map[ast.Expression]bool
+	// mutArgs marks the arguments passed to a `mut` parameter (MarkMutArgument).
+	mutArgs map[ast.Expression]bool
 	// journaling counts the journals open (Journal), and added is every expression first
 	// given a type while one is: what EndJournal forgets.
 	journaling int
@@ -78,6 +80,23 @@ func (t *TypeTable) MarkConstParam(expr ast.Expression) {
 		t.constParams = make(map[ast.Expression]bool)
 	}
 	t.constParams[expr] = true
+}
+
+// MarkMutArgument records that expr is passed to a `mut` parameter, so the callee writes
+// through it to expr's place — what lyra-E024 refuses for a place a closure captured.
+func (t *TypeTable) MarkMutArgument(expr ast.Expression) {
+	if t == nil {
+		return
+	}
+	if t.mutArgs == nil {
+		t.mutArgs = make(map[ast.Expression]bool)
+	}
+	t.mutArgs[expr] = true
+}
+
+// IsMutArgument reports whether expr is passed to a `mut` parameter.
+func (t *TypeTable) IsMutArgument(expr ast.Expression) bool {
+	return t != nil && t.mutArgs[expr]
 }
 
 // IsConstParam reports whether expr reads a `const` generic parameter as a value.

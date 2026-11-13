@@ -36,6 +36,7 @@ func (t *TypeTable) Clone() *TypeTable {
 		bindings:           cloneMap(t.bindings),
 		defaults:           cloneMap(t.defaults),
 		constParams:        cloneMap(t.constParams),
+		mutArgs:            cloneMap(t.mutArgs),
 		// A copy starts with no journal open: a journal is one inference's, on the table
 		// it was opened on.
 		journaling: 0,

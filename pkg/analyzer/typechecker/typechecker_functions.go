@@ -1744,6 +1744,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 // other (types.IsByRefParam), so `checkbox("x", true)` has nowhere to write.
 func (tc *TypeChecker) checkMutArgument(calleeName string, position int, paramName string, arg ast.Expression, paramType types.Type) {
 	tc.lend(arg, calleeName, true)
+	tc.typeTable.MarkMutArgument(arg)
 	if m, decl, ok := tc.namespacedPlace(arg); ok {
 		if !decl.CanMutateInterior() {
 			tc.addError(arg.GetLocation(), SeverityError,
