@@ -1069,6 +1069,12 @@ const (
 	// can't tell the names apart, so the pair is refused by type (checker, global_borrow.go).
 	CodeSecondNameBorrow = "lyra-E097"
 
+	// CodeWrittenGlobalBorrow: storage inside a box lent to a call that may write a mutable
+	// global able to hold that box (`var zs = g; via(zs[0])`, `via` pushing onto `g`). The two
+	// names are one array, so growing it through the global frees what the argument points
+	// at; the callee's writes are summarized and asked by type (checker, global_writes.go).
+	CodeWrittenGlobalBorrow = "lyra-E098"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

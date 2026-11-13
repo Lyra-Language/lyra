@@ -1394,16 +1394,8 @@ func (a *analyzer) mutableGlobal(name string, loc ast.Location) bool {
 }
 
 func mutableGlobal(symTable *symbols.SymbolTable, bound []map[string]bool, name string, loc ast.Location) bool {
-	for _, frame := range bound {
-		if frame[name] {
-			return false
-		}
-	}
-	if symTable == nil {
-		return false
-	}
-	decl, ok := symTable.BindingIn(symTable.ModuleOfFile[loc.File], name)
-	return ok && isMutableData(decl)
+	_, found := MutableGlobalNamed(symTable, bound, name, loc)
+	return found
 }
 
 // holdGlobalPlace holds a managed value read out of a mutable global where it is borrowed —
@@ -1452,34 +1444,64 @@ func (a *analyzer) rootedAtMutableGlobal(e ast.Expression) bool {
 // RootedAtMutableGlobal answers rootedAtMutableGlobal for a pass with its own record of what
 // the enclosing functions bind: per enclosing function, its parameters and its body's binders.
 func RootedAtMutableGlobal(e ast.Expression, symTable *symbols.SymbolTable, bound []map[string]bool) bool {
-	for x, ok := e, true; ok; x, ok = ast.PlaceObject(x) {
-		if m, isMember := x.(*ast.MemberExpr); isMember && namespacedMutableGlobal(symTable, bound, m) {
-			return true
-		}
-		if id, isName := x.(*ast.IdentifierExpr); isName {
-			return mutableGlobal(symTable, bound, id.Name, id.GetLocation())
-		}
-	}
-	return false
+	_, rooted := MutableGlobalRoot(e, symTable, bound)
+	return rooted
 }
 
-// namespacedMutableGlobal reports whether e is `lib.name` naming lib's mutable global.
-func namespacedMutableGlobal(symTable *symbols.SymbolTable, bound []map[string]bool, e *ast.MemberExpr) bool {
+// MutableGlobalRoot is the declaration of the mutable global the place path e starts at, by
+// its own name or through its namespace: RootedAtMutableGlobal's answer, saying which.
+func MutableGlobalRoot(e ast.Expression, symTable *symbols.SymbolTable, bound []map[string]bool) (*ast.VarDeclStmt, bool) {
+	for x, ok := e, true; ok; x, ok = ast.PlaceObject(x) {
+		if m, isMember := x.(*ast.MemberExpr); isMember {
+			if decl, found := namespacedMutableGlobal(symTable, bound, m); found {
+				return decl, true
+			}
+		}
+		if id, isName := x.(*ast.IdentifierExpr); isName {
+			return MutableGlobalNamed(symTable, bound, id.Name, id.GetLocation())
+		}
+	}
+	return nil, false
+}
+
+// MutableGlobalNamed is the mutable global a bare name means at loc, unless an enclosing
+// function binds it (mutableGlobal, saying which).
+func MutableGlobalNamed(symTable *symbols.SymbolTable, bound []map[string]bool, name string, loc ast.Location) (*ast.VarDeclStmt, bool) {
+	for _, frame := range bound {
+		if frame[name] {
+			return nil, false
+		}
+	}
+	if symTable == nil {
+		return nil, false
+	}
+	decl, ok := symTable.BindingIn(symTable.ModuleOfFile[loc.File], name)
+	if !ok || !isMutableData(decl) {
+		return nil, false
+	}
+	return decl, true
+}
+
+// namespacedMutableGlobal is the mutable global `lib.name` names, when e is that.
+func namespacedMutableGlobal(symTable *symbols.SymbolTable, bound []map[string]bool, e *ast.MemberExpr) (*ast.VarDeclStmt, bool) {
 	ns, ok := e.Object.(*ast.IdentifierExpr)
 	if !ok || symTable == nil {
-		return false
+		return nil, false
 	}
 	for _, frame := range bound {
 		if frame[ns.Name] {
-			return false
+			return nil, false
 		}
 	}
 	path, ok := symTable.NamespaceIn(symTable.ModuleOfFile[e.GetLocation().File], ns.Name)
 	if !ok {
-		return false
+		return nil, false
 	}
 	decl, ok := symTable.BindingIn(path, e.Property.Name)
-	return ok && isMutableData(decl)
+	if !ok || !isMutableData(decl) {
+		return nil, false
+	}
+	return decl, true
 }
 
 // ReachedThroughBox reports whether the place path e crosses a ref-counted box on its way to

@@ -260,7 +260,7 @@ same-named user `data Result` is not canonical.
 - Not a memory-safety fix (ownership retains defensively); it enforces `own` and exposes the
   reuse perf cliff.
 
-## `global_borrow.go` (`lyra-E091`, `lyra-E092`, `lyra-E097`)
+## `global_borrow.go` (`lyra-E091`, `lyra-E092`, `lyra-E097`, `lyra-E098`)
 
 `CheckGlobalBorrows(program, symTable, tt, mt)`, post-typecheck: a by-reference argument into a box
 a mutable global holds (E091), or into any box for a function returning a sequence (E092), whose
@@ -271,6 +271,16 @@ contains the other is the typechecker's, by place). Asks `ownership.RootedAtMuta
 callees come from use-after-move's `calleeParams`, and a bound call from the trait's signature.
 Builtins and C functions aren't asked about. A name an enclosing function binds isn't the global
 (`bound`), impl and default method bodies included.
+
+E098 (`writtenGlobal`) is storage in a box lent to a call that may write a mutable global whose
+type can hold that box (`var zs = g; via(zs[0])`, `via` growing `g`). **`global_writes.go`**
+summarizes each body — a lambda's (`lambdaKey`), a method clause's, a trait default's — by the
+mutable globals it writes (assigned, `+=`, `&mut`, a mutating builtin's receiver, a `mut`
+argument; `ownership.MutableGlobalRoot`) and the bodies it may run (every function it names,
+called or not, a namespaced one included; every lambda written in it; every method its calls,
+operators and `?` conversions dispatch to, a bound's every candidate), closed to a fixed point. A
+call is asked the union over its callee and the function values written or named at it
+(`calleeBodies(e, true)`); a function value reached any other way is not seen.
 
 ## `captured_assignment.go` (`lyra-E024`)
 

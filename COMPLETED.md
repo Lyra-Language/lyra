@@ -9,6 +9,38 @@ Newest first.
 
 ## Dated log
 
+### 11/12/26 — Storage lent to a call that can grow the global it shares: `lyra-E098`
+
+`var zs = g; via(zs[0])`, where `via` pushes onto `g`, read freed memory under ASan: after
+`var zs = g` the two names are one array, so the push reallocates the buffer `zs[0]` points
+into. E091 refuses `via(g[0])`, and E097 a `mut` of the array beside it, but here the second
+name is a global the callee reaches on its own, and no walk of the caller shows it. todo.md
+weighed copy-in/copy-out (a cost on every call, and a place that reads stale during it)
+against a summary of writes, and a refusal by callee alone hit 115 element arguments.
+
+**The callee says what it writes, and the type says whether that can matter.**
+`global_writes.go` summarizes each body by the mutable globals it writes and the bodies it may
+run, closed to a fixed point; `writtenGlobal` refuses the lent storage only where a written
+global's type can hold the box it is in (`ownership.CanHold`, as E097 asks). On the workspace
+(109 programs) it refuses nothing: in Vega alone 56 bodies write a global and 11 lent
+arguments were asked, and every one of the 23 globals they could write was of a type that
+can't hold the box lent. A parameter's array is asked too, since its caller may have passed
+the global.
+
+- **What a body may run is generous by design**: every function it names, called or not (a
+  function handed on as a value may be called); every lambda written in it; every method its
+  calls, operators and `?` conversions dispatch to, a `where` bound's every candidate; and at
+  the call itself, the lambdas and functions written or named there — `apply(zs[0], () =>
+  g.push(…))` is refused though `apply` writes nothing.
+- **Left (todo.md):** a function value read out of a struct, a global or a collection and
+  called in the callee isn't in the summary.
+- `ownership.MutableGlobalRoot`/`MutableGlobalNamed` say *which* global a place is rooted at;
+  `RootedAtMutableGlobal` and `mutableGlobal` now ask them.
+- Tests: `TestWrittenGlobalBorrow_*` (`pkg/driver`) — eight refused shapes (through another
+  function, a `mut` lend, a global struct's field, a method, a lambda and a function named at
+  the call, a parameter, another module's global through its namespace) and five quiet ones;
+  each refused case fails with the check taken out.
+
 ### 11/12/26 — A 68000 branch past 32 KB: a `jmp`, not an llc crash
 
 A function past 32 KB could stop llc with "Cannot relax the instruction, value does not fit"

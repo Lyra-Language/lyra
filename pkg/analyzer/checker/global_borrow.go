@@ -33,7 +33,8 @@ import (
 // The local twin isn't refused: a callee reaches a local only through its arguments, where
 // exclusivity by place (`checkExclusiveMutableBorrow`) already answers for the place itself,
 // and two names for one array among them are `lyra-E097`'s (secondName). A local sharing a
-// global's box, grown by a callee through the global, stays open (todo.md).
+// global's box, grown by a callee through the global, is `lyra-E098`'s (writtenGlobal), which
+// asks what the callee may write.
 //
 // **A function returning a sequence is refused any array or `shared` value's storage**
 // (`lyra-E092`), the global's or a local's: `for v in each(ys[0]) { ys = [] }`. Its body runs
@@ -47,6 +48,7 @@ func CheckGlobalBorrows(program *ast.Program, symTable *symbols.SymbolTable, tt 
 		mt:       mt,
 		callees:  &useAfterMove{symTable: symTable, tt: tt, mt: mt},
 	}
+	c.writes = newGlobalWrites(c, program)
 	for _, node := range program.Statements {
 		switch s := node.(type) {
 		case *ast.TraitImplStmt:
@@ -75,7 +77,9 @@ type globalBorrows struct {
 	callees *useAfterMove
 	// bound is, per enclosing function, every name it binds: a name there isn't a global.
 	bound []map[string]bool
-	out   []diag.Diagnostic
+	// writes is what each function may write of the mutable globals (lyra-E098).
+	writes *globalWrites
+	out    []diag.Diagnostic
 }
 
 func patternNames(patterns []ast.Pattern) map[string]bool {
@@ -134,6 +138,61 @@ func (c *globalBorrows) call(e *ast.FunctionCallExpr) {
 		}
 	}
 	c.secondName(lent)
+	c.writtenGlobal(e, lent)
+}
+
+// writtenGlobal refuses storage inside a box lent to a call that may write a mutable global
+// able to hold that box (`lyra-E098`): `var zs = g; via(zs[0])`, where `via` pushes onto `g`.
+// The two names are one array, so the push frees the buffer `zs[0]` points into. No walk of
+// the caller shows it, and a refusal of every call that writes a global would take in calls
+// lending what no global can be, so the callee's summary is asked by type (globalWrites,
+// ownership.CanHold), as lyra-E097 asks the `mut` beside it. Storage a global's own path
+// reaches is lyra-E091's already.
+func (c *globalBorrows) writtenGlobal(e *ast.FunctionCallExpr, args []lentArg) {
+	if c.writes == nil {
+		return
+	}
+	var written []*ast.VarDeclStmt
+	asked := false
+	for _, a := range args {
+		if !c.lends(a) || ownership.RootedAtMutableGlobal(a.expr, c.symTable, c.bound) {
+			continue
+		}
+		box, reached := ownership.BoxReached(a.expr, c.tt, c.symTable)
+		if !reached {
+			continue
+		}
+		if !asked {
+			written = c.writes.of(c.calleeBodies(e, true))
+			asked = true
+		}
+		for _, decl := range written {
+			t := c.globalType(decl)
+			if t == nil || !ownership.CanHold(t, box, c.symTable, decl.GetLocation()) {
+				continue
+			}
+			c.out = append(c.out, diag.Diagnostic{
+				Location: a.expr.GetLocation(),
+				Severity: diag.SeverityError,
+				Code:     diag.CodeWrittenGlobalBorrow,
+				Message: fmt.Sprintf(
+					"argument %d lends storage inside an array or `shared` value, and this call can write the mutable global %q, which can hold that same array under another name (after `var zs = %s`, both are one array). Growing or replacing it during the call would free what argument %d points at. Copy argument %d into a local and pass that",
+					a.position, decl.Name, decl.Name, a.position, a.position),
+			})
+			return
+		}
+	}
+}
+
+// globalType is a global's type as checked: its annotation, else its value's.
+func (c *globalBorrows) globalType(decl *ast.VarDeclStmt) types.Type {
+	if decl.Type != nil {
+		return decl.Type
+	}
+	if t, ok := c.tt.Get(decl.Value); ok {
+		return t
+	}
+	return nil
 }
 
 // lentArg is one argument of a call with the mode of the parameter it fills.

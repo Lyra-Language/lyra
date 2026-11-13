@@ -998,9 +998,11 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   (COMPLETED.md, 11/03.)
 - **[DONE 11/11] A by-reference argument can't dangle through a second name in its call**: storage in
   a box lent beside a `mut` that can hold that box is `lyra-E097` (COMPLETED.md, 11/11).
-- **[OPEN] A local sharing a global's box, grown by the callee through the global**: `var zs = g;
-  via(zs[0])` where `via` pushes onto `g`. No walk of the caller shows it; a refusal by callee would
-  hit 115 element arguments in the workspace, so it wants copy-in/copy-out or a summary of writes.
+- **[DONE 11/12] A local sharing a global's box, grown by the callee through the global**:
+  `var zs = g; via(zs[0])` is `lyra-E098` when the call may write a global able to hold the box
+  (COMPLETED.md 11/12).
+- **[OPEN] A function value E098 can't see**: one read out of a struct, a global or a collection
+  and called inside the callee isn't in the call's summary of global writes.
 - **[DONE 11/03] A box's storage can't be lent to a function returning a sequence** (`lyra-E092`),
   which answers a later argument freeing it and the consumer freeing it both. A sequence held as a
   value can't take a by-reference parameter, which crashed `lyrac`. (COMPLETED.md, 11/03.)
