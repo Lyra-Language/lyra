@@ -104,9 +104,8 @@ Package management, versioning and separate compilation are out of scope by deci
 
 - **[DONE 10/30] A large aggregate passed bare warns `lyra-W031`** (COMPLETED.md, 10/30); `ui`,
   `std` and the examples take `ref` where it fired.
-- **[OPEN] `lyra-W031` is left standing in Vega (355), Termina (82) and Sheliak (4)** —
-  mechanical (`x: T` → `x: ref T`, an `impl`'s `self` → `self: ref`), for each repo's own
-  session; Vega's `Studio` (2 KB) and Sheliak's `GenesisBus` are the costly ones.
+- **[DONE 11/12] `lyra-W031` is gone from Vega, Termina and Sheliak**: Vega's own session took
+  its parameters by `ref` (`3021b32`), and Termina's 43 and Sheliak's 4 followed on 11/12.
 
 - **[PARTIAL] The collector in Lyra — the bootstrap proper.** The Go collector is ~7.8k
   lines over a ~5.6k-line AST, so this is sliced rather than attempted.
