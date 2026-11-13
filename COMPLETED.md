@@ -9,6 +9,18 @@ Newest first.
 
 ## Dated log
 
+### 11/13/26 — A pre-push hook runs CI's format check
+
+From d5d92af1 (11/12) to f713da34 (11/13) six pushes went red on one step, `lyrafmt --check .`,
+over one unformatted file (`ui/interact.lyra`) while every test passed — a check nobody ran
+before pushing. **`tools/hooks/pre-push` runs it on what a push carries**: each pushed
+commit's `.lyra` files and `.lyrafmtignore`, exported with `git archive` to a scratch
+directory, so another session's uncommitted edit in the shared tree neither blocks a push nor
+hides a committed mistake. It refuses `fe9a305d` (naming the file) and passes HEAD. Tracked,
+and installed by the workspace's `setup.sh`/`setup.ps1` as `core.hooksPath` (left alone if
+already set elsewhere), so an update reaches every clone with a pull. Without `build/lyrafmt`
+it says so and lets the push through.
+
 ### 11/13/26 — lui writes a handler through as written
 
 `on_change={Width}` became `(value: i64) -> Ev => Width(value)`, a lambda typed by the

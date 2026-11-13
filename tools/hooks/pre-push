@@ -1,0 +1,36 @@
+#!/bin/sh
+# lyra's pre-push hook: refuse a push whose commits CI's format check would fail.
+#
+# CI ends with `build/lyrafmt --check .`, and one unformatted file fails every push after it
+# while every test passes (11/12–11/13: six red runs from one file). This runs the same check
+# on what is being pushed — each pushed commit's `.lyra` files and `.lyrafmtignore`, exported
+# to a scratch directory — rather than on the working tree, so another session's uncommitted
+# edit neither blocks a push nor hides a committed mistake.
+#
+# Installed by the workspace's setup.sh / setup.ps1 (`git config core.hooksPath tools/hooks`).
+# Without `build/lyrafmt` (run ./build.sh) it says so and lets the push through. Skip it
+# once with `git push --no-verify`.
+
+root=$(git rev-parse --show-toplevel) || exit 1
+fmt="$root/build/lyrafmt"
+if [ ! -x "$fmt" ]; then
+  echo "pre-push: no build/lyrafmt, so the format check is skipped (./build.sh builds it)" >&2
+  exit 0
+fi
+
+zero=0000000000000000000000000000000000000000
+status=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # A deleted ref pushes nothing to check.
+  [ "$local_sha" = "$zero" ] && continue
+  scratch=$(mktemp -d) || exit 1
+  git -C "$root" archive "$local_sha" -- '*.lyra' .lyrafmtignore | tar -x -C "$scratch"
+  if ! out=$(cd "$scratch" && "$fmt" --check . 2>&1); then
+    echo "pre-push: $local_ref fails CI's format check (build/lyrafmt --check .):" >&2
+    printf '%s\n' "$out" >&2
+    echo "pre-push: fix with build/lyrafmt -w <file>, commit, and push again" >&2
+    status=1
+  fi
+  rm -rf "$scratch"
+done
+exit $status

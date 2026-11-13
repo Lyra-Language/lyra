@@ -973,7 +973,9 @@ conditions** after the operator and **the body after `=>`** on its own line (09/
 inline block or struct literal opened and closed on the line before a list in it (11/11) — and
 **CI runs `lyrafmt --check .`** over the repo,
 skipping what `.lyrafmtignore` names (the compiler's fixtures, one of which is meant not to
-parse). Its
+parse), and **`tools/hooks/pre-push` runs the same check on each pushed commit** (its
+`.lyra` files exported, not the working tree), refusing a push CI would fail; the workspace's
+`setup.sh` installs it (`core.hooksPath`), `git push --no-verify` skips it once. Its
 value is that it
 keeps finding **compiler** bugs rather than formatter ones: a `let … else` use-after-free, a
 destructuring release that never happened, and an interpolation that swallows source to the
