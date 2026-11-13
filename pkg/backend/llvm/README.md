@@ -43,7 +43,9 @@ Built on `github.com/llir/llvm` v0.3.6 (pure Go, emits **typed** pointers such a
   `_shift_overflow`, `_range_step`, `_float_to_int`, `_constraint`, `_match_failed`,
   `_interior_nul`, `_negative_length`, `_negative_byte_len`, and `lyra_panic` (user
   `panic`). One function per kind; **every call passes its place** (`whereArgs`: an
-  interned `" at file:line:col"` and its length) first. The place is `l.here`, set by
+  interned `" at file:line:col"` and its length) first — on the 68000 the file named from
+  its root (`std/genesis/sprites.lyra`; `placeText`, `modules.RelativeName`), so a ROM
+  carries no builder's path. The place is `l.here`, set by
   `lowerExpr` and per statement in `lowerBlockStmts` through `at`, which restores it on the
   way out — so a site building a trap outside those (an assignment's target,
   `boundsCheckedIndex`) sets it itself. The index trap also takes the index and length

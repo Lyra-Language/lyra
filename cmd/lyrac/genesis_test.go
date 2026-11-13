@@ -149,6 +149,64 @@ let main = () -> void => {
 	}
 }
 
+// A trap's place names its file from the root its module path places it beneath — std's
+// from the folder holding `std/`, the program's from its own — not by where the builder
+// keeps them: the hero carried 185 absolute paths (11/13), ~7 KB of the cartridge and a
+// home folder, and a ROM that changed with where lyra sat.
+func TestGenesis_APlaceNamesItsFileFromItsRoot(t *testing.T) {
+	t.Parallel()
+	genesisToolchainOrSkip(t)
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	dir := t.TempDir()
+	files := map[string]string{
+		"lyra.toml": "target = \"genesis\"\n",
+		"places.lyra": `import std.genesis.sprites
+import parts
+let status = pure () -> ^u16 => unsafe { pointer_at(0xC00004) }
+let main = () -> void => {
+  let s = unsafe { status().read_volatile() }
+  sprites.add(sprites.Sprite { x: 0, y: i16(s), width: 1, height: 1, tile: s, palette: 0,
+    front: false, flip_x: false, flip_y: false })
+  var y: i16 = 0x7FFE
+  y += i16(s & 3)
+  sprites.add(sprites.Sprite { x: parts.grow(i16(s)), y: y, width: 1, height: 1, tile: 0,
+    palette: 0, front: false, flip_x: false, flip_y: false })
+}
+`,
+		"parts/grow.lyra": `module parts
+pub let grow = pure (n: i16) -> i16 => n * 300
+`,
+	}
+	for name, text := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := filepath.Join(dir, "places.bin")
+	if _, stderr, code := captureRun(t, "build", "-o", out, filepath.Join(dir, "places.lyra")); code != 0 {
+		t.Fatalf("build exited %d: %s", code, stderr)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{" at std/genesis/sprites.lyra:", " at parts/grow.lyra:2:", " at places.lyra:"} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Errorf("the ROM names no place %q", want)
+		}
+	}
+	for _, path := range []string{root, dir} {
+		if bytes.Contains(data, []byte(path)) {
+			t.Errorf("the ROM carries the builder's path %s", path)
+		}
+	}
+}
+
 // An index out of bounds writes its index and length with lyra_trap_write_int, whose
 // 64-bit division the 68000 has no instruction for: the ROM must link it from
 // compiler-rt and still reach the panic screen.

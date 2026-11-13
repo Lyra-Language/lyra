@@ -112,24 +112,11 @@ func Resolve(entryFile string, roots []string, opts Options) ([]Unit, []diag.Dia
 // before `src/settings/` beneath `src`, and the editor analysed it twice — every function
 // in it "already defined" at itself (10/30).
 func (r *resolver) addProgramRoot(entry Unit) {
-	if entry.Path == "" {
+	root, ok := programRoot(entry.File, entry.Path)
+	if !ok {
 		return
 	}
-	segments := strings.Split(entry.Path, ".")
 	dir := filepath.Dir(entry.File)
-	// In the module's own directory (one file of it), or the module is the file itself.
-	inDir := trailingDirs(dir, segments)
-	stem := strings.TrimSuffix(filepath.Base(entry.File), filepath.Ext(entry.File))
-	asFile := stem == segments[len(segments)-1] && trailingDirs(dir, segments[:len(segments)-1])
-	var root string
-	switch {
-	case inDir:
-		root = ancestor(dir, len(segments))
-	case asFile:
-		root = ancestor(dir, len(segments)-1)
-	default:
-		return
-	}
 	roots := []string{root}
 	for _, have := range r.roots {
 		if c := filepath.Clean(have); c != filepath.Clean(root) && c != filepath.Clean(dir) {
@@ -137,6 +124,39 @@ func (r *resolver) addProgramRoot(entry Unit) {
 		}
 	}
 	r.roots = roots
+}
+
+// programRoot is the root module path's file was found beneath, when its place says so:
+// the file sits in its module's own directory (one file of it, `<root>/a/b/x.lyra` for
+// `a.b`), or is the module itself (`<root>/a/b.lyra`).
+func programRoot(file, path string) (string, bool) {
+	if path == "" {
+		return "", false
+	}
+	segments := strings.Split(path, ".")
+	dir := filepath.Dir(file)
+	stem := strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))
+	switch {
+	case trailingDirs(dir, segments):
+		return ancestor(dir, len(segments)), true
+	case stem == segments[len(segments)-1] && trailingDirs(dir, segments[:len(segments)-1]):
+		return ancestor(dir, len(segments)-1), true
+	}
+	return "", false
+}
+
+// RelativeName is file named from the root its module path places it beneath, with `/`
+// between its parts — `std/genesis/sprites.lyra` for `std.genesis.sprites`, `face/app.lyra`
+// for a file of `face` — so the name is the same wherever the sources sit. A file its
+// module path does not place (an entry file declaring no module, or one declaring a module
+// its folders don't spell) is named by itself.
+func RelativeName(file, path string) string {
+	if root, ok := programRoot(file, path); ok {
+		if rel, err := filepath.Rel(root, file); err == nil {
+			return filepath.ToSlash(rel)
+		}
+	}
+	return filepath.Base(file)
 }
 
 // trailingDirs reports whether dir's last directories are names, in order.

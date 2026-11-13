@@ -77,3 +77,21 @@ func TestResolve_AModulesOwnDirectoryIsNotARoot(t *testing.T) {
 		t.Fatalf("units = %v, want face's two files and settings' one, each once", paths(units))
 	}
 }
+
+// A file is named from the root its module path places it beneath, wherever that root is.
+func TestRelativeName(t *testing.T) {
+	root := filepath.Join("/", "home", "someone", "lyra")
+	cases := []struct{ file, path, want string }{
+		{"std/genesis/sprites.lyra", "std.genesis.sprites", "std/genesis/sprites.lyra"},
+		{"std/prelude/strings.lyra", "std.prelude", "std/prelude/strings.lyra"},
+		{"src/face/app.lyra", "face", "face/app.lyra"},
+		{"game/main.lyra", "", "main.lyra"},
+		{"game/main.lyra", "main", "main.lyra"},
+		{"game/odd.lyra", "elsewhere", "odd.lyra"},
+	}
+	for _, c := range cases {
+		if got := RelativeName(filepath.Join(root, c.file), c.path); got != c.want {
+			t.Errorf("RelativeName(%s, %q) = %s, want %s", c.file, c.path, got, c.want)
+		}
+	}
+}

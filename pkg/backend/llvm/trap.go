@@ -10,6 +10,7 @@ import (
 	"github.com/llir/llvm/ir/value"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/modules"
 )
 
 // Checked arithmetic — the trap side (Pit-of-Success #2, "checked arithmetic by
@@ -147,18 +148,26 @@ func (l *lowerer) whereArgs(block *ir.Block) []value.Value {
 
 // placeArgs is loc as a trap call's place, a constant.
 func (l *lowerer) placeArgs(loc ast.Location) []value.Value {
-	text := placeText(loc)
+	text := l.placeText(loc)
 	return []value.Value{l.cString(text), i64c(int64(len(text)))}
 }
 
-func placeText(loc ast.Location) string {
+// placeText is loc as a trap names it: ` at <file>:<line>:<col>`. On the 68000 the file is
+// named from its root (modules.RelativeName) — `std/genesis/sprites.lyra`, not the builder's
+// path — so a ROM is the same wherever it was built, carries no home folder, and spends less
+// of the cartridge. A host program keeps the full path, which a terminal can open.
+func (l *lowerer) placeText(loc ast.Location) string {
 	switch {
 	case loc.StartLine <= 0:
 		return ""
 	case loc.File == "":
 		return fmt.Sprintf(" at %d:%d", loc.StartLine, loc.StartCol)
 	}
-	return fmt.Sprintf(" at %s:%d:%d", loc.File, loc.StartLine, loc.StartCol)
+	file := loc.File
+	if l.arch == M68k {
+		file = modules.RelativeName(file, l.res.SymbolTable.ModuleOfFile[file])
+	}
+	return fmt.Sprintf(" at %s:%d:%d", file, loc.StartLine, loc.StartCol)
 }
 
 // trackCaller gives irFn, if its source is `@track_caller`, one hidden parameter after its
@@ -217,7 +226,7 @@ func (l *lowerer) callerPlaceArg(block *ir.Block) value.Value {
 
 // placeRecord is loc's record, one per place.
 func (l *lowerer) placeRecord(loc ast.Location) value.Value {
-	text := placeText(loc)
+	text := l.placeText(loc)
 	g, ok := l.placeRecords[text]
 	if !ok {
 		args := l.placeArgs(loc)

@@ -9,6 +9,22 @@ Newest first.
 
 ## Dated log
 
+### 11/13/26 — A Genesis ROM names a trap's file from its root
+
+Each trap's place named its file as the compiler was given it — an absolute path — so the
+hero's ROM carried 185 copies of `/Users/…/lyra/std/…`: a home folder in every cartridge,
+7.2 KB of it (151,753 bytes used → 144,505), and a ROM that changed with where lyra sat.
+**On the 68000 the file is now named from the root its module path places it beneath**
+(`modules.RelativeName`, factored from the resolver's `addProgramRoot`, which already worked
+that root out): `std/genesis/sprites.lyra`, a module's `face/app.lyra`, and an entry file
+its path does not place by its own name. The front end keeps the full path — it keys
+`ModuleOfFile` and every diagnostic — so only the trap's text changes. **A host program
+keeps the full path**, which a terminal can open; the Z80 already writes no place.
+`TestGenesis_APlaceNamesItsFileFromItsRoot` checks a ROM for each kind and for neither
+path (it fails five ways with the shortening off). Its first program overflowed on every
+run, so LLVM dropped the code after it — the module's trap among it — and the check found
+nothing to look at: a trap test's condition has to be able to go either way.
+
 ### 11/12/26 — E098 sees a call through a function value
 
 `via(zs[0], h)` with `via` calling `h.on_use()`, a field holding `grow`, passed E098 and read
