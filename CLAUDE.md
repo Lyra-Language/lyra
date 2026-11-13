@@ -827,7 +827,8 @@ of Markdown.
   at 5 shows 384 × 216 of the world at full resolution, `width()`/`height()` then in the art's
   pixels); **a HUD at the screen's own pixels** over art scaled up — a `Sprite`'s `unscaled`,
   placed in `screen.full_width()`/`full_height()`, and `std.game.text`, a string drawn as
-  sprites from a `Font`, a grid of glyphs in the sprite art (`TestRun_GameDrawsAHUDAtTheScreensOwnPixels`); **a world smaller than the view is centred in it** (`std.game.camera`'s `inside`,
+  sprites from a `Font`, a grid of glyphs in the sprite art — `add_at` keeping it to a corner,
+  edge or the middle of the screen as it changes size (`TestRun_GameDrawsAHUDAtTheScreensOwnPixels`); **a world smaller than the view is centred in it** (`std.game.camera`'s `inside`,
   `Camera.kept_inside` where a camera starts — the Genesis's camera keeps the corner, its
   planes wrapping); a tile set's art
   is laid out with a pixel's gutter round each tile copied from its edge (`tile_picture`), so

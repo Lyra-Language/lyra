@@ -943,6 +943,7 @@ let main = () -> u8 => {
   screen.load_sprites(4, art)
   let font = Font { sheet_x: 2, glyph_width: 1, glyph_height: 2, columns: 2, count: 2, first: 48 }
   if text.width(font, "10\n1") != 2.0 || font.glyph_of(50) != -1 { return 5 }
+  if text.height(font, "1\n1") != 4.0 { return 7 }
   while screen.running() {
     sprites.clear()
     let red = Sprite { x: 0, y: 0, width: 2, height: 2, sheet_x: 0, sheet_y: 0 }
@@ -950,6 +951,8 @@ let main = () -> u8 => {
     sprites.add(Sprite { red | x: 8, unscaled: true })
     if (text.add(font, 12, 0, "10", true) - 2.0).abs() > 0.001 { return 6 }
     text.add(font, 4, 0, "0")
+    // Kept to the bottom-right corner of the screen's own pixels.
+    text.add_at(font, "1", 2, 2, 0, 0, true)
     screen.show()
   }
   screen.close()
@@ -976,6 +979,9 @@ let main = () -> u8 => {
 		{16, 0, white, "the scaled '0''s corner"},
 		{19, 7, white, "the scaled '0', four times its glyph"},
 		{20, 0, black, "after the scaled text"},
+		{23, 6, green, "'1' kept to the bottom-right corner"},
+		{23, 5, black, "above it"},
+		{22, 7, black, "left of it"},
 	} {
 		if got := frame.at(c.x, c.y); got != c.want {
 			t.Errorf("%s: (%d, %d) is %v, want %v", c.what, c.x, c.y, got, c.want)

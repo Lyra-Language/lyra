@@ -23,6 +23,7 @@ module std.game.text
 //! art at 5. Unscaled or not, letters are sprites: drawn in front of what is added after them,
 //! and `front` (the default) in front of the planes' front cells too.
 
+import std.game.screen
 import std.game.sprites
 import std.game.sprites.{ Sprite }
 
@@ -88,6 +89,29 @@ pub let add = (
   width(font, words)
 }
 
+/// `words` in `font` kept to a place on the screen as its size changes — a HUD's: `across`
+/// and `down` in halves, 0 against the left (or top) edge, 1 the middle, 2 against the right
+/// (or bottom) — then moved by (`x`, `y`), right and down. The screen is `full_width()` ×
+/// `full_height()` when `unscaled`, else `width()` × `height()`, the art's. As [add]
+/// otherwise; whole pixels, so a line in the middle stays sharp.
+pub let add_at = (
+  font: Font,
+  words: string,
+  across: i64,
+  down: i64,
+  x: f32,
+  y: f32,
+  unscaled: bool = false,
+  tint: u32 = 0xFFFFFF,
+  alpha: f32 = 1.0
+) -> f32 => {
+  let wide = f32(if unscaled { screen.full_width() } else { screen.width() })
+  let high = f32(if unscaled { screen.full_height() } else { screen.height() })
+  let left = f32(((wide - width(font, words)) * f32(across) / 2.0).floor()) + x
+  let top = f32(((high - height(font, words)) * f32(down) / 2.0).floor()) + y
+  add(font, left, top, words, unscaled, tint, alpha)
+}
+
 /// How wide `words` is in `font`, its widest line: what [add] would draw, to place it — right
 /// against the screen's edge, or in the middle.
 pub let width = pure (font: Font, words: string) -> f32 => {
@@ -104,6 +128,15 @@ pub let width = pure (font: Font, words: string) -> f32 => {
   if widest == 0 { 0.0 } else {
     f32(widest) * font.glyph_width + f32(widest - 1) * font.spacing
   }
+}
+
+/// How high `words` is in `font`: its lines, and the spacing between them.
+pub let height = pure (font: Font, words: string) -> f32 => {
+  var lines: i64 = 1
+  for c in words {
+    if i64(c) == 10 { lines += 1 }
+  }
+  f32(lines) * font.glyph_height + f32(lines - 1) * font.line_spacing
 }
 
 impl Font {
