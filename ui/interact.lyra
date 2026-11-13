@@ -1078,7 +1078,10 @@ impl Ui {
   /// The element keyed `key` ([Node.keyed]) scrolled into view, once a layout has it: every
   /// scroller round it moved just enough that it shows — a list's chosen item, chosen
   /// elsewhere (on a canvas), kept in sight. Nothing moves where it shows already.
-  pub let reveal_keyed = (self: mut, key: string) -> void => { self.reveal_key_wanted = key }
+  pub let reveal_keyed = (
+    self: mut,
+    key: string
+  ) -> void => { self.reveal_key_wanted = key }
 
   /// The scroller keyed `key` scrolled `y` units down — past its end is its end, where one that
   /// follows its end (`scroll_follow`) follows it again — once a layout has it.
