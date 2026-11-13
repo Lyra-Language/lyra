@@ -5064,6 +5064,18 @@ func (tc *TypeChecker) checkConstructorArity(expr *ast.TupleLiteralExpr, name st
 	return ""
 }
 
+// warnSpacedMinus reports a constructor juxtaposed with a `-` spaced on both sides, `Some - 1`
+// (lyra-W033): it reads as a subtraction and is `Some(-1)`, which compiles. Asked where the
+// constructor takes a payload — a data constructor with one, a `type`'s, a named tuple's.
+func (tc *TypeChecker) warnSpacedMinus(expr *ast.TupleLiteralExpr, name string) {
+	if expr.SpacedMinus == "" {
+		return
+	}
+	tc.addWarning(expr.GetLocation(), diag.CodeSpacedNegatedOperand,
+		"`%s - %s` applies %s to `-%s`; it is not a subtraction. Write `%s(-%s)` for the payload, or `(%s) - %s` to subtract",
+		name, expr.SpacedMinus, name, expr.SpacedMinus, name, expr.SpacedMinus, name, expr.SpacedMinus)
+}
+
 func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.Type {
 	name := expr.Name
 	if name == "" {
@@ -5092,6 +5104,16 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 					break
 				}
 			}
+			// `Empty - 1` on a constructor with no payload can only have meant the
+			// subtraction, so it is refused once, as that — not as a payload error beside a
+			// negation of the wrong type (lyra-W033's note).
+			if expr.SpacedMinus != "" && len(ctor.Params) == 0 {
+				tc.addError(expr.GetLocation(), SeverityError,
+					"`%s - %s` applies %s to `-%s`, and %s takes no payload: a constructor takes the operand written after it, so this is not a subtraction. Write `(%s) - %s` to subtract",
+					name, expr.SpacedMinus, name, expr.SpacedMinus, name, name, expr.SpacedMinus)
+				return dt
+			}
+			tc.warnSpacedMinus(expr, name)
 			voidPayload := tc.checkConstructorArity(expr, name, ctor)
 			// A *generic* data type's parameters are solved from the payload
 			// arguments, the constructor-call analogue of solving a generic
@@ -5429,6 +5451,7 @@ func conversionSpellingFor(t types.Type) (string, bool) {
 // TupleType would be unsound: two unrelated literals sharing a name could
 // compare equal despite different shapes.
 func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, name string) types.Type {
+	tc.warnSpacedMinus(expr, name)
 	decl, ok := tc.symTable.LookupTypeFrom(name, expr.GetLocation())
 	if !ok {
 		// A qualified name already refused (`shapes.Nope(1)`) says nothing more.

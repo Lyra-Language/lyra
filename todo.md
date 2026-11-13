@@ -574,9 +574,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[DONE 11/03] std's collections, dates and randomness construct through their types**:
   `HashMap.new()`, `Set.new()`, `Rng.seeded(n)`, `PlainDate.new(…)`, `Duration.days(n)`.
   (COMPLETED.md, 11/03.)
-- **[OPEN] Operator overload on a `data` type:** with a `Sub` impl, `Empty - 1` parses as
-  `Empty(-1)`. Contrived; if it bites, lint it rather than change the grammar.
-- **[IDEA] Warn on `Some - 1` with spaces on both sides**, which reads as subtraction.
+- **[DONE 11/13] `Empty - 1` on a `data` type with a `Sub` impl** is still `Empty(-1)`, as
+  the entry said to keep it; spaced so, it is one error pointing at `(Empty) - 1`, and
+  `Some - 1` (which compiles) is `lyra-W033` (COMPLETED.md 11/13).
 - **[IDEA] Admit compound juxtaposed operands** (`Ok f(y)`). Blocked by the
   parameter-position race with destructured lambda parameters; not worth a fragile parse.
   Verify against the corpus, not tree-sitter's "unnecessary conflict" warnings.

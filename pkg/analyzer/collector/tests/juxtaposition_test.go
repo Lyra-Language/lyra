@@ -73,6 +73,24 @@ func TestJuxtaposition_SomeNegativeOneIsApplication(t *testing.T) {
 	}
 }
 
+// …but written with a space on both sides of the `-`, it reads as the subtraction it is not,
+// and only the collector sees the spacing: it records the operand on the node
+// (TupleLiteralExpr.SpacedMinus) for the typechecker to report (lyra-W033). The `-` against
+// its operand is the application's spelling, and records nothing.
+func TestJuxtaposition_ASpacedMinusIsRecorded(t *testing.T) {
+	for _, c := range []struct{ src, ctor, want string }{
+		{`let a = Some - 1`, "Some", "1"},
+		{`let a = Empty - Full(1)`, "Empty", "Full(1)"},
+		{`let a = Some  -  x`, "Some", "x"},
+		{`let a = Some -1`, "Some", ""},
+	} {
+		lit := assertAppliedConstructor(t, firstBindingValue(t, c.src), c.ctor, 1)
+		if lit.SpacedMinus != c.want {
+			t.Errorf("%s: SpacedMinus = %q, want %q", c.src, lit.SpacedMinus, c.want)
+		}
+	}
+}
+
 // A SCREAMING_CASE name is a constant, lexically distinct from a constructor, so
 // arithmetic on it is untouched. This is the property that makes the decision
 // above safe.

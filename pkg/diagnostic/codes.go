@@ -1388,4 +1388,14 @@ const (
 	// run left to right, so this is the rule, but it reads as the opposite and drops the
 	// call's work silently. Binding the call's result first is the fix.
 	CodeCopiedBeforeMut = "lyra-W032"
+
+	// CodeSpacedNegatedOperand: a constructor taking a payload followed by `-` with a space on
+	// both sides — `Some - x`, `Cents - 1` — which reads as a subtraction and is a juxtaposed
+	// application, `Some(-x)`. `Err -1`, with the `-` against its operand, is the
+	// application's own spelling and is not reported. A lint rather than a grammar change:
+	// juxtaposition takes a negated operand on purpose, and the space is the only sign of
+	// which was meant. The collector records the spacing (TupleLiteralExpr.SpacedMinus) and
+	// the typechecker reports it; on a constructor with no payload (`Empty - 1`) only the
+	// subtraction can have been meant, so that is one error instead, not this warning.
+	CodeSpacedNegatedOperand = "lyra-W033"
 )

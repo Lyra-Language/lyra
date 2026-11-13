@@ -3,6 +3,7 @@ package expressions
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -48,8 +49,24 @@ func collectAppliedConstructorExpr(node *sitter.Node, ctx *collector_ctx.Ctx, lo
 		return collectNullaryConstructorExpr(ctorNode, ctx, loc)
 	}
 	return &ast.TupleLiteralExpr{
-		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-		Name:     ctx.TypeNameText(ctorNode),
-		Elements: []ast.Expression{CollectExpression(valueNode, ctx)},
+		ExprBase:    ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+		Name:        ctx.TypeNameText(ctorNode),
+		Elements:    []ast.Expression{CollectExpression(valueNode, ctx)},
+		SpacedMinus: spacedMinus(ctorNode, valueNode, ctx),
 	}
+}
+
+// spacedMinus is the operand's text when the juxtaposed operand is a negation whose `-` has a
+// space on both sides (`Empty - 1`), which reads as a subtraction; "" otherwise. `Err -1` —
+// the `-` against its operand — is how a negative payload is written. The typechecker
+// reports it (TupleLiteralExpr.SpacedMinus).
+func spacedMinus(ctorNode, valueNode *sitter.Node, ctx *collector_ctx.Ctx) string {
+	if valueNode.Kind() != "negation" {
+		return ""
+	}
+	operand := cst.Field(valueNode, "operand")
+	if operand == nil || ctorNode.EndByte() >= valueNode.StartByte() || operand.StartByte() <= valueNode.StartByte()+1 {
+		return ""
+	}
+	return ctx.NodeText(operand)
 }

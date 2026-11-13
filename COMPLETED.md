@@ -9,6 +9,27 @@ Newest first.
 
 ## Dated log
 
+### 11/13/26 — `Empty - 1` says it is not a subtraction
+
+Juxtaposition takes a negated operand, so `Err -1` is `Err(-1)`, and so is `Empty - 1`, even
+on a data type with a `Sub` impl where the author meant the subtraction. That gave two
+misleading errors, "Empty takes no payload" and "cannot negate non-numeric type Level". On a
+payload constructor, `Some - 1` compiled as `Some(-1)` and nothing was said.
+
+The entry said to lint it rather than change the grammar. **A constructor followed by a `-`
+with a space on both sides is now reported once, by the typechecker**, which knows whether the
+constructor takes a payload. Only the collector sees the spacing, so it records the operand's
+text on the node (`TupleLiteralExpr.SpacedMinus`).
+- With no payload, only the subtraction can have been meant. It is one error pointing at
+  `(Empty) - Full(1)`, which parses as the subtraction and dispatches to the impl. The arity
+  check and the operand's inference are skipped, so neither old error appears.
+- With a payload, the program compiles. It is `lyra-W033`, naming `Some(-1)` and `(Some) - 1`,
+  for a data constructor, a `type`'s (`Cents - 1`) and a named tuple's.
+
+`Err -1` and `Some(-1)` are quiet. A sweep of 101 programs across lyra, Vega, Sheliak and
+Termina found nothing either fires on. A first version warned from the collector, which could
+not tell the two cases apart, so the no-payload case kept both old errors beside the warning.
+
 ### 11/13/26 — `Self` in an `impl Type` block is the block's type
 
 `let make = () -> Self` in `impl Dice` was refused, "return type mismatch: expected Self, got
