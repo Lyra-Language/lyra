@@ -111,6 +111,8 @@ type TypeChecker struct {
 	stampedDecls map[*ast.TypeDeclStmt]bool
 	// aliasedTypeUses: AliasedTypeUses.
 	aliasedTypeUses map[string]map[string]bool
+	// constructorTypeUses: ConstructorTypeUses.
+	constructorTypeUses map[string]map[string]bool
 	// circularNewtypes are newtypes whose base chain leads back to themselves, found up
 	// front by checkNewtypeCycles. Resolution refuses to hand one back, which is what
 	// makes every newtype-stripping walk in the compiler terminate — see that function.
@@ -157,13 +159,14 @@ func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTabl
 		// The entry module's scope, not the global one: top-level declarations live in
 		// their module's scope now, and checkInModule swaps in the right one per
 		// statement — this is only the starting point.
-		scope:            symTable.EntryScope(),
-		resolvedTypes:    make(map[string]types.Type),
-		inferring:        make(map[ast.Expression]bool),
-		resolvingTypes:   make(map[string]bool),
-		circularNewtypes: make(map[string]bool),
-		stampedDecls:     make(map[*ast.TypeDeclStmt]bool),
-		aliasedTypeUses:  map[string]map[string]bool{},
+		scope:               symTable.EntryScope(),
+		resolvedTypes:       make(map[string]types.Type),
+		inferring:           make(map[ast.Expression]bool),
+		resolvingTypes:      make(map[string]bool),
+		circularNewtypes:    make(map[string]bool),
+		stampedDecls:        make(map[*ast.TypeDeclStmt]bool),
+		aliasedTypeUses:     map[string]map[string]bool{},
+		constructorTypeUses: map[string]map[string]bool{},
 	}
 }
 
@@ -3260,6 +3263,14 @@ func (tc *TypeChecker) declaredName(written, key string, loc ast.Location) strin
 // function through, which the call's rewrite replaced (noteTypeNameUse) — uses lyra-W004 can
 // no longer see in the source it reads.
 func (tc *TypeChecker) AliasedTypeUses() map[string]map[string]bool { return tc.aliasedTypeUses }
+
+// ConstructorTypeUses maps a file to the declared names of the data types whose constructors
+// it used — `Pen(3)`, `Eraser`, `Pen(n) =>` — which name the type nowhere. An import listing
+// only the type (`import shapes.{ Tool }`) is what admits them, so lyra-W004 must count them
+// as its use: until 11/13 it called `Tool` unused, and removing it left `Pen` undefined.
+func (tc *TypeChecker) ConstructorTypeUses() map[string]map[string]bool {
+	return tc.constructorTypeUses
+}
 
 // resolveTypeIfKnown resolves an UnresolvedType only when the name is actually
 // in the symbol table, returning t unchanged and emitting no diagnostic when it

@@ -874,6 +874,11 @@ func (tc *TypeChecker) declaringDataType(ctorName string, loc ast.Location) (*as
 	if !ok {
 		return nil, types.DataType{}, false
 	}
+	// The constructor's use is its type's, for lyra-W004 (ConstructorTypeUses).
+	if tc.constructorTypeUses[loc.File] == nil {
+		tc.constructorTypeUses[loc.File] = map[string]bool{}
+	}
+	tc.constructorTypeUses[loc.File][decl.Name] = true
 	return decl, dt, true
 }
 

@@ -9,6 +9,25 @@ Newest first.
 
 ## Dated log
 
+### 11/13/26 — lyra-W004 counts a constructor's use for its type
+
+Termina found `import ui.backend.{ Cursor, Hand }`, with `Arrow` used and `Cursor` written
+nowhere, reported `Cursor` unused. Removing it left `Arrow` undefined (lyra-E035). An import
+listing a data type admits its constructors, so a file using them uses the import, but W004
+asked only whether the type's *name* was written. Reduced: `import shapes.{ Tool }` with
+`Pen(3)` drew the warning, and taking its advice gave "undefined tuple type Pen". (Where
+another name from the module is listed, as `Hand` was, any import of it admits the module's
+constructors, so there the warning was right.)
+
+**`declaringDataType`**, the typechecker's one way from a constructor to its type,
+construction and pattern alike, **records the type's declared name for the file it is used
+in** (`ConstructorTypeUses`). The driver merges that into the names the check spares, beside
+the dispatched traits and the aliased types. It is per file: a type whose constructors only
+another file uses is still unused here, as before. Tested in
+`pkg/driver/constructor_import_use_test.go` with a payload constructor, a nullary one and a
+pattern used (no warning) and a type whose constructors go unused (warned), and the first fails
+without the fix.
+
 ### 11/13/26 — `std.io.exists`
 
 Termina asked whether a font was installed by listing its directory and looking for the name,

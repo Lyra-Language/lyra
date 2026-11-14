@@ -75,6 +75,10 @@ not a formality.
 
 Package management, versioning and separate compilation are out of scope by decision.
 
+- **[DONE 11/13] `lyra-W004` counts a constructor's use for its imported type** — an import
+  listing only `Tool` and using `Pen(3)` was called unused, and removing it left `Pen`
+  undefined (Termina; COMPLETED.md 11/13).
+
 - **[DONE 10/29] `lyra-W004` counts a turbofish argument as a use** (`layout::<StudioEvent>(…)`;
   COMPLETED.md, 10/29).
 

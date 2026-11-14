@@ -453,8 +453,8 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	// never writes that module's name, so the syntactic check cannot see the use.
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUnusedImports(program, checker.ImportUse{
 		Modules: tc.UFCSModules(),
-		Names: mergeNameUses(mergeNameUses(mergeNameUses(mergeNameUses(tc.DispatchedTraits(), aliasedConstructorUses),
-			aliasedTraitUses), tc.AliasedTypeUses()), qualifiedUses),
+		Names: mergeNameUses(mergeNameUses(mergeNameUses(mergeNameUses(mergeNameUses(tc.DispatchedTraits(), aliasedConstructorUses),
+			aliasedTraitUses), tc.AliasedTypeUses()), qualifiedUses), tc.ConstructorTypeUses()),
 		Callees: tc.UFCSCallees(),
 		Exports: func(file, name string) []string {
 			return typechecker.UFCSReachableExporters(symTable, file, name)
