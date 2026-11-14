@@ -42,6 +42,7 @@ import std.chips.music.{
 }
 import std.chips.sn76489.{ attenuation_byte }
 import std.chips.ym2612.{ FmPatch, key_on_code }
+import std.genesis.vdp
 
 /// Every PSG channel silent — a PSG may power up sounding — and the Z80's driver loaded and
 /// started, the YM2612 its to write. A game calls this first.
@@ -86,6 +87,8 @@ pub let init = () -> void => {
   }
   player = new_player()
   music = new_music()
+  // The driver reads the cartridge: a DMA from it holds the Z80's bus from now on.
+  vdp.guard_dma(true)
 }
 
 impl Effect {

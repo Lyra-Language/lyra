@@ -294,6 +294,57 @@ pub let end_lines = () -> void => set_register(15, 2)
 /// the VDP moves a plane right by its scroll, so the view at x is a scroll of -x.
 pub let line_word = pure (x: i32) -> u16 => u16((1024 - (x & 1023)) & 1023)
 
+/// `words` words from byte `source` of the 68000's memory (even; the cartridge's ROM, or RAM)
+/// to byte `address` of VRAM, by the VDP's DMA: the 68000 waits while the VDP copies, at many
+/// times the speed of writing them — what streaming a sprite's frames needs ([sprites.streamed]).
+/// In the vertical blank, where the VDP copies fastest and nothing shown tears. A source
+/// crossing a 128 KB boundary, which the VDP's source address cannot, is sent in two parts
+/// ([dma_run]). With the Z80's driver running ([guard_dma]), its bus is held for the copy: the
+/// Z80 reads the cartridge too.
+pub let dma_to_vram = (source: u32, address: u16, words: u16) -> void => {
+  if words == 0 { return }
+  let held = hold_vblank()
+  if dma_guarded { unsafe {
+    z80_bus().write_volatile(0x0100)
+    while (z80_bus().read_volatile() & 0x0100) != 0 {}
+  } }
+  set_register(1, mode | 0x10)
+  var from = source
+  var at = address
+  var left = words
+  while left > 0 {
+    let run = dma_run(from, left)
+    set_register(19, u8(run & 0xFF))
+    set_register(20, u8(run >> 8))
+    set_register(21, u8((from >> 1) & 0xFF))
+    set_register(22, u8((from >> 9) & 0xFF))
+    set_register(23, u8((from >> 17) & 0x7F))
+    // The address with the DMA bit (CD5) set: the copy starts with the second word.
+    let port = control_port()
+    unsafe {
+      port.write_volatile(0x4000 | (at & 0x3FFF))
+      port.write_volatile(0x0080 | (at >> 14))
+    }
+    from += u32(run) * 2
+    at = at.wrapping_add(run.wrapping_mul(2))
+    left -= run
+  }
+  set_register(1, mode)
+  if dma_guarded { unsafe { z80_bus().write_volatile(0) } }
+  release_vblank(held)
+}
+
+/// How many of `words` words from byte `source` one DMA can copy: up to the next 128 KB
+/// boundary of the source, which the VDP's source counter does not cross.
+pub let dma_run = pure (source: u32, words: u16) -> u16 => {
+  let room = 0x10000 - ((source >> 1) & 0xFFFF)
+  if u32(words) > room { u16(room) } else { words }
+}
+
+/// Whether [dma_to_vram] holds the Z80's bus while it copies: `std.genesis.sound.init` says
+/// so once its driver runs. Off before — a Z80 still in reset answers no bus request.
+pub let guard_dma = (on: bool) -> void => { dma_guarded = on }
+
 /// The vertical blank interrupt held off, answering whether it was on — around a run of
 /// writes from the game's loop: an address, then its data. The interrupt's own writes (the
 /// sprite list) move the VDP's address, and a run they land in goes on at theirs: a map
@@ -343,6 +394,9 @@ var mode: u8 = 0x04
 var line_mode: u8 = 0
 var banded: u8 = 0
 
+/// Whether [dma_to_vram] takes the Z80's bus ([guard_dma]).
+var dma_guarded: bool = false
+
 /// The first word of an address command for each memory; the second carries the
 /// address's top two bits and the rest of the code.
 const VRAM_WRITE: u16 = 0x4000
@@ -370,3 +424,6 @@ let control_port = pure () -> ^mut u16 => unsafe { pointer_at(0xC00004) }
 let data_port = pure () -> ^mut u16 => unsafe { pointer_at(0xC00000) }
 
 let data_long_port = pure () -> ^mut u32 => unsafe { pointer_at(0xC00000) }
+
+/// The Z80's bus request: 0x0100 written asks for its bus, read back clear once granted.
+let z80_bus = pure () -> ^mut u16 => unsafe { pointer_at(0xA11100) }
