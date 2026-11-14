@@ -606,9 +606,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   `tools/lui`, not a Lyra grammar change (COMPLETED.md, 10/19).
 - **[DONE 10/21] `.lui`: components called across files** — `<import src="other.lui"/>`
   reads its components, checks calls and imports the module (COMPLETED.md, 10/21).
-- **[OPEN] `bindings.imgui.ui`: what the tree lacks.** Keys for repeated labels (ImGui's
+- **[DEFERRED] `bindings.imgui.ui`: what the tree lacks.** Keys for repeated labels (ImGui's
   `push_id`), tooltips, tables, child regions, an integer slider, and layout past `Row` and
-  `Form`. Grow it as Vega's next dialogs and panels move to markup.
+  `Form`. No caller since Vega and Termina moved to `ui` (11/13): only `examples/imgui` uses it.
 - **[DONE 10/27] A float literal array's element times an f32** — unannotated it is refused
   since 10/21 (the array is `[]f64`); with the loop variable written, `for k: f32 in [-1.0,
   1.0]`, the literals now settle at `f32` (COMPLETED.md, 10/27).
@@ -616,21 +616,21 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   10/27).
 - **[DONE 11/09] `std.io`: walking a directory tree** — `walk_dir(root, keep)`; lyrafmt, lui
   and lyra-md's site moved onto it (COMPLETED.md, 11/09).
-- **[OPEN] Termina's `font_files` walks by hand** (`settings.lyra`): depth-limited, a
-  directory told by a name without a `.`, links followed. `walk_dir` with a depth-counting
-  `keep` would serve it once fonts' symlinked folders are known not to matter.
+- **[DONE 11/13] Termina's `font_files` walks by `walk_dir`**, its depth and its folders
+  without a `.` asked by `keep`; it no longer follows a linked folder, which no font
+  directory on macOS or Debian has (COMPLETED.md 11/13). Ubuntu's desktop is unchecked.
 - **[OPEN] `std.io`: whether a file exists.** Termina's `exists` lists the parent
   directory to ask; Vega's `game_code.lyra` calls the `dir_names` builtin directly where
   `read_dir` would do. A struct-free `access(path, F_OK)` would answer the first.
-- **[OPEN] `bindings.imgui.ui`: install a tree in the Mac's bar.** Vega's `menus.lyra` and
-  Termina's `menus/menus.lyra` each walk a menus tree into `bindings.menubar` (items by tag,
-  greying synced each frame). One shared function could serve both, and Vega's would then
-  read `Shortcut.alt`.
+- **[DONE] Menus installed in the Mac's bar by one function** — `ui` does it for every
+  program (`ui/sdl3.lyra` installs `App.menus` through `bindings.menubar`), so Vega and
+  Termina no longer walk their own (found 11/13).
 - **[DONE 11/11] `bindings.imgui`: the list clipper, payloads, arrays and `IsMousePosValid`**
   — generated: NULL defaults left out, pointer-and-count as `[]T`/`[]string`/`[]u8`, `Maybe`
   handles, `ImVector` lengths, `ListClipper.new()` (COMPLETED.md, 11/11). `set_layout_file`
   had already answered `imgui.ini`.
-- **[OPEN] `bindings.imgui`: what is still unbound** is listed at the end of `generated.lyra`.
+- **[DEFERRED] `bindings.imgui`: what is still unbound** (no caller since Vega and Termina
+  moved to `ui`, 11/13) is listed at the end of `generated.lyra`.
   Left: the `…Scalar` widgets (`ImGuiDataType` and a `void *p_data`: a wrapper per width,
   `drag_i64`, `slider_u8`, would close them), and a callback that must be given (`InputText`'s,
   `PlotLinesCallback`), which `lyra-E066` keeps to a `pub extern` per function. Not wanted:

@@ -9,6 +9,27 @@ Newest first.
 
 ## Dated log
 
+### 11/13/26 — Termina's font walk is `walk_dir`'s
+
+Termina's `font_files` walked the font directories by hand: two levels down, a directory
+told by a name without a `.`, symlinked folders followed. It is now `std.io.walk_dir` with a
+`keep` asking the same two questions. A font file is kept, and so is a name with no `.` within
+`FONT_DEPTH` (2) of the root. Then only the fonts are taken. The open question was the one
+difference, `walk_dir` never walking a linked folder, and **no font directory checked reaches
+a font through one**. This Mac's eight directories have one link, to a file, which `walk_dir`
+lists. Vega's Debian image, with DejaVu, has none. Ubuntu's desktop (the VM was down) is
+unchecked.
+
+Checked by a probe holding the old walk beside the new one: the same 662 files on this Mac.
+On a tree made for it, both skip a font three directories down and a folder with a `.`, both
+take an upper-case `.OTF` and a linked font file, and they part only at a font inside a linked
+folder.
+
+The three `bindings.imgui` entries beside it were retagged. The tree's growth and what is
+unbound are `[DEFERRED]`, since nothing outside `examples/imgui` uses `bindings.imgui.ui` now
+that Vega and Termina are on `ui`. Installing the menus in the Mac's bar is done, by `ui`:
+`ui/sdl3.lyra` installs `App.menus` through `bindings.menubar` for every program.
+
 ### 11/13/26 — `parse_strict`: a whole line, every flag declared
 
 Sheliak's three command-line programs each hand-rolled an argument loop, because neither of
