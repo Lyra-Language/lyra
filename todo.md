@@ -619,9 +619,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[DONE 11/13] Termina's `font_files` walks by `walk_dir`**, its depth and its folders
   without a `.` asked by `keep`; it no longer follows a linked folder, which no font
   directory on macOS or Debian has (COMPLETED.md 11/13). Ubuntu's desktop is unchecked.
-- **[OPEN] `std.io`: whether a file exists.** Termina's `exists` lists the parent
-  directory to ask; Vega's `game_code.lyra` calls the `dir_names` builtin directly where
-  `read_dir` would do. A struct-free `access(path, F_OK)` would answer the first.
+- **[DONE 11/13] `std.io.exists(path)`**, over `access(path, F_OK)`, and Termina's own
+  is gone (COMPLETED.md 11/13). Left: Vega's `game_code.lyra` still calls `dir_names` where
+  `read_dir` would do, harmlessly, as it matches names; the file was mid-edit elsewhere.
 - **[DONE] Menus installed in the Mac's bar by one function** — `ui` does it for every
   program (`ui/sdl3.lyra` installs `App.menus` through `bindings.menubar`), so Vega and
   Termina no longer walk their own (found 11/13).

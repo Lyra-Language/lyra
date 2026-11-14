@@ -192,6 +192,22 @@ pub let is_symlink = (path: string) -> bool => {
 pub let is_executable = (path: string) -> bool =>
   unsafe { access(path.cstring_ptr(), X_OK) } == 0
 
+/// Whether anything is at `path` — a file, a directory, or a link to one — without reading
+/// it: Termina asking which of a font's known places holds it, where reading the font would
+/// read all of it.
+///
+/// **It is `access(path, F_OK)`**, `is_executable`'s call with the one mode that asks about
+/// no permission at all, so it needs no struct (this module's header). It follows a link,
+/// so a link to nothing is `false`, as nothing could be read there; `is_symlink` asks about
+/// the link itself. Like any lookup of a path it needs each directory on the way searchable,
+/// and answers `false` where one is not.
+///
+/// ```
+/// let font = if exists("/System/Library/Fonts/SFNSMono.ttf") { "SF Mono" } else { "Menlo" }
+/// ```
+pub let exists = (path: string) -> bool =>
+  unsafe { access(path.cstring_ptr(), F_OK) } == 0
+
 /// The file at `path` overwritten with `contents`, answering whether all of it landed.
 ///
 /// The file is created if it does not exist (mode 0644, before the process umask) and
@@ -284,6 +300,10 @@ const FILE_MODE: u32 = 420
 /// as are `R_OK` (4) and `W_OK` (2) beside it — the one POSIX access constant trio that
 /// never varies.
 const X_OK: i32 = 1
+
+/// `access`'s "is anything there" question, asking about no permission: 0 everywhere, as
+/// POSIX defines it.
+const F_OK: i32 = 0
 
 /// `rwxr-xr-x`: `FILE_MODE` with the three execute bits set, for a copy of an executable.
 /// Octal 0755 as a value, on the rule FILE_MODE above states: 7*64 + 5*8 + 5.

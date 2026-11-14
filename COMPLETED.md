@@ -9,6 +9,21 @@ Newest first.
 
 ## Dated log
 
+### 11/13/26 — `std.io.exists`
+
+Termina asked whether a font was installed by listing its directory and looking for the name,
+because std had no way to ask, and reading the font to find out would read all of it.
+**`std.io.exists(path)`** is `access(path, F_OK)`, `is_executable`'s call with the mode that
+asks about no permission, so it needs no struct (`stat`'s mode offset is the `dirent` problem
+again). It follows a link, so a link to nothing is `false`; `is_symlink` asks about the link.
+`TestExec_Exists` covers a file, a directory, a link to each, a broken link, a missing path and
+a name below a file. Termina's own `exists` is gone, and on the 25 font paths Termina and
+`ui.text` ask about, std's answers are the old one's (9 present on this Mac).
+
+The entry's other half, Vega's `game_code.lyra` calling the `dir_names` builtin where
+`read_dir` would do, is left. It is harmless, since the loop matches names and neither `.`
+nor the order matters, and the file had another session's edits in it.
+
 ### 11/13/26 — Termina's font walk is `walk_dir`'s
 
 Termina's `font_files` walked the font directories by hand: two levels down, a directory

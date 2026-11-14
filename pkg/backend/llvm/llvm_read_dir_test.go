@@ -158,6 +158,51 @@ let main = () -> void => {
 	}
 }
 
+// `std.io.exists` over `access(path, F_OK)`: anything at the path, a file or a directory,
+// through a link to either — and not a link to nothing, which `is_symlink` still calls a link.
+func TestExec_Exists(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	file := filepath.Join(dir, "real.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(dir, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	toFile := filepath.Join(dir, "to_file")
+	toDir := filepath.Join(dir, "to_dir")
+	broken := filepath.Join(dir, "broken")
+	if err := os.Symlink(file, toFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sub, toDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "gone"), broken); err != nil {
+		t.Fatal(err)
+	}
+
+	src := `module main
+import std.io.{ exists }
+let main = () -> void => {
+  let args = program_args()
+  for i in 1..<args.len() { println(exists(args[i])) }
+}`
+	bin := preludeBinary(t, src)
+	out, err := command(bin, file, sub, toFile, toDir, broken,
+		filepath.Join(dir, "no-such-path"), filepath.Join(file, "under-a-file")).Output()
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	// real file, real directory, a link to each, a broken link, a path that is nothing, and a
+	// name below a file (which no directory holds).
+	if want := "true\ntrue\ntrue\ntrue\nfalse\nfalse\nfalse\n"; string(out) != want {
+		t.Errorf("stdout:\n%s\nwant:\n%s", out, want)
+	}
+}
+
 // `std.io.walk_dir` against Go's `filepath.WalkDir` over one tree: nested directories,
 // empty ones, dotfiles, names that sort differently by byte than by eye, and four kinds of
 // link — to a file, to a directory, to nothing, and to an ancestor (which a walk that

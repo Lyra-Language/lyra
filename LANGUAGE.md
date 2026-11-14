@@ -1094,6 +1094,7 @@ lyrac doc std/prelude/prelude.lyra -o ../lyra-website/src/content/docs/reference
 | `write_bytes(path, bytes: []u8) -> bool` | `std.io`, over `creat` | `write_file` for data that is not text (`read_bytes`'s pair); same loop |
 | `read_dir(path) -> Maybe<[]string>` | `std.io`, over the `dir_names` builtin | names only, sorted, without `.`/`..`; dotfiles kept; `None` if unopenable, `Some([])` when empty |
 | `dir_names(path) -> Maybe<[]string>` | builtin | what libc reported, in its order, `.`/`..` included. A builtin because `struct dirent`'s name offset and `readdir`'s symbol both differ by platform, and Lyra cannot ask which it is on; EffectInput |
+| `exists(path) -> bool` | `std.io`, over `access(path, F_OK)` | anything there — a file, a directory, a link to one — without reading it; a link to nothing is `false` |
 | `is_symlink(path) -> bool` | `std.io`, over `readlink` | the link itself, not its target (`opendir` follows one); `false` for a missing path, `true` for a broken link |
 | `walk_dir(root, keep: (string) -> bool) -> Maybe<[]string>` | `std.io`, over `read_dir` + `is_symlink` | every file beneath `root`, paths `root.join(…)`, sorted depth first (`filepath.WalkDir`'s order); `keep` asked of each entry's path before it is read — `false` skips a file, prunes a directory; never asked of `root`; dotfiles kept unless `keep` drops them; a symlinked directory neither walked nor listed, any other link listed; an unreadable directory beneath `root` listed as a file; `None` when `root` is not a readable directory |
 
