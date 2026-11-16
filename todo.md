@@ -759,9 +759,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   window, `Subscription.InWindow(key, subs)` hears one beside it, and `WindowSpec.title_bar`
   draws its own bar (COMPLETED.md 11/16). Untried: a drawn side window's bar on a Linux desktop,
   as the main window's (below).
-- **[OPEN] `TestRun_UiResizeSettles` runs near its one-minute budget** — 45–48 s alone at
-  `-O0` on an M-series Mac (10/27), so a loaded parallel suite can time it out. Measure a pass
-  and set the budget from it, or play fewer resizes.
+- **[DONE 11/16] `TestRun_UiResizeSettles` ran near its budget** — 378 resizes now, not 1,734,
+  10 s alone where it took 90; the budget two minutes, set from a measured pass (COMPLETED.md
+  11/16).
 - **[OPEN] Several windows on Linux are unverified** — X11 placing a torn-off window where
   the tab was let go, SDL's capture carrying the drag past the window, and Wayland, where no
   window is placed and so no tab crosses windows. Play `examples/ui/windows.lyra` in the VM.

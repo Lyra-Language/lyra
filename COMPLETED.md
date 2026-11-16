@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 11/16/26 — `TestRun_UiResizeSettles` plays 378 resizes, not 1,734
+
+The test resized the Layouts demo 1,734 times. It swept every 0.75 of a unit from 1300 wide
+to 300, then jittered 400 times across the 560 and 860 breakpoints. Each pass lays the whole
+demo out afresh, about 13 ms at `-O0`. It took 25 s of CPU, and 90 s of wall time alone on a
+loaded Mac today; it had already run past its first one-minute limit beside CI's suite, and
+10/29 raised the limit to five.
+
+**What the count was for.** The 10/21 entry says the demo's freeze was the live-resize watch,
+not the layout: headless, the layout never hung, and every iterative loop in it is bounded.
+So the sweep guards against a hang no particular width has caused, and its fineness bought
+nothing specific. Now:
+- **The sweep:** every 3.25 units, which still lands on every quarter of a unit.
+- **The breakpoints:** 70 jitters, covering each of the 7 and 5 offsets several times.
+- **The total:** 378 passes in 5 s of CPU; the test takes 10 s alone.
+
+The budget is two minutes, set from that measured pass at over twenty times the run.
+
+**The cascade was looked at first.** A profile put about 15% of a pass in
+`ui.style.applied`: each element is matched against every rule, and the eight theme rules
+that are selector lists are split for each. A rewrite without allocations made no measurable
+difference (27 s against 25 s of CPU, within the noise), so it was not kept. Laying out the
+whole tree at each new size is the cost, which is what the test exists to exercise.
+
 ### 11/16/26 — Several windows: AccessKit, subscriptions and a drawn title bar for each
 
 Three things a window beside the main one did not have: VoiceOver heard the main window alone,
