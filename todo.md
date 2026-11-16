@@ -793,10 +793,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[PARTIAL] What raw input left out** (`ui/TERMINAL.md` §3): the keypad's keys, a `cursor`
   style property and the Terminal role built 11/16 (COMPLETED.md). Left: a key's repeat flag and
   physical code, which SDL's key event in `bindings.sdl3` does not carry and nothing reads yet.
-- **[OPEN] `Fonts.cells` looks every cell up each frame**: the faces' character maps and
-  advances through HarfBuzz, a few calls a cell — 12,000 cells on a 200×60 screen. A cache by
-  face order and character would make a frame of an unchanged screen cost lookups only;
-  measure under Termina first.
+- **[DONE 11/16] `Fonts.cells` measured: no cache needed** — a 200×60 screen costs about 1 ms
+  of CPU a frame at `-O2`, and a cache by face order and character made no difference: a
+  HarfBuzz lookup costs what a hash map's does (COMPLETED.md 11/16).
 - **[OPEN] `ui.text`'s hinting is light everywhere unless a program says.** macOS draws
   text unhinted; `ui.text` cannot ask which platform it is on (it calls no platform library),
   so the default belongs to whatever opens the window (`ui.sdl3`, `ui.gpu`'s `open_app`).

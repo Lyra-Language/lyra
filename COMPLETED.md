@@ -9,6 +9,23 @@ Newest first.
 
 ## Dated log
 
+### 11/16/26 — `Fonts.cells` measured: a cache would buy nothing
+
+The item asked whether a terminal's grid needs its glyphs cached: `Fonts.cells` looks each
+cell's character up in the faces' character maps every frame, through HarfBuzz, 12,000 cells
+on a 200×60 screen. It said to measure first, under Termina. Termina is not run on this Mac,
+so the same path was measured on its own: a 200×60 screen of printable ASCII, a bold cell in
+eleven, laid out row by row through `Fonts.cells` with the system font and its fallbacks.
+Each run was timed whole, at 0 and 500 frames.
+
+**About 1 ms of CPU a frame at `-O2`** (0.46–0.49 s for 500 frames), 6% of a 60 Hz frame.
+
+**A cache was tried and made no difference.** It numbered each row's face order and size once,
+and kept each character's face, glyph and width in a `HashMap<i64, …>` keyed by that number
+and the code point: 0.49–0.50 s against 0.46 s, within the noise. HarfBuzz's character-map
+lookup costs what the hash map's does, so the cache was not kept, and `ui/text.lyra` is as it
+was. Termina's own frames are where a cost would show first, if one ever does.
+
 ### 11/16/26 — Raw input: the keypad, a `cursor` property and the Terminal role
 
 Three of the four things `ui/TERMINAL.md` §3 had left out of raw input.
