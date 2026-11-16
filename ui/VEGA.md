@@ -214,8 +214,9 @@ it. The atlas is shared as proposed, a picture let go only when no window's last
 it. A tab is carried between windows by the host, aimed at the dock under the pointer as a
 `foreign` `DockDrop`; it tears off only where the dock says so (`.tears_off(on_tear)`, a
 `DockTear` — what Vega's View menu needs no more than a dock does), and never a dock's only
-panel. Not done: AccessKit hears the main window alone, and `OnResize`/`OnFocus`/
-`OnWindowState` are the main window's. Example `examples/ui/windows.lyra`.
+panel. Every window is heard by AccessKit on an adapter of its own, a window beside the main
+one has the main window's subscriptions through `Subscription.InWindow(key, subs)`, and draws
+its own title bar by its `WindowSpec.title_bar` (11/16). Example `examples/ui/windows.lyra`.
 
 ## 9. lui
 

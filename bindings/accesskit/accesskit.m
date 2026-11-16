@@ -1,5 +1,6 @@
-// The C half of `bindings.accesskit`: a window's accessibility tree handed to AccessKit's
-// macOS adapter, and the actions assistive technology asks for queued for the program.
+// The C half of `bindings.accesskit`: each window's accessibility tree handed to AccessKit's
+// macOS adapter — an adapter a window, its own snapshot and focus — and the actions assistive
+// technology asks for queued for the program with the window they came from.
 //
 // Lyra cannot hand AccessKit a tree update the way AccessKit asks for one — from a callback,
 // whenever VoiceOver starts listening — so the program hands this file a *snapshot* instead
@@ -38,20 +39,41 @@ typedef struct {
   int64_t child_count;
 } element;
 
-/// A queued action: what, on which element, and its value.
+/// A queued action: the window it came from (SDL's number), what, on which element, and its
+/// value.
 typedef struct {
+  SDL_WindowID window;
   int kind;
   uint64_t target;
   double number;
   char *text;
 } request;
 
-static accesskit_macos_subclassing_adapter *adapter = NULL;
-static element *elements = NULL;
-static int64_t element_count = 0, element_cap = 0;
-static uint64_t root_id = 0, focus_id = 0;
+/// One window AccessKit hears: its adapter and the snapshot last handed over for it. Each is
+/// allocated alone, so the adapter's callbacks keep a pointer to it while others come and go.
+typedef struct {
+  SDL_Window *window;
+  SDL_WindowID id;
+  accesskit_macos_subclassing_adapter *adapter;
+  element *elements;
+  int64_t element_count, element_cap;
+  uint64_t root_id, focus_id;
+} surface;
+
+static surface **surfaces = NULL;
+static int64_t surface_count = 0, surface_cap = 0;
+/// The window a snapshot is being handed over for, between `lyra_access_begin` and
+/// `lyra_access_commit` — NULL for one AccessKit does not hear.
+static surface *building = NULL;
 static request *requests = NULL;
 static int64_t request_count = 0, request_cap = 0;
+
+static surface *surface_of(SDL_Window *window) {
+  for (int64_t i = 0; i < surface_count; i++) {
+    if (surfaces[i]->window == window) return surfaces[i];
+  }
+  return NULL;
+}
 
 /// `ui.backend`'s `AccessRole`, by the number `bindings.accesskit` passes.
 static accesskit_role role_of(int role) {
@@ -79,14 +101,14 @@ static accesskit_role role_of(int role) {
   }
 }
 
-/// The whole snapshot as one tree update.
+/// A window's whole snapshot as one tree update; `userdata` is its surface.
 static accesskit_tree_update *snapshot(void *userdata) {
-  (void)userdata;
+  surface *s = userdata;
   accesskit_tree_update *update =
-      accesskit_tree_update_with_capacity_and_focus((size_t)element_count, focus_id);
-  accesskit_tree_update_set_tree_info(update, accesskit_tree_info_new(root_id));
-  for (int64_t i = 0; i < element_count; i++) {
-    element *e = &elements[i];
+      accesskit_tree_update_with_capacity_and_focus((size_t)s->element_count, s->focus_id);
+  accesskit_tree_update_set_tree_info(update, accesskit_tree_info_new(s->root_id));
+  for (int64_t i = 0; i < s->element_count; i++) {
+    element *e = &s->elements[i];
     accesskit_node *node = accesskit_node_new(role_of(e->role));
     if (e->label[0]) accesskit_node_set_label(node, e->label);
     if (e->value[0]) accesskit_node_set_value(node, e->value);
@@ -113,12 +135,13 @@ static accesskit_tree_update *snapshot(void *userdata) {
   return update;
 }
 
-static void queue(int kind, uint64_t target, double number, const char *text) {
+static void queue(SDL_WindowID window, int kind, uint64_t target, double number,
+                  const char *text) {
   if (request_count == request_cap) {
     request_cap = request_cap ? request_cap * 2 : 16;
     requests = realloc(requests, (size_t)request_cap * sizeof(request));
   }
-  requests[request_count++] = (request){kind, target, number, strdup(text ? text : "")};
+  requests[request_count++] = (request){window, kind, target, number, strdup(text ? text : "")};
   // Wake a program waiting for input: its platform takes the queue after the wait.
   SDL_Event wake;
   SDL_zero(wake);
@@ -126,8 +149,9 @@ static void queue(int kind, uint64_t target, double number, const char *text) {
   SDL_PushEvent(&wake);
 }
 
+/// An action asked of a window's tree; `userdata` is its surface.
 static void on_action(accesskit_action_request *r, void *userdata) {
-  (void)userdata;
+  SDL_WindowID window = ((surface *)userdata)->id;
   double number = 0;
   const char *text = NULL;
   if (r->data.has_value) {
@@ -135,19 +159,20 @@ static void on_action(accesskit_action_request *r, void *userdata) {
     if (r->data.value.tag == ACCESSKIT_ACTION_DATA_NUMERIC_VALUE) number = r->data.value.numeric_value;
   }
   switch (r->action) {
-    case ACCESSKIT_ACTION_FOCUS: queue(1, r->target_node, 0, NULL); break;
-    case ACCESSKIT_ACTION_CLICK: queue(2, r->target_node, 0, NULL); break;
-    case ACCESSKIT_ACTION_SET_VALUE: queue(text ? 3 : 6, r->target_node, number, text); break;
-    case ACCESSKIT_ACTION_INCREMENT: queue(4, r->target_node, 0, NULL); break;
-    case ACCESSKIT_ACTION_DECREMENT: queue(5, r->target_node, 0, NULL); break;
+    case ACCESSKIT_ACTION_FOCUS: queue(window, 1, r->target_node, 0, NULL); break;
+    case ACCESSKIT_ACTION_CLICK: queue(window, 2, r->target_node, 0, NULL); break;
+    case ACCESSKIT_ACTION_SET_VALUE: queue(window, text ? 3 : 6, r->target_node, number, text); break;
+    case ACCESSKIT_ACTION_INCREMENT: queue(window, 4, r->target_node, 0, NULL); break;
+    case ACCESSKIT_ACTION_DECREMENT: queue(window, 5, r->target_node, 0, NULL); break;
     default: break;
   }
   accesskit_action_request_free(r);
 }
 
-/// Start accessibility for `window`; whether AccessKit took it.
+/// Start accessibility for `window` — the main window, or one opened beside it — whether
+/// AccessKit took it. Once a window: a second start of one it hears is `true` and nothing more.
 bool lyra_access_start(SDL_Window *window) {
-  if (adapter) return true;
+  if (surface_of(window)) return true;
   void *ns = SDL_GetPointerProperty(SDL_GetWindowProperties(window),
                                     SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, NULL);
   if (!ns) return false;
@@ -163,34 +188,77 @@ bool lyra_access_start(SDL_Window *window) {
     accesskit_macos_add_focus_forwarder_to_window_class(cls);
     if (patched_count < 8) strncpy(patched[patched_count++], cls, 127);
   }
-  adapter = accesskit_macos_subclassing_adapter_for_window(ns, snapshot, NULL, on_action, NULL);
-  if (!adapter) return false;
+  surface *s = calloc(1, sizeof(surface));
+  s->window = window;
+  s->id = SDL_GetWindowID(window);
+  s->adapter = accesskit_macos_subclassing_adapter_for_window(ns, snapshot, s, on_action, s);
+  if (!s->adapter) {
+    free(s);
+    return false;
+  }
+  if (surface_count == surface_cap) {
+    surface_cap = surface_cap ? surface_cap * 2 : 4;
+    surfaces = realloc(surfaces, (size_t)surface_cap * sizeof(surface *));
+  }
+  surfaces[surface_count++] = s;
+  // A window is started as it opens and shows, so as the one with the keyboard; each later
+  // change is said by `lyra_access_focus`.
   accesskit_macos_queued_events *events =
-      accesskit_macos_subclassing_adapter_update_view_focus_state(adapter, true);
+      accesskit_macos_subclassing_adapter_update_view_focus_state(s->adapter, true);
   if (events) accesskit_macos_queued_events_raise(events);
   return true;
 }
 
-void lyra_access_stop(void) {
-  if (adapter) accesskit_macos_subclassing_adapter_free(adapter);
-  adapter = NULL;
-}
-
-static void clear(void) {
-  for (int64_t i = 0; i < element_count; i++) {
-    free(elements[i].label);
-    free(elements[i].value);
-    free(elements[i].description);
-    free(elements[i].children);
+static void clear(surface *s) {
+  for (int64_t i = 0; i < s->element_count; i++) {
+    free(s->elements[i].label);
+    free(s->elements[i].value);
+    free(s->elements[i].description);
+    free(s->elements[i].children);
   }
-  element_count = 0;
+  s->element_count = 0;
 }
 
-/// A new snapshot, rooted at `root`, `focus` the element with the keyboard's focus.
-void lyra_access_begin(uint64_t root, uint64_t focus) {
-  clear();
-  root_id = root;
-  focus_id = focus;
+/// `window`'s adapter and snapshot freed, before the window is destroyed; its queued requests
+/// stay, and the program drops those of a window it has closed.
+void lyra_access_stop(SDL_Window *window) {
+  for (int64_t i = 0; i < surface_count; i++) {
+    surface *s = surfaces[i];
+    if (s->window != window) continue;
+    if (building == s) building = NULL;
+    accesskit_macos_subclassing_adapter_free(s->adapter);
+    clear(s);
+    free(s->elements);
+    free(s);
+    memmove(surfaces + i, surfaces + i + 1, (size_t)(surface_count - i - 1) * sizeof(surface *));
+    surface_count--;
+    return;
+  }
+}
+
+/// Every window's adapter freed, as the program ends.
+void lyra_access_stop_all(void) {
+  while (surface_count > 0) lyra_access_stop(surfaces[surface_count - 1]->window);
+}
+
+/// Whether `window` has the keyboard now, for its adapter: VoiceOver follows the window with
+/// it.
+void lyra_access_focus(SDL_Window *window, bool focused) {
+  surface *s = surface_of(window);
+  if (!s) return;
+  accesskit_macos_queued_events *events =
+      accesskit_macos_subclassing_adapter_update_view_focus_state(s->adapter, focused);
+  if (events) accesskit_macos_queued_events_raise(events);
+}
+
+/// A new snapshot of `window`'s tree, rooted at `root`, `focus` the element with the keyboard's
+/// focus; nothing is kept for a window AccessKit does not hear.
+void lyra_access_begin(SDL_Window *window, uint64_t root, uint64_t focus) {
+  building = surface_of(window);
+  if (!building) return;
+  clear(building);
+  building->root_id = root;
+  building->focus_id = focus;
 }
 
 void lyra_access_node(uint64_t id, int32_t role, const char *label, const char *value,
@@ -198,35 +266,42 @@ void lyra_access_node(uint64_t id, int32_t role, const char *label, const char *
                       int32_t has_numeric, double numeric, double min, double max,
                       double step, int32_t actions, const uint64_t *children,
                       int64_t child_count) {
-  if (element_count == element_cap) {
-    element_cap = element_cap ? element_cap * 2 : 64;
-    elements = realloc(elements, (size_t)element_cap * sizeof(element));
+  surface *s = building;
+  if (!s) return;
+  if (s->element_count == s->element_cap) {
+    s->element_cap = s->element_cap ? s->element_cap * 2 : 64;
+    s->elements = realloc(s->elements, (size_t)s->element_cap * sizeof(element));
   }
   uint64_t *kids = NULL;
   if (child_count > 0) {
     kids = malloc((size_t)child_count * sizeof(uint64_t));
     memcpy(kids, children, (size_t)child_count * sizeof(uint64_t));
   }
-  elements[element_count++] = (element){
+  s->elements[s->element_count++] = (element){
       id, role, strdup(label), strdup(value), strdup(description), x, y, w, h, toggled, has_numeric,
       numeric, min, max, step, actions, kids, child_count};
 }
 
-/// The snapshot to AccessKit, if assistive technology is listening.
+/// The snapshot begun to AccessKit, if assistive technology is listening to its window.
 void lyra_access_commit(void) {
-  if (!adapter) return;
+  surface *s = building;
+  building = NULL;
+  if (!s) return;
   accesskit_macos_queued_events *events =
-      accesskit_macos_subclassing_adapter_update_if_active(adapter, snapshot, NULL);
+      accesskit_macos_subclassing_adapter_update_if_active(s->adapter, snapshot, s);
   if (events) accesskit_macos_queued_events_raise(events);
 }
 
-/// The oldest queued action, if any: its kind (0 when the queue is empty), its element, its
-/// number, and its text copied into `text` (at most `cap` bytes, NUL-terminated).
-int32_t lyra_access_next(uint64_t *target, double *number, char *text, int64_t cap) {
+/// The oldest queued action, if any: its kind (0 when the queue is empty), the window it came
+/// from (SDL's number), its element, its number, and its text copied into `text` (at most `cap`
+/// bytes, NUL-terminated).
+int32_t lyra_access_next(uint32_t *window, uint64_t *target, double *number, char *text,
+                         int64_t cap) {
   if (request_count == 0) return 0;
   request r = requests[0];
   memmove(requests, requests + 1, (size_t)(request_count - 1) * sizeof(request));
   request_count--;
+  *window = r.window;
   *target = r.target;
   *number = r.number;
   if (cap > 0) {

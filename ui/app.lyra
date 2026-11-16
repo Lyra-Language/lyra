@@ -172,8 +172,8 @@ pub struct App<s, e> {
   /// The window's title bar: the system's (`SystemTitleBar`), or the program's own
   /// (`DrawnTitleBar`) — the window without the system's frame, moved from what the view marks
   /// [Node.window_drag] and resized from its edges, its buttons `window_buttons`. A Mac keeps
-  /// the system's title bar either way, for now (`ui/WINDOW.md`). The main window's: the
-  /// others keep the system's.
+  /// the system's title bar either way, for now (`ui/WINDOW.md`). The main window's: a window
+  /// beside it says its own ([WindowSpec.title_bar]).
   title_bar: TitleBar = SystemTitleBar,
   /// The windows beside the main one, a function of the state ([Windows]), or none. (An array of
   /// at most one, as `shortcuts` is.)
@@ -265,8 +265,9 @@ pub let chord_matches = pure (want: Modifiers, got: Modifiers) -> bool => {
 /// size it opens at, the least and greatest size the user may make it (nothing for no limit),
 /// which ways it resizes, and what it does with a view that does not fit. A window beside the
 /// main one ([Windows]) has a `key` its program knows it by, and a `place` — its top-left
-/// corner on the screens, in the system's coordinates (the system's choice for `None`) —
-/// both unread for the main window.
+/// corner on the screens, in the system's coordinates (the system's choice for `None`) — and a
+/// `title_bar`, the system's or its own as [App.title_bar] says the main window's; all three
+/// unread for the main window.
 pub struct WindowSpec {
   key: string = "",
   place: Maybe<Point> = None,
@@ -277,6 +278,7 @@ pub struct WindowSpec {
   resize_x: bool = true,
   resize_y: bool = true,
   overflow: Overflow = OverflowAuto,
+  title_bar: TitleBar = SystemTitleBar,
 }
 
 /// `view`, `update` and `subscriptions` as an `App` in `window`: its limits, resizing and
@@ -354,21 +356,26 @@ pub data Subscription<e> =
   EveryFrame((f32) -> e)
   /// The event, every so many milliseconds.
   | Every(i64, e)
-  /// The window's new size, each time it changes.
+  /// The main window's new size, each time it changes.
   | OnResize((Size) -> e)
   /// The system's look, each time it switches between light and dark.
   | OnAppearance((Appearance) -> e)
-  /// The window's keyboard focus, each time it is gained (`true`) or lost.
+  /// The main window's keyboard focus, each time it is gained (`true`) or lost.
   | OnFocus((bool) -> e)
-  /// The window minimized, maximized, made fullscreen or put back, each time it is.
+  /// The main window minimized, maximized, made fullscreen or put back, each time it is.
   | OnWindowState((WindowState) -> e)
-  /// The window moved, resized, minimized, maximized, made fullscreen or put back, each time it
-  /// is: where it is now and its state, for a program that keeps it between runs (a maximized
-  /// window's place is the system's, which the state says).
+  /// The main window moved, resized, minimized, maximized, made fullscreen or put back, each
+  /// time it is: where it is now and its state, for a program that keeps it between runs (a
+  /// maximized window's place is the system's, which the state says).
   | OnPlaced((WindowPlacement, WindowState) -> e)
-  /// Files dropped on the window, by path, one drop's together — on a Mac also a file opened
-  /// from Finder, which the system hands over as a drop.
+  /// Files dropped on any of the program's windows, by path, one drop's together — on a Mac
+  /// also a file opened from Finder, which the system hands over as a drop.
   | OnFilesDropped(([]string) -> e)
+  /// The window keyed so beside the main one ([WindowSpec.key]) heard as the main window is:
+  /// its `OnResize`, `OnFocus`, `OnWindowState` and `OnPlaced`, and `OnFilesDropped` for a drop
+  /// on it alone — `InWindow("inspector", [OnFocus(InspectorFocused)])`. The clocks and
+  /// descriptors (`EveryFrame`, `Every`, `Readable`) are no window's, and are not heard here.
+  | InWindow(string, []Subscription<e>)
   /// The event each pass that file descriptor has data to read — or has closed, which a read
   /// says — so a terminal reads its programs' output as it comes, and an idle one sleeps:
   /// the platform's wait wakes for it (`Platform.wake_for`). Level-triggered, as `poll` is:
@@ -748,43 +755,44 @@ impl Host<s, e> {
             return false
           }
         },
-        Resized(size) => if k == 0 {
-          self.heard(at, platform, (sub) => match sub {
+        Resized(size) => {
+          self.heard(k, false, at, platform, (sub) => match sub {
             OnResize(make) => Some(make(size)),
             _ => None,
           })
-          self.main_placed(at, platform)
-        } else { self.moved(k, at, platform) },
-        WindowPlaced(_) => if k > 0 {
-          self.moved(k, at, platform)
-        } else { self.main_placed(at, platform) },
+          self.placed(k, at, platform)
+          if k > 0 { self.moved(k, at, platform) }
+        },
+        WindowPlaced(_) => {
+          self.placed(k, at, platform)
+          if k > 0 { self.moved(k, at, platform) }
+        },
         AppearanceChanged(look) => {
           for j in 0..<self.windows.len() { self.windows[j].dirty = true }
-          self.heard(at, platform, (sub) => match sub {
+          self.heard(k, true, at, platform, (sub) => match sub {
             OnAppearance(make) => Some(make(look)),
             _ => None,
           })
         },
         WindowFocused => {
           self.focused = id
-          if k == 0 { self.heard(at, platform, (sub) => match sub {
+          self.heard(k, false, at, platform, (sub) => match sub {
             OnFocus(make) => Some(make(true)),
             _ => None,
-          }) }
+          })
         },
-        WindowUnfocused => if k == 0 { self.heard(at, platform, (sub) => match sub {
+        WindowUnfocused => self.heard(k, false, at, platform, (sub) => match sub {
           OnFocus(make) => Some(make(false)),
           _ => None,
-        }) },
-        WindowStateChanged(state) =>
-          if k == 0 {
-            self.heard(at, platform, (sub) => match sub {
-              OnWindowState(make) => Some(make(state)),
-              _ => None,
-            })
-            self.main_placed(at, platform)
-          },
-        FilesDropped(paths) => self.heard(at, platform, (sub) => match sub {
+        }),
+        WindowStateChanged(state) => {
+          self.heard(k, false, at, platform, (sub) => match sub {
+            OnWindowState(make) => Some(make(state)),
+            _ => None,
+          })
+          self.placed(k, at, platform)
+        },
+        FilesDropped(paths) => self.heard(k, true, at, platform, (sub) => match sub {
           OnFilesDropped(make) => Some(make(paths)),
           _ => None,
         }),
@@ -851,7 +859,13 @@ impl Host<s, e> {
             if platform.window_state(id).maximized { ToRestored } else { ToMaximized }
           ),
           CloseButton => {
+            // The main window's as the system's close is: the program's to be asked about,
+            // where it says so ([App.main_close]).
             if k == 0 {
+              if let Some(close) = self.main_close() {
+                self.dispatch((close.of)(self.state), at, platform)
+                continue
+              }
               self.running = false
               return false
             }
@@ -1089,18 +1103,21 @@ impl Host<s, e> {
     self.dispatch((list.on_moved)(self.windows[k].key, place), now, platform)
   }
 
-  /// The main window moved, resized or changed state: where it is now, to [Subscription.OnPlaced].
-  let main_placed<p> where p: Platform = (
+  /// Window `k` moved, resized or changed state: where it is now, to [Subscription.OnPlaced] —
+  /// the main window's, or one in [Subscription.InWindow] for a window beside it.
+  let placed<p> where p: Platform = (
     self: mut,
+    k: i64,
     now: i64,
     platform: mut p
   ) -> void => {
+    let id = self.windows[k].id
     let place = WindowPlacement {
-      place: platform.window_position(MAIN_WINDOW),
-      size: platform.window_size(MAIN_WINDOW)
+      place: platform.window_position(id),
+      size: platform.window_size(id)
     }
-    let state = platform.window_state(MAIN_WINDOW)
-    self.heard(now, platform, (sub) => match sub {
+    let state = platform.window_state(id)
+    self.heard(k, false, now, platform, (sub) => match sub {
       OnPlaced(make) => Some(make(place, state)),
       _ => None,
     })
@@ -1391,20 +1408,28 @@ impl Host<s, e> {
     None
   }
 
-  /// A drawn title bar ([App.title_bar]): the main window's system frame taken away once, and
-  /// each pass the platform told what of the window as last laid out moves it — what the view
-  /// marks [Node.window_drag] — and, inside that, what keeps a press: its controls and the
-  /// window's buttons.
+  /// Each window with a drawn title bar ([App.title_bar] the main window's, [WindowSpec.title_bar]
+  /// another's): its system frame taken away, and each pass the platform told what of the window
+  /// as last laid out moves it — what the view marks [Node.window_drag] — and, inside that, what
+  /// keeps a press: its controls and the window's buttons. A window whose spec goes back to the
+  /// system's title bar has its frame back and no areas.
   let sync_title_bar<p> where p: Platform = (self: mut, platform: mut p) -> void => {
-    if self.app.title_bar != DrawnTitleBar { return }
-    if !self.windows[0].undecorated {
-      platform.set_decorated(MAIN_WINDOW, false)
-      self.windows[0].undecorated = true
+    for k in 0..<self.windows.len() {
+      let bar = if k == 0 { self.app.title_bar } else { self.windows[k].spec.title_bar }
+      let drawn = bar == DrawnTitleBar
+      let id = self.windows[k].id
+      if drawn != self.windows[k].undecorated {
+        platform.set_decorated(id, !drawn)
+        self.windows[k].undecorated = drawn
+        if !drawn { platform.set_window_areas(id, [], [], 0.0) }
+      }
+      if drawn {
+        var drags: []Rect = []
+        var keeps: []Rect = []
+        for laid in self.windows[k].shown { press_areas(laid, Point {}, drags, keeps) }
+        platform.set_window_areas(id, drags, keeps, RESIZE_MARGIN)
+      }
     }
-    var drags: []Rect = []
-    var keeps: []Rect = []
-    for laid in self.windows[0].shown { press_areas(laid, Point {}, drags, keeps) }
-    platform.set_window_areas(MAIN_WINDOW, drags, keeps, RESIZE_MARGIN)
   }
 
   /// The program's menus ([App.menus]) as the state has them now, handed to the platform for
@@ -1474,16 +1499,33 @@ impl Host<s, e> {
     self.measures = []
   }
 
-  /// The event each subscription `pick` answers for, through `update`.
+  /// The event each subscription `pick` answers for, through `update`, of an input in window `k`:
+  /// the main window's for one outside [Subscription.InWindow] (or any window's, `everywhere`,
+  /// for what is not a window's own — a drop, the system's look), and window `k`'s in one naming
+  /// its key.
   let heard<p> where p: Platform = (
     self: mut,
+    k: i64,
+    everywhere: bool,
     now: i64,
     platform: mut p,
     pick: (Subscription<e>) -> Maybe<e>
   ) -> void => {
+    let key = self.windows[k].key
+    var due: []e = []
     for sub in (self.app.subscriptions)(self.state) {
-      if let Some(event) = pick(sub) { self.dispatch(event, now, platform) }
+      match sub {
+        InWindow(of, inner) => if k > 0 && of == key {
+          for one in inner {
+            if let Some(event) = pick(one) { due.push(event) }
+          }
+        },
+        _ => if k == 0 || everywhere {
+          if let Some(event) = pick(sub) { due.push(event) }
+        },
+      }
     }
+    for event in due { self.dispatch(event, now, platform) }
   }
 
   /// When an `Every` of `period` last fired; `now` for one that has not, so its first is a

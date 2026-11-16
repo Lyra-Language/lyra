@@ -28,7 +28,8 @@ pub const HIT_RESIZE_LEFT: i32 = 9
 /// `window`'s areas that move it (`drags`) and, inside them, those keeping a press (`keeps`) —
 /// each four numbers, x, y, width and height, in the window's coordinates, at most 64 of each —
 /// and the `margin` round its edges a borderless, resizable window not maximized resizes from.
-/// The hit test is installed the first time. False where SDL refuses one (its dummy driver).
+/// The hit test is installed the first time. Each window keeps its own areas. False where SDL
+/// refuses one (its dummy driver), or 16 windows have theirs already.
 pub let set_areas = (window: Window, drags: []f32, keeps: []f32, margin: f32) -> bool => {
   var d = drags
   var k = keeps
@@ -44,9 +45,13 @@ pub let set_areas = (window: Window, drags: []f32, keeps: []f32, margin: f32) ->
   }
 }
 
+/// `window`'s areas forgotten, as it is destroyed: what makes room for another window's.
+pub let forget = (window: Window) -> void => unsafe { lyra_hittest_forget(window) }
+
 /// What the point (`x`, `y`) of a window `w` × `h` whose `WINDOW_*` flags are `flags` is, from
-/// the areas last set: an edge or corner to resize from, a control's (`HIT_NORMAL`), a drag
-/// area, or the rest (`HIT_NORMAL`) — what SDL is answered, for a test to ask.
+/// the areas [set_areas_only] last set: an edge or corner to resize from, a control's
+/// (`HIT_NORMAL`), a drag area, or the rest (`HIT_NORMAL`) — what SDL is answered for a window,
+/// for a test to ask.
 pub let answer = (x: f32, y: f32, w: f32, h: f32, flags: u64) -> i32 =>
   unsafe { lyra_hittest_answer(x, y, w, h, flags) }
 
@@ -83,6 +88,9 @@ unsafe extern lyra_hittest_set: (
   keep_count: i32,
   margin: f32
 ) -> bool
+
+@symbol("lyra_hittest_forget")
+unsafe extern lyra_hittest_forget: (window: Window) -> void
 
 @symbol("lyra_hittest_answer")
 unsafe extern lyra_hittest_answer: (x: f32, y: f32, w: f32, h: f32, flags: u64) -> i32

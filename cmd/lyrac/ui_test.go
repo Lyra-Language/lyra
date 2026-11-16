@@ -5790,6 +5790,128 @@ the left edge, framed: 0
 // it, its minimize button pressed — each heard — and the drag area and controls it told the
 // platform, the system's frame taken away. The buttons' places are the window's right end, a
 // glyph's width each, whatever the font.
+// A window beside the main one heard as the main window is (`Subscription.InWindow`), and
+// drawing its own title bar (`WindowSpec.title_bar`): its focus, state and size reach the
+// subscriptions naming its key and not the main window's, a drop on it reaches both its own and
+// the any-window `OnFilesDropped`, and it loses its frame and gives the platform its drag areas
+// while the main window keeps the system's. The main window's own close button asks the program
+// (`App.main_close`), as the system's close does, rather than ending the run.
+func TestRun_UiSideWindowHeardByItsKey(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, Windows, WindowSpec, WindowPlacement, DrawnTitleBar, MainClose, Command, Subscription, OnFocus, OnWindowState, OnResize, OnFilesDropped, InWindow, host_of }
+import ui.script.{ timed_platform, parse_steps, Played, Waited }
+import ui.backend.{ Renderer, TextureId, WindowState, PointerMoved, PointerDown, PointerUp, Primary }
+import ui.draw.{ Size, Point, Color }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, Laid, row, column, text, expanded, window_buttons, WindowControl, CloseButton }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, window, background, ops) => {}
+}
+
+data Ev = Heard(string) | Moved(string) | Closed(string) | AskedToClose
+
+let said = pure (what: string) -> Ev => Heard(what)
+
+let update = (n: i64, e: Ev) -> (i64, []Command<Ev>) => {
+  match e {
+    Heard(what) => println(what),
+    Moved(key) => println("${key} moved"),
+    Closed(key) => println("${key} closed"),
+    AskedToClose => println("asked to close the main window"),
+  }
+  (n + 1, [])
+}
+
+let app = pure () -> App<i64, Ev> => App {
+  view: (_: i64) -> Node<Ev> => column([row([text("Main"), expanded(row([])), window_buttons()])]),
+  update: update,
+  subscriptions: (_: i64) -> []Subscription<Ev> => [
+    OnFocus((on) => said("main focus ${on}")),
+    OnResize((size) => said("main size ${size.w}x${size.h}")),
+    OnFilesDropped((paths) => said("dropped on a window: ${paths.join(",")}")),
+    InWindow("side", [
+      OnFocus((on) => said("side focus ${on}")),
+      OnWindowState((w) => said("side maximized ${w.maximized}")),
+      OnResize((size) => said("side size ${size.w}x${size.h}")),
+      OnFilesDropped((paths) => said("dropped on side: ${paths.join(",")}")),
+    ]),
+    InWindow("nowhere", [OnFocus((on) => said("a window not open heard ${on}"))]),
+  ],
+  background: Color { r: 0, g: 0, b: 0 },
+  main_close: [MainClose { of: (_: i64) -> Ev => AskedToClose }],
+  windows: [Windows {
+    of: (_: i64) -> []WindowSpec => [WindowSpec { key: "side", title: "Side", size: Size { w: 200.0, h: 100.0 }, title_bar: DrawnTitleBar }],
+    view: (_: i64, key: string) -> Node<Ev> => column([row([text(key), expanded(row([])), window_buttons()]).window_drag()]),
+    on_close: Closed,
+    on_moved: (key: string, _: WindowPlacement) -> Ev => Moved(key),
+  }],
+}
+
+let main = () -> u8 => {
+  let Ok(steps) = parse_steps("focus blur window:1 focus blur maximize resize:300,200 drop:/a window:0 drop:/b") else { return 1 }
+  var platform = timed_platform([Waited(1), ...steps], Size { w: 400.0, h: 200.0 })
+  var renderer = Blank {}
+  var fonts = fonts_new()
+  var host = host_of(app(), 0, platform)
+  let _ = host.step(platform, renderer, fonts)
+  println("main frame ${platform.decorated}, drag areas ${platform.drag_areas.len()}")
+  for w in platform.others {
+    println("side frame ${w.decorated}, drag areas ${w.drag_areas.len()}, controls in them ${w.keep_areas.len()}, margin ${w.resize_margin}")
+  }
+  while platform.next < platform.steps.len() { let _ = host.step(platform, renderer, fonts) }
+  let at = control(host.main_laid(), Point {}) ?? Point { x: -1.0, y: -1.0 }
+  platform.steps = [...platform.steps, Played(PointerMoved(at)), Played(PointerDown(Primary, at, 1)), Played(PointerUp(Primary, at)), Waited(1)]
+  while platform.next < platform.steps.len() {
+    if !host.step(platform, renderer, fonts) {
+      println("the run ended")
+      return 0
+    }
+  }
+  println("the run goes on")
+  0
+}
+
+/// The middle of the main window's close button.
+let control = pure (laid: ref Laid<Ev>, origin: Point) -> Maybe<Point> => {
+  if let WindowControl(CloseButton) = laid.kind {
+    return Some(Point { x: origin.x + laid.size.w / 2.0, y: origin.y + laid.size.h / 2.0 })
+  }
+  for child in laid.children {
+    if let Some(p) = control(child.laid, Point { x: origin.x + child.at.x, y: origin.y + child.at.y }) { return Some(p) }
+  }
+  None
+}
+`)
+	want := `main frame true, drag areas 0
+side frame false, drag areas 1, controls in them 3, margin 5
+main focus true
+main focus false
+side focus true
+side focus false
+side maximized true
+side size 300x200
+side moved
+dropped on a window: /a
+dropped on side: /a
+dropped on a window: /b
+asked to close the main window
+the run goes on
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 func TestRun_UiTitleBarExample(t *testing.T) {
 	t.Parallel()
 	skipWithoutText(t)

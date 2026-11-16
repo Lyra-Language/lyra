@@ -5,8 +5,8 @@
 // resizable and neither maximized nor fullscreen — an edge or corner it is resized from.
 //
 // **Why a shim**: SDL asks through a C function pointer, and Lyra cannot hand C a function. So
-// the areas are copied here, and `answer` reads them. One window's at a time — a program with
-// a drawn title bar has one window.
+// the areas are copied here, a slot a window, and `answer` reads the slot SDL hands back with
+// the press. A program's windows each draw their own bar or not; up to 16 at once draw theirs.
 //
 // SDL's functions are declared here rather than taken from its headers, as bindings.wake's are:
 // the program that links this links SDL3, and the archive builds with nothing but a C compiler.
@@ -41,14 +41,47 @@ enum {
 };
 
 #define MAX_AREAS 64
+#define MAX_WINDOWS 16
 
-// Each area four floats — x, y, width, height — in the window's coordinates.
-static float drags[MAX_AREAS * 4];
-static int drag_count = 0;
-static float keeps[MAX_AREAS * 4];
-static int keep_count = 0;
-static float margin = 0.0f;
-static void *installed = NULL;
+// One window's areas, each four floats — x, y, width, height — in the window's coordinates,
+// and the margin round its edges. `window` is NULL for a free slot.
+typedef struct {
+    void *window;
+    float drags[MAX_AREAS * 4];
+    int drag_count;
+    float keeps[MAX_AREAS * 4];
+    int keep_count;
+    float margin;
+} Areas;
+
+// Slot 0 is no window's: the areas `lyra_hittest_set_areas` sets for `lyra_hittest_answer`, a
+// test's. The rest are windows', each handed to SDL with the window's hit test.
+static Areas slots[MAX_WINDOWS + 1];
+
+// The slot of `window`, a free one taken for it if it has none — NULL when all are taken.
+static Areas *slot_of(void *window) {
+    Areas *free_slot = NULL;
+    for (int i = 1; i <= MAX_WINDOWS; i++) {
+        if (slots[i].window == window) return &slots[i];
+        if (!slots[i].window && !free_slot) free_slot = &slots[i];
+    }
+    if (free_slot) {
+        memset(free_slot, 0, sizeof(Areas));
+        free_slot->window = window;
+    }
+    return free_slot;
+}
+
+static void copy_areas(Areas *a, const float *drag, int32_t drag_n, const float *keep,
+                       int32_t keep_n, float edge) {
+    if (drag_n > MAX_AREAS) drag_n = MAX_AREAS;
+    if (keep_n > MAX_AREAS) keep_n = MAX_AREAS;
+    a->drag_count = drag_n < 0 ? 0 : drag_n;
+    a->keep_count = keep_n < 0 ? 0 : keep_n;
+    if (a->drag_count > 0) memcpy(a->drags, drag, sizeof(float) * 4 * (size_t)a->drag_count);
+    if (a->keep_count > 0) memcpy(a->keeps, keep, sizeof(float) * 4 * (size_t)a->keep_count);
+    a->margin = edge;
+}
 
 static bool inside(const float *areas, int count, float x, float y) {
     for (int i = 0; i < count; i++) {
@@ -58,9 +91,10 @@ static bool inside(const float *areas, int count, float x, float y) {
     return false;
 }
 
-// What the point (x, y) of a window `w` × `h` with `flags` is: an edge or corner to resize from,
-// one of the program's controls, an area that moves the window, or the rest of it.
-int32_t lyra_hittest_answer(float x, float y, float w, float h, uint64_t flags) {
+// What the point (x, y) of a window `w` × `h` with `flags` and areas `a` is: an edge or corner
+// to resize from, one of the program's controls, an area that moves the window, or the rest.
+static int32_t answer_in(const Areas *a, float x, float y, float w, float h, uint64_t flags) {
+    float margin = a->margin;
     bool frameless = (flags & FLAG_BORDERLESS) && (flags & FLAG_RESIZABLE) &&
                      !(flags & (FLAG_MAXIMIZED | FLAG_FULLSCREEN));
     if (frameless && margin > 0.0f) {
@@ -74,40 +108,53 @@ int32_t lyra_hittest_answer(float x, float y, float w, float h, uint64_t flags) 
         if (left) return HIT_RESIZE_LEFT;
         if (right) return HIT_RESIZE_RIGHT;
     }
-    if (inside(keeps, keep_count, x, y)) return HIT_NORMAL;
-    if (inside(drags, drag_count, x, y)) return HIT_DRAGGABLE;
+    if (inside(a->keeps, a->keep_count, x, y)) return HIT_NORMAL;
+    if (inside(a->drags, a->drag_count, x, y)) return HIT_DRAGGABLE;
     return HIT_NORMAL;
 }
 
+// The same, from the areas `lyra_hittest_set_areas` last set with no window — what a test asks.
+int32_t lyra_hittest_answer(float x, float y, float w, float h, uint64_t flags) {
+    return answer_in(&slots[0], x, y, w, h, flags);
+}
+
+// SDL's question for a press in `window`; `data` is the window's slot.
 static int answer(void *window, const HitPoint *point, void *data) {
-    (void)data;
     int w = 0, h = 0;
     SDL_GetWindowSize(window, &w, &h);
-    return lyra_hittest_answer((float)point->x, (float)point->y, (float)w, (float)h,
-                               SDL_GetWindowFlags(window));
+    return answer_in(data, (float)point->x, (float)point->y, (float)w, (float)h,
+                     SDL_GetWindowFlags(window));
 }
 
 // The areas that move the window (`drag_n` of them, four floats each) and those inside them that
 // keep a press (`keep_n`), in the window's coordinates, at most 64 each; and the margin round a
-// borderless window's edges it resizes from — what `lyra_hittest_answer` answers from.
+// borderless window's edges it resizes from — set with no window, what `lyra_hittest_answer`
+// answers from.
 void lyra_hittest_set_areas(const float *drag, int32_t drag_n, const float *keep, int32_t keep_n,
                             float edge) {
-    if (drag_n > MAX_AREAS) drag_n = MAX_AREAS;
-    if (keep_n > MAX_AREAS) keep_n = MAX_AREAS;
-    drag_count = drag_n < 0 ? 0 : drag_n;
-    keep_count = keep_n < 0 ? 0 : keep_n;
-    if (drag_count > 0) memcpy(drags, drag, sizeof(float) * 4 * (size_t)drag_count);
-    if (keep_count > 0) memcpy(keeps, keep, sizeof(float) * 4 * (size_t)keep_count);
-    margin = edge;
+    copy_areas(&slots[0], drag, drag_n, keep, keep_n, edge);
 }
 
-// The areas set, and the hit test installed on `window` the first time. False where SDL refuses
-// a hit test (its dummy driver).
+// `window`'s areas set, and its hit test installed the first time. False where SDL refuses a hit
+// test (its dummy driver), or 16 windows have theirs already.
 bool lyra_hittest_set(void *window, const float *drag, int32_t drag_n, const float *keep,
                       int32_t keep_n, float edge) {
-    lyra_hittest_set_areas(drag, drag_n, keep, keep_n, edge);
-    if (window == installed) return true;
-    if (!SDL_SetWindowHitTest(window, answer, NULL)) return false;
-    installed = window;
+    bool installed = false;
+    for (int i = 1; i <= MAX_WINDOWS; i++) installed = installed || slots[i].window == window;
+    Areas *a = slot_of(window);
+    if (!a) return false;
+    copy_areas(a, drag, drag_n, keep, keep_n, edge);
+    if (installed) return true;
+    if (!SDL_SetWindowHitTest(window, answer, a)) {
+        a->window = NULL;
+        return false;
+    }
     return true;
+}
+
+// `window`'s slot given back, as the window is destroyed (SDL drops its hit test with it).
+void lyra_hittest_forget(void *window) {
+    for (int i = 1; i <= MAX_WINDOWS; i++) {
+        if (slots[i].window == window) slots[i].window = NULL;
+    }
 }

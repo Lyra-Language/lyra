@@ -755,9 +755,10 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   tooltips, modals; the smaller controls, dropped files) done 10/26, 4–6 (docking, several
   windows, lui's elements) 10/27; Vega's front end (§10, step 7) next, its two `.lui` views
   rewritten for `ui` with it.
-- **[OPEN] Several windows: what is still the main window's** — AccessKit hears it alone,
-  `OnResize`/`OnFocus`/`OnWindowState` are its, and a drawn title bar (`App.title_bar`) is its
-  only; a window beside it keeps the system's frame (10/27).
+- **[DONE 11/16] Several windows: what was still the main window's** — AccessKit hears every
+  window, `Subscription.InWindow(key, subs)` hears one beside it, and `WindowSpec.title_bar`
+  draws its own bar (COMPLETED.md 11/16). Untried: a drawn side window's bar on a Linux desktop,
+  as the main window's (below).
 - **[OPEN] `TestRun_UiResizeSettles` runs near its one-minute budget** — 45–48 s alone at
   `-O0` on an M-series Mac (10/27), so a loaded parallel suite can time it out. Measure a pass
   and set the budget from it, or play fewer resizes.

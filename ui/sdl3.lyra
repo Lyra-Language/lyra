@@ -404,7 +404,7 @@ pub let release_renderer = (renderer: SdlRenderer) -> void => {
 /// The platform's cursor and windows put away — the main one last — and SDL.
 pub let close_platform = (platform: SdlPlatform) -> void => {
   if let Some(shown) = platform.cursor { destroy_cursor(shown) }
-  if platform.listening { accesskit.stop() }
+  if platform.listening { accesskit.stop_all() }
   for other in platform.others { destroy_window(other.window) }
   destroy_window(platform.window)
   quit()
@@ -425,8 +425,9 @@ pub struct SdlPlatform {
   look: Appearance = LightMode,
   /// The main window's state as last said ([WindowStateChanged]).
   state: WindowState = WindowState {},
-  /// Whether assistive technology can be told about the main window (AccessKit's adapter is on
-  /// it — macOS), and the element each node of the tree it was last told stands for.
+  /// Whether assistive technology can be told about the windows (AccessKit's adapters, one a
+  /// window — macOS), and the element each node of the main window's tree it was last told
+  /// stands for (a window beside it keeps its own, [OtherWindow.access_keys]).
   listening: bool = false,
   access_keys: HashMap<u64, string>,
   /// The shape of the menus last installed in the Mac's own bar ([install_menus]), `""` for
@@ -436,11 +437,13 @@ pub struct SdlPlatform {
   dropping: []string = [],
 }
 
-/// A window opened beside the main one: its number, the window, and its state as last said.
+/// A window opened beside the main one: its number, the window, its state as last said, and
+/// the element each node of its accessibility tree last told stands for.
 pub struct OtherWindow {
   id: WindowId,
   window: Window,
   state: WindowState = WindowState {},
+  access_keys: HashMap<u64, string>,
 }
 
 impl Platform for SdlPlatform {
@@ -469,6 +472,14 @@ impl Platform for SdlPlatform {
           let Some(window) = self.window_of(id) else { continue }
           let per_point = units_per_point(window)
           if let Some(input) = translate(got.event, got.modifiers, per_point) {
+            // VoiceOver follows the window with the keyboard, each adapter told.
+            if self.listening {
+              match input {
+                WindowFocused => accesskit.focus(window, true),
+                WindowUnfocused => accesskit.focus(window, false),
+                _ => {},
+              }
+            }
             events.push((id, input))
           }
         },
@@ -493,11 +504,13 @@ impl Platform for SdlPlatform {
         },
       }))
     }
-    // What assistive technology asked for; its request woke the wait above.
+    // What assistive technology asked for, of the window whose tree it reads; its request woke
+    // the wait above. One of a window closed since goes nowhere.
     while let Some(raw) = accesskit.next_request() {
-      let Some(element) = self.access_keys.get(raw.target) else { continue }
+      let Some(id) = self.id_of(raw.window) else { continue }
+      let Some(element) = self.access_key(id, raw.target) else { continue }
       if let Some(request) = access_request(raw) { events.push((
-        MAIN_WINDOW,
+        id,
         AccessAction(element, request)
       )) }
     }
@@ -674,13 +687,13 @@ impl Platform for SdlPlatform {
     }
   }
   update_access = (self, id, tree) => {
-    // AccessKit's adapter is on the main window alone, for now (todo.md).
-    if !self.listening || id != MAIN_WINDOW { return }
-    let pixels = self.scale(MAIN_WINDOW)
-    self.access_keys = HashMap.new::<u64, string>()
-    accesskit.begin(tree.root, tree.focus)
+    if !self.listening { return }
+    let Some(window) = self.window_of(id) else { return }
+    let pixels = self.scale(id)
+    var keys = HashMap.new::<u64, string>()
+    accesskit.begin(window, tree.root, tree.focus)
     for node in tree.nodes {
-      self.access_keys.insert(node.id, node.key)
+      keys.insert(node.id, node.key)
       let at = access_bounds(node.bounds, pixels)
       accesskit.element(
         node.id,
@@ -702,6 +715,13 @@ impl Platform for SdlPlatform {
       )
     }
     accesskit.commit()
+    if id == MAIN_WINDOW {
+      self.access_keys = keys
+    } else {
+      for i, other in self.others {
+        if other.id == id { self.others[i].access_keys = keys }
+      }
+    }
   }
   // Opened hidden, placed, then shown, so it never shows where the system first put it; at
   // its size in logical units, as the main window is.
@@ -723,16 +743,23 @@ impl Platform for SdlPlatform {
     let _ = show_window(window)
     pin_contents(window)
     let id = WindowId(i64(window_id(window)))
+    // Heard by assistive technology as the main window is, on an adapter of its own.
+    if self.listening { let _ = accesskit.start(window) }
     self.others.push(OtherWindow {
       id: id,
       window: window,
-      state: state_of(window_flags(window))
+      state: state_of(window_flags(window)),
+      access_keys: HashMap.new(),
     })
     Some(id)
   }
   close_window = (self, id) => {
     for other in self.others {
-      if other.id == id { destroy_window(other.window) }
+      if other.id == id {
+        if self.listening { accesskit.stop(other.window) }
+        hittest.forget(other.window)
+        destroy_window(other.window)
+      }
     }
     self.others = [o in self.others | o.id != id | o]
   }
@@ -745,6 +772,16 @@ impl SdlPlatform {
     if id == MAIN_WINDOW { return Some(self.window) }
     for other in self.others {
       if other.id == id { return Some(other.window) }
+    }
+    None
+  }
+
+  /// The element node `node` of window `id`'s accessibility tree stands for, as the tree was
+  /// last told.
+  let access_key = pure (self, id: WindowId, node: u64) -> Maybe<string> => {
+    if id == MAIN_WINDOW { return self.access_keys.get(node) }
+    for other in self.others {
+      if other.id == id { return other.access_keys.get(node) }
     }
     None
   }

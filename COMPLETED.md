@@ -9,6 +9,59 @@ Newest first.
 
 ## Dated log
 
+### 11/16/26 — Several windows: AccessKit, subscriptions and a drawn title bar for each
+
+Three things a window beside the main one did not have: VoiceOver heard the main window alone,
+`OnResize`/`OnFocus`/`OnWindowState`/`OnPlaced` were the main window's, and only the main window
+could draw its own title bar. All three now reach every window.
+
+**AccessKit has an adapter a window.** `accesskit.m` kept one adapter, one snapshot and one
+request queue in statics. Now each window is a `surface`: its adapter, its snapshot, and the
+root and focus. Each surface is allocated alone, because AccessKit's callbacks keep the pointer
+given as their userdata while other windows come and go. `begin(window, root, focus)` picks the
+surface the elements that follow belong to, and a request is queued with SDL's number for its
+window. `ui.sdl3` starts an adapter as a window opens and stops it before the window is
+destroyed. It tells each adapter when its window gains or loses the keyboard (`focus`), and
+keeps each window's node-to-element map, so a request is answered in the window it came from.
+Checked on this Mac, not only in tests, through the accessibility API (the computer-use tools,
+from a packaged `.app` of two windows):
+- Each window's tree held its own button, at its place.
+- An `AXPress` on each button reached the program as that window's event.
+- The side window was closed and its adapter stopped, while the main window still answered.
+- A window opened again was heard on a fresh adapter.
+- The quit freed every adapter and left no crash report.
+
+VoiceOver itself, speaking, was not tried.
+
+**`Subscription.InWindow(key, subs)` hears a window beside the main one** as the unscoped
+subscriptions hear the main window. Other shapes were weighed against it:
+- A field on `Windows` per event would have broken the `Windows` every program writes.
+- Variants carrying a key would have doubled each one.
+
+The `[]` holds several subscriptions at once and breaks the size cycle a recursive `data` needs
+(LANGUAGE.md's rule). `heard` now takes the window an input came in. A subscription outside
+`InWindow` is the main window's, except a drop and the system's look, which are any window's,
+as before. The clocks and descriptors are no window's and are not looked for inside one.
+
+**A drawn title bar is a window's own.** `WindowSpec.title_bar` says it for a window beside the
+main one, and `sync_title_bar` goes through every window. A spec going back to `SystemTitleBar`
+gives the frame back and clears the areas. The platform calls already named their window. Two
+things kept to one window:
+- **`bindings.hittest`'s static areas**, because SDL calls one C function for every window's
+  hit test. Each window now has a slot (16 at once), handed to SDL as the hit test's `data`,
+  and `forget` frees it as the window goes. Slot 0 stays window-less for `answer`'s test.
+- **The script platform's frame and areas**, now kept on each `ScriptWindow`.
+
+**Found on the way:** the main window's own close button (`window_buttons`) ended the run
+without asking `App.main_close`, where the system's close asks it. It now asks.
+
+`TestRun_UiSideWindowHeardByItsKey` plays focus, state, size and drops into both windows. It
+checks that each subscription hears its own window and no other, that a drop reaches both the
+side window's subscription and the any-window one, and that a key no window has hears nothing.
+It also checks the side window's frame and areas, and the main close button asking. A drawn
+side window's bar on a Linux desktop is as untried as the main window's: SDL's dummy driver
+refuses a hit test.
+
 ### 11/16/26 — raylib's last gaps: uniforms, materials, cubemaps, PNG bytes
 
 The four raylib functions `todo.md` listed as unreachable are bound

@@ -183,6 +183,12 @@ pub struct ScriptWindow {
   most: Size = Size {},
   window: WindowState = WindowState {},
   typing: Maybe<Rect> = None,
+  /// Whether it has the system's frame, and the areas a drawn title bar last gave it, as the
+  /// main window's are kept ([ScriptPlatform.decorated]).
+  decorated: bool = true,
+  drag_areas: []Rect = [],
+  keep_areas: []Rect = [],
+  resize_margin: f32 = 0.0,
 }
 
 /// One step of a script: an input, time passing, the window dragged to a size — the
@@ -384,10 +390,27 @@ impl Platform for ScriptPlatform {
     self.set_state(id, now)
     self.answers.push((id, WindowStateChanged(now)))
   }
-  set_decorated = (self, id, on) => { if id == MAIN_WINDOW { self.decorated = on } }
+  set_decorated = (self, id, on) => {
+    if id == MAIN_WINDOW {
+      self.decorated = on
+      return
+    }
+    for i, w in self.others {
+      if w.id == id { self.others[i].decorated = on }
+    }
+  }
   choose_file = (self, id, tag, dialog) => { self.dialogs.push((tag, dialog)) }
   set_window_areas = (self, id, drags, keeps, margin) => {
-    if id != MAIN_WINDOW { return }
+    if id != MAIN_WINDOW {
+      for i, w in self.others {
+        if w.id == id {
+          self.others[i].drag_areas = drags
+          self.others[i].keep_areas = keeps
+          self.others[i].resize_margin = margin
+        }
+      }
+      return
+    }
     self.drag_areas = drags
     self.keep_areas = keeps
     self.resize_margin = margin

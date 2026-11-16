@@ -5,8 +5,12 @@
 #include <stdint.h>
 
 bool lyra_access_start(void *window) { (void)window; return false; }
-void lyra_access_stop(void) {}
-void lyra_access_begin(uint64_t root, uint64_t focus) { (void)root; (void)focus; }
+void lyra_access_stop(void *window) { (void)window; }
+void lyra_access_stop_all(void) {}
+void lyra_access_focus(void *window, bool focused) { (void)window; (void)focused; }
+void lyra_access_begin(void *window, uint64_t root, uint64_t focus) {
+  (void)window; (void)root; (void)focus;
+}
 void lyra_access_node(uint64_t id, int32_t role, const char *label, const char *value,
                       const char *description, double x, double y, double w, double h, int32_t toggled,
                       int32_t has_numeric, double numeric, double min, double max,
@@ -17,7 +21,8 @@ void lyra_access_node(uint64_t id, int32_t role, const char *label, const char *
   (void)actions; (void)children; (void)child_count;
 }
 void lyra_access_commit(void) {}
-int32_t lyra_access_next(uint64_t *target, double *number, char *text, int64_t cap) {
-  (void)target; (void)number; (void)text; (void)cap;
+int32_t lyra_access_next(uint32_t *window, uint64_t *target, double *number, char *text,
+                         int64_t cap) {
+  (void)window; (void)target; (void)number; (void)text; (void)cap;
   return 0;
 }
