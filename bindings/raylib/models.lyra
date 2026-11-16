@@ -119,6 +119,15 @@ pub struct Animations {
   count: i32,
 }
 
+/// The materials loaded from one file ([load_materials]), and the only handle that releases
+/// them — [Animations]' decision again: raylib answers one array, freed as one. A material
+/// read out by [material_in] is the set's.
+@must_release(unload_materials)
+pub struct Materials {
+  list: ^mut Material,
+  count: i32,
+}
+
 // ---------------------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------------------
@@ -462,14 +471,51 @@ pub let load_material_default = () -> Maybe<Material> => {
   if material_valid(m) { Some(m) } else { None }
 }
 
-// **`LoadMaterials` is deliberately unbound**, and it is a language limit rather than a
-// raylib one. It answers an array of `Material` raylib allocated, which must go back to
-// raylib's `MemFree` — declared in `files.lyra` as `(^u8) -> void`, since it frees any
-// buffer. Lyra has no pointer reinterpretation (a pointer comes from `&` or `nullptr` and
-// nothing else), so a `^Material` cannot be handed to it, and declaring `MemFree` a second
-// time with a `^Material` parameter is one C symbol with two signatures, which the backend
-// refuses by name. A single material is [load_material_default]; a model's materials come
-// with the model and are freed by [unload_model].
+/// The materials of a material library — an OBJ's `.mtl` file; given the `.obj` itself,
+/// raylib answers none — or `None` if it held none or there is no window. Each is drawn with by
+/// [draw_mesh] through [material_in], with raylib's default shader; its `Kd` colour is the
+/// albedo slot's ([material_color]), and a `map_Kd` texture is loaded into it.
+pub let load_materials = (path: string) -> Maybe<Materials> => {
+  if !window_ready() { return None }
+  // The count taken outside a closure, as [load_animations] does.
+  var cpath = path.cstring()
+  var found: i32 = 0
+  let raw = unsafe { rl_load_materials(cpath.data(), &mut found) }
+  if raw == nullptr { return None }
+  if found <= 0 {
+    unsafe { rl_mem_free(pointer_at(raw.address())) }
+    return None
+  }
+  Some(Materials { list: raw, count: found })
+}
+
+/// Free every material of the set — its slots, the textures loaded into them, a shader of
+/// its own — and then raylib's array, which `MemFree` takes as the bytes it is.
+pub let unload_materials = (materials: Materials) -> void => {
+  for i in 0..<i64(materials.count) {
+    unsafe { rl_unload_material(materials.list.offset(i)^) }
+  }
+  unsafe { rl_mem_free(pointer_at(materials.list.address())) }
+}
+
+/// Material `index` of a set, to draw with. **It stays the set's**: [unload_materials]
+/// frees it, so unloading it alone would free it twice — `@borrowed` says so, and a
+/// binding of it owes nothing.
+@borrowed
+pub let material_in = pure (materials: Materials, index: i64) -> Material => {
+  if index < 0 || index >= i64(materials.count) {
+    panic("material index ${index} out of range for ${materials.count} material(s)")
+  }
+  unsafe { materials.list.offset(index)^ }
+}
+
+/// The colour in one of a material's slots — one of the `MATERIAL_MAP_*` constants.
+pub let material_color = pure (material: Material, map: i32) -> Color => {
+  if i64(map) < 0 || i64(map) >= MATERIAL_MAP_COUNT {
+    panic("material map ${map} out of range for ${MATERIAL_MAP_COUNT} slots")
+  }
+  unsafe { material.maps.offset(i64(map))^.color }
+}
 
 pub let material_valid = (material: Material) -> bool =>
   unsafe { rl_material_valid(material) } != 0
@@ -854,6 +900,8 @@ unsafe extern rl_texture_id_default: () -> u32
 unsafe extern rl_set_material_texture:
   (material: ^mut Material, map: i32, texture: Texture2D) -> void
 
+@symbol("LoadMaterials")
+unsafe extern rl_load_materials: (path: ^u8, count: ^mut i32) -> ^mut Material
 @symbol("LoadModelAnimations")
 unsafe extern rl_load_model_animations: (path: ^u8, count: ^mut i32) -> ^ModelAnimation
 @symbol("UnloadModelAnimations")

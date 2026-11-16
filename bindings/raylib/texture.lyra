@@ -141,6 +141,16 @@ pub let unload_image = (image: Image) -> void => unsafe { rl_unload_image(image)
 pub let export_image = (image: Image, path: string) -> bool =>
   path.with_cstring((p) => unsafe { rl_export_image(image, p) }) != 0
 
+/// An image encoded as a file's bytes, or `None` where raylib cannot encode `kind` in
+/// memory — PNG is the one it can. `kind` takes the dot or not, as [image_from_memory]'s
+/// does: raylib answers NULL without one.
+pub let export_image_to_memory = (image: Image, kind: string) -> Maybe<[]u8> => {
+  var ext = (if kind.starts_with(".") { kind } else { "." ++ kind }).cstring()
+  var size: i32 = 0
+  let raw = unsafe { rl_export_image_to_memory(image, ext.data(), &mut size) }
+  take_bytes(raw, i64(size))
+}
+
 // ---------------------------------------------------------------------------------------
 // Images — generating
 //
@@ -310,6 +320,27 @@ pub let load_texture = (path: string) -> Maybe<Texture2D> => {
 /// Upload an image to the GPU. The image is untouched and is still the caller's to unload.
 pub let texture_from_image = (image: Image) -> Maybe<Texture2D> => {
   let t = unsafe { rl_texture_from_image(image) }
+  if texture_valid(t) { Some(t) } else { None }
+}
+
+/// How a cubemap's six faces sit in one image, for [load_texture_cubemap]. A cross puts
+/// `+Y` above `+Z` and `-Y` below it, `-X` left and `+X`, `-Z` right; a line runs `+X -X
+/// +Y -Y +Z -Z`. Auto-detect picks one from the image's proportions.
+pub const CUBEMAP_LAYOUT_AUTO_DETECT: i32 = 0
+pub const CUBEMAP_LAYOUT_LINE_VERTICAL: i32 = 1
+pub const CUBEMAP_LAYOUT_LINE_HORIZONTAL: i32 = 2
+pub const CUBEMAP_LAYOUT_CROSS_THREE_BY_FOUR: i32 = 3
+pub const CUBEMAP_LAYOUT_CROSS_FOUR_BY_THREE: i32 = 4
+
+/// Six faces cut out of one image and uploaded as a cubemap — a skybox, or what a surface
+/// reflects — or `None` if the image's shape fits no layout (raylib logs why). Its width
+/// and height are a face's. Needs a window.
+///
+/// It is a `Texture2D`, as raylib's `TextureCubemap` is one, released by [unload_texture].
+/// A shader reads it as a `samplerCube` from a model's `MATERIAL_MAP_CUBEMAP` slot:
+/// [set_model_material_texture] puts it there and [bind_shader_map] names the sampler.
+pub let load_texture_cubemap = (image: Image, layout: i32) -> Maybe<Texture2D> => {
+  let t = unsafe { rl_load_texture_cubemap(image, layout) }
   if texture_valid(t) { Some(t) } else { None }
 }
 
@@ -485,6 +516,9 @@ unsafe extern rl_unload_image: (image: Image) -> void
 @symbol("ExportImage")
 unsafe extern rl_export_image: (image: Image, path: ^u8) -> u8
 
+@symbol("ExportImageToMemory")
+unsafe extern rl_export_image_to_memory: (image: Image, kind: ^u8, size: ^mut i32) -> ^u8
+
 @symbol("GenImageColor")
 unsafe extern rl_gen_image_color: (width: i32, height: i32, color: Color) -> Image
 
@@ -568,6 +602,9 @@ unsafe extern rl_load_texture: (path: ^u8) -> Texture2D
 
 @symbol("LoadTextureFromImage")
 unsafe extern rl_texture_from_image: (image: Image) -> Texture2D
+
+@symbol("LoadTextureCubemap")
+unsafe extern rl_load_texture_cubemap: (image: Image, layout: i32) -> Texture2D
 
 @symbol("IsTextureValid")
 unsafe extern pure rl_texture_valid: (texture: Texture2D) -> u8

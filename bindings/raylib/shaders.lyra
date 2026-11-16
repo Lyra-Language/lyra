@@ -16,10 +16,18 @@ module bindings.raylib
 //! metalness and normal slots. A shader written against those names needs nothing more.
 //! Any other slot needs [bind_shader_map] to say which sampler receives it.
 //!
-//! **Uniform values are not bound yet.** `SetShaderValue` takes a `const void *`, and a
-//! Lyra pointer comes from `&` or `nullptr` and nothing else, so no pointer reaches it —
-//! the language limit `LoadMaterials` also stops at. A per-material number goes in through
-//! a texture instead: a 1x1 one whose colour is the number.
+//! **A uniform of the program's own is set by type** — [set_shader_float] through
+//! [set_shader_vec4], their arrays, [set_shader_int], [set_shader_matrix] and
+//! [set_shader_texture] — at the location [shader_location] found. raylib's
+//! `SetShaderValue` takes a `const void *`; each setter hands it its value's address as
+//! `^u8` (`pointer_at(p.address())`) with the uniform type that matches, so a `vec3` is
+//! never sent as four floats.
+//!
+//! **A uniform reaches every draw of a shader mode, as its last value.** raylib batches 2D
+//! draws and sends them at [end_shader_mode]; a uniform changed between two rectangles in
+//! one mode reaches both with the second value (measured). To draw with two values, end
+//! the mode and begin it again between them. A mesh is drawn at once ([draw_model],
+//! [draw_mesh]), so there a uniform set between two draws reaches only the second.
 
 import std.ffi.{ with_cstrings }
 
@@ -74,6 +82,90 @@ pub let bind_shader_map = (shader: Shader, map: i32, uniform: string) -> bool =>
 pub let unload_shader = (shader: Shader) -> void => unsafe { rl_unload_shader(shader) }
 
 // ---------------------------------------------------------------------------------------
+// Uniform values
+//
+// `loc` is from [shader_location]; a negative one is ignored by raylib, as GL ignores it.
+// A value holds until it is set again — a program keeps its uniforms between draws.
+// ---------------------------------------------------------------------------------------
+
+pub let set_shader_float = (shader: Shader, loc: i32, value: f32) -> void =>
+  unsafe {
+    rl_set_shader_value(shader, loc, pointer_at((&value).address()), UNIFORM_FLOAT)
+  }
+
+pub let set_shader_vec2 = (shader: Shader, loc: i32, value: Vector2) -> void =>
+  unsafe {
+    rl_set_shader_value(shader, loc, pointer_at((&value).address()), UNIFORM_VEC2)
+  }
+
+pub let set_shader_vec3 = (shader: Shader, loc: i32, value: Vector3) -> void =>
+  unsafe {
+    rl_set_shader_value(shader, loc, pointer_at((&value).address()), UNIFORM_VEC3)
+  }
+
+pub let set_shader_vec4 = (shader: Shader, loc: i32, value: Vector4) -> void =>
+  unsafe {
+    rl_set_shader_value(shader, loc, pointer_at((&value).address()), UNIFORM_VEC4)
+  }
+
+/// An `int` uniform — and a sampler's texture unit, which GLSL sets as one.
+pub let set_shader_int = (shader: Shader, loc: i32, value: i32) -> void =>
+  unsafe { rl_set_shader_value(shader, loc, pointer_at((&value).address()), UNIFORM_INT) }
+
+/// A `float name[n]` uniform, from its first element: `values.len()` of them are set.
+pub let set_shader_floats = (shader: Shader, loc: i32, values: []f32) -> void =>
+  set_values(shader, loc, unsafe { values.data().address() }, UNIFORM_FLOAT, values.len())
+
+pub let set_shader_vec2s = (shader: Shader, loc: i32, values: []Vector2) -> void =>
+  set_values(shader, loc, unsafe { values.data().address() }, UNIFORM_VEC2, values.len())
+
+pub let set_shader_vec3s = (shader: Shader, loc: i32, values: []Vector3) -> void =>
+  set_values(shader, loc, unsafe { values.data().address() }, UNIFORM_VEC3, values.len())
+
+pub let set_shader_vec4s = (shader: Shader, loc: i32, values: []Vector4) -> void =>
+  set_values(shader, loc, unsafe { values.data().address() }, UNIFORM_VEC4, values.len())
+
+pub let set_shader_ints = (shader: Shader, loc: i32, values: []i32) -> void =>
+  set_values(shader, loc, unsafe { values.data().address() }, UNIFORM_INT, values.len())
+
+/// A `mat4` uniform. [Matrix]'s fields are raylib's row-major names; GLSL receives the
+/// translation as column 3 (`m[3].xyz`), as raylib's own `mvp` arrives.
+pub let set_shader_matrix = (shader: Shader, loc: i32, value: Matrix) -> void =>
+  unsafe { rl_set_shader_value_matrix(shader, loc, value) }
+
+/// A `sampler2D` uniform, given a texture for the shader mode's draws: set it inside
+/// [begin_shader_mode] or just before. The texture stays the caller's.
+pub let set_shader_texture = (shader: Shader, loc: i32, texture: Texture2D) -> void =>
+  unsafe { rl_set_shader_value_texture(shader, loc, texture) }
+
+/// An array uniform's `n` elements, from the address of the first; nothing for an empty
+/// array, whose count of 0 GL would refuse.
+let set_values = (shader: Shader, loc: i32, first: u64, kind: i32, n: i64) -> void =>
+  if n > 0 {
+    unsafe { rl_set_shader_value_v(shader, loc, pointer_at(first), kind, i32(n)) }
+  }
+
+// raylib's `SHADER_UNIFORM_*` (`ShaderUniformDataType`), the ones the setters send.
+const UNIFORM_FLOAT: i32 = 0
+const UNIFORM_VEC2: i32 = 1
+const UNIFORM_VEC3: i32 = 2
+const UNIFORM_VEC4: i32 = 3
+const UNIFORM_INT: i32 = 4
+
+// ---------------------------------------------------------------------------------------
+// Shader mode — 2D drawing through a program of your own
+// ---------------------------------------------------------------------------------------
+
+/// Draw the shapes and textures that follow through `shader` instead of raylib's default,
+/// until [end_shader_mode]. Its vertex stage receives raylib's names (`vertexPosition`,
+/// `vertexTexCoord`, `vertexColor`, `mvp`); see the module note on when uniforms arrive.
+pub let begin_shader_mode = (shader: Shader) -> void =>
+  unsafe { rl_begin_shader_mode(shader) }
+
+/// Send the shader mode's draws, and go back to the default shader.
+pub let end_shader_mode = () -> void => unsafe { rl_end_shader_mode() }
+
+// ---------------------------------------------------------------------------------------
 // Render state
 // ---------------------------------------------------------------------------------------
 
@@ -99,6 +191,32 @@ const SHADER_LOC_MAP_ALBEDO: i64 = 15
 
 @symbol("LoadShaderFromMemory")
 unsafe extern rl_load_shader_from_memory: (vertex: ^u8, fragment: ^u8) -> Shader
+@symbol("SetShaderValue")
+unsafe extern rl_set_shader_value: (
+  shader: Shader,
+  loc: i32,
+  value: ^u8,
+  kind: i32
+) -> void
+@symbol("SetShaderValueV")
+unsafe extern rl_set_shader_value_v:
+  (shader: Shader, loc: i32, values: ^u8, kind: i32, count: i32) -> void
+@symbol("SetShaderValueMatrix")
+unsafe extern rl_set_shader_value_matrix: (
+  shader: Shader,
+  loc: i32,
+  value: Matrix
+) -> void
+@symbol("SetShaderValueTexture")
+unsafe extern rl_set_shader_value_texture: (
+  shader: Shader,
+  loc: i32,
+  texture: Texture2D
+) -> void
+@symbol("BeginShaderMode")
+unsafe extern rl_begin_shader_mode: (shader: Shader) -> void
+@symbol("EndShaderMode")
+unsafe extern rl_end_shader_mode: () -> void
 @symbol("IsShaderValid")
 unsafe extern rl_shader_valid: (shader: Shader) -> u8
 @symbol("GetShaderLocation")

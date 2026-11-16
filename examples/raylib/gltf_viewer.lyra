@@ -653,8 +653,9 @@ let run_viewer = (paths: []string) -> void => {
 // ---------------------------------------------------------------------------------------
 
 /// The lighting shader, twice: once shading with the mesh's own normals, and once shading
-/// flat for a mesh that has none. Two programs rather than one with a switch, because a
-/// switch would be a uniform and uniform values cannot be set yet (`shaders.lyra`).
+/// flat for a mesh that has none. Two programs rather than one with a switch: the program
+/// is a material's and stays with it, where a switch would be a uniform set again before
+/// every mesh drawn.
 @must_release(unload_lighting)
 struct Lighting {
   smooth: Shader,
@@ -862,10 +863,11 @@ let upload_jpeg = (image: ImageBytes) -> Maybe<Texture2D> =>
 /// material's factors then scale in the shader, a flat normal, and no occlusion. The model
 /// takes each texture and frees it in `unload_model`.
 ///
-/// **The parameters go in as a texture**, since uniform values cannot be set yet
-/// (`shaders.lyra`): one row, each texel holding one float's four bytes, which the shader
-/// reads back exactly with `texelFetch` and `uintBitsToFloat`. It sits in the height slot,
-/// which nothing here uses. [param_floats] is the layout, and the shader's `param(i)` reads it.
+/// **The parameters go in as a texture**, uploaded once and kept by the material, where
+/// uniforms (`set_shader_floats`) would be set again before every mesh drawn: one row, each
+/// texel holding one float's four bytes, which the shader reads back exactly with
+/// `texelFetch` and `uintBitsToFloat`. It sits in the height slot, which nothing here uses.
+/// [param_floats] is the layout, and the shader's `param(i)` reads it.
 let complete_materials = (model: Model, params: []MaterialParams) -> void => {
   for i in 0..<i64(model.material_count) {
     fill_slot(model, i, MATERIAL_MAP_METALNESS, WHITE)

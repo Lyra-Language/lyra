@@ -725,9 +725,12 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   7. `editor.lyra` — a level editor, driving every key constant (generated) and the mouse.
      **Done 09/26.** Still unbound: the GPU API, surfaces, joysticks, text input, the
      clipboard, window management beyond fullscreen, file dialogs.
-- **[OPEN] raylib gaps:** `SetShaderValue*` uniforms (a `const void *` no Lyra pointer
-  reaches); `LoadMaterials` (needs pointer reinterpretation to reach `MemFree`);
-  `LoadTextureCubemap`; `ExportImageToMemory` (returns size 0).
+- **[DONE 11/16] raylib gaps:** uniforms by type and shader mode, `load_materials`,
+  `load_texture_cubemap`, `export_image_to_memory`, each read back through a hidden window
+  (COMPLETED.md 11/16).
+- **[IDEA] The glTF viewer on uniforms:** one lighting program with a `flat` uniform, and
+  the 43 parameters as `set_shader_floats` before each `draw_model_mesh`, would drop the
+  second program and the parameter texture's bit-packing.
 - **[OPEN] glTF viewer gaps:** morph targets, `KHR_animation_pointer`, crossfading node
   clips; WebP and KTX2/Basis textures; `KHR_materials_variants`, iridescence, sheen,
   specular, IOR, volume; back-to-front sorting of see-through meshes.

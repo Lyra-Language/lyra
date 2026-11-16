@@ -613,6 +613,49 @@ let main = () -> void => {
 	}
 }
 
+// `export_image_to_memory`, headless: a PNG the bindings encode decodes back to the same
+// size and pixel, whether the kind is spelled with its dot or without; QOI, which raylib
+// writes only to a file, is `None`. Until raylib 6 it answered a size of 0 either way.
+func TestExec_RaylibImageToMemory(t *testing.T) {
+	t.Parallel()
+	libdir := pkgConfigLibDir(t, "raylib")
+	src := `
+module main
+import bindings.raylib.{ gen_image_color, unload_image, image_color_at, export_image_to_memory,
+                         image_from_memory, rect, rgb }
+let main = () -> void => {
+  var image = gen_image_color(3, 2, rgb(10, 20, 30))
+  image.paint_rectangle(rect(2.0, 1.0, 1.0, 1.0), rgb(200, 100, 50))
+  var report = "${export_image_to_memory(image, "qoi").is_none()}"
+  for kind in ["png", ".png"] {
+    match export_image_to_memory(image, kind) {
+      Some(bytes) => match image_from_memory("png", bytes) {
+        Some(back) => {
+          let c = image_color_at(back, 2, 1)
+          report = report ++ " ${back.width}x${back.height} ${c.r},${c.g},${c.b}"
+          unload_image(back)
+        },
+        None => { report = report ++ " undecodable" },
+      },
+      None => { report = report ++ " none" },
+    }
+  }
+  unload_image(image)
+  println(report)
+}
+`
+	bin := compileCached(t, lookClang(t), emitWithPrelude(t, src), "-L"+libdir, "-lraylib")
+	raw, err := command(bin).Output()
+	if err != nil {
+		t.Fatalf("running the raylib image-to-memory binary failed: %v", err)
+	}
+	want := "true 3x2 200,100,50 3x2 200,100,50"
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if got := strings.TrimSpace(lines[len(lines)-1]); got != want {
+		t.Errorf("raylib image to memory = %q; want %q", got, want)
+	}
+}
+
 // pkgConfigLibDir asks pkg-config where a library lives, skipping when it is absent.
 //
 // `@link` emits `-lNAME` and nothing more — a search path is a build-system question the

@@ -9,6 +9,58 @@ Newest first.
 
 ## Dated log
 
+### 11/16/26 — raylib's last gaps: uniforms, materials, cubemaps, PNG bytes
+
+The four raylib functions `todo.md` listed as unreachable are bound
+(`bindings/raylib/shaders.lyra`, `models.lyra`, `texture.lyra`). Two had been held up by
+the language and two by raylib, and none of the four reasons still held.
+
+**The language limit had been lifted already.** `SetShaderValue`'s `const void *` and
+`LoadMaterials`' trip through `MemFree(void *)` both wanted one pointer read as another,
+and the notes said a pointer came from `&` or `nullptr` and nothing else. Since
+`pointer_at` and `p.address()` arrived for the Genesis, `pointer_at(p.address())` pinned
+to `^u8` is exactly that cast, and `std/io.lyra` already used it on the host. So each
+setter sends its value's address with the uniform type that matches. There are ten, from
+`set_shader_float` to `set_shader_ints`, and arrays go through `SetShaderValueV`.
+`set_shader_matrix` and `set_shader_texture` pass by value. The setters keep `pointer_at`
+inside the binding, so a program never sees a `void *`. `begin_shader_mode` and
+`end_shader_mode` came with them, since a uniform cannot be shown to arrive without a draw
+through the shader.
+
+**A uniform reaches every 2D draw of a shader mode as its last value.** This was measured
+in C before it was written down. Two rectangles drawn in one mode, with the uniform changed
+between them, both read the second value (191 and 191), because raylib batches the draws
+and sends them at `EndShaderMode`. Ending the mode and beginning it again keeps the two
+values apart, and a sampler set before `BeginShaderMode` still arrives. A mesh draw is
+immediate, so there a uniform set between two draws reaches only the second.
+`TestExec_RaylibShaderUniforms` draws twelve one-pixel columns, each in its own mode with an
+int `which` naming the uniform whose value its red channel shows, and reads them back:
+`64 128 191 96 159 32 223 16 80 143 112 200`. Each array's first element is 0.9, so an
+array sent from the wrong element, or as the wrong type, would read otherwise.
+
+**`LoadMaterials` is `Animations` again.** raylib answers one array and frees it as one,
+so `load_materials` returns a single `@must_release(unload_materials)` handle.
+`material_in` reads a material out with `@borrowed`, so a binding of it owes nothing. A
+W022 check of a program that loads a set and never frees it warns on the set alone.
+`unload_materials` unloads each material and then hands the array to `MemFree`. It reads an
+`.mtl` file (given the `.obj` that names one, raylib answers none); a `Kd` lands in the
+albedo slot (`material_color`).
+
+**Both of raylib's reasons were raylib 5's.** On raylib 6, `ExportImageToMemory` gives
+78 bytes for a 4x4 PNG with the dot and NULL without it, the same dot trap
+`image_from_memory` absorbs; PNG is the only format it encodes in memory. The note "answers
+size 0, measured both with and without the dot" was true of 5.x. `LoadTextureCubemap`
+"waited on 3D", and 3D has since been bound. `TestExec_RaylibCubemap` paints a 4x3 cross
+with six colours and samples each direction through a model's `MATERIAL_MAP_CUBEMAP` slot
+and a `samplerCube`, one column a face. The colours come back in the order the
+`CUBEMAP_LAYOUT_*` note states (+X −X +Y −Y +Z −Z). Auto-detect divides by whole faces, so
+the 5x7 image first tried as a refusal passed as a 3x4 cross of 1-pixel faces; the test
+uses 10x10.
+
+The glTF viewer's two notes blamed the missing uniforms for its parameter texture and its
+second lighting program. The texture still suits it, since it is uploaded once and kept by
+the material, so only the reasoning changed; moving it to uniforms is an `[IDEA]`.
+
 ### 11/15/26 — Raster effects on the Genesis: a colour in the gap between two lines
 
 `std.genesis.raster`: a table of colour changes, each from a line of the picture down, made
