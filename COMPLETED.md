@@ -9,6 +9,23 @@ Newest first.
 
 ## Dated log
 
+### 11/16/26 — `text-align`
+
+A paragraph's lines always started at their box's left. **`Style.text_align`** is CSS's
+`text-align`, inherited as CSS has it: `TextLeft` (the default), `TextCenter` or `TextRight`.
+Once a paragraph's box is sized, `lines_aligned` moves each line's glyphs by the room beside
+that line: all of it for the right, half for the middle. Only paragraphs (`Words`) are aligned;
+fields and painters place their own text. lui writes it from `text-align: left | center |
+right | start | end`. Text runs left to right only, so `start` is left and `end` is right, until
+bidi comes.
+
+`TestRun_UiTextAlign` puts "Hi" in a box 200 wide, unset and set each way, and once with the
+alignment set on the column around it: left, left, middle, right, and right from the column.
+
+The todo item it came from stays open for the rest: runs cut by script as well as by face,
+bidi, and a ZWJ sequence's one glyph across a terminal's cells. Those need Unicode's script and
+bidi data, which `ui.text` does not have. The item's ellipsis was built earlier today.
+
 ### 11/16/26 — Text hinting is the platform's unless the program says
 
 `ui.text` hinted every glyph lightly unless a program set `Fonts.hinting`, so a `ui` program on

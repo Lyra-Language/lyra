@@ -73,6 +73,9 @@ layer — implements the two traits; the display list is the whole contract.
   and after a dragged edge's arrows (`Ui.cursor_at`), so a painter's command line can be an
   I-beam inside a grid that is an arrow. **`TerminalRole`** (`.with_role(TerminalRole)`) is
   heard as AccessKit's terminal (`AxTerminal`, code 21), named by the element's label.
+- **`text_align`** (CSS's `text-align`, inherited; lui's `text-align: left | center | right |
+  start | end`): `TextLeft`, `TextCenter`, `TextRight` — each line of a paragraph moved by the
+  room beside it in its box (`lines_aligned`). Text runs left to right only, so `start` is left.
 - **`text_overflow: TextEllipsis`** (CSS's `text-overflow: ellipsis`, lui's `text-overflow`;
   `TextClip` the default) keeps a paragraph one line, cut by rune to its box with "…" after it
   where it is wider (`ellipsized`, by halving; spaces before the "…" dropped, "…" alone where

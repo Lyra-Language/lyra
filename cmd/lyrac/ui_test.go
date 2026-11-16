@@ -5856,6 +5856,53 @@ let main = () -> u8 => {
 	}
 }
 
+// CSS's text-align (`Style.text_align`, inherited): a paragraph's lines at the left of a box
+// 200 wide, in its middle, or at its right — each line by the room beside it — and a column's
+// alignment reaching the text inside it.
+func TestRun_UiTextAlign(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.draw.{ Size }
+import ui.text.{ fonts_new, Fonts }
+import ui.style.{ Style, TextAlign, TextLeft, TextCenter, TextRight }
+import ui.layout.{ Node, Laid, Prose, text, column, layout, loose }
+
+let first_x = (laid: Laid<void>) -> Maybe<(f32, f32)> => {
+  if let Prose(block) = laid.content {
+    if block.lines.len() > 0 && block.lines[0].glyphs.len() > 0 {
+      return Some((block.lines[0].glyphs[0].x, block.lines[0].width))
+    }
+  }
+  for child in laid.children {
+    if let Some(found) = first_x(child.laid) { return Some(found) }
+  }
+  None
+}
+
+let place = (node: Node<void>, fonts: mut Fonts) -> string => {
+  let laid = layout(node, loose(Size { w: 400.0, h: 100.0 }), fonts)
+  let Some((x, w)) = first_x(laid) else { return "none" }
+  let room = 200.0 - w
+  if x.abs() < 0.5 { "left" } else if (x - room / 2.0).abs() < 0.5 { "middle" } else if (x - room).abs() < 0.5 { "right" } else { "at ${x}" }
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  let box = (align: Maybe<TextAlign>) -> Node<void> =>
+    text::<void>("Hi").with_style(Style { width: Some(200.0), text_align: align })
+  println("unset ${place(box(None), fonts)}, left ${place(box(Some(TextLeft)), fonts)}, center ${place(box(Some(TextCenter)), fonts)}, right ${place(box(Some(TextRight)), fonts)}")
+  let inherited = column::<void>([box(None)]).with_style(Style { text_align: Some(TextRight) })
+  println("from its column: ${place(inherited, fonts)}")
+  fonts.close()
+  0
+}
+`)
+	want := "unset left, left left, center middle, right right\nfrom its column: right\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // CSS's text-overflow: ellipsis (`Style.text_overflow`, `ellipsized`): a paragraph wider than
 // its box is one line, cut by rune to what fits with "…" after it, spaces before the "…"
 // dropped, and "…" alone where nothing more fits; one that fits is itself. Checked as what a

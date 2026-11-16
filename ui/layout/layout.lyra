@@ -84,10 +84,22 @@ import ui.draw.{
   radius,
 }
 import ui.backend.{ Renderer, Key, Modifiers, PointerButton, Chord, Cursor }
-import ui.text.{ Fonts, FontSpec, Cell, TextBlock, GlyphAtlas, caret_x }
+import ui.text.{
+  Fonts,
+  FontSpec,
+  Cell,
+  TextBlock,
+  TextLine,
+  LineGlyph,
+  GlyphAtlas,
+  caret_x
+}
 import ui.style.{
   Style,
   TextEllipsis,
+  TextAlign,
+  TextLeft,
+  TextCenter,
   scrollbar_rules,
   Sheet,
   Theme,
@@ -684,6 +696,27 @@ pub let modal<e> = pure (
   on_dismiss: e
 ) -> Node<e> =>
   Node { kind: Modal(open, on_dismiss), tag: "Modal", children: [under, content] }
+
+/// `block`'s lines set across a box `width` wide as `align` says — each moved by the room
+/// beside it, all of it for the right, half for the middle; the left is where they are laid.
+let lines_aligned = pure (
+  block: TextBlock,
+  width: f32,
+  align: TextAlign
+) -> TextBlock => {
+  if align == TextLeft { return block }
+  let share: f32 = if align == TextCenter { 0.5 } else { 1.0 }
+  TextBlock {
+    block |
+    lines: [line in block.lines | {
+      let by = ((width - line.width) * share).max(0.0)
+      TextLine {
+        line |
+        glyphs: [g in line.glyphs | LineGlyph { g | x: g.x + by, pen: g.pen + by }],
+      }
+    }],
+  }
+}
 
 /// `text` as one line no wider than `width` in `font`: itself where it fits, else its longest
 /// start that fits with "…" after it (spaces before the "…" dropped), or "…" alone where nothing
@@ -1765,9 +1798,10 @@ let lay_fresh<e> = (
           UNBOUNDED
         )
       } else { fonts.lay_out(content, style.font, inner.max_w) }
+      let size = inner.constrain(Size { w: block.width, h: block.height })
       Body::<e> {
-        size: inner.constrain(Size { w: block.width, h: block.height }),
-        content: Prose(block),
+        size: size,
+        content: Prose(lines_aligned(block, size.w, style.text_align))
       }
     },
     Texels(texture, texels, natural) => {

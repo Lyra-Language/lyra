@@ -799,11 +799,10 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/16] `ui.text`'s hinting is the platform's unless a program says**: the host asks
   `Platform.unhinted_text` once (none on Apple's systems); `Fonts.set_hinting` keeps a
   program's choice (COMPLETED.md 11/16). Termina's own line choosing it is now redundant.
-- **[OPEN] `ui.text`: left to right, runs by face only.** Fallback is built (10/22): a
-  paragraph's runs are cut by the face that has each character. Not by script — a run of one
-  face mixing Latin and Hebrew is shaped as one — and no bidi. Colour emoji are drawn
-  (COMPLETED.md, 10/30), but not a ZWJ sequence's one glyph across a terminal's cells. Also no
-  text alignment (a line starts at its box's left) and no ellipsis.
+- **[PARTIAL] `ui.text`: left to right, runs by face only.** Runs are cut by face, not by
+  script (Latin and Hebrew in one face are shaped as one run), and there is no bidi; a ZWJ
+  sequence is not one glyph across a terminal's cells. Text alignment and the ellipsis are built
+  (COMPLETED.md 11/16).
 - **[DONE 10/22] `ui.text`: the atlas's pages** — a page a texture, added when a glyph fits
   in none, the least recently drawn emptied past `ATLAS_PAGES` (COMPLETED.md, 10/22).
 - **[OPEN] `ui.layout`: a `Picture` ignores opacity.** `DrawOp.Picture` has no colour to
