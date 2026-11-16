@@ -549,6 +549,7 @@ impl Platform for SdlPlatform {
     events
   }
   held = (self) => modifiers_of(modifiers())
+  unhinted_text = (self) => apple()
   wake_for = (self, fds) => {
     let _ = wake.watch(fds)
   }

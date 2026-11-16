@@ -9,6 +9,31 @@ Newest first.
 
 ## Dated log
 
+### 11/16/26 — Text hinting is the platform's unless the program says
+
+`ui.text` hinted every glyph lightly unless a program set `Fonts.hinting`, so a `ui` program on
+a Mac drew text hinted where the system's own text is not. `ui.text` cannot ask which platform
+it is on, since it calls no platform library, so the choice belongs to whatever opens the
+window. Termina made it itself, from `bindings.sdl3`'s `platform()`.
+
+**The host asks the platform, once.** `Platform` has `unhinted_text`, false by default.
+`ui.sdl3` answers yes on Apple's systems, and the script platform answers its `unhinted`
+field, which keeps tests as they were. At its first step, before `App.start`'s commands, the
+host sets `Fonts.hinting` to `HintNone` where the answer is yes and to `HintLight` where it is
+no.
+
+**A program's choice is kept.** `Fonts.set_hinting` sets the hinting and `hinting_given`, and
+the host leaves a given hinting alone. Setting the field directly, as Termina does, stays the
+platform's to replace. Termina's line picks the very values the host now picks, so it changes
+nothing and could go. A `Maybe<Hinting>` field would have said "unset" more directly, but it
+would have broken that assignment in a repository not run here, and `Hinting` is
+`bindings.freetype`'s, mapped onto FreeType's load flags, so it takes no "the platform's"
+variant either.
+
+`TestRun_UiHintingIsThePlatforms`: light where the platform says no, none where it says yes,
+and full where the program chose full. Vega's `--check` runs on the script platform and is
+unchanged.
+
 ### 11/16/26 — `Fonts.cells` measured: a cache would buy nothing
 
 The item asked whether a terminal's grid needs its glyphs cached: `Fonts.cells` looks each

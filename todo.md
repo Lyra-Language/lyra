@@ -796,9 +796,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/16] `Fonts.cells` measured: no cache needed** — a 200×60 screen costs about 1 ms
   of CPU a frame at `-O2`, and a cache by face order and character made no difference: a
   HarfBuzz lookup costs what a hash map's does (COMPLETED.md 11/16).
-- **[OPEN] `ui.text`'s hinting is light everywhere unless a program says.** macOS draws
-  text unhinted; `ui.text` cannot ask which platform it is on (it calls no platform library),
-  so the default belongs to whatever opens the window (`ui.sdl3`, `ui.gpu`'s `open_app`).
+- **[DONE 11/16] `ui.text`'s hinting is the platform's unless a program says**: the host asks
+  `Platform.unhinted_text` once (none on Apple's systems); `Fonts.set_hinting` keeps a
+  program's choice (COMPLETED.md 11/16). Termina's own line choosing it is now redundant.
 - **[OPEN] `ui.text`: left to right, runs by face only.** Fallback is built (10/22): a
   paragraph's runs are cut by the face that has each character. Not by script — a run of one
   face mixing Latin and Hebrew is shaped as one — and no bidi. Colour emoji are drawn

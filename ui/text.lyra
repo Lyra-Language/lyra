@@ -139,9 +139,13 @@ pub struct Fonts {
   fallbacks: []string = [],
   /// The faces made, by what they were made as (`made_key`).
   made: HashMap<string, i64>,
-  /// How glyphs are fitted to the pixel grid — light (vertically only) unless the program says
-  /// otherwise: macOS draws its own text unhinted.
+  /// How glyphs are fitted to the pixel grid. Unless the program says ([Fonts.set_hinting]), the
+  /// platform's way once a window is open (`ui.app`'s host asks `Platform.unhinted_text`): none
+  /// on Apple's systems, which draw their own text unhinted; light (vertically only) elsewhere,
+  /// and before then. Set directly, it is the platform's to replace; `set_hinting` keeps it.
   hinting: Hinting = HintLight,
+  /// Whether the program chose [Fonts.hinting] ([Fonts.set_hinting]), so the platform does not.
+  hinting_given: bool = false,
   laid: HashMap<string, TextBlock>,
   /// The paragraphs laid out before `laid` filled: kept one generation more, so a screen's
   /// text is found again however often the cache turns over, and the cache never holds more
@@ -337,6 +341,12 @@ impl Fonts {
   let forget_laid = (self: mut) -> void => {
     self.laid = HashMap.new::<string, TextBlock>()
     self.older = HashMap.new::<string, TextBlock>()
+  }
+
+  /// Glyphs fitted to the pixel grid this way, whatever the platform does with its own text.
+  pub let set_hinting = (self: mut, hinting: Hinting) -> void => {
+    self.hinting = hinting
+    self.hinting_given = true
   }
 
   /// Add the first of [SYSTEM_FONTS] there is as `"system"`; `false` if there is none.

@@ -5795,6 +5795,67 @@ let main = () -> u8 => {
 	}
 }
 
+// Text hinting is the platform's where the program has not chosen one: the host asks
+// `Platform.unhinted_text` once, at its first step — none where the system draws its own
+// text unhinted (Apple's), light elsewhere — and a program's `Fonts.set_hinting` keeps its
+// choice whatever the platform says.
+func TestRun_UiHintingIsThePlatforms(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, Command, Subscription, host_of }
+import ui.script.{ timed_platform, Waited }
+import ui.backend.{ Renderer, TextureId }
+import ui.draw.{ Size, Color }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, text }
+import bindings.freetype.{ Hinting, HintNone, HintLight, HintFull }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, window, background, ops) => {}
+}
+
+let named = pure (h: Hinting) -> string => match h {
+  HintNone => "none",
+  HintLight => "light",
+  HintFull => "full",
+}
+
+let main = () -> u8 => {
+  for (unhinted, chosen) in [(false, false), (true, false), (true, true)] {
+    var fonts = fonts_new()
+    if chosen { fonts.set_hinting(HintFull) }
+    var platform = timed_platform([Waited(1)], Size { w: 100.0, h: 100.0 })
+    platform.unhinted = unhinted
+    var renderer = Blank {}
+    let app = App {
+      view: pure (_: i64) -> Node<i64> => text("hi"),
+      update: pure (s: i64, _: i64) -> (i64, []Command<i64>) => (s, []),
+      subscriptions: (_: i64) -> []Subscription<i64> => [],
+      background: Color { r: 0, g: 0, b: 0 },
+    }
+    var host = host_of(app, 0, platform)
+    let _ = host.step(platform, renderer, fonts)
+    println("platform unhinted ${unhinted}, program chose ${chosen}: ${named(fonts.hinting)}")
+  }
+  0
+}
+`)
+	want := "platform unhinted false, program chose false: light\n" +
+		"platform unhinted true, program chose false: none\n" +
+		"platform unhinted true, program chose true: full\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // CSS's text-overflow: ellipsis (`Style.text_overflow`, `ellipsized`): a paragraph wider than
 // its box is one line, cut by rune to what fits with "…" after it, spaces before the "…"
 // dropped, and "…" alone where nothing more fits; one that fits is itself. Checked as what a

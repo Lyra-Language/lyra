@@ -212,8 +212,11 @@ layer — implements the two traits; the display list is the whole contract.
   is emboldened, an italic from an upright one slanted (FreeType's synthesis; the advance
   unchanged). `metrics(spec, scale)` reads a face's own tables (HarfBuzz's metrics, with its
   fallbacks), its advance the `M`'s, whole pixels while glyphs are hinted; `MeasureFont` asks it
-  of a host. Glyphs are hinted lightly unless a program sets `Fonts.hinting` — ui.text asks no
-  platform which it is on, so macOS's unhinted look is the program's to choose.
+  of a host. **Hinting is the platform's unless the program chooses**: ui.text asks no platform
+  which it is on, so the host does, once, at its first step (`Platform.unhinted_text` — `ui.sdl3`
+  yes on Apple's systems) and sets `Fonts.hinting` to none there, light elsewhere; a program's
+  `Fonts.set_hinting` (`hinting_given`) keeps its own. Light before a window opens, and on the
+  script platform unless its `unhinted` says otherwise.
 - **The glyph atlas is pages**: a glyph that fits on none opens one, and past `ATLAS_PAGES`
   the page drawn from least recently is cleared and filled again — never one the frame being
   painted has drawn from, since that frame's ops still show it (a frame needing more pages

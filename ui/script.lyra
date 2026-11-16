@@ -136,6 +136,9 @@ pub struct ScriptPlatform {
   /// it has a menu bar of its own, as a Mac does, and the menus it was last given for it
   /// ([Platform.set_menus]).
   apple_keys: bool = false,
+  /// Whether it says the system draws its text unhinted ([Platform.unhinted_text]), as Apple's
+  /// do — apart from `apple_keys`, so the shortcuts can be Apple's while text stays as it was.
+  unhinted: bool = false,
   native_menus: bool = false,
   menus: []NativeMenu = [],
   /// The window's state; whether it has the system's frame; the areas a drawn title bar was
@@ -293,6 +296,7 @@ impl Platform for ScriptPlatform {
   held = pure (self) => self.holding
   // It never waits: each pass plays the next step.
   wake_for = (self, fds) => {}
+  unhinted_text = pure (self) => self.unhinted
   scale = pure (self, id) => self.units * self.interface
   set_interface_scale = (self, factor) => {
     self.interface = factor

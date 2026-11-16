@@ -81,6 +81,10 @@ pub trait Platform {
   /// read (or closes): asked each pass, after what was ready has been read; none stops it. A
   /// platform that never waits ignores it.
   wake_for: (mut Self, []i32) -> void
+  /// Whether the system draws its own text unhinted — Apple's do — so `ui.text` should too
+  /// where the program has not said ([Fonts.hinting_given]); the host asks it once. No, by
+  /// default.
+  unhinted_text: (Self) -> bool = (self) => false
   /// The text on the clipboard; `""` when there is none.
   clipboard: (Self) -> string
   set_clipboard: (mut Self, string) -> void

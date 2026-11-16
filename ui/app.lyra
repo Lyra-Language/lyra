@@ -95,6 +95,7 @@ import ui.backend.{
 }
 import ui.draw.{ Point, Size, Rect, Color }
 import ui.text.{ Fonts, FontSpec, FontMetrics, FontFile, GlyphAtlas, glyph_atlas }
+import bindings.freetype.{ HintNone, HintLight }
 import ui.style.{ Viewport, Style, Overflow, OverflowAuto, light_theme }
 import ui.layout.{
   Node,
@@ -705,6 +706,10 @@ impl Host<s, e> {
     // loaded is there for the pass's layout, a focus asked for found in it.
     if !self.started {
       self.started = true
+      // The platform's hinting, where the program chose none: none on Apple's systems.
+      if !fonts.hinting_given {
+        fonts.hinting = if platform.unhinted_text() { HintNone } else { HintLight }
+      }
       self.carry_out(self.app.start, now, platform)
     }
     self.measure(platform, fonts)

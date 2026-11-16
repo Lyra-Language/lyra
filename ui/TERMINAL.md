@@ -2,8 +2,9 @@
 
 **Status: proposed 10/22; steps 1–5 built 10/22, steps 6 and 7 10/23, step 8 10/23 (its second half `WINDOW.md`'s, Termina on `ui` alone)** (`painted`, `PaintDraw`, `PaintText`,
 `on_size`, `PaintArea.visible`, `examples/ui/painted.lyra`; the atlas's pages; faces, made
-faces, metrics and hinting — `Fonts.hinting` light unless the program says, as `ui.text` asks
-no platform which it is on; `MeasureFont` answered once, not again as fonts change;
+faces, metrics and hinting — `Fonts.hinting` the platform's unless the program says
+(`Fonts.set_hinting`), the host asking `Platform.unhinted_text` since `ui.text` asks no platform
+which it is on (11/16); `MeasureFont` answered once, not again as fonts change;
 fallback — a space the run's face has stays in its run too, so a run is not cut at every space;
 `PaintCells` centres every glyph on its columns, not only a wide one, so a fallback's narrow
 glyph sits in its cell's middle; `examples/ui/cells.lyra`; raw input as a builder,
