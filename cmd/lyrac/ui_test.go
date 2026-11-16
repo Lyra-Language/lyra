@@ -5667,6 +5667,82 @@ let view = pure () -> Node<Ev> => themed::<Ev>(light_theme(), Sheet { rules: [Ru
 	}
 }
 
+// CSS's text-overflow: ellipsis (`Style.text_overflow`, `ellipsized`): a paragraph wider than
+// its box is one line, cut by rune to what fits with "…" after it, spaces before the "…"
+// dropped, and "…" alone where nothing more fits; one that fits is itself. And a tab strip too
+// narrow for its labels shows each one line ending in "…" within its tab, where it was cut bare.
+func TestRun_UiTextEllipsis(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ ui_new }
+import ui.draw.{ Size }
+import ui.text.{ Fonts, fonts_new, FontSpec }
+import ui.style.{ light_theme, Sheet }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, themed, tight, TabsSpec, TabSpec, tab_bar, Tabbed, Prose, ellipsized, UNBOUNDED }
+
+data Ev = Selected(i64) | Closed(i64) | Moved(i64, i64)
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  let font = light_theme().font
+  let words = "Hello world, again"
+  let full = fonts.lay_out(words, font, UNBOUNDED).width
+  for width in [full + 10.0, full * 0.6, full * 0.35, 1.0] {
+    let cut = ellipsized(words, font, width, fonts)
+    let fits = fonts.lay_out(cut, font, UNBOUNDED).width <= width || cut == "…"
+    println("${cut} (fits ${fits})")
+  }
+  // Four long labels in a strip a quarter of their width: each tab's label one line, cut with
+  // "…" inside its tab.
+  var ui = ui_new()
+  var cache: LayoutCache<Ev> = layout_cache()
+  let laid = ui.frame_within(view(), tight(Size { w: 360.0, h: 100.0 }), fonts, cache)
+  var labels: []string = []
+  gather(laid, labels)
+  println(labels.join(" | "))
+  0
+}
+
+/// Each tab's label: its lines, and whether it is no wider than its box.
+let gather = (laid: Laid<Ev>, out: mut []string) -> void => {
+  if let Tabbed(_) = laid.kind {
+    var found: []string = []
+    label_in(laid, found)
+    for f in found { out.push(f) }
+    return
+  }
+  for child in laid.children { gather(child.laid, out) }
+}
+
+let label_in = (laid: Laid<Ev>, out: mut []string) -> void => {
+  if let Prose(block) = laid.content {
+    if block.width > 30.0 {
+      out.push("${block.lines.len()} line, inside ${block.width <= laid.size.w + 0.5}")
+      return
+    }
+  }
+  for child in laid.children { label_in(child.laid, out) }
+}
+
+let view = pure () -> Node<Ev> => themed::<Ev>(light_theme(), Sheet {}, [
+  column([
+    tab_bar(TabsSpec {
+      tabs: [i in 0..<4 | TabSpec { label: "Documents and settings ${i}", key: "d${i}" }],
+      selected: 0,
+      on_select: Selected,
+      on_close: Closed,
+      on_move: Moved,
+    }),
+  ]),
+])
+`)
+	want := "Hello world, again (fits true)\nHello w… (fits true)\nHell… (fits true)\n… (fits true)\n" +
+		"1 line, inside true | 1 line, inside true | 1 line, inside true | 1 line, inside true\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // examples/ui/tabs.lyra played: a press selects Document 2, a drag moves Document 1 past it,
 // and Document 3's × closes it; then, from the keyboard, + pressed nine times, the strip shrinking
 // and then holding the rest in its more-tabs menu. The last frame is written.

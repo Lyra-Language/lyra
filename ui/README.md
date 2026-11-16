@@ -68,6 +68,11 @@ layer — implements the two traits; the display list is the whole contract.
   beside them. **Intrinsic widths** (`intrinsic_width`) are measured outside the layout cache,
   so the cache keeps only real layouts; an unchanged flex container or grid is given back
   whole like any element.
+- **`text_overflow: TextEllipsis`** (CSS's `text-overflow: ellipsis`, lui's `text-overflow`;
+  `TextClip` the default) keeps a paragraph one line, cut by rune to its box with "…" after it
+  where it is wider (`ellipsized`, by halving; spaces before the "…" dropped, "…" alone where
+  nothing more fits); its least width is the "…"'s, so a row can shrink it. A tab's label is
+  one.
 - **Overflow is CSS's** (`overflow_x`, `overflow_y`: `OverflowVisible`, `OverflowHidden`,
   `OverflowClip`, `OverflowScroll`, `OverflowAuto`; lui's `overflow` takes one or two). An axis
   that is not visible clips, and lays its content out unbounded down (`max_h` `UNBOUNDED`) or,
@@ -451,7 +456,8 @@ layer — implements the two traits; the display list is the whole contract.
   with `maximize`, `minimize` and `restore`, and its platform records what it was told.
 - **A tab bar** (`tab_bar(TabsSpec { tabs, selected, on_select, on_close, on_move, after })`,
   `ui/WINDOW.md` step 4): a strip (`TabBar`, `TabStrip`) of tabs (`Tab`, `:checked` the
-  selected; `Tabbed`), each its label clipped to its width and, closable, a × (`TabClose`), then
+  selected; `Tabbed`), each its label — one line, ending in "…" where it is cut to its width
+  (`text_overflow: TextEllipsis`) — and, closable, a × (`TabClose`), then
   `after`. **The order is the program's**: a drag past half of a movable neighbour raises
   `on_move(from, to)`, and a tab is keyed by its `TabSpec.key`, so the press stays on it as it
   moves. A press selects (on the ×, closes, the focus left where it was); a middle click closes;

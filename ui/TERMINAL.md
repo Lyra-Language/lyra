@@ -1,6 +1,6 @@
 # What a terminal needs of `ui` — design
 
-**Status: proposed 10/22; steps 1–5 built 10/22, steps 6 and 7 10/23, step 8's first half 10/23** (`painted`, `PaintDraw`, `PaintText`,
+**Status: proposed 10/22; steps 1–5 built 10/22, steps 6 and 7 10/23, step 8 10/23 (its second half `WINDOW.md`'s, Termina on `ui` alone)** (`painted`, `PaintDraw`, `PaintText`,
 `on_size`, `PaintArea.visible`, `examples/ui/painted.lyra`; the atlas's pages; faces, made
 faces, metrics and hinting — `Fonts.hinting` light unless the program says, as `ui.text` asks
 no platform which it is on; `MeasureFont` answered once, not again as fonts change;

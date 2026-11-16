@@ -14,13 +14,14 @@ module ui.layout
 //! [TAB_LEAST]; and where even then they do not fit, **the strip shows as many as fit beside a
 //! more-tabs button** (`TabsMore`, an arrow, [more_tabs]) — the selected one always among them —
 //! whose menu lists the rest, an item choosing one as a press on it would (`ui/WINDOW.md`'s open
-//! question 2). A label too long for its tab is clipped, not wrapped.
+//! question 2). A label too long for its tab ends in "…" where it is cut (`text-overflow:
+//! ellipsis`), and is never wrapped.
 //!
 //! **The more-tabs menu is made at layout**, from the tabs hidden, as a select's list is; a
 //! strip from the cache makes it again from the fresh nodes of the same tabs ([strip_children]),
 //! so its events are this frame's.
 
-import ui.style.{ OverflowHidden }
+import ui.style.{ OverflowHidden, TextEllipsis }
 
 /// What a tab bar shows and raises: its tabs in order; the one selected, by place; the events
 /// for selecting, closing and moving a tab (from its place to another); and what follows the
@@ -79,12 +80,13 @@ pub let tab_bar<e> = pure (spec: TabsSpec<e>) -> Node<e> => {
   }
 }
 
-/// Tab `i` of `spec`: its label clipped to its width, and its ×.
+/// Tab `i` of `spec`: its label, ending in "…" where it is cut to its width, and its ×.
 let tab_node<e> = pure (spec: TabsSpec<e>, i: i64) -> Node<e> => {
   let t = spec.tabs[i]
-  // Laid out at its whole width and clipped there, never wrapped.
-  let label = scroll::<e>(Horizontal, 0.0, text::<e>(t.label))
-    .with_style(Style { overflow_x: Some(OverflowClip) })
+  // One line, never wrapped: as wide as it needs, or cut to the tab with "…" saying there is
+  // more, where the strip has shrunk it or it is longer than TAB_MOST.
+  let label = text::<e>(t.label)
+    .with_style(Style { text_overflow: Some(TextEllipsis) })
     .with_part("label")
   // Not a control of its own: a press on it is the tab's, which closes it (`ui.interact`).
   let mark = text::<e>("×")

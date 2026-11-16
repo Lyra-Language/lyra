@@ -9,6 +9,28 @@ Newest first.
 
 ## Dated log
 
+### 11/16/26 — `text-overflow: ellipsis`, and a tab's label ends in "…"
+
+A tab shrunk by a crowded strip showed its label's first letters cut off bare, "Docu", with
+nothing to say there was more. `ui` had no `text-overflow`, so the tab held its label in a
+horizontal scroller clipped at the tab's width.
+
+**`Style.text_overflow`** is CSS's: `TextClip`, the default, wraps and clips as before, and
+`TextEllipsis` keeps a paragraph one line. Where the line is wider than its box, it is cut to
+the longest run of runes that fits with "…" after it (`ellipsized`, found by halving, each
+try a cached shaping); spaces before the "…" are dropped, and "…" alone is left where nothing
+more fits. Its least width (`intrinsic_width`) is the "…"'s, so a row can shrink it, and its
+natural width is the whole line. lui writes it from `text-overflow: clip | ellipsis`.
+
+A tab's label is now such a paragraph in its slot beside the ×: laid out at the width it
+wants when the strip measures it, and cut with "…" where the strip shrinks the tab or the
+label is longer than `TAB_MOST`. `TestRun_UiTextEllipsis` checks the cut at four widths and
+a strip of four long labels in a quarter of their width. `examples/ui/tabs.lyra` with nine
+tabs added draws each shrunk tab as "D…" and its ×.
+
+The terminal item in todo.md is marked done as well: its step 8's second half was the
+window's needs, done 10/23 with Termina moved onto `ui`, and only its status had not followed.
+
 ### 11/16/26 — A docked panel's framework state follows it
 
 A panel's scroll, focus and caret were lost whenever the dock's tree moved it, to another

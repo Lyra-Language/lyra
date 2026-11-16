@@ -87,6 +87,7 @@ import ui.backend.{ Renderer, Key, Modifiers, PointerButton, Chord, Cursor }
 import ui.text.{ Fonts, FontSpec, Cell, TextBlock, GlyphAtlas, caret_x }
 import ui.style.{
   Style,
+  TextEllipsis,
   scrollbar_rules,
   Sheet,
   Theme,
@@ -680,6 +681,39 @@ pub let modal<e> = pure (
   on_dismiss: e
 ) -> Node<e> =>
   Node { kind: Modal(open, on_dismiss), tag: "Modal", children: [under, content] }
+
+/// `text` as one line no wider than `width` in `font`: itself where it fits, else its longest
+/// start that fits with "…" after it (spaces before the "…" dropped), or "…" alone where nothing
+/// more does — CSS's `text-overflow: ellipsis`. The cut is by rune, found by halving.
+pub let ellipsized = (
+  text: string,
+  font: FontSpec,
+  width: f32,
+  fonts: mut Fonts
+) -> string => {
+  if width >= UNBOUNDED || fonts.lay_out(text, font, UNBOUNDED).width <= width {
+    return text
+  }
+  let runes = text.to_runes()
+  var fits = 0
+  var over = runes.len()
+  while over - fits > 1 {
+    let mid = (fits + over) / 2
+    if fonts.lay_out(cut_at(runes, mid), font, UNBOUNDED).width <= width {
+      fits = mid
+    } else {
+      over = mid
+    }
+  }
+  cut_at(runes, fits)
+}
+
+/// The first `n` of `runes`, spaces at its end dropped, and "…".
+let cut_at = pure (runes: []rune, n: i64) -> string => {
+  var end = n
+  while end > 0 && runes[end - 1].is_ascii_space() { end -= 1 }
+  "${[r in runes.slice(0, end) | "${r}"].join("")}…"
+}
 
 /// The innermost modal open in `laid` (its top-left corner at `origin`): its content — the scrim
 /// holding the dialog — and where that is in the window, or `None` with no modal open. Only what
@@ -1720,7 +1754,14 @@ let lay_fresh<e> = (
       Body { size: fixed.constrain(content.size), children: content.children }
     },
     Words(content) => {
-      let block = fonts.lay_out(content, style.font, inner.max_w)
+      // An ellipsis keeps it one line, cut to its box with "…" where it is wider.
+      let block = if style.text_overflow == TextEllipsis {
+        fonts.lay_out(
+          ellipsized(content, style.font, inner.max_w, fonts),
+          style.font,
+          UNBOUNDED
+        )
+      } else { fonts.lay_out(content, style.font, inner.max_w) }
       Body::<e> {
         size: inner.constrain(Size { w: block.width, h: block.height }),
         content: Prose(block),

@@ -771,12 +771,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/16] A modal is heard as one, and keeps the app's shortcuts out** — a modal
   dialog to AccessKit, the window's tree only the dialog while it is open; `App.shortcuts` and
   menus' wait but a menu inside it (COMPLETED.md 11/16). The Mac's own bar still answers.
-- **[OPEN] What a terminal needs of `ui`** — an element the program paints, font faces and
-  fallback, raw keys and pointer; designed in `ui/TERMINAL.md` (10/22), for Termina's move
-  off ImGui. Steps 1 (`painted`, `PaintDraw`/`PaintText`, `on_size`), 2 (the atlas's pages)
-  and 3 (faces, metrics, hinting), 4 (fallback) and 5 (`PaintCells`, `PaintWave`) are built
-  (10/22), 6 (raw input) and 7 (`Readable`, `scroll_follow`, `ScrollTo`) 10/23, and step 8's
-  first half 10/23: `termina-ui` beside the ImGui app.
+- **[DONE 10/23] What a terminal needs of `ui`** — an element the program paints, faces and
+  fallback, raw input (`ui/TERMINAL.md`, steps 1–8); step 8's second half is the window's
+  needs below, Termina now on `ui` alone. Left open from it: the items after this one.
 - **[DONE 10/23] What a terminal's window needs of `ui`** — popups, menus (drawn, and native
   on a Mac), a tab bar, the window's controls and a drawn title bar, a file dialog, colour,
   lui's elements; and Termina moved onto them, its releases built from `ui` and the ImGui
@@ -785,9 +782,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   `bindings.hittest` for a borderless window (moving it, its edges resizing it) is untested:
   the dummy driver refuses a hit test. And its double click: SDL starts a move at the press, so
   a second click never reaches the program to maximize (`ui/WINDOW.md`'s open question 3).
-- **[OPEN] `ui`: a tab's label is clipped bare**, its last letters cut where it shrinks
-  ("Docu"); an ellipsis, or a fade at the edge, would say there is more. Text has no
-  `text-overflow` yet.
+- **[DONE 11/16] `ui`: a tab's label ends in "…" where it is cut** — `text_overflow:
+  TextEllipsis`, CSS's `text-overflow` (lui's too), on any paragraph (COMPLETED.md 11/16).
 - **[OPEN] `ui` focuses nothing at start, and `App` has no first command.** termina-ui asks
   `FocusKeyed` from its painter's first `on_size`; an `App.start: []Command<e>`, or an
   `autofocus` on an element, would say it directly.

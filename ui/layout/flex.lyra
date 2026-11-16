@@ -13,6 +13,7 @@ module ui.layout
 
 import ui.style.{
   Computed,
+  TextEllipsis,
   OverflowVisible,
   FlexRow,
   FlexRowReverse,
@@ -472,8 +473,12 @@ let intrinsic_width<e> = (
     return styled.space.horizontal().clamp(floor, ceiling)
   }
   let content = match node.kind {
-    Words(text) =>
-      fonts.lay_out(text, style.font, if least { 0.0 } else { UNBOUNDED }).width,
+    // An ellipsis keeps it one line: at its least it is the "…" alone.
+    Words(text) => if style.text_overflow == TextEllipsis {
+      fonts.lay_out(if least { "…" } else { text }, style.font, UNBOUNDED).width
+    } else {
+      fonts.lay_out(text, style.font, if least { 0.0 } else { UNBOUNDED }).width
+    },
     Texels(_, _, natural) => natural.w,
     Pictured(_, natural) => natural.w,
     Measured(Some(w), _) => w,

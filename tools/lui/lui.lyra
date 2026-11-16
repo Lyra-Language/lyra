@@ -1316,6 +1316,8 @@ const LAYOUT_NAMES = [
   "OverflowClip",
   "OverflowScroll",
   "OverflowAuto",
+  "TextClip",
+  "TextEllipsis",
   "Media",
   "Portrait",
   "Landscape",
@@ -2523,6 +2525,11 @@ let layout_declaration = pure (
     },
     "overflow_x" => one(name, overflow_of(value)),
     "overflow_y" => one(name, overflow_of(value)),
+    "text_overflow" => one(name, match value.trim() {
+      "clip" => Ok("TextClip"),
+      "ellipsis" => Ok("TextEllipsis"),
+      other => Err("text-overflow is clip or ellipsis, not ${other}"),
+    }),
     "scroll_follow" => one(name, match value.trim() {
       "true" => Ok("true"),
       "false" => Ok("false"),
@@ -2839,7 +2846,7 @@ let ui_declarations = pure (
       "font_size" => ui_number(given),
       "line_height" => ui_number(given),
       "padding" => ui_padding(given),
-      _ => Err("no style property ${name} in ui (color, background, border-color, border-width, radius (one to four numbers, as border-radius), gap, opacity, font-size, line-height, padding; transition and transition-property, -duration, -timing-function, -delay; overflow (one or two of visible, hidden, clip, scroll, auto), overflow-x, overflow-y; box-shadow, a gradient background or background-image, filter: blur(), backdrop-filter: blur(); width, height and their min- and max-; row-gap, column-gap; flex, flex-direction, flex-wrap, flex-grow, flex-shrink, flex-basis, order, justify-content, align-content, align-items, align-self; grid-template-columns, grid-template-rows, grid-auto-columns, grid-auto-rows, grid-auto-flow, grid-column, grid-row, justify-items, justify-self)"),
+      _ => Err("no style property ${name} in ui (color, background, border-color, border-width, radius (one to four numbers, as border-radius), gap, opacity, font-size, line-height, padding; transition and transition-property, -duration, -timing-function, -delay; overflow (one or two of visible, hidden, clip, scroll, auto), overflow-x, overflow-y; text-overflow (clip or ellipsis); box-shadow, a gradient background or background-image, filter: blur(), backdrop-filter: blur(); width, height and their min- and max-; row-gap, column-gap; flex, flex-direction, flex-wrap, flex-grow, flex-shrink, flex-basis, order, justify-content, align-content, align-items, align-self; grid-template-columns, grid-template-rows, grid-auto-columns, grid-auto-rows, grid-auto-flow, grid-column, grid-row, justify-items, justify-self)"),
     }
     match lyra {
       Ok(v) => { fields = with_field(fields, "${field}: Some(${v})") },

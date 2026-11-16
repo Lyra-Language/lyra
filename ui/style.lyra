@@ -158,6 +158,9 @@ pub struct Style {
   /// `overflow-y` (lui's `overflow` sets both).
   overflow_x: Maybe<Overflow> = None,
   overflow_y: Maybe<Overflow> = None,
+  /// What a paragraph too wide for its box shows at its end — CSS's `text-overflow`: cut
+  /// (`TextClip`, the default, and wrapped as ever) or one line ending in "…" (`TextEllipsis`).
+  text_overflow: Maybe<TextOverflow> = None,
   /// Whether a scroller at its end stays there as its content grows — a terminal's, a chat's
   /// — and, scrolled off it, stays where it was until scrolled back (lui's `scroll-follow`).
   /// CSS has no such property; every terminal and chat needs one.
@@ -196,6 +199,10 @@ pub data Timing =
 /// scrolled by the user with a scrollbar always shown (`OverflowScroll`) or shown only when
 /// the content does not fit (`OverflowAuto`).
 pub data Overflow = OverflowVisible | OverflowHidden | OverflowClip | OverflowScroll | OverflowAuto
+
+/// What a paragraph too wide for its box does with what does not fit (CSS's `text-overflow`):
+/// wraps it, cut where its box clips it, or stays one line ending in "…" — a tab's label.
+pub data TextOverflow = TextClip | TextEllipsis
 
 /// A flex container's main axis, and which way along it its items go (CSS's
 /// `flex-direction`).
@@ -323,6 +330,7 @@ impl Style {
     backdrop_blur: self.backdrop_blur.or(base.backdrop_blur),
     overflow_x: self.overflow_x.or(base.overflow_x),
     overflow_y: self.overflow_y.or(base.overflow_y),
+    text_overflow: self.text_overflow.or(base.text_overflow),
     scroll_follow: self.scroll_follow.or(base.scroll_follow),
     transition: self.transition.or(base.transition),
   }
@@ -1019,6 +1027,7 @@ pub struct Computed {
   backdrop_blur: f32 = 0.0,
   overflow_x: Overflow = OverflowVisible,
   overflow_y: Overflow = OverflowVisible,
+  text_overflow: TextOverflow = TextClip,
   scroll_follow: bool = false,
   transition: []Transition = [],
 }
@@ -1152,6 +1161,7 @@ impl Cascade {
       backdrop_blur: (s.backdrop_blur ?? 0.0).max(0.0),
       overflow_x: s.overflow_x ?? OverflowVisible,
       overflow_y: s.overflow_y ?? OverflowVisible,
+      text_overflow: s.text_overflow ?? TextClip,
       scroll_follow: s.scroll_follow ?? false,
       transition: s.transition ?? [],
     }
