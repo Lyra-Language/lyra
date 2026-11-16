@@ -771,7 +771,9 @@ of Markdown.
   wrapped in MOVE from SR and to CCR (0012 regenerates the LLVM tests they change); 0013
   makes a compare with zero TST, never made before, and 0014 moves a copy whose source
   lives on ahead of the instruction setting the flags (0015 their tests); 0016 branches on
-  a boolean's bit rather than sign-extending it first; 0017 keeps a spill's memory operand. **A
+  a boolean's bit rather than sign-extending it first; 0017 keeps a spill's memory operand;
+  0018 makes post-increment, `(An)+` — a copy `move.w (%a1)+, (%a0)+` — with an M68k TTI asking
+  loop strength reduction for it where every stream a loop steps through can be one. **A
   backend change moves every game's timing**: run Vega's `--check`, which plays scripted
   games frame by frame, not lyrac's tests alone.
   **The runtime's `__muldi3` takes a sign-extended pair as a signed 32 × 32** — what LLVM

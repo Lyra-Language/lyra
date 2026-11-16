@@ -1355,9 +1355,17 @@ sets V on every add. What stands between that and a ROM:
   word one (counting in `i32` made it worse), and the latch bumping the channel pointer
   through a data register (`move.l %a3, %d0; add.l #80`; is CMPA missing?). Worse when
   tried: `is_held` asked once a pass, counting in `i32`, `-disable-lsr` (COMPLETED 11/16).
-- **[OPEN] The M68k backend, smaller items** (after 0007–0017): the 37 `neg.b` left,
+- **[DONE 11/16] Post-increment on the 68000**: `(An)+` loads and stores, chosen by loop
+  strength reduction where every stream can use one (`tools/llvm-m68k-patches/0018`,
+  COMPLETED 11/16). `send_colors`' loop is one MOVE, a SUBQ and a branch.
+- **[OPEN] The M68k backend, smaller items** (after 0007–0018): the 37 `neg.b` left,
   booleans combined (`&&`, `^`) before a branch; 118 `and.b #1`, mostly a bool masked as it
-  is stored; the 37 flag saves left, where the compare reads the copy's destination.
+  is stored; the 37 flag saves left, where the compare reads the copy's destination; a
+  pointer stepped by a constant through a data register (`move.l %a0, %d2; addq.l #6, %d2;
+  movea.l %d2, %a0`, the channel loop's latch too) where `lea (6,%a0), %a0` would do; ALU
+  operations reading `(An)+` (`add.w (%a0)+, %d0`), which 0018 gave only MOVE; and
+  `movea.l`, which the copies 0011 makes print but LLVM's own assembler refuses
+  (`move.l %d2, %a0` assembles) — only `-S` output is affected.
 - **[DONE 10/16] A Genesis program inlined less crashed**: a `fastcc` struct return popped a
   pointer passed in a register (`tools/llvm-m68k-patches/0004`, COMPLETED 10/16).
 - **[DONE 10/16] clang segfaulted compiling a copy of Sheliak**: a global's 320 KB

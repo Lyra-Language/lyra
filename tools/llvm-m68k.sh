@@ -106,6 +106,19 @@
 #   - 0017: a spill 0007 makes a MOVE keeps its memory operand (the stack slot), which it
 #     had dropped: later passes saw an unknown access, and `-print`/asm lost its "Folded
 #     Spill" note. The hero's code is the same.
+#   - 0018: post-increment, (An)+, which the target never made — `vdp.send_colors`' 64
+#     colours were `move.w (0,%a0,%d4), $c00000; addq; cmpi.l #128; bne`, and a copy
+#     stepped each address through a data register. Indexed loads and stores are legal
+#     (getPostIndexedAddressParts: a whole byte, word or long, the address past it), and
+#     MOVEs naming the address register's new value as a def tied to it (M68kInstrData.td,
+#     `*_PI`) are selected by hand (selectPostIncrement), a store of such a load's value
+#     reading it itself: `move.w (%a1)+, (%a0)+`. An M68k TTI (BasicTTIImpl's answers,
+#     what the target had by default) asks loop strength reduction for post-increment
+#     where every stream a loop steps through can be one: asked where a struct's fields
+#     step by the struct, it made an address register of each, and the raster handler's
+#     extra saves made the first colour late. And an ADD of -n with flags only Z, N or V
+#     branches read is SUBQ, so the count down is `subq.l #1`. The hero's vertical blank
+#     handler 53.7 → 49.6 lines a frame on average, its chip writes the same.
 #   **Tried and left out**: shrink-wrapping (enableShrinkWrapping) changed nothing in the
 #   hero — every function needs its callee-saved registers from its entry. Rematerializing
 #   constants and addresses (isReMaterializableImpl past the dead CCR def, a flag-keeping

@@ -1,0 +1,766 @@
+diff --git a/llvm/lib/Target/M68k/CMakeLists.txt b/llvm/lib/Target/M68k/CMakeLists.txt
+index 1ac7e21..4f03572 100644
+--- a/llvm/lib/Target/M68k/CMakeLists.txt
++++ b/llvm/lib/Target/M68k/CMakeLists.txt
+@@ -36,6 +36,7 @@ add_llvm_target(M68kCodeGen
+   M68kSelectionDAGInfo.cpp
+   M68kSubtarget.cpp
+   M68kTargetMachine.cpp
++  M68kTargetTransformInfo.cpp
+   M68kTargetObjectFile.cpp
+ 
+   LINK_COMPONENTS
+diff --git a/llvm/lib/Target/M68k/M68kISelDAGToDAG.cpp b/llvm/lib/Target/M68k/M68kISelDAGToDAG.cpp
+index a0360b1..2205a90 100644
+--- a/llvm/lib/Target/M68k/M68kISelDAGToDAG.cpp
++++ b/llvm/lib/Target/M68k/M68kISelDAGToDAG.cpp
+@@ -301,6 +301,10 @@ private:
+ 
+   std::pair<bool, SDNode *> selectNode(SDNode *Node);
+ 
++  bool selectPostIncrement(SDNode *Node);
++  bool selectDestination(StoreSDNode *ST, char &Mode,
++                         SmallVectorImpl<SDValue> &Ops);
++
+   bool SelectARI(SDNode *Parent, SDValue N, SDValue &Base);
+   bool SelectARIPI(SDNode *Parent, SDValue N, SDValue &Base);
+   bool SelectARIPD(SDNode *Parent, SDValue N, SDValue &Base);
+@@ -786,11 +790,171 @@ void M68kDAGToDAGISel::Select(SDNode *Node) {
+   case M68kISD::GLOBAL_BASE_REG:
+     ReplaceNode(Node, getGlobalBaseReg());
+     return;
++
++  case ISD::LOAD:
++  case ISD::STORE:
++    if (selectPostIncrement(Node))
++      return;
++    break;
+   }
+ 
+   SelectCode(Node);
+ }
+ 
++// The opcode of a post-increment MOVE (M68kInstrData.td): size 8, 16 or 32, and the
++// destination's and source's addressing modes, as the instruction names spell them.
++static unsigned postIncrementMove(unsigned Size, char Dst, char Src) {
++#define MX_PI(D, S)                                                            \
++  if (Dst == (#D)[0] && Src == (#S)[0])                                        \
++    return Size == 8 ? M68k::MOV8##D##S##_PI                                    \
++                     : Size == 16 ? M68k::MOV16##D##S##_PI : M68k::MOV32##D##S##_PI;
++  MX_PI(o, o)
++  MX_PI(o, i)
++  MX_PI(j, o)
++  MX_PI(p, o)
++  MX_PI(f, o)
++  MX_PI(b, o)
++#undef MX_PI
++  if (Dst == 'o' && Src == 'r')
++    return Size == 8 ? M68k::MOV8od_PI
++                     : Size == 16 ? M68k::MOV16or_PI : M68k::MOV32or_PI;
++  if (Dst == 'r' && Src == 'o')
++    return Size == 8 ? M68k::MOV8do_PI
++                     : Size == 16 ? M68k::MOV16ro_PI : M68k::MOV32ro_PI;
++  llvm_unreachable("no such post-increment move");
++}
++
++// A post-increment load the store \p ST may read itself, as one memory-to-memory MOVE:
++// its value used by the store alone, the store chained straight after it, and the
++// store's address not made from it (or the MOVE would be its own operand).
++static LoadSDNode *foldablePostIncrementLoad(StoreSDNode *ST) {
++  auto *LD = dyn_cast<LoadSDNode>(ST->getValue());
++  if (!LD || LD->isMachineOpcode() || LD->getAddressingMode() != ISD::POST_INC ||
++      LD->getExtensionType() != ISD::NON_EXTLOAD || ST->isTruncatingStore() ||
++      LD->getMemoryVT() != ST->getMemoryVT() || !LD->hasNUsesOfValue(1, 0) ||
++      ST->getChain() != SDValue(LD, 2))
++    return nullptr;
++  SDNode *Ptr = ST->getBasePtr().getNode();
++  if (Ptr == LD || Ptr->hasPredecessor(LD))
++    return nullptr;
++  if (ST->getAddressingMode() != ISD::UNINDEXED) {
++    SDNode *Inc = ST->getOffset().getNode();
++    if (Inc == LD || Inc->hasPredecessor(LD))
++      return nullptr;
++  }
++  return LD;
++}
++
++// An unindexed store's address as a MOVE's destination operands: (An), (d16,An),
++// (d8,An,Xn) or an absolute address.
++bool M68kDAGToDAGISel::selectDestination(StoreSDNode *ST, char &Mode,
++                                         SmallVectorImpl<SDValue> &Ops) {
++  SDValue Addr = ST->getBasePtr(), A, B, C;
++  if (SelectARI(ST, Addr, A)) {
++    Mode = 'j';
++    Ops.push_back(A);
++  } else if (SelectARID(ST, Addr, A, B)) {
++    Mode = 'p';
++    Ops.append({A, B});
++  } else if (SelectARII(ST, Addr, A, B, C)) {
++    Mode = 'f';
++    Ops.append({A, B, C});
++  } else if (SelectAL(ST, Addr, A)) {
++    Mode = 'b';
++    Ops.push_back(A);
++  } else {
++    return false;
++  }
++  return true;
++}
++
++// Post-increment loads and stores, (An)+, which no pattern can name: an indexed node
++// has the address register's new value as a second result. A store of such a load's
++// value reads it itself, so `*p++ = *q++` is one MOVE.
++bool M68kDAGToDAGISel::selectPostIncrement(SDNode *Node) {
++  SDLoc DL(Node);
++  if (auto *LD = dyn_cast<LoadSDNode>(Node)) {
++    if (LD->getAddressingMode() != ISD::POST_INC)
++      return false;
++    EVT From = LD->getMemoryVT(), To = LD->getValueType(0);
++    MachineSDNode *MN = CurDAG->getMachineNode(
++        postIncrementMove(From.getSizeInBits(), 'r', 'o'), DL, From, MVT::i32,
++        MVT::Other, {LD->getBasePtr(), LD->getChain()});
++    CurDAG->setNodeMemRefs(MN, {LD->getMemOperand()});
++    if (From == To) {
++      ReplaceNode(Node, MN);
++      return true;
++    }
++    // Extended in the register, as the patterns for (i32 (zext i8)) and the rest do.
++    bool Signed = LD->getExtensionType() == ISD::SEXTLOAD;
++    unsigned Ext;
++    if (From == MVT::i8 && To == MVT::i16)
++      Ext = Signed ? M68k::MOVSXd16d8 : M68k::MOVZXd16d8;
++    else if (From == MVT::i8)
++      Ext = Signed ? M68k::MOVSXd32d8 : M68k::MOVZXd32d8;
++    else
++      Ext = Signed ? M68k::MOVSXd32d16 : M68k::MOVZXd32d16;
++    SDNode *Wide = CurDAG->getMachineNode(Ext, DL, To, SDValue(MN, 0));
++    ReplaceUses(SDValue(LD, 0), SDValue(Wide, 0));
++    ReplaceUses(SDValue(LD, 1), SDValue(MN, 1));
++    ReplaceUses(SDValue(LD, 2), SDValue(MN, 2));
++    CurDAG->RemoveDeadNode(LD);
++    return true;
++  }
++
++  auto *ST = cast<StoreSDNode>(Node);
++  bool Indexed = ST->getAddressingMode() == ISD::POST_INC;
++  if (!Indexed && ST->getAddressingMode() != ISD::UNINDEXED)
++    return false;
++  LoadSDNode *LD = foldablePostIncrementLoad(ST);
++  if (!Indexed && !LD)
++    return false;
++  unsigned Size = ST->getMemoryVT().getSizeInBits();
++
++  char Dst = 'o', Src = 'r';
++  SmallVector<SDValue, 6> Ops;
++  if (Indexed)
++    Ops.push_back(ST->getBasePtr());
++  else if (!selectDestination(ST, Dst, Ops))
++    return false;
++
++  SmallVector<EVT, 3> VTs;
++  if (Indexed)
++    VTs.push_back(MVT::i32);
++  if (LD) {
++    Src = 'o';
++    Ops.push_back(LD->getBasePtr());
++    VTs.push_back(MVT::i32);
++  } else if (auto *C = dyn_cast<ConstantSDNode>(ST->getValue())) {
++    Src = 'i';
++    Ops.push_back(CurDAG->getSignedTargetConstant(C->getSExtValue(), DL,
++                                                 ST->getMemoryVT()));
++  } else {
++    Ops.push_back(ST->getValue());
++  }
++  Ops.push_back(LD ? LD->getChain() : ST->getChain());
++  VTs.push_back(MVT::Other);
++
++  MachineSDNode *MN = CurDAG->getMachineNode(postIncrementMove(Size, Dst, Src),
++                                             DL, CurDAG->getVTList(VTs), Ops);
++  if (LD)
++    CurDAG->setNodeMemRefs(MN, {LD->getMemOperand(), ST->getMemOperand()});
++  else
++    CurDAG->setNodeMemRefs(MN, {ST->getMemOperand()});
++  unsigned Chain = VTs.size() - 1;
++  if (LD) {
++    // The load's results: its value went only to this store; its new address is the
++    // MOVE's last register result, and its chain the MOVE's.
++    ReplaceUses(SDValue(LD, 1), SDValue(MN, Chain - 1));
++    ReplaceUses(SDValue(LD, 2), SDValue(MN, Chain));
++  }
++  if (Indexed)
++    ReplaceUses(SDValue(ST, 0), SDValue(MN, 0));
++  ReplaceUses(SDValue(ST, Indexed ? 1 : 0), SDValue(MN, Chain));
++  CurDAG->RemoveDeadNode(ST);
++  return true;
++}
++
+ bool M68kDAGToDAGISel::SelectARIPI(SDNode *Parent, SDValue N, SDValue &Base) {
+   LLVM_DEBUG(dbgs() << "Selecting AddrType::ARIPI: ");
+   LLVM_DEBUG(dbgs() << "NOT IMPLEMENTED\n");
+diff --git a/llvm/lib/Target/M68k/M68kISelLowering.cpp b/llvm/lib/Target/M68k/M68kISelLowering.cpp
+index 12fc217..c65e7e6 100644
+--- a/llvm/lib/Target/M68k/M68kISelLowering.cpp
++++ b/llvm/lib/Target/M68k/M68kISelLowering.cpp
+@@ -77,6 +77,12 @@ M68kTargetLowering::M68kTargetLowering(const M68kTargetMachine &TM,
+   setTruncStoreAction(MVT::i32, MVT::i8, Expand);
+   setTruncStoreAction(MVT::i16, MVT::i8, Expand);
+ 
++  // (An)+, selected by hand (M68kDAGToDAGISel::selectPostIncrement).
++  for (MVT VT : {MVT::i8, MVT::i16, MVT::i32}) {
++    setIndexedLoadAction(ISD::POST_INC, VT, Legal);
++    setIndexedStoreAction(ISD::POST_INC, VT, Legal);
++  }
++
+   setOperationAction({ISD::MUL, ISD::SDIV, ISD::UDIV}, MVT::i8, Promote);
+   setOperationAction({ISD::MUL, ISD::SDIV, ISD::UDIV}, MVT::i16, Legal);
+   if (Subtarget.atLeastM68020()) {
+@@ -3762,3 +3768,45 @@ CCAssignFn *M68kTargetLowering::getCCAssignFn(CallingConv::ID CC, bool Return,
+   else
+     return CC_M68k_C;
+ }
++
++// A load or store followed by its address register stepped past what it moved, as the
++// 68000's (An)+ does in the move itself: a word copy `move.w (a0)+, (a1)+`, where the
++// increments were two ADDs through data registers. Only whole moves of a byte, word or
++// long (a load extended after, by the selector; never a truncating store), and not from
++// a frame index.
++bool M68kTargetLowering::getPostIndexedAddressParts(SDNode *N, SDNode *Op,
++                                                    SDValue &Base,
++                                                    SDValue &Offset,
++                                                    ISD::MemIndexedMode &AM,
++                                                    SelectionDAG &DAG) const {
++  EVT VT;
++  SDValue Ptr;
++  if (auto *LD = dyn_cast<LoadSDNode>(N)) {
++    EVT To = LD->getValueType(0);
++    if (LD->getExtensionType() != ISD::NON_EXTLOAD &&
++        To != MVT::i16 && To != MVT::i32)
++      return false;
++    VT = LD->getMemoryVT();
++    Ptr = LD->getBasePtr();
++  } else if (auto *ST = dyn_cast<StoreSDNode>(N)) {
++    if (ST->isTruncatingStore())
++      return false;
++    VT = ST->getMemoryVT();
++    Ptr = ST->getBasePtr();
++  } else {
++    return false;
++  }
++  if (VT != MVT::i8 && VT != MVT::i16 && VT != MVT::i32)
++    return false;
++  if (Op->getOpcode() != ISD::ADD || Op->getOperand(0) != Ptr)
++    return false;
++  auto *C = dyn_cast<ConstantSDNode>(Op->getOperand(1));
++  if (!C || C->getSExtValue() != (int64_t)VT.getStoreSize())
++    return false;
++  if (isa<FrameIndexSDNode>(Ptr) || Ptr.getOpcode() == ISD::TargetFrameIndex)
++    return false;
++  Base = Ptr;
++  Offset = Op->getOperand(1);
++  AM = ISD::POST_INC;
++  return true;
++}
+diff --git a/llvm/lib/Target/M68k/M68kISelLowering.h b/llvm/lib/Target/M68k/M68kISelLowering.h
+index be331e3..007159b 100644
+--- a/llvm/lib/Target/M68k/M68kISelLowering.h
++++ b/llvm/lib/Target/M68k/M68kISelLowering.h
+@@ -125,6 +125,10 @@ private:
+   unsigned GetAlignedArgumentStackSize(unsigned StackSize,
+                                        SelectionDAG &DAG) const;
+ 
++  bool getPostIndexedAddressParts(SDNode *N, SDNode *Op, SDValue &Base,
++                                  SDValue &Offset, ISD::MemIndexedMode &AM,
++                                  SelectionDAG &DAG) const override;
++
+   bool isOffsetFoldingLegal(const GlobalAddressSDNode *GA) const override {
+     // In many cases, `GA` doesn't give the correct offset to fold. It's
+     // hard to know if the real offset actually fits into the displacement
+diff --git a/llvm/lib/Target/M68k/M68kInstrData.td b/llvm/lib/Target/M68k/M68kInstrData.td
+index 30808f2..0744b6d 100644
+--- a/llvm/lib/Target/M68k/M68kInstrData.td
++++ b/llvm/lib/Target/M68k/M68kInstrData.td
+@@ -227,6 +227,63 @@ foreach AM = MxMoveSrcAMs in {
+                   !cast<MxEncMemOp>("MxMoveSrcOpEnc_"#AM)>;
+ } // foreach AM
+ 
++// Post-increment: (An)+, with the address register's new value a def tied to the operand,
++// which the instructions above leave out (they are for the assembler). Selected by hand
++// (M68kDAGToDAGISel::selectPostIncrement) from an indexed load or store.
++defvar MxPIDstAMs = ["j", "p", "f", "b"];
++defvar MxPISrcAMs = ["j", "p", "f", "b", "k", "q"];
++let isCodeGenOnly = 1 in {
++foreach TYPE = [MxType8, MxType16, MxType32] in {
++  defvar S = TYPE.Size;
++  defvar PI = !cast<MxOpBundle>("MxOp"#S#"AddrMode_o");
++  defvar SZ = !cast<MxMoveSize>("MxMoveSize"#S);
++  // R <- (An)+
++  foreach REG = !if(!eq(S, 8), ["d"], ["r"]) in
++  let mayLoad = 1, Constraints = "$wb = $src" in
++  def MOV # S # REG # o_PI
++      : MxMove<TYPE.Prefix,
++               (outs !cast<MxOpBundle>("MxOp"#S#"AddrMode_"#REG).Op:$dst, AR32:$wb),
++               (ins PI.Op:$src), [],
++               MxMoveEncoding<SZ, !cast<MxEncMemOp>("MxMoveDstOpEnc_"#REG),
++                              MxMoveSrcOpEnc_o>>;
++  // (An)+ <- R
++  foreach REG = !if(!eq(S, 8), ["d"], ["r"]) in
++  let mayStore = 1, Constraints = "$wb = $dst" in
++  def MOV # S # o # REG # _PI
++      : MxMove<TYPE.Prefix, (outs AR32:$wb),
++               (ins PI.Op:$dst, !cast<MxOpBundle>("MxOp"#S#"AddrMode_"#REG).Op:$src), [],
++               MxMoveEncoding<SZ, MxMoveDstOpEnc_o,
++                              !cast<MxEncMemOp>("MxMoveSrcOpEnc_"#REG)>>;
++  // (An)+ <- #imm
++  let mayStore = 1, Constraints = "$wb = $dst" in
++  def MOV # S # oi_PI
++      : MxMove<TYPE.Prefix, (outs AR32:$wb),
++               (ins PI.Op:$dst, !cast<MxImmOpBundle>("MxOp"#S#"AddrMode_i").Op:$src), [],
++               MxMoveEncoding<SZ, MxMoveDstOpEnc_o, MxEncAddrMode_i<"src", S>>>;
++  // M <- (An)+
++  foreach AM = MxPIDstAMs in
++  let mayLoad = 1, mayStore = 1, Constraints = "$wb = $src" in
++  def MOV # S # AM # o_PI
++      : MxMove<TYPE.Prefix, (outs AR32:$wb),
++               (ins !cast<MxOpBundle>("MxOp"#S#"AddrMode_"#AM).Op:$dst, PI.Op:$src), [],
++               MxMoveEncoding<SZ, !cast<MxEncMemOp>("MxMoveDstOpEnc_"#AM),
++                              MxMoveSrcOpEnc_o>>;
++  // (An)+ <- M
++  foreach AM = MxPISrcAMs in
++  let mayLoad = 1, mayStore = 1, Constraints = "$wb = $dst" in
++  def MOV # S # o # AM # _PI
++      : MxMove<TYPE.Prefix, (outs AR32:$wb),
++               (ins PI.Op:$dst, !cast<MxOpBundle>("MxOp"#S#"AddrMode_"#AM).Op:$src), [],
++               MxMoveEncoding<SZ, MxMoveDstOpEnc_o,
++                              !cast<MxEncMemOp>("MxMoveSrcOpEnc_"#AM)>>;
++  // (An)+ <- (Am)+
++  let mayLoad = 1, mayStore = 1, Constraints = "$wbd = $dst, $wbs = $src" in
++  def MOV # S # oo_PI
++      : MxMove<TYPE.Prefix, (outs AR32:$wbd, AR32:$wbs), (ins PI.Op:$dst, PI.Op:$src), [],
++               MxMoveEncoding<SZ, MxMoveDstOpEnc_o, MxMoveSrcOpEnc_o>>;
++}
++} // isCodeGenOnly
++
+ // Tail call version
+ let Pattern = [(null_frag)] in {
+   foreach REG = ["r", "a"] in
+diff --git a/llvm/lib/Target/M68k/M68kInstrInfo.cpp b/llvm/lib/Target/M68k/M68kInstrInfo.cpp
+index c632dde..21067cb 100644
+--- a/llvm/lib/Target/M68k/M68kInstrInfo.cpp
++++ b/llvm/lib/Target/M68k/M68kInstrInfo.cpp
+@@ -654,6 +654,34 @@ bool M68kInstrInfo::ExpandMOVEM(MachineInstrBuilder &MIB,
+   return true;
+ }
+ 
++// Whether everything reading the flags \p MI sets is a branch on a condition with no carry
++// in it — Z, N or V, which ADD of -n and SUBQ of n set alike (the result is the same, and
++// so is its overflow); only C and X differ. The flags must not reach another block but by
++// a branch in this one.
++static bool onlyCarryFreeReaders(const MachineInstr &MI) {
++  const MachineBasicBlock &MBB = *MI.getParent();
++  for (auto I = std::next(MachineBasicBlock::const_iterator(MI)); I != MBB.end();
++       ++I) {
++    if (I->readsRegister(M68k::CCR, /*TRI=*/nullptr)) {
++      switch (getCondFromBranchOpc(I->getOpcode())) {
++      case M68k::COND_EQ: case M68k::COND_NE: case M68k::COND_MI:
++      case M68k::COND_PL: case M68k::COND_VS: case M68k::COND_VC:
++      case M68k::COND_LT: case M68k::COND_GE: case M68k::COND_GT:
++      case M68k::COND_LE:
++        break;
++      default:
++        return false;
++      }
++    }
++    if (I->definesRegister(M68k::CCR, /*TRI=*/nullptr))
++      return true;
++  }
++  for (const MachineBasicBlock *Succ : MBB.successors())
++    if (Succ->isLiveIn(M68k::CCR))
++      return false;
++  return true;
++}
++
+ bool M68kInstrInfo::ExpandQuick(MachineInstr &MI) const {
+   unsigned Bits = 0;
+   bool Sub = false, Addr = false;
+@@ -690,7 +718,9 @@ bool M68kInstrInfo::ExpandQuick(MachineInstr &MI) const {
+       (After != MBB.end() &&
+        MBB.computeRegisterLiveness(&RI, M68k::CCR, After, 32) ==
+            MachineBasicBlock::LQR_Dead);
+-  if ((Flipped || Addr) && !FlagsDead)
++  if (Addr && !FlagsDead)
++    return false;
++  if (Flipped && !FlagsDead && !onlyCarryFreeReaders(MI))
+     return false;
+ 
+   unsigned Opcode = 0;
+diff --git a/llvm/lib/Target/M68k/M68kTargetMachine.cpp b/llvm/lib/Target/M68k/M68kTargetMachine.cpp
+index 72f4762..cec0a44 100644
+--- a/llvm/lib/Target/M68k/M68kTargetMachine.cpp
++++ b/llvm/lib/Target/M68k/M68kTargetMachine.cpp
+@@ -16,6 +16,7 @@
+ #include "M68kMachineFunction.h"
+ #include "M68kSubtarget.h"
+ #include "M68kTargetObjectFile.h"
++#include "M68kTargetTransformInfo.h"
+ #include "TargetInfo/M68kTargetInfo.h"
+ #include "llvm/CodeGen/GlobalISel/IRTranslator.h"
+ #include "llvm/CodeGen/GlobalISel/InstructionSelect.h"
+@@ -127,6 +128,11 @@ public:
+ };
+ } // namespace
+ 
++TargetTransformInfo
++M68kTargetMachine::getTargetTransformInfo(const Function &F) const {
++  return TargetTransformInfo(std::make_unique<M68kTTIImpl>(this, F));
++}
++
+ TargetPassConfig *M68kTargetMachine::createPassConfig(PassManagerBase &PM) {
+   return new M68kPassConfig(*this, PM);
+ }
+diff --git a/llvm/lib/Target/M68k/M68kTargetMachine.h b/llvm/lib/Target/M68k/M68kTargetMachine.h
+index c2648f5..6c23d81 100644
+--- a/llvm/lib/Target/M68k/M68kTargetMachine.h
++++ b/llvm/lib/Target/M68k/M68kTargetMachine.h
+@@ -54,6 +54,8 @@ public:
+   // Pass Pipeline Configuration
+   TargetPassConfig *createPassConfig(PassManagerBase &PM) override;
+ 
++  TargetTransformInfo getTargetTransformInfo(const Function &F) const override;
++
+   TargetLoweringObjectFile *getObjFileLowering() const override {
+     return TLOF.get();
+   }
+diff --git a/llvm/lib/Target/M68k/M68kTargetTransformInfo.cpp b/llvm/lib/Target/M68k/M68kTargetTransformInfo.cpp
+new file mode 100644
+index 0000000..e66bc41
+--- /dev/null
++++ b/llvm/lib/Target/M68k/M68kTargetTransformInfo.cpp
+@@ -0,0 +1,62 @@
++//===-- M68kTargetTransformInfo.cpp - M68k specific TTI -------------------===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++
++#include "M68kTargetTransformInfo.h"
++#include "llvm/Analysis/LoopInfo.h"
++#include "llvm/Analysis/ScalarEvolution.h"
++#include "llvm/Analysis/ScalarEvolutionExpressions.h"
++#include "llvm/IR/Instructions.h"
++
++using namespace llvm;
++
++// A byte, word or long: what one MOVE through (An)+ moves.
++static bool movedWhole(Type *Ty) {
++  if (Ty->isPointerTy())
++    return true;
++  auto *IT = dyn_cast<IntegerType>(Ty);
++  return IT && (IT->getBitWidth() == 8 || IT->getBitWidth() == 16 ||
++                IT->getBitWidth() == 32);
++}
++
++// Post-increment only where every access stepping through memory can be one: each a
++// byte, word or long moved whole, its address advancing by just that each pass. An array
++// of structs read a field at a time steps by the struct's size, not the field's, and
++// asked to prefer post-increment there loop strength reduction makes an address register
++// of each field (three for a six-byte struct, where one index did) — more registers to
++// save, and slower, not faster. A loop with no such stream asks for nothing either.
++TargetTransformInfo::AddressingModeKind
++M68kTTIImpl::getPreferredAddressingMode(const Loop *L,
++                                        ScalarEvolution *SE) const {
++  if (!SE)
++    return TargetTransformInfo::AMK_None;
++  bool Any = false;
++  for (const BasicBlock *BB : L->blocks()) {
++    for (const Instruction &I : *BB) {
++      const Value *Ptr;
++      Type *Ty;
++      if (auto *LI = dyn_cast<LoadInst>(&I)) {
++        Ptr = LI->getPointerOperand();
++        Ty = LI->getType();
++      } else if (auto *SI = dyn_cast<StoreInst>(&I)) {
++        Ptr = SI->getPointerOperand();
++        Ty = SI->getValueOperand()->getType();
++      } else {
++        continue;
++      }
++      auto *AR = dyn_cast<SCEVAddRecExpr>(SE->getSCEV(const_cast<Value *>(Ptr)));
++      if (!AR || AR->getLoop() != L)
++        continue; // Loop-invariant (a port), or another loop's.
++      auto *Step = dyn_cast<SCEVConstant>(AR->getStepRecurrence(*SE));
++      if (!AR->isAffine() || !Step || !movedWhole(Ty) ||
++          Step->getAPInt() != getDataLayout().getTypeStoreSize(Ty).getFixedValue())
++        return TargetTransformInfo::AMK_None;
++      Any = true;
++    }
++  }
++  return Any ? TargetTransformInfo::AMK_PostIndexed : TargetTransformInfo::AMK_None;
++}
+diff --git a/llvm/lib/Target/M68k/M68kTargetTransformInfo.h b/llvm/lib/Target/M68k/M68kTargetTransformInfo.h
+new file mode 100644
+index 0000000..596ee68
+--- /dev/null
++++ b/llvm/lib/Target/M68k/M68kTargetTransformInfo.h
+@@ -0,0 +1,51 @@
++//===-- M68kTargetTransformInfo.h - M68k specific TTI -----------*- C++ -*-===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++///
++/// \file
++/// What the target tells the IR passes: BasicTTIImpl's answers (what M68k had with no
++/// TTI of its own, CodeGenTargetMachineImpl's default) but the addressing a loop
++/// prefers. The 68000 has (An)+ and no scaled index, so a loop stepping through memory
++/// is best one address register a stream, each moved past what it read or wrote, rather
++/// than a counter added to a base at every access — where every access can be (An)+
++/// (see the .cpp). Whether an indexed load or store is legal BasicTTIImpl asks the
++/// target lowering, which says (An)+ is.
++///
++//===----------------------------------------------------------------------===//
++
++#ifndef LLVM_LIB_TARGET_M68K_M68KTARGETTRANSFORMINFO_H
++#define LLVM_LIB_TARGET_M68K_M68KTARGETTRANSFORMINFO_H
++
++#include "M68kSubtarget.h"
++#include "M68kTargetMachine.h"
++#include "llvm/CodeGen/BasicTTIImpl.h"
++#include "llvm/IR/DerivedTypes.h"
++
++namespace llvm {
++
++class M68kTTIImpl final : public BasicTTIImplBase<M68kTTIImpl> {
++  using BaseT = BasicTTIImplBase<M68kTTIImpl>;
++  friend BaseT;
++
++  const M68kSubtarget *ST;
++  const M68kTargetLowering *TLI;
++
++  const M68kSubtarget *getST() const { return ST; }
++  const M68kTargetLowering *getTLI() const { return TLI; }
++
++public:
++  explicit M68kTTIImpl(const M68kTargetMachine *TM, const Function &F)
++      : BaseT(TM, F.getDataLayout()), ST(TM->getSubtargetImpl(F)),
++        TLI(ST->getTargetLowering()) {}
++
++  TargetTransformInfo::AddressingModeKind
++  getPreferredAddressingMode(const Loop *L, ScalarEvolution *SE) const override;
++};
++
++} // end namespace llvm
++
++#endif
+diff --git a/llvm/test/CodeGen/M68k/Data/post-increment.ll b/llvm/test/CodeGen/M68k/Data/post-increment.ll
+new file mode 100644
+index 0000000..8a797b0
+--- /dev/null
++++ b/llvm/test/CodeGen/M68k/Data/post-increment.ll
+@@ -0,0 +1,203 @@
++; NOTE: Assertions have been autogenerated by utils/update_llc_test_checks.py UTC_ARGS: --version 6
++; RUN: llc < %s -mtriple=m68k-linux -mcpu=M68000 -verify-machineinstrs | FileCheck %s
++
++; A loop stepping through memory a whole byte, word or long at a time moves through
++; (An)+, each address register stepped by the move: copies are one MOVE a pass.
++
++define void @copy_words(ptr %a, ptr %b, i32 %n) {
++; CHECK-LABEL: copy_words:
++; CHECK:         .cfi_startproc
++; CHECK-NEXT:  ; %bb.0: ; %entry
++; CHECK-NEXT:    move.l (12,%sp), %d0
++; CHECK-NEXT:    tst.l %d0
++; CHECK-NEXT:    beq .LBB0_3
++; CHECK-NEXT:  ; %bb.1: ; %loop.preheader
++; CHECK-NEXT:    move.l (8,%sp), %a0
++; CHECK-NEXT:    move.l (4,%sp), %a1
++; CHECK-NEXT:  .LBB0_2: ; %loop
++; CHECK-NEXT:    ; =>This Inner Loop Header: Depth=1
++; CHECK-NEXT:    move.w (%a1)+, (%a0)+
++; CHECK-NEXT:    subq.l #1, %d0
++; CHECK-NEXT:    bne .LBB0_2
++; CHECK-NEXT:  .LBB0_3: ; %done
++; CHECK-NEXT:    rts
++entry:
++  %z = icmp eq i32 %n, 0
++  br i1 %z, label %done, label %loop
++loop:
++  %i = phi i32 [0, %entry], [%i.next, %loop]
++  %p = getelementptr i16, ptr %a, i32 %i
++  %q = getelementptr i16, ptr %b, i32 %i
++  %v = load i16, ptr %p, align 2
++  store i16 %v, ptr %q, align 2
++  %i.next = add nuw nsw i32 %i, 1
++  %c = icmp eq i32 %i.next, %n
++  br i1 %c, label %done, label %loop
++done:
++  ret void
++}
++
++; To a port, the stream's one address register stepping.
++define void @to_port(ptr %a) {
++; CHECK-LABEL: to_port:
++; CHECK:         .cfi_startproc
++; CHECK-NEXT:  ; %bb.0: ; %entry
++; CHECK-NEXT:    moveq #64, %d0
++; CHECK-NEXT:    move.l (4,%sp), %a0
++; CHECK-NEXT:    move.l #12582912, %a1
++; CHECK-NEXT:  .LBB1_1: ; %loop
++; CHECK-NEXT:    ; =>This Inner Loop Header: Depth=1
++; CHECK-NEXT:    move.w (%a0)+, (%a1)
++; CHECK-NEXT:    subq.l #1, %d0
++; CHECK-NEXT:    bne .LBB1_1
++; CHECK-NEXT:  ; %bb.2: ; %done
++; CHECK-NEXT:    rts
++entry:
++  br label %loop
++loop:
++  %i = phi i32 [0, %entry], [%i.next, %loop]
++  %p = getelementptr i16, ptr %a, i32 %i
++  %v = load i16, ptr %p, align 2
++  store volatile i16 %v, ptr inttoptr (i32 12582912 to ptr), align 2
++  %i.next = add nuw nsw i32 %i, 1
++  %c = icmp eq i32 %i.next, 64
++  br i1 %c, label %done, label %loop
++done:
++  ret void
++}
++
++define void @clear_longs(ptr %a, i32 %n) {
++; CHECK-LABEL: clear_longs:
++; CHECK:         .cfi_startproc
++; CHECK-NEXT:  ; %bb.0: ; %entry
++; CHECK-NEXT:    move.l (8,%sp), %d0
++; CHECK-NEXT:    tst.l %d0
++; CHECK-NEXT:    beq .LBB2_3
++; CHECK-NEXT:  ; %bb.1: ; %loop.preheader
++; CHECK-NEXT:    move.l (4,%sp), %a0
++; CHECK-NEXT:  .LBB2_2: ; %loop
++; CHECK-NEXT:    ; =>This Inner Loop Header: Depth=1
++; CHECK-NEXT:    move.l #0, (%a0)+
++; CHECK-NEXT:    subq.l #1, %d0
++; CHECK-NEXT:    bne .LBB2_2
++; CHECK-NEXT:  .LBB2_3: ; %done
++; CHECK-NEXT:    rts
++entry:
++  %z = icmp eq i32 %n, 0
++  br i1 %z, label %done, label %loop
++loop:
++  %i = phi i32 [0, %entry], [%i.next, %loop]
++  %p = getelementptr i32, ptr %a, i32 %i
++  store i32 0, ptr %p, align 2
++  %i.next = add nuw nsw i32 %i, 1
++  %c = icmp eq i32 %i.next, %n
++  br i1 %c, label %done, label %loop
++done:
++  ret void
++}
++
++; A byte read and widened: the load through (An)+, the extension after it.
++define i32 @sum_bytes(ptr %a, i32 %n) {
++; CHECK-LABEL: sum_bytes:
++; CHECK:         .cfi_startproc
++; CHECK-NEXT:  ; %bb.0: ; %entry
++; CHECK-NEXT:    subq.l #4, %sp
++; CHECK-NEXT:    .cfi_def_cfa_offset -8
++; CHECK-NEXT:    movem.l %d2, (0,%sp) ; 8-byte Folded Spill
++; CHECK-NEXT:    move.l (12,%sp), %d1
++; CHECK-NEXT:    tst.l %d1
++; CHECK-NEXT:    beq .LBB3_1
++; CHECK-NEXT:  ; %bb.2: ; %loop.preheader
++; CHECK-NEXT:    move.l (8,%sp), %a0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:  .LBB3_3: ; %loop
++; CHECK-NEXT:    ; =>This Inner Loop Header: Depth=1
++; CHECK-NEXT:    move.b (%a0)+, %d2
++; CHECK-NEXT:    and.l #255, %d2
++; CHECK-NEXT:    add.l %d2, %d0
++; CHECK-NEXT:    subq.l #1, %d1
++; CHECK-NEXT:    bne .LBB3_3
++; CHECK-NEXT:    bra .LBB3_4
++; CHECK-NEXT:  .LBB3_1:
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:  .LBB3_4: ; %done
++; CHECK-NEXT:    movem.l (0,%sp), %d2 ; 8-byte Folded Reload
++; CHECK-NEXT:    addq.l #4, %sp
++; CHECK-NEXT:    rts
++entry:
++  %z = icmp eq i32 %n, 0
++  br i1 %z, label %done, label %loop
++loop:
++  %i = phi i32 [0, %entry], [%i.next, %loop]
++  %s = phi i32 [0, %entry], [%s.next, %loop]
++  %p = getelementptr i8, ptr %a, i32 %i
++  %v = load i8, ptr %p, align 1
++  %w = zext i8 %v to i32
++  %s.next = add i32 %s, %w
++  %i.next = add nuw nsw i32 %i, 1
++  %c = icmp eq i32 %i.next, %n
++  br i1 %c, label %done, label %loop
++done:
++  %r = phi i32 [0, %entry], [%s.next, %loop]
++  ret i32 %r
++}
++
++; Fields of an array of structs step by the struct, not the field: no stream there can
++; be (An)+, and the loop keeps one address register with displacements.
++%pair = type { i16, i16, i16 }
++define i32 @sum_fields(ptr %a, i32 %n) {
++; CHECK-LABEL: sum_fields:
++; CHECK:         .cfi_startproc
++; CHECK-NEXT:  ; %bb.0: ; %entry
++; CHECK-NEXT:    subq.l #8, %sp
++; CHECK-NEXT:    .cfi_def_cfa_offset -12
++; CHECK-NEXT:    movem.l %d2-%d3, (0,%sp) ; 12-byte Folded Spill
++; CHECK-NEXT:    move.l (16,%sp), %d1
++; CHECK-NEXT:    tst.l %d1
++; CHECK-NEXT:    beq .LBB4_1
++; CHECK-NEXT:  ; %bb.2: ; %loop.preheader
++; CHECK-NEXT:    move.l (12,%sp), %d2
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    addq.l #4, %d2
++; CHECK-NEXT:    move.l %d2, %a0
++; CHECK-NEXT:  .LBB4_3: ; %loop
++; CHECK-NEXT:    ; =>This Inner Loop Header: Depth=1
++; CHECK-NEXT:    move.w (%a0), %d2
++; CHECK-NEXT:    and.l #65535, %d2
++; CHECK-NEXT:    move.w (-2,%a0), %d3
++; CHECK-NEXT:    and.l #65535, %d3
++; CHECK-NEXT:    add.l %d2, %d3
++; CHECK-NEXT:    add.l %d3, %d0
++; CHECK-NEXT:    move.l %a0, %d2
++; CHECK-NEXT:    addq.l #6, %d2
++; CHECK-NEXT:    subq.l #1, %d1
++; CHECK-NEXT:    movea.l %d2, %a0
++; CHECK-NEXT:    bne .LBB4_3
++; CHECK-NEXT:    bra .LBB4_4
++; CHECK-NEXT:  .LBB4_1:
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:  .LBB4_4: ; %done
++; CHECK-NEXT:    movem.l (0,%sp), %d2-%d3 ; 12-byte Folded Reload
++; CHECK-NEXT:    addq.l #8, %sp
++; CHECK-NEXT:    rts
++entry:
++  %z = icmp eq i32 %n, 0
++  br i1 %z, label %done, label %loop
++loop:
++  %i = phi i32 [0, %entry], [%i.next, %loop]
++  %s = phi i32 [0, %entry], [%s.next, %loop]
++  %p = getelementptr %pair, ptr %a, i32 %i, i32 1
++  %q = getelementptr %pair, ptr %a, i32 %i, i32 2
++  %v = load i16, ptr %p, align 2
++  %u = load i16, ptr %q, align 2
++  %vw = zext i16 %v to i32
++  %uw = zext i16 %u to i32
++  %t = add i32 %vw, %uw
++  %s.next = add i32 %s, %t
++  %i.next = add nuw nsw i32 %i, 1
++  %c = icmp eq i32 %i.next, %n
++  br i1 %c, label %done, label %loop
++done:
++  %r = phi i32 [0, %entry], [%s.next, %loop]
++  ret i32 %r
++}

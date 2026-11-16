@@ -308,6 +308,34 @@ The glTF viewer's two notes blamed the missing uniforms for its parameter textur
 second lighting program. The texture still suits it, since it is uploaded once and kept by
 the material, so only the reasoning changed; moving it to uniforms is an `[IDEA]`.
 
+### 11/16/26 — Post-increment on the 68000
+
+The hottest compare in the hero was `vdp.send_colors`' loop, 64 colours to the VDP's port
+each vertical blank while raster effects run: `move.w (0,%a0,%d4), $c00000; addq.l #2, %d4;
+cmpi.l #128, %d4; bne`, 58 cycles a colour. The M68k backend never made `(An)+`: no indexed
+load or store was legal, and the target's MOVEs through `(An)+` (there for the assembler)
+did not say they change the register. A copy loop was worse, each address stepped through a
+data register and back.
+- **The selector** (`tools/llvm-m68k-patches/0018`): post-increment loads and stores are
+  legal for a whole byte, word or long, with MOVEs naming the address register's new value
+  as a def tied to its operand, selected by hand — a store of such a load's value reads it
+  itself, so a copy is `move.w (%a1)+, (%a0)+`. An extending load takes `(An)+` and extends
+  in the register.
+- **Loop strength reduction must ask for it**, through a TTI the target had none of. Asked
+  everywhere, it made an address register of each field of an array of structs (they step
+  by the struct): the raster handler's change loop saved four more registers, its first
+  colour came late, and `TestGenesis_RasterEffects` failed. So it is asked only where every
+  stream a loop steps through can be `(An)+`. The TTI first stood on the bare defaults;
+  M68k's default had been `BasicTTIImpl`, and without it `opt` vectorized the hero
+  (`sdiv <2 x i32>`, which `llc` cannot select) — it is `BasicTTIImplBase` now.
+- **And a count down is SUBQ**: an ADD of -1 whose flags a branch reads only for Z, N or V
+  (the same for both) is `subq.l #1`. `send_colors` is now `move.w (%a0)+, (%a1); subq.l
+  #1, %d0; bne`, 30 cycles a colour.
+- **Measured**: the hero's vertical blank handler 53.7 → 49.6 lines a frame on average over
+  240 frames, the worst 162 → 158; every chip write the same, as far as the old build got in
+  1,800 frames (the new gets three writes further); LLVM's M68k tests, the Genesis tests and
+  Vega's `--check` pass.
+
 ### 11/16/26 — The channel loop's spills were its induction variables
 
 Profiled by instruction and read in context, the vertical blank's hottest stack accesses
