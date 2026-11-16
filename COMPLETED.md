@@ -260,6 +260,22 @@ The glTF viewer's two notes blamed the missing uniforms for its parameter textur
 second lighting program. The texture still suits it, since it is uploaded once and kept by
 the material, so only the reasoning changed; moving it to uniforms is an `[IDEA]`.
 
+### 11/16/26 — The channel loop's spills were its induction variables
+
+Profiled by instruction and read in context, the vertical blank's hottest stack accesses
+were the channel loop's latch: `llc`'s loop strength reduction had made five induction
+variables of the one `k` — a word for the shifts (`held >> k`), a long, a pointer stepping
+4 through `starts`, one stepping 76 through `voices`, and an end pointer — and three lived
+on the stack, each reloaded, bumped and stored back on every pass. The IR had one; the
+68000's indexed addressing cannot scale, so every stride needed its own.
+- **The pattern starts live in their channels** (`MusicChannel.start`, which `ready_starts`
+  fills): reached through the channel pointer, one stride fewer. Stack instructions 18% of
+  the vertical blank to 15%; ordinary frames 49 lines to 48, the worst 163 to 162. Every
+  chip write the same.
+- **Worse, each measured**: `is_held(held, k)` asked once a pass (54 lines — its value held
+  across the whole body); counting in `i32` and narrowing (51); strength reduction off,
+  `-disable-lsr` (55 — it pays everywhere else).
+
 ### 11/16/26 — Spilling in the big inlined functions: measured, and mostly not spilling
 
 The music player inlined into the vertical blank keeps 560 stack accesses; the question was

@@ -231,6 +231,10 @@ pub struct MusicChannel {
   target: i32 = 0,
   sounding: bool = false,
   instrument: i16 = -1,
+  /// Where the channel's pattern in the order playing starts among the cells
+  /// ([MusicPlayer.starts_of]), beside the rest of its state: a separate array of them was
+  /// one more pointer the channel loop kept.
+  start: i32 = 0,
   /// The patch last written to the channel; -1 for none (or an effect's since). And what a
   /// note's level and panning need of it, kept as it is written ([kept_patch]): its carriers
   /// (operator 1 the lowest bit), operators 1–4's levels (register 40) and its register B4
@@ -316,11 +320,10 @@ pub struct MusicPlayer {
   /// worked out for (-1: none): each worked out again only when it changes.
   heard_muted: u16 = 0,
   dac_pitch: i32 = -1,
-  /// Where each channel's pattern starts in the order `starts_of` (of the whole table; -1
-  /// none yet): asked of the tables once an order, on the tick before its first row — a
-  /// checked multiply apiece, a call on the 68000, which the order's first row could not
-  /// spare (11/16).
-  starts: [13]i32 = #[0; 13],
+  /// The order whose patterns' starts the channels hold (`MusicChannel.start`; of the whole
+  /// table; -1 none yet): asked of the tables once an order, on the tick before its first
+  /// row — a checked multiply apiece, a call on the 68000, which the order's first row
+  /// could not spare (11/16).
   starts_of: i32 = -1,
 }
 
@@ -434,7 +437,7 @@ impl MusicPlayer {
       let skipped = self.voices[k].resting() && !is_held(held, k) && k != FIRST_PSG + 2
       if !reading && skipped { continue }
       if reading {
-        let cell = tables.cell(self.starts[k] + self.row)
+        let cell = tables.cell(self.voices[k].start + self.row)
         if cell.blank() && self.voices[k].unmoved() {
           // Most of a song's cells: nothing to take, and nothing the row's effects were
           // doing to stop — the channel stays steady, and [sound] has nothing to work out.
@@ -486,14 +489,17 @@ impl MusicPlayer {
     }
   }
 
-  /// The patterns' starts of order `at` (of the whole table) in [starts], unless they are.
+  /// The patterns' starts of order `at` (of the whole table) in each channel's `start`,
+  /// unless they are.
   let ready_starts<d> where d: MusicData = (
     self: mut,
     tables: ref d,
     at: i32
   ) -> void => {
     if self.starts_of == at { return }
-    for k: i16 in 0..<self.channels() { self.starts[k] = tables.pattern(at, i32(k)) }
+    for k: i16 in 0..<self.channels() {
+      self.voices[k].start = tables.pattern(at, i32(k))
+    }
     self.starts_of = at
   }
 

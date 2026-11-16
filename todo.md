@@ -1347,15 +1347,15 @@ sets V on every add. What stands between that and a ROM:
   left is how much the M68k backend spills — `sound` keeps a 340-byte frame — so a note
   costs thousands of cycles, and a song starting notes on all thirteen channels at once
   could still take most of a frame.
-- **[OPEN] The channel loop's spills on the 68000** (measured 11/16): stack-relative
-  instructions are 18% of the hero's vertical blank (7.9 lines of 43), and by stack object
-  about 80% of its accesses are spill slots — the music player's channel loop keeping its
-  word-sized counters and indices on the stack across its long inlined body. Aggregates
-  (`Out`, an `FmPatch` copy, a `Cell`, `Dac`s, an 8-byte array) are the other fifth, and
-  the 68000's every-aggregate-through-memory convention costs little once inlined: few
-  survive. Tried without gain: rematerializing constants, outlining `sound`, `take` or
-  `tick_once` (COMPLETED 11/16). Left: fewer values live across the loop body — a smaller
-  per-channel state, or the loop's work split so each part allocates on its own.
+- **[PARTIAL] The channel loop's spills on the 68000** (11/16): stack-relative
+  instructions were 18% of the hero's vertical blank, now 15% (6.3 lines of 41.5). They
+  were the loop's induction variables — strength reduction in `llc` kept `k` as a word, as
+  a long, a pointer into `starts` and one into `voices`, and an end pointer, three of them
+  on the stack, each reloaded, bumped and stored every pass. The pattern starts now live in
+  each channel (`MusicChannel.start`), one pointer fewer. Left: the long `k` beside the
+  word one (counting in `i32` made it worse), and the latch bumping the channel pointer
+  through a data register (`move.l %a3, %d0; add.l #80`; is CMPA missing?). Worse when
+  tried: `is_held` asked once a pass, counting in `i32`, `-disable-lsr` (COMPLETED 11/16).
 - **[OPEN] The M68k backend, smaller items** (after 0007–0017): the 37 `neg.b` left,
   booleans combined (`&&`, `^`) before a branch; 118 `and.b #1`, mostly a bool masked as it
   is stored; the 37 flag saves left, where the compare reads the copy's destination.
