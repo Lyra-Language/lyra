@@ -1,0 +1,140 @@
+module std.genesis.palette
+//! The 64 colours as a game changes them while it plays: runs of a palette's colours
+//! rotating — water flowing, lava glowing, lights chasing — and the whole screen faded to a
+//! colour and back.
+//!
+//! ```
+//! import std.genesis.palette
+//! import std.genesis.palette.{ Cycle }
+//!
+//! const WATER: [1]Cycle = #[Cycle { palette: 1, first: 9, count: 3, frames: 8 }]
+//!
+//! loop {
+//!   palette.step_cycles(WATER)        // once a frame
+//!   vdp.wait_vblank()
+//!   sprites.show()                    // sends the colours changed, first
+//! }
+//! palette.fade_to(vdp.rgb(0, 0, 0), 30)   // half a second to black, waiting
+//! palette.fade_back(30)                    // and back
+//! ```
+//!
+//! **What they change reaches CRAM in the vertical blank**, queued (`vdp.queue_color`) and sent
+//! by `sprites.show` before anything else — or by `vdp.send_colors` in a game that does not call
+//! it: written while the picture is drawn, a colour changes partway down the screen, and a step
+//! of a fade tore across it in the hero's game, whose interrupt's music had used up the blank.
+//!
+//! **Both work from the colours as shown** — `vdp`'s copy of what it last wrote to CRAM
+//! (`vdp.color_of`) — so they need nothing loaded through them: a palette `vdp.load_palette`
+//! wrote turns and fades. A cycle turns its colours one place a step, as the hardware's
+//! colours are its only state, so a colour set by the game in a run turns with it.
+
+import std.genesis.vdp
+import std.genesis.sprites
+
+/// A run of palette `palette`'s colours turning: `count` from `first`, a step every `frames`
+/// frames moving each one place on — the last to the first — or back. Vega writes a
+/// project's as `PALETTE_CYCLES`.
+pub struct Cycle {
+  palette: u16,
+  first: u16,
+  count: u16,
+  frames: u16,
+  backward: bool = false,
+}
+
+/// Each of `cycles` a step on where its frames have passed since the last: once a frame —
+/// Vega's scenes call it from `scroll_maps`. The colours go to CRAM at the next vertical blank,
+/// with `sprites.show` (or `vdp.send_colors` in a game that does not call it).
+pub let step_cycles<const N: i64> = (cycles: ref [N]Cycle) -> void => {
+  ticks = ticks.wrapping_add(1)
+  for c in cycles {
+    if c.count < 2 || c.frames == 0 || ticks % c.frames != 0 { continue }
+    turn(c)
+  }
+}
+
+/// Every colour from what it shows to `color` (a CRAM word, `vdp.rgb`'s) over `frames` frames,
+/// a step each vertical blank, returning once it is there: the screen to black, to white, or a
+/// flash of a colour. What it showed is kept for [fade_back].
+pub let fade_to = (color: u16, frames: u16) -> void => {
+  for i: u16 in 0..<64 { before[i] = vdp.color_of(i / 16, i % 16) }
+  var targets: [64]u16 = #[color; 64]
+  fade(targets, frames)
+}
+
+/// Every colour back from what it shows to what it showed before the last [fade_to], over
+/// `frames` frames, returning once it is there.
+pub let fade_back = (frames: u16) -> void => fade(before, frames)
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// Frames counted by [step_cycles], whose steps fall where a cycle's frames divide it.
+var ticks: u16 = 0
+
+/// The colours before the last [fade_to].
+var before: [64]u16 = #[0; 64]
+
+/// Cycle `c`'s colours one place on (or back).
+let turn = (c: Cycle) -> void => {
+  let last = c.first + c.count - 1
+  if c.backward {
+    let first = vdp.color_of(c.palette, c.first)
+    for k: u16 in c.first..<last {
+      vdp.queue_color(c.palette, k, vdp.color_of(c.palette, k + 1))
+    }
+    vdp.queue_color(c.palette, last, first)
+  } else {
+    let end = vdp.color_of(c.palette, last)
+    var k = last
+    while k > c.first {
+      vdp.queue_color(c.palette, k, vdp.color_of(c.palette, k - 1))
+      k -= 1
+    }
+    vdp.queue_color(c.palette, c.first, end)
+  }
+}
+
+/// Every colour from what it shows to `targets` over `frames` frames, a step a vertical blank.
+let fade = (targets: ref [64]u16, frames: u16) -> void => {
+  var from: [64]u16 = #[0; 64]
+  for i: u16 in 0..<64 { from[i] = vdp.color_of(i / 16, i % 16) }
+  let steps = frames.max(1)
+  for k: u16 in 1..<=steps {
+    for i: u16 in 0..<64 {
+      vdp.queue_color(i / 16, i % 16, mixed(from[i], targets[i], k, steps))
+    }
+    next_blank()
+  }
+}
+
+/// Wait for the next vertical blank to send the colours queued: the one the game's interrupt
+/// shows the sprites in (`sprites.show` sends them first), or, with no interrupt, the next one
+/// begun, sending them here. Polled with the interrupt on, the blank could pass inside the
+/// handler unseen, and the colours would be written while the picture is drawn.
+let next_blank = () -> void => {
+  if vdp.vblank_interrupt_on() {
+    let seen = sprites.shown()
+    while sprites.shown() == seen {}
+  } else {
+    vdp.wait_vblank()
+    vdp.send_colors()
+  }
+}
+
+/// CRAM word `a` taken `k` of `steps` of the way to `b` as the Genesis fades: every channel a
+/// level nearer at the same moments — seven, evenly over the steps, the most a channel's
+/// eight levels need — so the whole screen changes together, a channel already there waiting.
+/// Each channel stepped by its own share changed one now and another the frame after, and the
+/// fade looked jumpy (11/13).
+let mixed = pure (a: u16, b: u16, k: u16, steps: u16) -> u16 => {
+  let levels = i16(k) * 7 / i16(steps)
+  channel(a, b, 1, levels) | channel(a, b, 5, levels) | channel(a, b, 9, levels)
+}
+
+/// One channel of [mixed]: the three bits at `shift`, `levels` levels nearer `b`'s, no further.
+let channel = pure (a: u16, b: u16, shift: u16, levels: i16) -> u16 => {
+  let x = i16((a >> shift) & 7)
+  let y = i16((b >> shift) & 7)
+  let v = if y > x { (x + levels).min(y) } else { (x - levels).max(y) }
+  u16(v) << shift
+}

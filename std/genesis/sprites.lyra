@@ -131,7 +131,11 @@ pub let add = (s: Sprite) -> void => {
 /// The list written to the VDP's sprite table, each entry linked to the next. Call in
 /// the vertical blank ([vdp.wait_vblank]), after the list is complete.
 pub let show = () -> void => {
-  // The streamed sprites' frames first, so the table's tiles are there when it is.
+  // The colours `std.genesis.palette` changed first, at the blank's start, so none lands
+  // partway down the picture; then the streamed sprites' frames, so the table's tiles are
+  // there when it is.
+  vdp.send_colors()
+  shows = shows.wrapping_add(1)
   for i: u16 in 0..<sends {
     vdp.dma_to_vram(send_source[i], send_tile[i] * 32, send_words[i])
   }
@@ -157,6 +161,13 @@ var table: [320]u16 = #[0; 320]
 
 /// Sprites in the list.
 var count: u16 = 0
+
+/// The times [show] has run: a vertical blank each, in a game whose interrupt calls it.
+var shows: u16 = 0
+
+/// How many times [show] has run, read afresh each time — for what waits for the next vertical
+/// blank in a game whose interrupt shows the sprites (`std.genesis.palette`'s fades).
+pub let shown = () -> u16 => unsafe { (&shows).read_volatile() }
 
 /// Lists started ([clear]), going round below [NO_TILE]: which frame a slot was last drawn in.
 var lists: u16 = 0

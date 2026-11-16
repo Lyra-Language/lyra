@@ -330,6 +330,17 @@ pub let set_look = (look: Look) -> void => {
 /// The colour behind everything, where no cell or sprite is.
 pub let set_backdrop = (r: u8, g: u8, b: u8) -> void => { backdrop = rgb(r, g, b) }
 
+/// Colour `color` (`0xRRGGBB`) over the whole frame, `amount` of the way (0 none, 1 all of
+/// it): a fade, as `std.genesis.palette` fades the Genesis's colours. `std.game.palette`'s
+/// `fade_to` and `fade_back` step it.
+pub let set_fade = (color: u32, amount: f32) -> void => {
+  fade_color = rgb(u8((color >> 16) & 0xFF), u8((color >> 8) & 0xFF), u8(color & 0xFF))
+  fade_amount = amount.clamp(0.0, 1.0)
+}
+
+/// How far the frame is faded ([set_fade]), 0 to 1.
+pub let faded = () -> f32 => fade_amount
+
 /// The art the planes' cells show in `palette` (0–15): `columns` tiles a row, `tile_size`
 /// pixels square each (every palette's alike), `pixels` the whole picture row by row, `0xAARRGGBB` (alpha 0 is transparent). Tile
 /// `t` is the `t`-th, left to right, top to bottom; tile 0 should be blank. A cell in palette
@@ -408,6 +419,15 @@ pub let show = () -> void => {
   draw_planes(r, true, t)
   draw_sprites(r, true, t)
   r.set_scale(1.0, 1.0)
+  // A fade over everything, the screen's own pixels: `std.game.palette`'s.
+  if fade_amount > 0.0 {
+    r.set_draw_blend(BLEND_ALPHA)
+    r.set_draw_color(Color {
+      fade_color | a: u8((fade_amount.clamp(0.0, 1.0) * 255.0).round())
+    })
+    r.fill_rect(Rect { x: 0.0, y: 0.0, w: f32(full_width()), h: f32(full_height()) })
+    r.set_draw_blend(BLEND_NONE)
+  }
   frame += 1
   if limit > 0 && frame == limit && ppm_path != "" && !write_ppm(r, ppm_path) {
     println("could not write ${ppm_path}")
@@ -517,6 +537,10 @@ var design_width: i64 = 0
 var design_height: i64 = 0
 var screen_height: i64 = 0
 var backdrop: Color = rgb(0, 0, 0)
+
+/// The fade over the frame ([set_fade]): its colour, and how far.
+var fade_color: Color = rgb(0, 0, 0)
+var fade_amount: f32 = 0.0
 var tile_art: []Maybe<Texture> = [None; PALETTES]
 var tile_columns: i64 = 1
 var sprite_art: Maybe<Texture> = None

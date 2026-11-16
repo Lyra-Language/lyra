@@ -1,0 +1,47 @@
+module std.game.palette
+//! `std.genesis.palette`'s fades for every modern platform: the whole screen faded to a
+//! colour and back, waiting for it, as a Genesis game fades its 64 colours.
+//!
+//! ```
+//! import std.game.palette
+//!
+//! palette.fade_to(0x000000, 30)   // half a second to black, the frame shown each update
+//! palette.fade_back(30)           // and back
+//! ```
+//!
+//! A modern game's art is coloured when it is built, so its colours are not the game's to
+//! turn: the fade is the colour drawn over the frame (`screen.set_fade`), which looks the same.
+//! A palette's colour cycles are the Genesis's alone so far.
+
+import std.game.screen
+
+/// The whole screen from how it shows to `color` (`0xRRGGBB`) over `updates` updates, the
+/// frame shown each, returning once it is there: to black, to white, or a flash of a colour.
+pub let fade_to = (color: u32, updates: i64) -> void => {
+  fade_color = color
+  fade(1.0, updates)
+}
+
+/// The screen back from the last [fade_to]'s colour over `updates` updates, returning once it
+/// is clear.
+pub let fade_back = (updates: i64) -> void => fade(0.0, updates)
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// The colour the last [fade_to] faded to.
+var fade_color: u32 = 0
+
+/// The fade from where it is to `to` over `updates` updates, shown as it goes.
+let fade = (to: f32, updates: i64) -> void => {
+  let from = screen.faded()
+  let steps = updates.max(1)
+  var k = 0
+  while k < steps && screen.running() {
+    for _ in 0..<screen.updates_due() {
+      if k < steps { k += 1 }
+    }
+    screen.set_fade(fade_color, from + (to - from) * f32(k) / f32(steps))
+    screen.show()
+  }
+  screen.set_fade(fade_color, to)
+}

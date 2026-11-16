@@ -71,6 +71,7 @@ pub let init = () -> void => {
   mode = INIT_REGISTERS[1]
   line_mode = 0
   banded = 0
+  for i: u16 in 0..<64 { shown[i] = 0 }
 }
 
 /// Show the planes and sprites (off after [init], so a game can load before anything is
@@ -136,19 +137,54 @@ pub let rgb = pure (r: u16, g: u16, b: u16) -> u16 =>
 /// Colour `index` (0–15) of palette `palette` (0–3). Colour 0 of each palette is
 /// transparent in a sprite or a plane's tile.
 pub let set_color = (palette: u16, index: u16, color: u16) -> void => {
+  let at = (palette & 3) * 16 + (index & 15)
+  shown[at] = color
   let held = hold_vblank()
-  set_address(CRAM_WRITE, ((palette & 3) * 16 + (index & 15)) * 2)
+  set_address(CRAM_WRITE, at * 2)
   write_word(color)
   release_vblank(held)
 }
 
 /// All sixteen colours of palette `palette` from a table.
 pub let load_palette = (palette: u16, colors: ref [16]u16) -> void => {
+  let first = (palette & 3) * 16
   let held = hold_vblank()
-  set_address(CRAM_WRITE, (palette & 3) * 32)
-  for c in colors { write_word(c) }
+  set_address(CRAM_WRITE, first * 2)
+  for i: u16 in 0..<16 {
+    shown[first + i] = colors[i]
+    write_word(colors[i])
+  }
   release_vblank(held)
 }
+
+/// Colour `index` of palette `palette` set to `color` at the next [send_colors] — in the
+/// vertical blank, where `sprites.show` sends them: written while the picture is drawn, a
+/// colour changes partway down it (and leaves a dot on a real console). What
+/// `std.genesis.palette`'s cycles and fades change colours by. [color_of] answers it at once.
+pub let queue_color = (palette: u16, index: u16, color: u16) -> void => {
+  shown[(palette & 3) * 16 + (index & 15)] = color
+  colors_queued = true
+}
+
+/// The colours [queue_color] changed, all 64 to CRAM; nothing when none did. In the vertical
+/// blank: `sprites.show` calls it first; a game that does not call that, after [wait_vblank].
+pub let send_colors = () -> void => {
+  if !colors_queued { return }
+  colors_queued = false
+  let held = hold_vblank()
+  set_address(CRAM_WRITE, 0)
+  for i: u16 in 0..<64 { write_word(shown[i]) }
+  release_vblank(held)
+}
+
+/// Whether the vertical blank interrupt is on ([enable_vblank_interrupt]): a game whose
+/// handler calls `sprites.show`, which sends what is queued.
+pub let vblank_interrupt_on = () -> bool => (mode & 0x20) != 0
+
+/// Colour `index` of palette `palette` as [set_color], [load_palette] or [queue_color] last
+/// made it (CRAM is not read back): what `std.genesis.palette` turns and fades from.
+pub let color_of = (palette: u16, index: u16) -> u16 =>
+  shown[(palette & 3) * 16 + (index & 15)]
 
 /// The colour behind everything: colour `index` of palette `palette`.
 pub let set_backdrop = (palette: u16, index: u16) -> void =>
@@ -393,6 +429,12 @@ var mode: u8 = 0x04
 /// and the planes whose lines the game writes: bit 0 plane A's, bit 1 plane B's.
 var line_mode: u8 = 0
 var banded: u8 = 0
+
+/// The 64 colours as last written ([color_of]).
+var shown: [64]u16 = #[0; 64]
+
+/// Whether [queue_color] has changed a colour [send_colors] has not sent.
+var colors_queued: bool = false
 
 /// Whether [dma_to_vram] takes the Z80's bus ([guard_dma]).
 var dma_guarded: bool = false
