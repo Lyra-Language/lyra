@@ -98,6 +98,7 @@ static accesskit_role role_of(int role) {
     case 18: return ACCESSKIT_ROLE_TABLE;
     case 19: return ACCESSKIT_ROLE_ROW;
     case 20: return ACCESSKIT_ROLE_DIALOG;
+    case 21: return ACCESSKIT_ROLE_TERMINAL;
     default: return ACCESSKIT_ROLE_GENERIC_CONTAINER;
   }
 }

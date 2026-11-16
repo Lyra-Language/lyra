@@ -35,7 +35,7 @@ module ui.style
 //! into its parent's, so a half-transparent card's text is half-transparent too. Everything else starts unset.
 
 import ui.draw.{ Color, Size, Radii, BoxShadow, Gradient, rgb, rgba }
-import ui.backend.{ Appearance }
+import ui.backend.{ Appearance, Cursor }
 import ui.text.{ FontSpec }
 
 /// Space inside an element's edge, on each side, in logical units.
@@ -161,6 +161,10 @@ pub struct Style {
   /// What a paragraph too wide for its box shows at its end — CSS's `text-overflow`: cut
   /// (`TextClip`, the default, and wrapped as ever) or one line ending in "…" (`TextEllipsis`).
   text_overflow: Maybe<TextOverflow> = None,
+  /// The pointer's shape over it — CSS's `cursor`, inherited: an I-beam over a painter's
+  /// command line inside a grid that is an arrow. Unset is the framework's choice (an I-beam
+  /// over a text field, a hand over a button, else the arrow).
+  cursor: Maybe<Cursor> = None,
   /// Whether a scroller at its end stays there as its content grows — a terminal's, a chat's
   /// — and, scrolled off it, stays where it was until scrolled back (lui's `scroll-follow`).
   /// CSS has no such property; every terminal and chat needs one.
@@ -331,6 +335,7 @@ impl Style {
     overflow_x: self.overflow_x.or(base.overflow_x),
     overflow_y: self.overflow_y.or(base.overflow_y),
     text_overflow: self.text_overflow.or(base.text_overflow),
+    cursor: self.cursor.or(base.cursor),
     scroll_follow: self.scroll_follow.or(base.scroll_follow),
     transition: self.transition.or(base.transition),
   }
@@ -1028,6 +1033,8 @@ pub struct Computed {
   overflow_x: Overflow = OverflowVisible,
   overflow_y: Overflow = OverflowVisible,
   text_overflow: TextOverflow = TextClip,
+  /// `None` for the framework's choice ([Style.cursor]).
+  cursor: Maybe<Cursor> = None,
   scroll_follow: bool = false,
   transition: []Transition = [],
 }
@@ -1162,6 +1169,7 @@ impl Cascade {
       overflow_x: s.overflow_x ?? OverflowVisible,
       overflow_y: s.overflow_y ?? OverflowVisible,
       text_overflow: s.text_overflow ?? TextClip,
+      cursor: s.cursor.or(self.inherited.cursor),
       scroll_follow: s.scroll_follow ?? false,
       transition: s.transition ?? [],
     }

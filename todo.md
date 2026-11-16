@@ -790,9 +790,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/16] A script's key is pressed and released** (`ui.script`), the modifiers let go
   first, so none are held after `Ctrl+r`. Quoted text stays an input method's, with no key
   (COMPLETED.md 11/16).
-- **[OPEN] What raw input left out** (`ui/TERMINAL.md` §3): a key's repeat flag and physical
-  code, the keypad's keys (they type through text), a `cursor` style property (a painter's
-  I-beam over its command line), and AccessKit's Terminal role (a painter is a group).
+- **[PARTIAL] What raw input left out** (`ui/TERMINAL.md` §3): the keypad's keys, a `cursor`
+  style property and the Terminal role built 11/16 (COMPLETED.md). Left: a key's repeat flag and
+  physical code, which SDL's key event in `bindings.sdl3` does not carry and nothing reads yet.
 - **[OPEN] `Fonts.cells` looks every cell up each frame**: the faces' character maps and
   advances through HarfBuzz, a few calls a cell — 12,000 cells on a 200×60 screen. A cache by
   face order and character would make a frame of an unchanged screen cost lookups only;

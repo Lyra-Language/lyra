@@ -282,6 +282,8 @@ pub data AccessRole =
   | AxRow
   /// A modal dialog: assistive technology keeps to it while it is open.
   | AxDialog
+  /// A terminal.
+  | AxTerminal
   | AxContainer
 
 /// What assistive technology asks of an element.
@@ -411,6 +413,10 @@ pub data Key =
   /// F1 to F24, by number.
   | FunctionKey(i64)
   | Character(rune)
+  /// A key of the numeric keypad, by what it types — `'0'`–`'9'`, `'.'`, `'+'`, `'-'`, `'*'`,
+  /// `'/'`, `'='` — so a terminal's application keypad tells it from the row's; its text comes
+  /// as a [TextTyped] as the row's does. Its Enter is [Enter].
+  | Keypad(rune)
   | Unnamed(u32)
 
 /// The modifier keys held with a key. `primary` is the one shortcuts use — Command on a

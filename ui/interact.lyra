@@ -1409,7 +1409,9 @@ impl Ui {
     }
   }
 
-  /// The pointer's shape at `at`: an I-beam over a text field, or while a selection is being
+  /// The pointer's shape at `at`: the arrows along an edge dragged or under it; else the
+  /// `cursor` the element held, or the deepest under the pointer, has from its style
+  /// ([Style.cursor], inherited); else an I-beam over a text field, or while a selection is being
   /// dragged in one; the pointing hand over a button that can be pressed (a disabled one is no
   /// control under the pointer); else the arrow.
   let cursor_at<e> = pure (self: ref, laid: Laid<e>, at: Point) -> Cursor => {
@@ -1425,6 +1427,15 @@ impl Ui {
     if let Some(f) = edge {
       if let Drags(spec) = f.laid.kind { return if spec.axis == Horizontal { ResizeAcross } else { ResizeDown } }
     }
+    // A shape the program's style asks for, on the element held or the one under the pointer.
+    let styled = match held {
+      Some(f) => f.laid.style.cursor,
+      None => {
+        let path = hit(laid, at)
+        if path.len() > 0 { path[path.len() - 1].laid.style.cursor } else { None }
+      },
+    }
+    if let Some(shape) = styled { return shape }
     let over = if held.is_some() { held } else { control_at(laid, at) }
     match over {
       Some(f) => if f.laid.field.is_some() { IBeam } else {

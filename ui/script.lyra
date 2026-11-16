@@ -17,7 +17,9 @@ module ui.script
 //! - a key, held with any of `Shift+`, `Alt+`, `Ctrl+`, `Cmd+` and `Primary+` (Command on a
 //!   Mac, Control elsewhere — the shortcut modifier): `Tab`, `Enter`, `Space`, `Escape`,
 //!   `Backspace`, `Delete`, `Left`, `Right`, `Up`, `Down`, `Home`, `End`, `PageUp`,
-//!   `PageDown`, `Insert`, `F1` to `F24`, or one character (`a`, `/`), which is its key. It is
+//!   `PageDown`, `Insert`, `F1` to `F24`, the keypad's `Num0` to `Num9`, `NumDot`, `NumPlus`,
+//!   `NumMinus`, `NumTimes`, `NumDivide` and `NumEquals` ([Keypad]), or one character (`a`,
+//!   `/`), which is its key. It is
 //!   **pressed and released**, the modifiers let go first: `Ctrl+r` is a [KeyPressed] with
 //!   Control and a [KeyReleased] with none, so a program keeping the modifiers as the last key
 //!   left them sees none held after it, as after a keyboard's.
@@ -91,6 +93,7 @@ import ui.backend.{
   PageUp,
   PageDown,
   Insert,
+  Keypad,
   FunctionKey,
   Character,
   Cursor,
@@ -736,5 +739,13 @@ let key_named = pure (name: string) -> Maybe<Key> => match name {
   "PageUp" => Some(PageUp),
   "PageDown" => Some(PageDown),
   "Insert" => Some(Insert),
-  _ => if name.len() == 1 { Some(Character(name[0])) } else { function_key(name) },
+  "NumDot" => Some(Keypad('.')),
+  "NumPlus" => Some(Keypad('+')),
+  "NumMinus" => Some(Keypad('-')),
+  "NumTimes" => Some(Keypad('*')),
+  "NumDivide" => Some(Keypad('/')),
+  "NumEquals" => Some(Keypad('=')),
+  _ => if name.len() == 1 { Some(Character(name[0])) } else if name.len() == 4 && name.starts_with("Num") && name[3].is_ascii_digit() {
+    Some(Keypad(name[3]))
+  } else { function_key(name) },
 }

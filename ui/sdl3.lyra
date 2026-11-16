@@ -125,6 +125,15 @@ import bindings.sdl3.{
   CURSOR_NS_RESIZE,
   KEY_RETURN,
   KEY_KP_ENTER,
+  KEY_KP_DIVIDE,
+  KEY_KP_MULTIPLY,
+  KEY_KP_MINUS,
+  KEY_KP_PLUS,
+  KEY_KP_1,
+  KEY_KP_9,
+  KEY_KP_0,
+  KEY_KP_PERIOD,
+  KEY_KP_EQUALS,
   KEY_ESCAPE,
   KEY_TAB,
   KEY_BACKSPACE,
@@ -221,6 +230,7 @@ import ui.backend.{
   Insert,
   FunctionKey,
   Character,
+  Keypad,
   Unnamed,
   Modifiers,
   Cursor,
@@ -252,6 +262,7 @@ import ui.backend.{
   AxTable,
   AxRow,
   AxDialog,
+  AxTerminal,
   AxListBox,
   AxOption,
   AxContainer,
@@ -825,6 +836,7 @@ let role_code = pure (role: AccessRole) -> i32 => match role {
   AxTable => 18,
   AxRow => 19,
   AxDialog => 20,
+  AxTerminal => 21,
   AxContainer => 0,
 }
 
@@ -967,11 +979,33 @@ let key = pure (code: u32) -> Key =>
     FunctionKey(i64(code - KEY_F1) + 1)
   } else if code >= KEY_F13 && code <= KEY_F24 {
     FunctionKey(i64(code - KEY_F13) + 13)
+  } else if let Some(c) = keypad_rune(code) {
+    Keypad(c)
   } else if code >= 0x20 && code < 0x40000000 {
     Character(rune(i32(code)))
   } else {
     Unnamed(code)
   }
+
+/// What a key of the numeric keypad types, by SDL's code for it — `None` for another key.
+let keypad_rune = pure (code: u32) -> Maybe<rune> =>
+  if code >= KEY_KP_1 && code <= KEY_KP_9 {
+    Some(rune(i32(code - KEY_KP_1) + 49))
+  } else if code == KEY_KP_0 {
+    Some('0')
+  } else if code == KEY_KP_PERIOD {
+    Some('.')
+  } else if code == KEY_KP_PLUS {
+    Some('+')
+  } else if code == KEY_KP_MINUS {
+    Some('-')
+  } else if code == KEY_KP_MULTIPLY {
+    Some('*')
+  } else if code == KEY_KP_DIVIDE {
+    Some('/')
+  } else if code == KEY_KP_EQUALS {
+    Some('=')
+  } else { None }
 
 /// The modifiers in an SDL mask (`MOD_*`). Command is the primary modifier on Apple's systems.
 let modifiers_of = (held: u16) -> Modifiers => {

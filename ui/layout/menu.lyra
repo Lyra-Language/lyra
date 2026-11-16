@@ -34,6 +34,7 @@ import ui.backend.{
   Insert,
   FunctionKey,
   Character,
+  Keypad,
   Unnamed,
 }
 
@@ -220,6 +221,7 @@ let key_text = pure (key: Key, apple: bool) -> string => match key {
   PageUp => if apple { "⇞" } else { "PgUp" },
   PageDown => if apple { "⇟" } else { "PgDn" },
   Insert => "Insert",
+  Keypad(c) => if apple { "⌧${c}" } else { "Num ${c}" },
   Unnamed(code) => "#${code}",
 }
 

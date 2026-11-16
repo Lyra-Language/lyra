@@ -41,6 +41,7 @@ import ui.backend.{
   PageDown,
   Insert,
   FunctionKey,
+  Keypad,
   Unnamed,
 }
 import ui.draw.{ Point, Size, Rect, Color, Fill, Border, radius }
@@ -244,5 +245,6 @@ let key_name = pure (key: Key) -> string => match key {
   PageDown => "PageDown",
   Insert => "Insert",
   FunctionKey(n) => "F${n}",
+  Keypad(c) => "keypad ${c}",
   Unnamed(code) => "key ${code}",
 }

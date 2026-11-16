@@ -9,8 +9,9 @@ fallback — a space the run's face has stays in its run too, so a run is not cu
 glyph sits in its cell's middle; `examples/ui/cells.lyra`; raw input as a builder,
 `.takes_input(RawInput { … })`, its types `TypedText`/`ComposedText` and `PointerPress`… —
 prefixed, constructors matching program-wide — `KeyInput` without `repeat` and `code` (a
-terminal sends a repeat as a press; nothing needs the physical key yet), `Key` without the
-keypad's, no `cursor` style property and no AccessKit Terminal role yet; a pointer event's
+terminal sends a repeat as a press; nothing needs the physical key yet), the keypad's keys
+`Key.Keypad`, the `cursor` style property and AccessKit's Terminal role (`TerminalRole`) added
+11/16; a pointer event's
 modifiers from `Platform.held()`, since `InputEvent`'s carry none; `App.shortcuts` an array of
 at most one `Shortcuts`; `FocusKeyed(key)` for `Focus(id)`, since a program knows its keys, not
 its identities; `examples/ui/keys.lyra`; `ScrollTo(key, y)` by key, as `FocusKeyed`; the wake's

@@ -690,6 +690,7 @@ import ui.layout.{
   TableRole,
   RowRole,
   DialogRole,
+  TerminalRole,
   FieldSpec,
   SliderSpec,
   Vertical,
@@ -919,6 +920,7 @@ let role_name = pure (role: Role) -> string => match role {
   TableRole => "table",
   RowRole => "row",
   DialogRole => "dialog",
+  TerminalRole => "terminal",
 }
 `)
 	want := `hits a,c,b,c
@@ -1462,7 +1464,7 @@ func TestRun_UiAccessibilityTree(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ sandbox, host_of }
 import ui.script.{ script_platform, ScriptPlatform }
-import ui.backend.{ AxWindow, AxGroup, AxLabel, AxImage, AxButton, AxCheckbox, AxSlider, AxTextInput, AxScroll, AxComboBox, AxListBox, AxOption, AxTabList, AxTab, AxRadio, AxRadioGroup, AxProgress, AxTable, AxRow, AxDialog, AxContainer, Renderer, InputEvent, AccessAction, AccessTree, AccessNode, AxSetValue, AxClick, AxIncrement, AxFocus, AxSetNumber }
+import ui.backend.{ AxWindow, AxGroup, AxLabel, AxImage, AxButton, AxCheckbox, AxSlider, AxTextInput, AxScroll, AxComboBox, AxListBox, AxOption, AxTabList, AxTab, AxRadio, AxRadioGroup, AxProgress, AxTable, AxRow, AxDialog, AxTerminal, AxContainer, Renderer, InputEvent, AccessAction, AccessTree, AccessNode, AxSetValue, AxClick, AxIncrement, AxFocus, AxSetNumber }
 import ui.access.{ access_node }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new, Fonts }
@@ -1593,6 +1595,7 @@ let role_name = pure (node: AccessNode) -> string => match node.role {
   AxTable => "table",
   AxRow => "row",
   AxDialog => "dialog",
+  AxTerminal => "terminal",
   AxContainer => "container",
 }
 `)
@@ -5697,6 +5700,96 @@ let main = () -> u8 => {
 }
 `)
 	want := "press r control true\nrelease r control false\ntext 'echo', control held false\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// What raw input had left out (ui/TERMINAL.md §3), but a key's repeat and physical code:
+// the keypad's keys as Key.Keypad (a script's Num5, NumPlus; a shortcut spelled "Num 5"), a
+// `cursor` style property — inherited, and before the framework's own choice — and the
+// Terminal role, heard by assistive technology for an element said to be one.
+func TestRun_UiKeypadCursorAndTerminalRole(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, Command, Subscription, host_of }
+import ui.script.{ parse_script, timed_platform, parse_steps, Waited }
+import ui.backend.{ Renderer, TextureId, KeyPressed, Keypad, Chord, Modifiers, Cursor, Arrow, IBeam, Hand, Crosshair, AxTerminal }
+import ui.draw.{ Size, Color }
+import ui.text.{ fonts_new }
+import ui.style.{ Style }
+import ui.layout.{ Node, column, text, button, sized, chord_text, TerminalRole }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, window, background, ops) => {}
+}
+
+data Ev = Pressed
+
+let shape_name = pure (c: Cursor) -> string => match c {
+  Arrow => "arrow",
+  IBeam => "I-beam",
+  Hand => "hand",
+  Crosshair => "crosshair",
+  _ => "other",
+}
+
+let view = pure (_: i64) -> Node<Ev> => column([
+  sized::<Ev>(Some(200.0), Some(40.0)).with_style(Style { cursor: Some(IBeam) }),
+  button("Plain", Pressed),
+  column([button("Inside", Pressed)]).with_style(Style { cursor: Some(Crosshair) }),
+  Node { text::<Ev>("$ ls") | label: "Shell" }.with_role(TerminalRole),
+])
+
+let main = () -> u8 => {
+  let Ok(keys) = parse_script("Num5 NumPlus NumDot") else { return 1 }
+  var pressed: []string = []
+  for k in keys {
+    if let KeyPressed(Keypad(c), _) = k { pressed.push("${c}") }
+  }
+  println("keypad ${pressed.join(" ")}; a shortcut on it reads ${chord_text(Chord { key: Keypad('5'), mods: Modifiers { control: true } }, false)}")
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 2 }
+  // A step to begin with: a script platform with none left closes the window.
+  var platform = timed_platform([Waited(1)], Size { w: 300.0, h: 300.0 })
+  var renderer = Blank {}
+  let app = App {
+    view: view,
+    update: pure (s: i64, _: Ev) -> (i64, []Command<Ev>) => (s, []),
+    subscriptions: (_: i64) -> []Subscription<Ev> => [],
+    background: Color { r: 0, g: 0, b: 0 },
+  }
+  var host = host_of(app, 0, platform)
+  let _ = host.step(platform, renderer, fonts)
+  let laid = host.main_laid()
+  // Over the box, over the plain button, over the button inside the crosshair column.
+  let plain = laid.children[1]
+  let inside = laid.children[2]
+  let spot = pure (x: f32, y: f32) -> string => "${i64((x + 5.0).round())},${i64((y + 5.0).round())}"
+  for at in ["10,20", spot(plain.at.x, plain.at.y), spot(inside.at.x, inside.at.y)] {
+    let Ok(steps) = parse_steps("move:${at}") else { return 3 }
+    platform.steps = [...platform.steps, ...steps]
+    while platform.next < platform.steps.len() {
+      if !host.step(platform, renderer, fonts) { return 4 }
+    }
+    print("${shape_name(platform.shape)} ")
+  }
+  println("")
+  let terminals = platform.access.nodes.any((n) => n.role == AxTerminal && n.label == "Shell")
+  println("a terminal heard: ${terminals}")
+  fonts.close()
+  0
+}
+`)
+	want := "keypad 5 + .; a shortcut on it reads Ctrl+Num 5\nI-beam hand crosshair \na terminal heard: true\n"
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}

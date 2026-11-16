@@ -1295,6 +1295,15 @@ const UI_MODULES = [
     "PageUp",
     "PageDown",
     "Insert",
+    "Arrow",
+    "IBeam",
+    "Hand",
+    "Crosshair",
+    "Move",
+    "NotAllowed",
+    "Busy",
+    "ResizeAcross",
+    "ResizeDown",
   ]),
   ("ui.app", ["WindowSpec"]),
 ]
@@ -2525,6 +2534,18 @@ let layout_declaration = pure (
     },
     "overflow_x" => one(name, overflow_of(value)),
     "overflow_y" => one(name, overflow_of(value)),
+    "cursor" => one(name, match value.trim() {
+      "default" => Ok("Arrow"),
+      "text" => Ok("IBeam"),
+      "pointer" => Ok("Hand"),
+      "crosshair" => Ok("Crosshair"),
+      "move" => Ok("Move"),
+      "not-allowed" => Ok("NotAllowed"),
+      "wait" => Ok("Busy"),
+      "ew-resize" => Ok("ResizeAcross"),
+      "ns-resize" => Ok("ResizeDown"),
+      other => Err("cursor is default, text, pointer, crosshair, move, not-allowed, wait, ew-resize or ns-resize, not ${other}"),
+    }),
     "text_overflow" => one(name, match value.trim() {
       "clip" => Ok("TextClip"),
       "ellipsis" => Ok("TextEllipsis"),
@@ -2846,7 +2867,7 @@ let ui_declarations = pure (
       "font_size" => ui_number(given),
       "line_height" => ui_number(given),
       "padding" => ui_padding(given),
-      _ => Err("no style property ${name} in ui (color, background, border-color, border-width, radius (one to four numbers, as border-radius), gap, opacity, font-size, line-height, padding; transition and transition-property, -duration, -timing-function, -delay; overflow (one or two of visible, hidden, clip, scroll, auto), overflow-x, overflow-y; text-overflow (clip or ellipsis); box-shadow, a gradient background or background-image, filter: blur(), backdrop-filter: blur(); width, height and their min- and max-; row-gap, column-gap; flex, flex-direction, flex-wrap, flex-grow, flex-shrink, flex-basis, order, justify-content, align-content, align-items, align-self; grid-template-columns, grid-template-rows, grid-auto-columns, grid-auto-rows, grid-auto-flow, grid-column, grid-row, justify-items, justify-self)"),
+      _ => Err("no style property ${name} in ui (color, background, border-color, border-width, radius (one to four numbers, as border-radius), gap, opacity, font-size, line-height, padding; transition and transition-property, -duration, -timing-function, -delay; overflow (one or two of visible, hidden, clip, scroll, auto), overflow-x, overflow-y; text-overflow (clip or ellipsis); cursor (default, text, pointer, crosshair, move, not-allowed, wait, ew-resize, ns-resize); box-shadow, a gradient background or background-image, filter: blur(), backdrop-filter: blur(); width, height and their min- and max-; row-gap, column-gap; flex, flex-direction, flex-wrap, flex-grow, flex-shrink, flex-basis, order, justify-content, align-content, align-items, align-self; grid-template-columns, grid-template-rows, grid-auto-columns, grid-auto-rows, grid-auto-flow, grid-column, grid-row, justify-items, justify-self)"),
     }
     match lyra {
       Ok(v) => { fields = with_field(fields, "${field}: Some(${v})") },

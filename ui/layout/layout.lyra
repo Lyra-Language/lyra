@@ -390,6 +390,9 @@ pub data Role =
   | RowRole
   /// A modal's dialog ([modal]): heard as a modal dialog, labelled as its content is.
   | DialogRole
+  /// A terminal: an element painting one (`.with_role(TerminalRole)` on a painter, which is
+  /// otherwise a group), heard as AccessKit's terminal, named by its `label`.
+  | TerminalRole
 
 /// A row's axis or a column's.
 pub data Axis = Horizontal | Vertical

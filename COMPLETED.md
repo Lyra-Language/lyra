@@ -9,6 +9,37 @@ Newest first.
 
 ## Dated log
 
+### 11/16/26 — Raw input: the keypad, a `cursor` property and the Terminal role
+
+Three of the four things `ui/TERMINAL.md` §3 had left out of raw input.
+
+**The keypad's keys are `Key.Keypad(rune)`**, by what they type: `'0'`–`'9'`, `'.'`, `'+'`,
+`'-'`, `'*'`, `'/'`, `'='`. A terminal's application keypad can now tell them from the row's;
+they were `Unnamed` codes before, known only by their text, which still comes as a
+`TextTyped`. Keypad Enter stays `Enter`, so fields and buttons hear it as they did.
+`ui.sdl3` maps SDL's keypad codes (`keypad_rune`), a shortcut on one is spelled "Num 5" ("⌧5"
+on a Mac), and a script names them `Num0`–`Num9`, `NumDot`, `NumPlus`, `NumMinus`, `NumTimes`,
+`NumDivide` and `NumEquals`, since a `+` in a token already separates modifiers.
+
+**`Style.cursor` is CSS's `cursor`, inherited.** `cursor_at` takes it from the element held, or
+else the deepest under the pointer, after a dragged edge's arrows and before the framework's
+own choice (an I-beam over a field, a hand over a button, a painter's `RawInput.cursor`). A
+painter's command line can then be an I-beam inside a grid that is an arrow. lui writes it
+from CSS's names: `default`, `text`, `pointer`, `crosshair`, `move`, `not-allowed`, `wait`,
+`ew-resize` and `ns-resize`.
+
+**`TerminalRole`**, given with `with_role`, is heard as AccessKit's terminal (`AxTerminal`,
+code 21 in the shim), named by the element's label. A painter is otherwise a group.
+
+**Left open: a key's repeat flag and physical code.** SDL's key event in `bindings.sdl3`
+carries only the key code. Adding them reaches every `KeyPressed` match in `ui`, Vega and
+Termina, and nothing reads either yet (a terminal sends a repeat as a press).
+
+`TestRun_UiKeypadCursorAndTerminalRole` covers all three. Its first version hung: a script
+platform with no steps left closes the window, so a loop that waited for a step to be played
+waited for ever. It now starts with a `Waited(1)`, as the other tests do, and gives up if the
+run ends.
+
 ### 11/16/26 — A script's key is pressed and released
 
 `ui.script` played a key token as a `KeyPressed` alone, so a program keeping the modifiers

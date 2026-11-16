@@ -44,6 +44,7 @@ import ui.backend.{
   AxTable,
   AxRow,
   AxDialog,
+  AxTerminal,
   ACCESS_FOCUS,
   ACCESS_CLICK,
   ACCESS_SET_VALUE,
@@ -72,6 +73,7 @@ import ui.layout.{
   TableRole,
   RowRole,
   DialogRole,
+  TerminalRole,
   open_modal,
   Checkable,
   Radio,
@@ -167,6 +169,7 @@ let heard_as<e> = pure (laid: Laid<e>) -> Maybe<AccessRole> => match laid.role {
   TableRole => Some(AxTable),
   RowRole => Some(AxRow),
   DialogRole => Some(AxDialog),
+  TerminalRole => Some(AxTerminal),
 }
 
 /// The node for `laid`, heard as `role`.
