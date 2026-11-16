@@ -304,6 +304,23 @@ pub let set_scroll = (plane: u16, x: i16, y: i16) -> void => {
   release_vblank(held)
 }
 
+/// Shadow and highlight on or off — register 12's mode. On, a pixel of the planes is drawn at
+/// half its brightness (the shadow) unless either plane's cell there is high priority; a
+/// sprite takes the shade under it unless it is high priority itself; and two colours of
+/// palette 3 are not drawn at all but change what is under them — [HIGHLIGHT_INDEX] a step
+/// brighter (a shadow back to normal, normal to the highlight, halfway to white), and
+/// [SHADOW_INDEX] into the shadow: lights, glows and shadows that follow a sprite. Any other
+/// colour 14 is drawn at normal, shaded or not. Once, as a scene starts.
+pub let shadow_highlight = (on: bool) -> void => {
+  set_register(12, if on { INIT_REGISTERS[12] | 0x08 } else { INIT_REGISTERS[12] })
+}
+
+/// The palette whose colours [HIGHLIGHT_INDEX] and [SHADOW_INDEX] are operators in shadow and
+/// highlight ([shadow_highlight]), and those colours.
+pub const OPERATOR_PALETTE: u16 = 3
+pub const HIGHLIGHT_INDEX: u16 = 14
+pub const SHADOW_INDEX: u16 = 15
+
 /// Scroll each line of the screen on its own — the VDP's line scroll — and say which
 /// planes' lines a game writes itself ([begin_lines]; `std.genesis.camera`'s
 /// `scroll_bands`), the rest kept whole by [set_scroll]. Both false turns it off, the
