@@ -1347,12 +1347,15 @@ sets V on every add. What stands between that and a ROM:
   left is how much the M68k backend spills — `sound` keeps a 340-byte frame — so a note
   costs thousands of cycles, and a song starting notes on all thirteen channels at once
   could still take most of a frame.
-- **[OPEN] Aggregates through memory on the 68000** (found 11/16): of the hero's vertical
-  blank's 560 stack accesses only about 150 are the register allocator's spills; the rest
-  are Lyra's aggregates — `lowerer.inMemory` passes, returns and keeps every struct through
-  memory on the 68000 (61 `move.l #N, (N,%sp)` building ones). What they are, and whether
-  small structs could travel in registers, is the next measured step; the allocator's side
-  was tried (rematerialization, outlining `sound`: no gain, COMPLETED 11/16).
+- **[OPEN] The channel loop's spills on the 68000** (measured 11/16): stack-relative
+  instructions are 18% of the hero's vertical blank (7.9 lines of 43), and by stack object
+  about 80% of its accesses are spill slots — the music player's channel loop keeping its
+  word-sized counters and indices on the stack across its long inlined body. Aggregates
+  (`Out`, an `FmPatch` copy, a `Cell`, `Dac`s, an 8-byte array) are the other fifth, and
+  the 68000's every-aggregate-through-memory convention costs little once inlined: few
+  survive. Tried without gain: rematerializing constants, outlining `sound`, `take` or
+  `tick_once` (COMPLETED 11/16). Left: fewer values live across the loop body — a smaller
+  per-channel state, or the loop's work split so each part allocates on its own.
 - **[OPEN] The M68k backend, smaller items** (after 0007–0017): the 37 `neg.b` left,
   booleans combined (`&&`, `^`) before a branch; 118 `and.b #1`, mostly a bool masked as it
   is stored; the 37 flag saves left, where the compare reads the copy's destination.

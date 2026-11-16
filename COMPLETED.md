@@ -273,9 +273,15 @@ how much of that the register allocator could save. Little, it turned out:
   every one slower, ordinary frames 49 lines to 53, the worst 163 to 172. Inlining earns its
   spills.
 - **What the stack traffic is**: 0007 dropped a spill's memory operand when it made it a
-  MOVE (0017 keeps it), which also hid the "Folded Spill" notes. With them back, about 150 of
-  the 560 are spills; the rest are Lyra's aggregates through memory (`lowerer.inMemory`), a
-  Lyra code-generation item now in todo.md.
+  MOVE (0017 keeps it). **Counted by the asm's "Folded Spill" notes, a quarter looked like
+  spills and the rest Lyra's aggregates — wrong**: the notes miss most spills. Counted by
+  stack object before frame layout (`-print-after=stack-slot-coloring`, 4- and 2-byte slots
+  against the named sizes), 590 of 745 accesses are spill slots; `Out` (62), an `FmPatch`
+  copy (76) and an 8-byte array (17) are the aggregates. Weighted by the profile, the stack
+  instructions are 18% of the vertical blank, the hottest the channel loop's word-sized
+  counters reloaded on every pass — spills of loop values, which rematerialization cannot
+  touch. The aggregates' convention (`lowerer.inMemory`) costs little once inlined, and
+  `__muldi3` (a checked multiply's) 0.3 calls a frame.
 
 ### 11/16/26 — The M68k backend: a boolean's bit, and what did not pay
 
