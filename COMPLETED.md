@@ -9,6 +9,27 @@ Newest first.
 
 ## Dated log
 
+### 11/16/26 — A script's key is pressed and released
+
+`ui.script` played a key token as a `KeyPressed` alone, so a program keeping the modifiers
+as the last key left them saw Control held through everything after `Ctrl+r`, its text
+included, which no keyboard does. **A key token is now a press and a release**: a
+`KeyPressed` with its modifiers, then a `KeyReleased` with none, as if the modifiers were let
+go first. `ui`'s `Key` has no modifier keys, so their own release cannot be played, and
+releasing the key with none held is what leaves a program's last modifiers empty.
+
+**Quoted text keeps no key before it.** The script already defined it as text an input
+method hands over, and an input method sends no key; a script wanting keys writes key tokens
+(`e c h o`). That half of the item was the token's meaning, so the docs now say so rather
+than the token changing.
+
+Two tests moved with it: `TestRun_UiRawInput` hears each key's release, the `Primary+t`
+shortcut's too, which reaches the painter as a keyboard's would. `TestRun_UiCommandsAndSubscriptions`
+plays 40 steps where it played 23, one more frame among them. `TestRun_UiScriptKeyIsPressedAndReleased`
+reads `Ctrl+r 'echo'`: Control on the press, none on the release, none held for the text.
+Vega's `--check` passes. Termina's scripted checks were not run, since Termina is not run on
+this Mac.
+
 ### 11/16/26 — `App.start`: a program's first commands
 
 `ui` focused nothing when a program started, and an `App` had no way to ask for anything

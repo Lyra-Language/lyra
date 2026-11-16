@@ -787,9 +787,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/16] `App.start`**: commands carried out once before the first frame, so
   `[FocusKeyed("term")]` focuses from the start (COMPLETED.md 11/16). Termina still asks it
   from its painter's first `on_size`, and could move to it.
-- **[OPEN] A script's key is a press with no release, and its text no key before it**
-  (`ui.script`). A program keeping the modifiers as the last key left them sees Ctrl held
-  after `Ctrl+r 'echo'`, which no keyboard does. A key token could press and release.
+- **[DONE 11/16] A script's key is pressed and released** (`ui.script`), the modifiers let go
+  first, so none are held after `Ctrl+r`. Quoted text stays an input method's, with no key
+  (COMPLETED.md 11/16).
 - **[OPEN] What raw input left out** (`ui/TERMINAL.md` §3): a key's repeat flag and physical
   code, the keypad's keys (they type through text), a `cursor` style property (a painter's
   I-beam over its command line), and AccessKit's Terminal role (a painter is a group).

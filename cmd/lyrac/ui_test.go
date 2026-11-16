@@ -1206,7 +1206,7 @@ animate true
 animate false
 child poked
 bye
-frames 8 over 100ms; clock 2100; script 21 of 23; opened https://example.com
+frames 9 over 100ms; clock 2100; script 35 of 40; opened https://example.com
 `
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
@@ -5667,6 +5667,41 @@ let view = pure () -> Node<Ev> => themed::<Ev>(light_theme(), Sheet { rules: [Ru
 	}
 }
 
+// A script's key token is pressed and released, the modifiers let go first: `Ctrl+r` is a
+// press with Control and a release with none, so a program keeping the modifiers as the last
+// key left them sees none held after it — before, it saw Control held through the text after
+// it. The text is an input method's, with no key: `'echo'` is one TextTyped.
+func TestRun_UiScriptKeyIsPressedAndReleased(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.script.{ parse_script }
+import ui.backend.{ InputEvent, KeyPressed, KeyReleased, TextTyped, Modifiers, Character }
+
+let main = () -> u8 => {
+  let Ok(inputs) = parse_script("Ctrl+r 'echo'") else { return 1 }
+  var last = Modifiers {}
+  for input in inputs {
+    match input {
+      KeyPressed(Character(c), mods) => {
+        last = mods
+        println("press ${c} control ${mods.control}")
+      },
+      KeyReleased(Character(c), mods) => {
+        last = mods
+        println("release ${c} control ${mods.control}")
+      },
+      TextTyped(text) => println("text '${text}', control held ${last.control}"),
+      _ => println("other"),
+    }
+  }
+  0
+}
+`)
+	want := "press r control true\nrelease r control false\ntext 'echo', control held false\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // CSS's text-overflow: ellipsis (`Style.text_overflow`, `ellipsized`): a paragraph wider than
 // its box is one line, cut by rune to what fits with "…" after it, spaces before the "…"
 // dropped, and "…" alone where nothing more fits; one that fits is itself. Checked as what a
@@ -8484,12 +8519,17 @@ let main = () -> u8 => {
 primary press 1 at 30,40
 primary release at 30,40
 key a
+key a up
 key Tab
+key Tab up
 key F5
+key F5 up
 key Insert
+key Insert up
 typed 'hi'
 composing 'ka' caret 2
 shortcut: new tab
+key t up
 move to 30,40
 Shift+primary press 1 at 30,40
 primary release at 30,40
@@ -8501,6 +8541,7 @@ window unfocused
 window focused
 the button
 key a
+key a up
 the input method's window at 10,20 1x16
 `
 	if got != want {

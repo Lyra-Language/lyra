@@ -11,12 +11,16 @@ module ui.script
 //!
 //! **A script** is tokens a space apart:
 //!
-//! - `'text'` — text typed, as an input method would hand it over (a [TextTyped]); a quote
-//!   inside is written `\'`.
+//! - `'text'` — text typed, as an input method would hand it over (a [TextTyped]), with no key
+//!   before it, as an input method sends none; a quote inside is written `\'`. Keys typed one
+//!   by one are key tokens: `e c h o`.
 //! - a key, held with any of `Shift+`, `Alt+`, `Ctrl+`, `Cmd+` and `Primary+` (Command on a
 //!   Mac, Control elsewhere — the shortcut modifier): `Tab`, `Enter`, `Space`, `Escape`,
 //!   `Backspace`, `Delete`, `Left`, `Right`, `Up`, `Down`, `Home`, `End`, `PageUp`,
-//!   `PageDown`, `Insert`, `F1` to `F24`, or one character (`a`, `/`), which is its key.
+//!   `PageDown`, `Insert`, `F1` to `F24`, or one character (`a`, `/`), which is its key. It is
+//!   **pressed and released**, the modifiers let go first: `Ctrl+r` is a [KeyPressed] with
+//!   Control and a [KeyReleased] with none, so a program keeping the modifiers as the last key
+//!   left them sees none held after it, as after a keyboard's.
 //! - `compose:'text'` — an input method's composition in progress, its caret at its end
 //!   (`compose:''` ends it).
 //! - `focus`, `blur` — the window gained the keyboard's focus, or lost it.
@@ -636,7 +640,9 @@ pub let parse_steps = pure (script: string) -> Result<[]Step, string> => {
       }
     }
     let Some(key) = key_named(parts[parts.len() - 1]) else { return Err("not a key: ${token}") }
+    // Pressed, and let go with the modifiers already up.
     inputs.push(Played(KeyPressed(key, mods)))
+    inputs.push(Played(KeyReleased(key, Modifiers {})))
   }
   Ok(inputs)
 }
