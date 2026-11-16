@@ -114,6 +114,56 @@ The glTF viewer's two notes blamed the missing uniforms for its parameter textur
 second lighting program. The texture still suits it, since it is uploaded once and kept by
 the material, so only the reasoning changed; moving it to uniforms is an `[IDEA]`.
 
+### 11/16/26 — The M68k backend: TST, and copies ahead of the flags
+
+Two more (`tools/llvm-m68k-patches/0013`, `0014`; `0015` their LLVM tests): the hero's
+vertical blank from 51 lines a frame to 49, its worst from 171 to 166, every lyrac and Vega
+check the same.
+- **TST did not exist**: every compare with zero — 454 in the hero, a bool's test most of
+  them — was CMPI #0, twice TST's cycles and bytes, setting the same flags. 0013 defines
+  it for the modes a 68000 has (a PC-relative one is the 68020's; an absolute one went
+  unused, as a global is reached through an address register, and was left out) with a
+  pattern for (CMP 0, x).
+- **A copy whose source lives on** could not be EXG (0011), so it was still saved around
+  with MOVE from SR. 0014 puts it before the instruction that set the flags, where nothing
+  between reads or writes its destination or writes its source and that instruction reads
+  no flags (ADDX and SUBX read X and Z): the MOVE's flags are then replaced. Of 90, 37 are
+  left — the compare itself reads the copy's destination.
+- **`moveq` needed nothing**: every constant that fits already was one; the 256 long
+  immediates left are addresses and constants past a byte.
+
+### 11/16/26 — The M68k backend's code: spills, ADDQ, compares, flag-keeping copies
+
+Five patches to the M68k LLVM (`tools/llvm-m68k-patches/0007`–`0011`, and `0012` the LLVM
+tests they change), each a waste found by profiling the hero's vertical blank by
+instruction shape: a scratch Sheliak logging the clocks of each instruction, the program's
+object disassembled with its symbols, the time summed by pattern with `main`'s idle wait
+left out. The handler went from 59 lines a frame to 51, its worst from 194 to 171; the ROM
+is 9 KB smaller. Every chip write and every lyrac and Vega check the same.
+- **Spills were MOVEM**, a register's alone — because MOVE sets the flags and a spill may
+  land between a compare and its branch. 0007 makes it a MOVE where the block's liveness
+  says CCR is dead: 70% of them, 4–8 cycles each.
+- **No ADDQ or SUBQ existed**: `x += 1` was ADDI, 16 cycles where 8 do, six bytes where two.
+  0009 defines them with no pattern and makes them after register allocation (an ADD of 1–8
+  keeps its flags exactly; a negative constant only where CCR is dead, as the carry
+  differs), and `adda.l #N, %sp` LEA. 442 in the hero, none before.
+- **Every compare was a SUB** (x86's choice, so CSE could share it; x86 turns an unused one
+  back into CMP, this target never did): a copy and a subtract where CMPI does, and 16-bit
+  compares widened to 32 bits for an x86 decoder stall. 0010: CMP unless the SUB exists.
+- **Overflow checks through a mask** (0008): an add folding a load came to the branch as
+  `(and overflow, 1) == 0`, which LowerBRCOND did not see through — Scc, AND, CMP, a branch.
+- **A copy between a compare and its branch** saved the flags through SR (18 cycles); MOVEA
+  and EXG set none (0011, where EXG's source dies). Half of them; the rest keep the source.
+- **A check, not the compiler, failed**: "the hero's body collider follows the frame he
+  shows" went green with any one patch and back with all five. Bisecting by `llc` flags in
+  a wrapper toolchain (`LYRA_M68K_LLVM` at a directory whose `llc` adds them) showed every
+  build, the original included, failing from about update 204, when the hero's walk ends;
+  the check read frame 220, update ~200, and faster code got there sooner. Vega's scripted
+  checks now judge updates 100–119 and keep the verdict (`rom_checks.JUDGED_FROM`).
+- **What was measured but left**: `-verify-machineinstrs` fails after register allocation
+  on the unpatched `llc` too ("Illegal virtual register"); a bool tested as a byte, copies
+  whose source lives on, and the backend's spilling (todo.md).
+
 ### 11/16/26 — The music player's row fits the 68000's frame
 
 The hero's theme ran its vertical blank handler 145–177 lines on a row and 302 on a

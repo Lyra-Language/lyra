@@ -1346,12 +1346,18 @@ sets V on every add. What stands between that and a ROM:
   from `d0` while its caller passed it in `a0` (10/15). Lyra moves every aggregate through
   memory on the 68000 since (COMPLETED.md 10/15); a reduced IR case would settle it.
 - **[PARTIAL] `std.chips.music` on the 68000**: the hero's vertical blank handler, theme and
-  all, runs ~58 lines a frame, 84–99 on a row and at most 195 on a pattern's first tick (from
-  55, 145–177 and 302, which overran the frame; COMPLETED 11/16). What is left is the code
-  LLVM's M68k backend makes: ~2,400 cycles a call of `sound` or `sound_fm`, most of it
-  spills (a 340-byte frame) and overflow checks through the status register, so a note
-  costs ~8,000 cycles — a song starting notes on all thirteen channels at once could still
-  take most of a frame. Next: fewer calls a note, or the backend's spilling.
+  all, runs ~51 lines a frame and at most 171 on a pattern's first tick (from 55 and 302,
+  which overran the frame; the player 11/16, the backend's 0007–0011 the same day). What is
+  left is how much the M68k backend spills — `sound` keeps a 340-byte frame — so a note
+  costs thousands of cycles, and a song starting notes on all thirteen channels at once
+  could still take most of a frame.
+- **[OPEN] The M68k backend, next** (after 0007–0014, COMPLETED 11/16): register pressure —
+  spills and callee-saved MOVEMs are still a tenth of the vertical blank's time (`sound`
+  keeps a 340-byte frame; perhaps fewer callee-saved registers for `fastcc`); a bool
+  sign-extended to be tested (`and.b #1`, `neg.b`, `tst.b`) and masked as it is copied (133
+  `and.b #1` in the hero); the 37 flag saves left, where the compare reads the copy's
+  destination. `moveq` is already used wherever a constant fits. Measure as COMPLETED 11/16
+  says before and after each.
 - **[DONE 10/16] A Genesis program inlined less crashed**: a `fastcc` struct return popped a
   pointer passed in a register (`tools/llvm-m68k-patches/0004`, COMPLETED 10/16).
 - **[DONE 10/16] clang segfaulted compiling a copy of Sheliak**: a global's 320 KB

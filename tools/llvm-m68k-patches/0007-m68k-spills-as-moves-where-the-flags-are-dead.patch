@@ -1,0 +1,54 @@
+diff --git a/llvm/lib/Target/M68k/M68kInstrInfo.cpp b/llvm/lib/Target/M68k/M68kInstrInfo.cpp
+index c7cdb99..91b7a2b 100644
+--- a/llvm/lib/Target/M68k/M68kInstrInfo.cpp
++++ b/llvm/lib/Target/M68k/M68kInstrInfo.cpp
+@@ -587,6 +587,49 @@ bool M68kInstrInfo::ExpandMOVEM(MachineInstrBuilder &MIB,
+     Reg = MIB->getOperand(2).getReg();
+   }
+ 
++  // A spill or reload of one register at a displacement from a base: MOVEM, which
++  // leaves the condition codes alone, so a spill may sit between a compare and its
++  // branch. Where CCR is dead it is a MOVE instead, the same access 4 to 8 cycles
++  // cheaper on a 68000 (MOVEM.L (d16,An) is 16 + 8n, MOVE.L 16).
++  unsigned Move = 0;
++  switch (Desc.getOpcode()) {
++  case M68k::MOVM32mp:
++    Move = M68k::MOV32rp;
++    break;
++  case M68k::MOVM16mp:
++    Move = M68k::MOV16rp;
++    break;
++  case M68k::MOVM32pm:
++    Move = M68k::MOV32pr;
++    break;
++  case M68k::MOVM16pm:
++    Move = M68k::MOV16pr;
++    break;
++  default:
++    break;
++  }
++  bool Word = Move == M68k::MOV16rp || Move == M68k::MOV16pr;
++  const TargetRegisterClass &Moved =
++      Word ? M68k::XR16RegClass : M68k::XR32RegClass;
++  if (Move && Moved.contains(Reg) &&
++      MBB.computeRegisterLiveness(&RI, M68k::CCR, MI, 32) ==
++          MachineBasicBlock::LQR_Dead) {
++    MachineInstrBuilder Built =
++        IsRM ? BuildMI(MBB, MI, DL, get(Move), Reg).addImm(Offset).addReg(Base)
++             : BuildMI(MBB, MI, DL, get(Move))
++                   .addImm(Offset)
++                   .addReg(Base)
++                   .addReg(Reg, getKillRegState(MIB->getOperand(2).isKill()));
++    if (MachineOperand *Flags =
++            Built->findRegisterDefOperand(M68k::CCR, /*TRI=*/nullptr))
++      Flags->setIsDead();
++    for (const MachineOperand &Op : MIB->implicit_operands())
++      if (Op.getReg() != M68k::CCR)
++        Built.add(Op);
++    MIB->eraseFromParent();
++    return true;
++  }
++
+   unsigned Mask = 1 << RI.getSpillRegisterOrder(Reg);
+   if (IsRM) {
+     BuildMI(MBB, MI, DL, Desc)

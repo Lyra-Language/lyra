@@ -1,0 +1,35 @@
+diff --git a/llvm/lib/Target/M68k/M68kISelLowering.cpp b/llvm/lib/Target/M68k/M68kISelLowering.cpp
+index 549c5a1..841c8e4 100644
+--- a/llvm/lib/Target/M68k/M68kISelLowering.cpp
++++ b/llvm/lib/Target/M68k/M68kISelLowering.cpp
+@@ -2549,16 +2549,20 @@ SDValue M68kTargetLowering::LowerBRCOND(SDValue Op, SelectionDAG &DAG) const {
+   bool Inverted = false;
+ 
+   if (Cond.getOpcode() == ISD::SETCC) {
+-    // Check for setcc([su]{add,sub}o == 0).
+-    if (cast<CondCodeSDNode>(Cond.getOperand(2))->get() == ISD::SETEQ &&
+-        isNullConstant(Cond.getOperand(1)) &&
+-        Cond.getOperand(0).getResNo() == 1 &&
+-        (Cond.getOperand(0).getOpcode() == ISD::SADDO ||
+-         Cond.getOperand(0).getOpcode() == ISD::UADDO ||
+-         Cond.getOperand(0).getOpcode() == ISD::SSUBO ||
+-         Cond.getOperand(0).getOpcode() == ISD::USUBO)) {
+-      Inverted = true;
+-      Cond = Cond.getOperand(0);
++    // Check for setcc([su]{add,sub}o == 0) and != 0 — the overflow bit perhaps masked
++    // with 1, as promoting the i1 to a byte leaves it. Missed through the mask, an
++    // overflow check (every checked add Lyra makes) was Scc, AND, CMP and a branch
++    // where one Bcc does.
++    ISD::CondCode Test = cast<CondCodeSDNode>(Cond.getOperand(2))->get();
++    SDValue Flag = Cond.getOperand(0);
++    if (Flag.getOpcode() == ISD::AND && isOneConstant(Flag.getOperand(1)))
++      Flag = Flag.getOperand(0);
++    if ((Test == ISD::SETEQ || Test == ISD::SETNE) &&
++        isNullConstant(Cond.getOperand(1)) && Flag.getResNo() == 1 &&
++        (Flag.getOpcode() == ISD::SADDO || Flag.getOpcode() == ISD::UADDO ||
++         Flag.getOpcode() == ISD::SSUBO || Flag.getOpcode() == ISD::USUBO)) {
++      Inverted = Test == ISD::SETEQ;
++      Cond = Flag;
+     } else {
+       if (SDValue NewCond = LowerSETCC(Cond, DAG))
+         Cond = NewCond;

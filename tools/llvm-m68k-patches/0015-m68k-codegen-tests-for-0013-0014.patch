@@ -1,0 +1,874 @@
+diff --git a/llvm/test/CodeGen/M68k/Atomics/rmw.ll b/llvm/test/CodeGen/M68k/Atomics/rmw.ll
+index 9989003..64d8541 100644
+--- a/llvm/test/CodeGen/M68k/Atomics/rmw.ll
++++ b/llvm/test/CodeGen/M68k/Atomics/rmw.ll
+@@ -52,7 +52,7 @@ define i8 @atomicrmw_add_i8(i8 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.b %d2, %d0
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-NEXT:    move.b %d0, %d2
+ ; ATOMIC-NEXT:    move.w %d3, %ccr
+@@ -112,7 +112,7 @@ define i16 @atomicrmw_sub_i16(i16 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.w %d2, %d0
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-NEXT:    move.w %d0, %d2
+ ; ATOMIC-NEXT:    move.w %d3, %ccr
+@@ -170,7 +170,7 @@ define i32 @atomicrmw_and_i32(i32 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.l %d2, %d0
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-NEXT:    move.l %d0, %d2
+ ; ATOMIC-NEXT:    move.w %d3, %ccr
+@@ -282,7 +282,7 @@ define i8 @atomicrmw_or_i8(i8 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.b %d2, %d0
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-NEXT:    move.b %d0, %d2
+ ; ATOMIC-NEXT:    move.w %d3, %ccr
+@@ -351,7 +351,7 @@ define i16 @atmoicrmw_nand_i16(i16 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.w %d2, %d1
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-NEXT:    move.w %d1, %d2
+ ; ATOMIC-NEXT:    move.w %d3, %ccr
+@@ -408,17 +408,15 @@ define i32 @atomicrmw_min_i32(i32 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.l %d2, %d0
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-NEXT:    move.l %d0, %d2
+ ; ATOMIC-NEXT:    move.w %d3, %ccr
+ ; ATOMIC-NEXT:    bne .LBB6_4
+ ; ATOMIC-NEXT:  .LBB6_1: ; %atomicrmw.start
+ ; ATOMIC-NEXT:    ; =>This Inner Loop Header: Depth=1
+-; ATOMIC-NEXT:    cmp.l %d1, %d2
+-; ATOMIC-NEXT:    move.w %ccr, %d0
+ ; ATOMIC-NEXT:    move.l %d2, %d3
+-; ATOMIC-NEXT:    move.w %d0, %ccr
++; ATOMIC-NEXT:    cmp.l %d1, %d2
+ ; ATOMIC-NEXT:    ble .LBB6_3
+ ; ATOMIC-NEXT:  ; %bb.2: ; %atomicrmw.start
+ ; ATOMIC-NEXT:    ; in Loop: Header=BB6_1 Depth=1
+@@ -457,7 +455,7 @@ define i64 @atomicrmw_max_i64(i64 %val, ptr %ptr) {
+ ; NO-ATOMIC-000-NEXT:    move.b %d0, %d2
+ ; NO-ATOMIC-000-NEXT:    move.l (28,%sp), %d1
+ ; NO-ATOMIC-000-NEXT:    move.l (24,%sp), %d0
+-; NO-ATOMIC-000-NEXT:    cmpi.b #0, %d2
++; NO-ATOMIC-000-NEXT:    tst.b %d2
+ ; NO-ATOMIC-000-NEXT:    bne .LBB7_4
+ ; NO-ATOMIC-000-NEXT:  .LBB7_1: ; %atomicrmw.start
+ ; NO-ATOMIC-000-NEXT:    ; =>This Inner Loop Header: Depth=1
+@@ -472,7 +470,7 @@ define i64 @atomicrmw_max_i64(i64 %val, ptr %ptr) {
+ ; NO-ATOMIC-000-NEXT:    move.w (%sp)+, %ccr
+ ; NO-ATOMIC-000-NEXT:    subx.l %d0, %d2
+ ; NO-ATOMIC-000-NEXT:    slt %d2
+-; NO-ATOMIC-000-NEXT:    cmpi.b #0, %d2
++; NO-ATOMIC-000-NEXT:    tst.b %d2
+ ; NO-ATOMIC-000-NEXT:    bne .LBB7_3
+ ; NO-ATOMIC-000-NEXT:  ; %bb.2: ; %atomicrmw.start
+ ; NO-ATOMIC-000-NEXT:    ; in Loop: Header=BB7_1 Depth=1
+@@ -508,7 +506,7 @@ define i64 @atomicrmw_max_i64(i64 %val, ptr %ptr) {
+ ; NO-ATOMIC-010-NEXT:    move.b %d0, %d2
+ ; NO-ATOMIC-010-NEXT:    move.l (28,%sp), %d1
+ ; NO-ATOMIC-010-NEXT:    move.l (24,%sp), %d0
+-; NO-ATOMIC-010-NEXT:    cmpi.b #0, %d2
++; NO-ATOMIC-010-NEXT:    tst.b %d2
+ ; NO-ATOMIC-010-NEXT:    bne .LBB7_4
+ ; NO-ATOMIC-010-NEXT:  .LBB7_1: ; %atomicrmw.start
+ ; NO-ATOMIC-010-NEXT:    ; =>This Inner Loop Header: Depth=1
+@@ -523,7 +521,7 @@ define i64 @atomicrmw_max_i64(i64 %val, ptr %ptr) {
+ ; NO-ATOMIC-010-NEXT:    move.w (%sp)+, %ccr
+ ; NO-ATOMIC-010-NEXT:    subx.l %d0, %d2
+ ; NO-ATOMIC-010-NEXT:    slt %d2
+-; NO-ATOMIC-010-NEXT:    cmpi.b #0, %d2
++; NO-ATOMIC-010-NEXT:    tst.b %d2
+ ; NO-ATOMIC-010-NEXT:    bne .LBB7_3
+ ; NO-ATOMIC-010-NEXT:  ; %bb.2: ; %atomicrmw.start
+ ; NO-ATOMIC-010-NEXT:    ; in Loop: Header=BB7_1 Depth=1
+@@ -559,7 +557,7 @@ define i64 @atomicrmw_max_i64(i64 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    move.b %d0, %d2
+ ; ATOMIC-NEXT:    move.l (28,%sp), %d1
+ ; ATOMIC-NEXT:    move.l (24,%sp), %d0
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    bne .LBB7_4
+ ; ATOMIC-NEXT:  .LBB7_1: ; %atomicrmw.start
+ ; ATOMIC-NEXT:    ; =>This Inner Loop Header: Depth=1
+@@ -574,7 +572,7 @@ define i64 @atomicrmw_max_i64(i64 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    move.w (%sp)+, %ccr
+ ; ATOMIC-NEXT:    subx.l %d0, %d2
+ ; ATOMIC-NEXT:    slt %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    bne .LBB7_3
+ ; ATOMIC-NEXT:  ; %bb.2: ; %atomicrmw.start
+ ; ATOMIC-NEXT:    ; in Loop: Header=BB7_1 Depth=1
+@@ -635,17 +633,15 @@ define i8 @atomicrmw_i8_umin(i8 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.b %d2, %d0
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-NEXT:    move.b %d0, %d2
+ ; ATOMIC-NEXT:    move.w %d3, %ccr
+ ; ATOMIC-NEXT:    bne .LBB8_4
+ ; ATOMIC-NEXT:  .LBB8_1: ; %atomicrmw.start
+ ; ATOMIC-NEXT:    ; =>This Inner Loop Header: Depth=1
+-; ATOMIC-NEXT:    cmp.b %d1, %d2
+-; ATOMIC-NEXT:    move.w %ccr, %d0
+ ; ATOMIC-NEXT:    move.b %d2, %d3
+-; ATOMIC-NEXT:    move.w %d0, %ccr
++; ATOMIC-NEXT:    cmp.b %d1, %d2
+ ; ATOMIC-NEXT:    bls .LBB8_3
+ ; ATOMIC-NEXT:  ; %bb.2: ; %atomicrmw.start
+ ; ATOMIC-NEXT:    ; in Loop: Header=BB8_1 Depth=1
+@@ -705,17 +701,15 @@ define i16 @atomicrmw_umax_i16(i16 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.w %d2, %d0
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-NEXT:    move.w %d0, %d2
+ ; ATOMIC-NEXT:    move.w %d3, %ccr
+ ; ATOMIC-NEXT:    bne .LBB9_4
+ ; ATOMIC-NEXT:  .LBB9_1: ; %atomicrmw.start
+ ; ATOMIC-NEXT:    ; =>This Inner Loop Header: Depth=1
+-; ATOMIC-NEXT:    cmp.w %d1, %d2
+-; ATOMIC-NEXT:    move.w %ccr, %d0
+ ; ATOMIC-NEXT:    move.w %d2, %d3
+-; ATOMIC-NEXT:    move.w %d0, %ccr
++; ATOMIC-NEXT:    cmp.w %d1, %d2
+ ; ATOMIC-NEXT:    bhi .LBB9_3
+ ; ATOMIC-NEXT:  ; %bb.2: ; %atomicrmw.start
+ ; ATOMIC-NEXT:    ; in Loop: Header=BB9_1 Depth=1
+@@ -774,7 +768,7 @@ define i16 @atomicrmw_xchg_i16(i16 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.w %d2, %d0
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, -(%sp)
+ ; ATOMIC-NEXT:    move.w %d0, %d2
+ ; ATOMIC-NEXT:    move.w (%sp)+, %ccr
+@@ -831,7 +825,7 @@ define i32 @atomicrmw_xchg_i32(i32 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.l %d2, %d0
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, -(%sp)
+ ; ATOMIC-NEXT:    move.l %d0, %d2
+ ; ATOMIC-NEXT:    move.w (%sp)+, %ccr
+@@ -892,7 +886,7 @@ define i8 @atomicrmw_sub_i8_arid(ptr align 2 %self) {
+ ; ATOMIC-NEXT:    cmp.b %d1, %d0
+ ; ATOMIC-NEXT:    seq %d1
+ ; ATOMIC-NEXT:    and.b #1, %d1
+-; ATOMIC-NEXT:    cmpi.b #0, %d1
++; ATOMIC-NEXT:    tst.b %d1
+ ; ATOMIC-NEXT:    move.w %ccr, %d2
+ ; ATOMIC-NEXT:    move.b %d0, %d1
+ ; ATOMIC-NEXT:    move.w %d2, %ccr
+@@ -955,7 +949,7 @@ define i16 @atomicrmw_sub_i16_arid(ptr align 2 %self) {
+ ; ATOMIC-NEXT:    cmp.w %d1, %d0
+ ; ATOMIC-NEXT:    seq %d1
+ ; ATOMIC-NEXT:    and.b #1, %d1
+-; ATOMIC-NEXT:    cmpi.b #0, %d1
++; ATOMIC-NEXT:    tst.b %d1
+ ; ATOMIC-NEXT:    move.w %ccr, %d2
+ ; ATOMIC-NEXT:    move.w %d0, %d1
+ ; ATOMIC-NEXT:    move.w %d2, %ccr
+@@ -1018,7 +1012,7 @@ define i32 @atomicrmw_sub_i32_arid(ptr align 2 %self) {
+ ; ATOMIC-NEXT:    cmp.l %d1, %d0
+ ; ATOMIC-NEXT:    seq %d1
+ ; ATOMIC-NEXT:    and.b #1, %d1
+-; ATOMIC-NEXT:    cmpi.b #0, %d1
++; ATOMIC-NEXT:    tst.b %d1
+ ; ATOMIC-NEXT:    move.w %ccr, %d2
+ ; ATOMIC-NEXT:    move.l %d0, %d1
+ ; ATOMIC-NEXT:    move.w %d2, %ccr
+diff --git a/llvm/test/CodeGen/M68k/CodeModel/Large/Atomics/cmpxchg.ll b/llvm/test/CodeGen/M68k/CodeModel/Large/Atomics/cmpxchg.ll
+index 98e0464..5074a97 100644
+--- a/llvm/test/CodeGen/M68k/CodeModel/Large/Atomics/cmpxchg.ll
++++ b/llvm/test/CodeGen/M68k/CodeModel/Large/Atomics/cmpxchg.ll
+@@ -22,7 +22,7 @@ define { i32, i1 } @std_thread_new() {
+ ; NO-ATOMIC-NEXT:    move.l #0, (4,%sp)
+ ; NO-ATOMIC-NEXT:    move.l #thread_id, (%sp)
+ ; NO-ATOMIC-NEXT:    jsr __sync_val_compare_and_swap_4
+-; NO-ATOMIC-NEXT:    cmpi.l #0, %d0
++; NO-ATOMIC-NEXT:    tst.l %d0
+ ; NO-ATOMIC-NEXT:    seq %d1
+ ; NO-ATOMIC-NEXT:    lea (12,%sp), %sp
+ ; NO-ATOMIC-NEXT:    rts
+@@ -38,7 +38,7 @@ define { i32, i1 } @std_thread_new() {
+ ; NO-ATOMIC-PIC-NEXT:    move.l #1, (8,%sp)
+ ; NO-ATOMIC-PIC-NEXT:    move.l #0, (4,%sp)
+ ; NO-ATOMIC-PIC-NEXT:    jsr (__sync_val_compare_and_swap_4@PLT,%pc)
+-; NO-ATOMIC-PIC-NEXT:    cmpi.l #0, %d0
++; NO-ATOMIC-PIC-NEXT:    tst.l %d0
+ ; NO-ATOMIC-PIC-NEXT:    seq %d1
+ ; NO-ATOMIC-PIC-NEXT:    lea (12,%sp), %sp
+ ; NO-ATOMIC-PIC-NEXT:    rts
+@@ -50,7 +50,7 @@ define { i32, i1 } @std_thread_new() {
+ ; ATOMIC-NEXT:    moveq #1, %d1
+ ; ATOMIC-NEXT:    moveq #0, %d0
+ ; ATOMIC-NEXT:    cas.l %d0, %d1, (%a0)
+-; ATOMIC-NEXT:    cmpi.l #0, %d0
++; ATOMIC-NEXT:    tst.l %d0
+ ; ATOMIC-NEXT:    seq %d1
+ ; ATOMIC-NEXT:    rts
+ ;
+@@ -65,7 +65,7 @@ define { i32, i1 } @std_thread_new() {
+ ; ATOMIC-PIC-NEXT:    moveq #1, %d2
+ ; ATOMIC-PIC-NEXT:    moveq #0, %d0
+ ; ATOMIC-PIC-NEXT:    cas.l %d0, %d2, (0,%a0,%d1)
+-; ATOMIC-PIC-NEXT:    cmpi.l #0, %d0
++; ATOMIC-PIC-NEXT:    tst.l %d0
+ ; ATOMIC-PIC-NEXT:    seq %d1
+ ; ATOMIC-PIC-NEXT:    movem.l (0,%sp), %d2 ; 8-byte Folded Reload
+ ; ATOMIC-PIC-NEXT:    addq.l #4, %sp
+diff --git a/llvm/test/CodeGen/M68k/CodeModel/Large/Atomics/rmw.ll b/llvm/test/CodeGen/M68k/CodeModel/Large/Atomics/rmw.ll
+index 9034fcd..273d21a 100644
+--- a/llvm/test/CodeGen/M68k/CodeModel/Large/Atomics/rmw.ll
++++ b/llvm/test/CodeGen/M68k/CodeModel/Large/Atomics/rmw.ll
+@@ -85,7 +85,7 @@ define i8 @atomicrmw_add_i8(i8 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.b %d2, %d0
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-NEXT:    move.b %d0, %d2
+ ; ATOMIC-NEXT:    move.w %d3, %ccr
+@@ -113,7 +113,7 @@ define i8 @atomicrmw_add_i8(i8 %val, ptr %ptr) {
+ ; ATOMIC-PIC-NEXT:    cmp.b %d2, %d0
+ ; ATOMIC-PIC-NEXT:    seq %d2
+ ; ATOMIC-PIC-NEXT:    and.b #1, %d2
+-; ATOMIC-PIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-PIC-NEXT:    tst.b %d2
+ ; ATOMIC-PIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-PIC-NEXT:    move.b %d0, %d2
+ ; ATOMIC-PIC-NEXT:    move.w %d3, %ccr
+@@ -201,7 +201,7 @@ define i16 @atomicrmw_sub_i16(i16 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.w %d2, %d0
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-NEXT:    move.w %d0, %d2
+ ; ATOMIC-NEXT:    move.w %d3, %ccr
+@@ -229,7 +229,7 @@ define i16 @atomicrmw_sub_i16(i16 %val, ptr %ptr) {
+ ; ATOMIC-PIC-NEXT:    cmp.w %d2, %d0
+ ; ATOMIC-PIC-NEXT:    seq %d2
+ ; ATOMIC-PIC-NEXT:    and.b #1, %d2
+-; ATOMIC-PIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-PIC-NEXT:    tst.b %d2
+ ; ATOMIC-PIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-PIC-NEXT:    move.w %d0, %d2
+ ; ATOMIC-PIC-NEXT:    move.w %d3, %ccr
+@@ -313,7 +313,7 @@ define i32 @atomicrmw_and_i32(i32 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.l %d2, %d0
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-NEXT:    move.l %d0, %d2
+ ; ATOMIC-NEXT:    move.w %d3, %ccr
+@@ -341,7 +341,7 @@ define i32 @atomicrmw_and_i32(i32 %val, ptr %ptr) {
+ ; ATOMIC-PIC-NEXT:    cmp.l %d2, %d0
+ ; ATOMIC-PIC-NEXT:    seq %d2
+ ; ATOMIC-PIC-NEXT:    and.b #1, %d2
+-; ATOMIC-PIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-PIC-NEXT:    tst.b %d2
+ ; ATOMIC-PIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-PIC-NEXT:    move.l %d0, %d2
+ ; ATOMIC-PIC-NEXT:    move.w %d3, %ccr
+@@ -529,7 +529,7 @@ define i8 @atomicrmw_or_i8(i8 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.b %d2, %d0
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-NEXT:    move.b %d0, %d2
+ ; ATOMIC-NEXT:    move.w %d3, %ccr
+@@ -557,7 +557,7 @@ define i8 @atomicrmw_or_i8(i8 %val, ptr %ptr) {
+ ; ATOMIC-PIC-NEXT:    cmp.b %d2, %d0
+ ; ATOMIC-PIC-NEXT:    seq %d2
+ ; ATOMIC-PIC-NEXT:    and.b #1, %d2
+-; ATOMIC-PIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-PIC-NEXT:    tst.b %d2
+ ; ATOMIC-PIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-PIC-NEXT:    move.b %d0, %d2
+ ; ATOMIC-PIC-NEXT:    move.w %d3, %ccr
+@@ -662,7 +662,7 @@ define i16 @atmoicrmw_nand_i16(i16 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.w %d2, %d1
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-NEXT:    move.w %d1, %d2
+ ; ATOMIC-NEXT:    move.w %d3, %ccr
+@@ -691,7 +691,7 @@ define i16 @atmoicrmw_nand_i16(i16 %val, ptr %ptr) {
+ ; ATOMIC-PIC-NEXT:    cmp.w %d2, %d1
+ ; ATOMIC-PIC-NEXT:    seq %d2
+ ; ATOMIC-PIC-NEXT:    and.b #1, %d2
+-; ATOMIC-PIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-PIC-NEXT:    tst.b %d2
+ ; ATOMIC-PIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-PIC-NEXT:    move.w %d1, %d2
+ ; ATOMIC-PIC-NEXT:    move.w %d3, %ccr
+@@ -774,17 +774,15 @@ define i32 @atomicrmw_min_i32(i32 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.l %d2, %d0
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-NEXT:    move.l %d0, %d2
+ ; ATOMIC-NEXT:    move.w %d3, %ccr
+ ; ATOMIC-NEXT:    bne .LBB6_4
+ ; ATOMIC-NEXT:  .LBB6_1: ; %atomicrmw.start
+ ; ATOMIC-NEXT:    ; =>This Inner Loop Header: Depth=1
+-; ATOMIC-NEXT:    cmp.l %d1, %d2
+-; ATOMIC-NEXT:    move.w %ccr, %d0
+ ; ATOMIC-NEXT:    move.l %d2, %d3
+-; ATOMIC-NEXT:    move.w %d0, %ccr
++; ATOMIC-NEXT:    cmp.l %d1, %d2
+ ; ATOMIC-NEXT:    ble .LBB6_3
+ ; ATOMIC-NEXT:  ; %bb.2: ; %atomicrmw.start
+ ; ATOMIC-NEXT:    ; in Loop: Header=BB6_1 Depth=1
+@@ -812,17 +810,15 @@ define i32 @atomicrmw_min_i32(i32 %val, ptr %ptr) {
+ ; ATOMIC-PIC-NEXT:    cmp.l %d2, %d0
+ ; ATOMIC-PIC-NEXT:    seq %d2
+ ; ATOMIC-PIC-NEXT:    and.b #1, %d2
+-; ATOMIC-PIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-PIC-NEXT:    tst.b %d2
+ ; ATOMIC-PIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-PIC-NEXT:    move.l %d0, %d2
+ ; ATOMIC-PIC-NEXT:    move.w %d3, %ccr
+ ; ATOMIC-PIC-NEXT:    bne .LBB6_4
+ ; ATOMIC-PIC-NEXT:  .LBB6_1: ; %atomicrmw.start
+ ; ATOMIC-PIC-NEXT:    ; =>This Inner Loop Header: Depth=1
+-; ATOMIC-PIC-NEXT:    cmp.l %d1, %d2
+-; ATOMIC-PIC-NEXT:    move.w %ccr, %d0
+ ; ATOMIC-PIC-NEXT:    move.l %d2, %d3
+-; ATOMIC-PIC-NEXT:    move.w %d0, %ccr
++; ATOMIC-PIC-NEXT:    cmp.l %d1, %d2
+ ; ATOMIC-PIC-NEXT:    ble .LBB6_3
+ ; ATOMIC-PIC-NEXT:  ; %bb.2: ; %atomicrmw.start
+ ; ATOMIC-PIC-NEXT:    ; in Loop: Header=BB6_1 Depth=1
+@@ -861,7 +857,7 @@ define i64 @atomicrmw_max_i64(i64 %val, ptr %ptr) {
+ ; NO-ATOMIC-000-NEXT:    move.b %d0, %d2
+ ; NO-ATOMIC-000-NEXT:    move.l (28,%sp), %d1
+ ; NO-ATOMIC-000-NEXT:    move.l (24,%sp), %d0
+-; NO-ATOMIC-000-NEXT:    cmpi.b #0, %d2
++; NO-ATOMIC-000-NEXT:    tst.b %d2
+ ; NO-ATOMIC-000-NEXT:    bne .LBB7_4
+ ; NO-ATOMIC-000-NEXT:  .LBB7_1: ; %atomicrmw.start
+ ; NO-ATOMIC-000-NEXT:    ; =>This Inner Loop Header: Depth=1
+@@ -876,7 +872,7 @@ define i64 @atomicrmw_max_i64(i64 %val, ptr %ptr) {
+ ; NO-ATOMIC-000-NEXT:    move.w (%sp)+, %ccr
+ ; NO-ATOMIC-000-NEXT:    subx.l %d0, %d2
+ ; NO-ATOMIC-000-NEXT:    slt %d2
+-; NO-ATOMIC-000-NEXT:    cmpi.b #0, %d2
++; NO-ATOMIC-000-NEXT:    tst.b %d2
+ ; NO-ATOMIC-000-NEXT:    bne .LBB7_3
+ ; NO-ATOMIC-000-NEXT:  ; %bb.2: ; %atomicrmw.start
+ ; NO-ATOMIC-000-NEXT:    ; in Loop: Header=BB7_1 Depth=1
+@@ -912,7 +908,7 @@ define i64 @atomicrmw_max_i64(i64 %val, ptr %ptr) {
+ ; NO-ATOMIC-010-NEXT:    move.b %d0, %d2
+ ; NO-ATOMIC-010-NEXT:    move.l (28,%sp), %d1
+ ; NO-ATOMIC-010-NEXT:    move.l (24,%sp), %d0
+-; NO-ATOMIC-010-NEXT:    cmpi.b #0, %d2
++; NO-ATOMIC-010-NEXT:    tst.b %d2
+ ; NO-ATOMIC-010-NEXT:    bne .LBB7_4
+ ; NO-ATOMIC-010-NEXT:  .LBB7_1: ; %atomicrmw.start
+ ; NO-ATOMIC-010-NEXT:    ; =>This Inner Loop Header: Depth=1
+@@ -927,7 +923,7 @@ define i64 @atomicrmw_max_i64(i64 %val, ptr %ptr) {
+ ; NO-ATOMIC-010-NEXT:    move.w (%sp)+, %ccr
+ ; NO-ATOMIC-010-NEXT:    subx.l %d0, %d2
+ ; NO-ATOMIC-010-NEXT:    slt %d2
+-; NO-ATOMIC-010-NEXT:    cmpi.b #0, %d2
++; NO-ATOMIC-010-NEXT:    tst.b %d2
+ ; NO-ATOMIC-010-NEXT:    bne .LBB7_3
+ ; NO-ATOMIC-010-NEXT:  ; %bb.2: ; %atomicrmw.start
+ ; NO-ATOMIC-010-NEXT:    ; in Loop: Header=BB7_1 Depth=1
+@@ -963,7 +959,7 @@ define i64 @atomicrmw_max_i64(i64 %val, ptr %ptr) {
+ ; NO-ATOMIC-PIC-000-NEXT:    move.b %d0, %d2
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l (28,%sp), %d1
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l (24,%sp), %d0
+-; NO-ATOMIC-PIC-000-NEXT:    cmpi.b #0, %d2
++; NO-ATOMIC-PIC-000-NEXT:    tst.b %d2
+ ; NO-ATOMIC-PIC-000-NEXT:    bne .LBB7_4
+ ; NO-ATOMIC-PIC-000-NEXT:  .LBB7_1: ; %atomicrmw.start
+ ; NO-ATOMIC-PIC-000-NEXT:    ; =>This Inner Loop Header: Depth=1
+@@ -978,7 +974,7 @@ define i64 @atomicrmw_max_i64(i64 %val, ptr %ptr) {
+ ; NO-ATOMIC-PIC-000-NEXT:    move.w (%sp)+, %ccr
+ ; NO-ATOMIC-PIC-000-NEXT:    subx.l %d0, %d2
+ ; NO-ATOMIC-PIC-000-NEXT:    slt %d2
+-; NO-ATOMIC-PIC-000-NEXT:    cmpi.b #0, %d2
++; NO-ATOMIC-PIC-000-NEXT:    tst.b %d2
+ ; NO-ATOMIC-PIC-000-NEXT:    bne .LBB7_3
+ ; NO-ATOMIC-PIC-000-NEXT:  ; %bb.2: ; %atomicrmw.start
+ ; NO-ATOMIC-PIC-000-NEXT:    ; in Loop: Header=BB7_1 Depth=1
+@@ -1014,7 +1010,7 @@ define i64 @atomicrmw_max_i64(i64 %val, ptr %ptr) {
+ ; NO-ATOMIC-PIC-010-NEXT:    move.b %d0, %d2
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l (28,%sp), %d1
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l (24,%sp), %d0
+-; NO-ATOMIC-PIC-010-NEXT:    cmpi.b #0, %d2
++; NO-ATOMIC-PIC-010-NEXT:    tst.b %d2
+ ; NO-ATOMIC-PIC-010-NEXT:    bne .LBB7_4
+ ; NO-ATOMIC-PIC-010-NEXT:  .LBB7_1: ; %atomicrmw.start
+ ; NO-ATOMIC-PIC-010-NEXT:    ; =>This Inner Loop Header: Depth=1
+@@ -1029,7 +1025,7 @@ define i64 @atomicrmw_max_i64(i64 %val, ptr %ptr) {
+ ; NO-ATOMIC-PIC-010-NEXT:    move.w (%sp)+, %ccr
+ ; NO-ATOMIC-PIC-010-NEXT:    subx.l %d0, %d2
+ ; NO-ATOMIC-PIC-010-NEXT:    slt %d2
+-; NO-ATOMIC-PIC-010-NEXT:    cmpi.b #0, %d2
++; NO-ATOMIC-PIC-010-NEXT:    tst.b %d2
+ ; NO-ATOMIC-PIC-010-NEXT:    bne .LBB7_3
+ ; NO-ATOMIC-PIC-010-NEXT:  ; %bb.2: ; %atomicrmw.start
+ ; NO-ATOMIC-PIC-010-NEXT:    ; in Loop: Header=BB7_1 Depth=1
+@@ -1065,7 +1061,7 @@ define i64 @atomicrmw_max_i64(i64 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    move.b %d0, %d2
+ ; ATOMIC-NEXT:    move.l (28,%sp), %d1
+ ; ATOMIC-NEXT:    move.l (24,%sp), %d0
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    bne .LBB7_4
+ ; ATOMIC-NEXT:  .LBB7_1: ; %atomicrmw.start
+ ; ATOMIC-NEXT:    ; =>This Inner Loop Header: Depth=1
+@@ -1080,7 +1076,7 @@ define i64 @atomicrmw_max_i64(i64 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    move.w (%sp)+, %ccr
+ ; ATOMIC-NEXT:    subx.l %d0, %d2
+ ; ATOMIC-NEXT:    slt %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    bne .LBB7_3
+ ; ATOMIC-NEXT:  ; %bb.2: ; %atomicrmw.start
+ ; ATOMIC-NEXT:    ; in Loop: Header=BB7_1 Depth=1
+@@ -1116,7 +1112,7 @@ define i64 @atomicrmw_max_i64(i64 %val, ptr %ptr) {
+ ; ATOMIC-PIC-NEXT:    move.b %d0, %d2
+ ; ATOMIC-PIC-NEXT:    move.l (28,%sp), %d1
+ ; ATOMIC-PIC-NEXT:    move.l (24,%sp), %d0
+-; ATOMIC-PIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-PIC-NEXT:    tst.b %d2
+ ; ATOMIC-PIC-NEXT:    bne .LBB7_4
+ ; ATOMIC-PIC-NEXT:  .LBB7_1: ; %atomicrmw.start
+ ; ATOMIC-PIC-NEXT:    ; =>This Inner Loop Header: Depth=1
+@@ -1131,7 +1127,7 @@ define i64 @atomicrmw_max_i64(i64 %val, ptr %ptr) {
+ ; ATOMIC-PIC-NEXT:    move.w (%sp)+, %ccr
+ ; ATOMIC-PIC-NEXT:    subx.l %d0, %d2
+ ; ATOMIC-PIC-NEXT:    slt %d2
+-; ATOMIC-PIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-PIC-NEXT:    tst.b %d2
+ ; ATOMIC-PIC-NEXT:    bne .LBB7_3
+ ; ATOMIC-PIC-NEXT:  ; %bb.2: ; %atomicrmw.start
+ ; ATOMIC-PIC-NEXT:    ; in Loop: Header=BB7_1 Depth=1
+@@ -1220,17 +1216,15 @@ define i8 @atomicrmw_i8_umin(i8 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.b %d2, %d0
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-NEXT:    move.b %d0, %d2
+ ; ATOMIC-NEXT:    move.w %d3, %ccr
+ ; ATOMIC-NEXT:    bne .LBB8_4
+ ; ATOMIC-NEXT:  .LBB8_1: ; %atomicrmw.start
+ ; ATOMIC-NEXT:    ; =>This Inner Loop Header: Depth=1
+-; ATOMIC-NEXT:    cmp.b %d1, %d2
+-; ATOMIC-NEXT:    move.w %ccr, %d0
+ ; ATOMIC-NEXT:    move.b %d2, %d3
+-; ATOMIC-NEXT:    move.w %d0, %ccr
++; ATOMIC-NEXT:    cmp.b %d1, %d2
+ ; ATOMIC-NEXT:    bls .LBB8_3
+ ; ATOMIC-NEXT:  ; %bb.2: ; %atomicrmw.start
+ ; ATOMIC-NEXT:    ; in Loop: Header=BB8_1 Depth=1
+@@ -1258,17 +1252,15 @@ define i8 @atomicrmw_i8_umin(i8 %val, ptr %ptr) {
+ ; ATOMIC-PIC-NEXT:    cmp.b %d2, %d0
+ ; ATOMIC-PIC-NEXT:    seq %d2
+ ; ATOMIC-PIC-NEXT:    and.b #1, %d2
+-; ATOMIC-PIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-PIC-NEXT:    tst.b %d2
+ ; ATOMIC-PIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-PIC-NEXT:    move.b %d0, %d2
+ ; ATOMIC-PIC-NEXT:    move.w %d3, %ccr
+ ; ATOMIC-PIC-NEXT:    bne .LBB8_4
+ ; ATOMIC-PIC-NEXT:  .LBB8_1: ; %atomicrmw.start
+ ; ATOMIC-PIC-NEXT:    ; =>This Inner Loop Header: Depth=1
+-; ATOMIC-PIC-NEXT:    cmp.b %d1, %d2
+-; ATOMIC-PIC-NEXT:    move.w %ccr, %d0
+ ; ATOMIC-PIC-NEXT:    move.b %d2, %d3
+-; ATOMIC-PIC-NEXT:    move.w %d0, %ccr
++; ATOMIC-PIC-NEXT:    cmp.b %d1, %d2
+ ; ATOMIC-PIC-NEXT:    bls .LBB8_3
+ ; ATOMIC-PIC-NEXT:  ; %bb.2: ; %atomicrmw.start
+ ; ATOMIC-PIC-NEXT:    ; in Loop: Header=BB8_1 Depth=1
+@@ -1356,17 +1348,15 @@ define i16 @atomicrmw_umax_i16(i16 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.w %d2, %d0
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-NEXT:    move.w %d0, %d2
+ ; ATOMIC-NEXT:    move.w %d3, %ccr
+ ; ATOMIC-NEXT:    bne .LBB9_4
+ ; ATOMIC-NEXT:  .LBB9_1: ; %atomicrmw.start
+ ; ATOMIC-NEXT:    ; =>This Inner Loop Header: Depth=1
+-; ATOMIC-NEXT:    cmp.w %d1, %d2
+-; ATOMIC-NEXT:    move.w %ccr, %d0
+ ; ATOMIC-NEXT:    move.w %d2, %d3
+-; ATOMIC-NEXT:    move.w %d0, %ccr
++; ATOMIC-NEXT:    cmp.w %d1, %d2
+ ; ATOMIC-NEXT:    bhi .LBB9_3
+ ; ATOMIC-NEXT:  ; %bb.2: ; %atomicrmw.start
+ ; ATOMIC-NEXT:    ; in Loop: Header=BB9_1 Depth=1
+@@ -1394,17 +1384,15 @@ define i16 @atomicrmw_umax_i16(i16 %val, ptr %ptr) {
+ ; ATOMIC-PIC-NEXT:    cmp.w %d2, %d0
+ ; ATOMIC-PIC-NEXT:    seq %d2
+ ; ATOMIC-PIC-NEXT:    and.b #1, %d2
+-; ATOMIC-PIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-PIC-NEXT:    tst.b %d2
+ ; ATOMIC-PIC-NEXT:    move.w %ccr, %d3
+ ; ATOMIC-PIC-NEXT:    move.w %d0, %d2
+ ; ATOMIC-PIC-NEXT:    move.w %d3, %ccr
+ ; ATOMIC-PIC-NEXT:    bne .LBB9_4
+ ; ATOMIC-PIC-NEXT:  .LBB9_1: ; %atomicrmw.start
+ ; ATOMIC-PIC-NEXT:    ; =>This Inner Loop Header: Depth=1
+-; ATOMIC-PIC-NEXT:    cmp.w %d1, %d2
+-; ATOMIC-PIC-NEXT:    move.w %ccr, %d0
+ ; ATOMIC-PIC-NEXT:    move.w %d2, %d3
+-; ATOMIC-PIC-NEXT:    move.w %d0, %ccr
++; ATOMIC-PIC-NEXT:    cmp.w %d1, %d2
+ ; ATOMIC-PIC-NEXT:    bhi .LBB9_3
+ ; ATOMIC-PIC-NEXT:  ; %bb.2: ; %atomicrmw.start
+ ; ATOMIC-PIC-NEXT:    ; in Loop: Header=BB9_1 Depth=1
+@@ -1491,7 +1479,7 @@ define i16 @atomicrmw_xchg_i16(i16 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.w %d2, %d0
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, -(%sp)
+ ; ATOMIC-NEXT:    move.w %d0, %d2
+ ; ATOMIC-NEXT:    move.w (%sp)+, %ccr
+@@ -1517,7 +1505,7 @@ define i16 @atomicrmw_xchg_i16(i16 %val, ptr %ptr) {
+ ; ATOMIC-PIC-NEXT:    cmp.w %d2, %d0
+ ; ATOMIC-PIC-NEXT:    seq %d2
+ ; ATOMIC-PIC-NEXT:    and.b #1, %d2
+-; ATOMIC-PIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-PIC-NEXT:    tst.b %d2
+ ; ATOMIC-PIC-NEXT:    move.w %ccr, -(%sp)
+ ; ATOMIC-PIC-NEXT:    move.w %d0, %d2
+ ; ATOMIC-PIC-NEXT:    move.w (%sp)+, %ccr
+@@ -1600,7 +1588,7 @@ define i32 @atomicrmw_xchg_i32(i32 %val, ptr %ptr) {
+ ; ATOMIC-NEXT:    cmp.l %d2, %d0
+ ; ATOMIC-NEXT:    seq %d2
+ ; ATOMIC-NEXT:    and.b #1, %d2
+-; ATOMIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-NEXT:    tst.b %d2
+ ; ATOMIC-NEXT:    move.w %ccr, -(%sp)
+ ; ATOMIC-NEXT:    move.l %d0, %d2
+ ; ATOMIC-NEXT:    move.w (%sp)+, %ccr
+@@ -1626,7 +1614,7 @@ define i32 @atomicrmw_xchg_i32(i32 %val, ptr %ptr) {
+ ; ATOMIC-PIC-NEXT:    cmp.l %d2, %d0
+ ; ATOMIC-PIC-NEXT:    seq %d2
+ ; ATOMIC-PIC-NEXT:    and.b #1, %d2
+-; ATOMIC-PIC-NEXT:    cmpi.b #0, %d2
++; ATOMIC-PIC-NEXT:    tst.b %d2
+ ; ATOMIC-PIC-NEXT:    move.w %ccr, -(%sp)
+ ; ATOMIC-PIC-NEXT:    move.l %d0, %d2
+ ; ATOMIC-PIC-NEXT:    move.w (%sp)+, %ccr
+@@ -1715,7 +1703,7 @@ define i8 @atomicrmw_sub_i8_arid(ptr align 2 %self) {
+ ; ATOMIC-NEXT:    cmp.b %d1, %d0
+ ; ATOMIC-NEXT:    seq %d1
+ ; ATOMIC-NEXT:    and.b #1, %d1
+-; ATOMIC-NEXT:    cmpi.b #0, %d1
++; ATOMIC-NEXT:    tst.b %d1
+ ; ATOMIC-NEXT:    move.w %ccr, %d2
+ ; ATOMIC-NEXT:    move.b %d0, %d1
+ ; ATOMIC-NEXT:    move.w %d2, %ccr
+@@ -1743,7 +1731,7 @@ define i8 @atomicrmw_sub_i8_arid(ptr align 2 %self) {
+ ; ATOMIC-PIC-NEXT:    cmp.b %d1, %d0
+ ; ATOMIC-PIC-NEXT:    seq %d1
+ ; ATOMIC-PIC-NEXT:    and.b #1, %d1
+-; ATOMIC-PIC-NEXT:    cmpi.b #0, %d1
++; ATOMIC-PIC-NEXT:    tst.b %d1
+ ; ATOMIC-PIC-NEXT:    move.w %ccr, %d2
+ ; ATOMIC-PIC-NEXT:    move.b %d0, %d1
+ ; ATOMIC-PIC-NEXT:    move.w %d2, %ccr
+@@ -1834,7 +1822,7 @@ define i16 @atomicrmw_sub_i16_arid(ptr align 2 %self) {
+ ; ATOMIC-NEXT:    cmp.w %d1, %d0
+ ; ATOMIC-NEXT:    seq %d1
+ ; ATOMIC-NEXT:    and.b #1, %d1
+-; ATOMIC-NEXT:    cmpi.b #0, %d1
++; ATOMIC-NEXT:    tst.b %d1
+ ; ATOMIC-NEXT:    move.w %ccr, %d2
+ ; ATOMIC-NEXT:    move.w %d0, %d1
+ ; ATOMIC-NEXT:    move.w %d2, %ccr
+@@ -1862,7 +1850,7 @@ define i16 @atomicrmw_sub_i16_arid(ptr align 2 %self) {
+ ; ATOMIC-PIC-NEXT:    cmp.w %d1, %d0
+ ; ATOMIC-PIC-NEXT:    seq %d1
+ ; ATOMIC-PIC-NEXT:    and.b #1, %d1
+-; ATOMIC-PIC-NEXT:    cmpi.b #0, %d1
++; ATOMIC-PIC-NEXT:    tst.b %d1
+ ; ATOMIC-PIC-NEXT:    move.w %ccr, %d2
+ ; ATOMIC-PIC-NEXT:    move.w %d0, %d1
+ ; ATOMIC-PIC-NEXT:    move.w %d2, %ccr
+@@ -1953,7 +1941,7 @@ define i32 @atomicrmw_sub_i32_arid(ptr align 2 %self) {
+ ; ATOMIC-NEXT:    cmp.l %d1, %d0
+ ; ATOMIC-NEXT:    seq %d1
+ ; ATOMIC-NEXT:    and.b #1, %d1
+-; ATOMIC-NEXT:    cmpi.b #0, %d1
++; ATOMIC-NEXT:    tst.b %d1
+ ; ATOMIC-NEXT:    move.w %ccr, %d2
+ ; ATOMIC-NEXT:    move.l %d0, %d1
+ ; ATOMIC-NEXT:    move.w %d2, %ccr
+@@ -1981,7 +1969,7 @@ define i32 @atomicrmw_sub_i32_arid(ptr align 2 %self) {
+ ; ATOMIC-PIC-NEXT:    cmp.l %d1, %d0
+ ; ATOMIC-PIC-NEXT:    seq %d1
+ ; ATOMIC-PIC-NEXT:    and.b #1, %d1
+-; ATOMIC-PIC-NEXT:    cmpi.b #0, %d1
++; ATOMIC-PIC-NEXT:    tst.b %d1
+ ; ATOMIC-PIC-NEXT:    move.w %ccr, %d2
+ ; ATOMIC-PIC-NEXT:    move.l %d0, %d1
+ ; ATOMIC-PIC-NEXT:    move.w %d2, %ccr
+diff --git a/llvm/test/CodeGen/M68k/Control/cmp.ll b/llvm/test/CodeGen/M68k/Control/cmp.ll
+index eeab020..d0f26f1 100644
+--- a/llvm/test/CodeGen/M68k/Control/cmp.ll
++++ b/llvm/test/CodeGen/M68k/Control/cmp.ll
+@@ -5,7 +5,7 @@ define i32 @test1(ptr %y) nounwind {
+ ; CHECK-LABEL: test1:
+ ; CHECK:       ; %bb.0:
+ ; CHECK-NEXT:    move.l (4,%sp), %a0
+-; CHECK-NEXT:    cmpi.l #0, (%a0)
++; CHECK-NEXT:    tst.l (%a0)
+ ; CHECK-NEXT:    beq .LBB0_2
+ ; CHECK-NEXT:  ; %bb.1: ; %cond_false
+ ; CHECK-NEXT:    moveq #0, %d0
+@@ -30,7 +30,7 @@ define i32 @test2(ptr %y) nounwind {
+ ; CHECK-NEXT:    move.l (4,%sp), %a0
+ ; CHECK-NEXT:    move.l (%a0), %d0
+ ; CHECK-NEXT:    and.l #536870911, %d0
+-; CHECK-NEXT:    cmpi.l #0, %d0
++; CHECK-NEXT:    tst.l %d0
+ ; CHECK-NEXT:    beq .LBB1_2
+ ; CHECK-NEXT:  ; %bb.1: ; %cond_false
+ ; CHECK-NEXT:    moveq #0, %d0
+@@ -56,7 +56,7 @@ define i8 @test2b(ptr %y) nounwind {
+ ; CHECK-NEXT:    move.l (4,%sp), %a0
+ ; CHECK-NEXT:    move.b (%a0), %d0
+ ; CHECK-NEXT:    and.b #31, %d0
+-; CHECK-NEXT:    cmpi.b #0, %d0
++; CHECK-NEXT:    tst.b %d0
+ ; CHECK-NEXT:    beq .LBB2_2
+ ; CHECK-NEXT:  ; %bb.1: ; %cond_false
+ ; CHECK-NEXT:    moveq #0, %d0
+@@ -143,7 +143,7 @@ F:
+ define i32 @test7(i64 %res) nounwind {
+ ; CHECK-LABEL: test7:
+ ; CHECK:       ; %bb.0: ; %entry
+-; CHECK-NEXT:    cmpi.l #0, (4,%sp)
++; CHECK-NEXT:    tst.l (4,%sp)
+ ; CHECK-NEXT:    seq %d0
+ ; CHECK-NEXT:    and.l #255, %d0
+ ; CHECK-NEXT:    and.l #1, %d0
+@@ -191,7 +191,7 @@ define i32 @test13(i32 %mask, i32 %base, i32 %intra) {
+ ; CHECK-NEXT:  ; %bb.0:
+ ; CHECK-NEXT:    move.l (4,%sp), %d0
+ ; CHECK-NEXT:    and.l #8, %d0
+-; CHECK-NEXT:    cmpi.l #0, %d0
++; CHECK-NEXT:    tst.l %d0
+ ; CHECK-NEXT:    bne .LBB9_1
+ ; CHECK-NEXT:  ; %bb.2:
+ ; CHECK-NEXT:    lea (8,%sp), %a0
+@@ -213,7 +213,7 @@ define i32 @test14(i32 %mask, i32 %base, i32 %intra) #0 {
+ ; CHECK-NEXT:  ; %bb.0:
+ ; CHECK-NEXT:    move.l (4,%sp), %d0
+ ; CHECK-NEXT:    lsr.l #7, %d0
+-; CHECK-NEXT:    cmpi.l #0, %d0
++; CHECK-NEXT:    tst.l %d0
+ ; CHECK-NEXT:    bpl .LBB10_1
+ ; CHECK-NEXT:  ; %bb.2:
+ ; CHECK-NEXT:    lea (8,%sp), %a0
+@@ -238,7 +238,7 @@ define zeroext i1 @test15(i32 %bf.load, i32 %n) {
+ ; CHECK-NEXT:    lsr.l %d0, %d1
+ ; CHECK-NEXT:    cmp.l (8,%sp), %d1
+ ; CHECK-NEXT:    scc %d0
+-; CHECK-NEXT:    cmpi.l #0, %d1
++; CHECK-NEXT:    tst.l %d1
+ ; CHECK-NEXT:    seq %d1
+ ; CHECK-NEXT:    or.b %d0, %d1
+ ; CHECK-NEXT:    move.l %d1, %d0
+@@ -305,7 +305,7 @@ define void @test20(i32 %bf.load, i8 %x1, ptr %b_addr) {
+ ; CHECK-NEXT:    and.b #1, %d1
+ ; CHECK-NEXT:    move.l (16,%sp), %a0
+ ; CHECK-NEXT:    move.b %d1, (%a0)
+-; CHECK-NEXT:    cmpi.l #0, %d0
++; CHECK-NEXT:    tst.l %d0
+ ; CHECK-NEXT:    sne %d0
+ ; CHECK-NEXT:    and.b #1, %d0
+ ; CHECK-NEXT:    lea (d,%pc), %a0
+diff --git a/llvm/test/CodeGen/M68k/Control/long-setcc.ll b/llvm/test/CodeGen/M68k/Control/long-setcc.ll
+index 45a6175..8566319 100644
+--- a/llvm/test/CodeGen/M68k/Control/long-setcc.ll
++++ b/llvm/test/CodeGen/M68k/Control/long-setcc.ll
+@@ -16,7 +16,7 @@ define i1 @t1(i64 %x) nounwind {
+ define i1 @t2(i64 %x) nounwind {
+ ; CHECK-LABEL: t2:
+ ; CHECK:       ; %bb.0:
+-; CHECK-NEXT:    cmpi.l #0, (4,%sp)
++; CHECK-NEXT:    tst.l (4,%sp)
+ ; CHECK-NEXT:    seq %d0
+ ; CHECK-NEXT:    rts
+   %tmp = icmp ult i64 %x, 4294967296
+diff --git a/llvm/test/CodeGen/M68k/Control/non-cmov-switch.ll b/llvm/test/CodeGen/M68k/Control/non-cmov-switch.ll
+index 719cf3c..d03a50c 100644
+--- a/llvm/test/CodeGen/M68k/Control/non-cmov-switch.ll
++++ b/llvm/test/CodeGen/M68k/Control/non-cmov-switch.ll
+@@ -9,7 +9,7 @@ define internal void @select_i32(i32 %self, ptr nonnull %value) {
+ ; M68000-NEXT:    subq.l #4, %sp
+ ; M68000-NEXT:    .cfi_def_cfa_offset -8
+ ; M68000-NEXT:    movem.l %d2, (0,%sp) ; 8-byte Folded Spill
+-; M68000-NEXT:    cmpi.l #0, (8,%sp)
++; M68000-NEXT:    tst.l (8,%sp)
+ ; M68000-NEXT:    move.w %sr, %d2
+ ; M68000-NEXT:    sne %d1
+ ; M68000-NEXT:    move.l (12,%sp), %d0
+@@ -18,7 +18,7 @@ define internal void @select_i32(i32 %self, ptr nonnull %value) {
+ ; M68000-NEXT:  ; %bb.1: ; %start
+ ; M68000-NEXT:    and.l #255, %d1
+ ; M68000-NEXT:    and.l #1, %d1
+-; M68000-NEXT:    cmpi.l #0, %d1
++; M68000-NEXT:    tst.l %d1
+ ; M68000-NEXT:    bne .LBB0_3
+ ; M68000-NEXT:  .LBB0_2: ; %null
+ ; M68000-NEXT:    suba.l %a0, %a0
+@@ -34,7 +34,7 @@ define internal void @select_i32(i32 %self, ptr nonnull %value) {
+ ; M68020-NEXT:    subq.l #4, %sp
+ ; M68020-NEXT:    .cfi_def_cfa_offset -8
+ ; M68020-NEXT:    movem.l %d2, (0,%sp) ; 8-byte Folded Spill
+-; M68020-NEXT:    cmpi.l #0, (8,%sp)
++; M68020-NEXT:    tst.l (8,%sp)
+ ; M68020-NEXT:    move.w %ccr, %d2
+ ; M68020-NEXT:    sne %d1
+ ; M68020-NEXT:    move.l (12,%sp), %d0
+@@ -43,7 +43,7 @@ define internal void @select_i32(i32 %self, ptr nonnull %value) {
+ ; M68020-NEXT:  ; %bb.1: ; %start
+ ; M68020-NEXT:    and.l #255, %d1
+ ; M68020-NEXT:    and.l #1, %d1
+-; M68020-NEXT:    cmpi.l #0, %d1
++; M68020-NEXT:    tst.l %d1
+ ; M68020-NEXT:    bne .LBB0_3
+ ; M68020-NEXT:  .LBB0_2: ; %null
+ ; M68020-NEXT:    suba.l %a0, %a0
+@@ -79,7 +79,7 @@ define internal void @select_i16(i16 %self, ptr nonnull %value) {
+ ; M68000-NEXT:    subq.l #4, %sp
+ ; M68000-NEXT:    .cfi_def_cfa_offset -8
+ ; M68000-NEXT:    movem.l %d2, (0,%sp) ; 8-byte Folded Spill
+-; M68000-NEXT:    cmpi.w #0, (10,%sp)
++; M68000-NEXT:    tst.w (10,%sp)
+ ; M68000-NEXT:    move.w %sr, %d2
+ ; M68000-NEXT:    sne %d1
+ ; M68000-NEXT:    move.l (12,%sp), %d0
+@@ -88,7 +88,7 @@ define internal void @select_i16(i16 %self, ptr nonnull %value) {
+ ; M68000-NEXT:  ; %bb.1: ; %start
+ ; M68000-NEXT:    and.l #255, %d1
+ ; M68000-NEXT:    and.w #1, %d1
+-; M68000-NEXT:    cmpi.w #0, %d1
++; M68000-NEXT:    tst.w %d1
+ ; M68000-NEXT:    bne .LBB1_3
+ ; M68000-NEXT:  .LBB1_2: ; %null
+ ; M68000-NEXT:    suba.l %a0, %a0
+@@ -104,7 +104,7 @@ define internal void @select_i16(i16 %self, ptr nonnull %value) {
+ ; M68020-NEXT:    subq.l #4, %sp
+ ; M68020-NEXT:    .cfi_def_cfa_offset -8
+ ; M68020-NEXT:    movem.l %d2, (0,%sp) ; 8-byte Folded Spill
+-; M68020-NEXT:    cmpi.w #0, (10,%sp)
++; M68020-NEXT:    tst.w (10,%sp)
+ ; M68020-NEXT:    move.w %ccr, %d2
+ ; M68020-NEXT:    sne %d1
+ ; M68020-NEXT:    move.l (12,%sp), %d0
+@@ -113,7 +113,7 @@ define internal void @select_i16(i16 %self, ptr nonnull %value) {
+ ; M68020-NEXT:  ; %bb.1: ; %start
+ ; M68020-NEXT:    and.l #255, %d1
+ ; M68020-NEXT:    and.w #1, %d1
+-; M68020-NEXT:    cmpi.w #0, %d1
++; M68020-NEXT:    tst.w %d1
+ ; M68020-NEXT:    bne .LBB1_3
+ ; M68020-NEXT:  .LBB1_2: ; %null
+ ; M68020-NEXT:    suba.l %a0, %a0
+@@ -149,7 +149,7 @@ define internal void @select_i8(i8 %self, ptr nonnull %value) {
+ ; M68000-NEXT:    subq.l #4, %sp
+ ; M68000-NEXT:    .cfi_def_cfa_offset -8
+ ; M68000-NEXT:    movem.l %d2, (0,%sp) ; 8-byte Folded Spill
+-; M68000-NEXT:    cmpi.b #0, (11,%sp)
++; M68000-NEXT:    tst.b (11,%sp)
+ ; M68000-NEXT:    move.w %sr, %d2
+ ; M68000-NEXT:    sne %d1
+ ; M68000-NEXT:    move.l (12,%sp), %d0
+@@ -157,7 +157,7 @@ define internal void @select_i8(i8 %self, ptr nonnull %value) {
+ ; M68000-NEXT:    bne .LBB2_2
+ ; M68000-NEXT:  ; %bb.1: ; %start
+ ; M68000-NEXT:    and.b #1, %d1
+-; M68000-NEXT:    cmpi.b #0, %d1
++; M68000-NEXT:    tst.b %d1
+ ; M68000-NEXT:    bne .LBB2_3
+ ; M68000-NEXT:  .LBB2_2: ; %null
+ ; M68000-NEXT:    suba.l %a0, %a0
+@@ -173,7 +173,7 @@ define internal void @select_i8(i8 %self, ptr nonnull %value) {
+ ; M68020-NEXT:    subq.l #4, %sp
+ ; M68020-NEXT:    .cfi_def_cfa_offset -8
+ ; M68020-NEXT:    movem.l %d2, (0,%sp) ; 8-byte Folded Spill
+-; M68020-NEXT:    cmpi.b #0, (11,%sp)
++; M68020-NEXT:    tst.b (11,%sp)
+ ; M68020-NEXT:    move.w %ccr, %d2
+ ; M68020-NEXT:    sne %d1
+ ; M68020-NEXT:    move.l (12,%sp), %d0
+@@ -181,7 +181,7 @@ define internal void @select_i8(i8 %self, ptr nonnull %value) {
+ ; M68020-NEXT:    bne .LBB2_2
+ ; M68020-NEXT:  ; %bb.1: ; %start
+ ; M68020-NEXT:    and.b #1, %d1
+-; M68020-NEXT:    cmpi.b #0, %d1
++; M68020-NEXT:    tst.b %d1
+ ; M68020-NEXT:    bne .LBB2_3
+ ; M68020-NEXT:  .LBB2_2: ; %null
+ ; M68020-NEXT:    suba.l %a0, %a0
+diff --git a/llvm/test/CodeGen/M68k/PR57660.ll b/llvm/test/CodeGen/M68k/PR57660.ll
+index 5f363fb..6d06fc0 100644
+--- a/llvm/test/CodeGen/M68k/PR57660.ll
++++ b/llvm/test/CodeGen/M68k/PR57660.ll
+@@ -12,7 +12,7 @@ define dso_local void @foo1() {
+ ; CHECK-NEXT:  .LBB0_1: ; %do.body
+ ; CHECK-NEXT:    ; =>This Inner Loop Header: Depth=1
+ ; CHECK-NEXT:    movem.w (0,%sp), %d0
+-; CHECK-NEXT:    cmpi.b #0, %d0
++; CHECK-NEXT:    tst.b %d0
+ ; CHECK-NEXT:    bne .LBB0_1
+ ; CHECK-NEXT:  ; %bb.2: ; %do.end
+ ; CHECK-NEXT:    addq.l #2, %sp

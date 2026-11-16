@@ -763,6 +763,16 @@ of Markdown.
   and a branch past 16 bits, which the 68000 has no form for, stopped llc ("Cannot relax the
   instruction") — now a `jmp` to the absolute address, a `b<cc>` the opposite condition over
   one (0006, `TestGenesis_ABranchFurtherThanAWordReaches`), so a function may pass 32 KB.
+  **0007–0011 make its code cheaper**, changing nothing a program does: a spill as a MOVE
+  where the flags are dead, not MOVEM; an overflow check through the i1's mask one `bvs`;
+  ADDQ/SUBQ (and LEA for an address register) made after register allocation of an ADD or
+  SUB of 1 to 8, which the target never selected; a compare a CMP, not x86's SUB that
+  copied the register; and a copy between a compare and its branch MOVEA or EXG, not
+  wrapped in MOVE from SR and to CCR (0012 regenerates the LLVM tests they change); 0013
+  makes a compare with zero TST, never made before, and 0014 moves a copy whose source
+  lives on ahead of the instruction setting the flags (0015 their tests). **A
+  backend change moves every game's timing**: run Vega's `--check`, which plays scripted
+  games frame by frame, not lyrac's tests alone.
   **The runtime's `__muldi3` takes a sign-extended pair as a signed 32 × 32** — what LLVM
   makes of a checked `i32` multiply, Lyra's `*`: one `muls` for two words. **llc writes
   objects without assembling text**, so an instruction the 68000 lacks reaches the ROM

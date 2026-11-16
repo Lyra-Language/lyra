@@ -1,0 +1,40 @@
+diff --git a/llvm/lib/Target/M68k/M68kISelLowering.cpp b/llvm/lib/Target/M68k/M68kISelLowering.cpp
+index 841c8e4..8a9ebc1 100644
+--- a/llvm/lib/Target/M68k/M68kISelLowering.cpp
++++ b/llvm/lib/Target/M68k/M68kISelLowering.cpp
+@@ -2201,20 +2201,22 @@ SDValue M68kTargetLowering::EmitCmp(SDValue Op0, SDValue Op1, unsigned M68kCC,
+ 
+   if ((Op0.getValueType() == MVT::i8 || Op0.getValueType() == MVT::i16 ||
+        Op0.getValueType() == MVT::i32 || Op0.getValueType() == MVT::i64)) {
+-    // Only promote the compare up to I32 if it is a 16 bit operation
+-    // with an immediate.  16 bit immediates are to be avoided.
+-    if ((Op0.getValueType() == MVT::i16 &&
+-         (isa<ConstantSDNode>(Op0) || isa<ConstantSDNode>(Op1))) &&
+-        !DAG.getMachineFunction().getFunction().hasMinSize()) {
+-      unsigned ExtendOp =
+-          isM68kCCUnsigned(M68kCC) ? ISD::ZERO_EXTEND : ISD::SIGN_EXTEND;
+-      Op0 = DAG.getNode(ExtendOp, DL, MVT::i32, Op0);
+-      Op1 = DAG.getNode(ExtendOp, DL, MVT::i32, Op1);
+-    }
+-    // Use SUB instead of CMP to enable CSE between SUB and CMP.
++    // A compare is a CMP, unless the difference is computed anyway: then the SUB's
++    // flags, which CSE shares. Always a SUB (x86's choice, which x86 turns back into
++    // a CMP later and this target never did), it destroyed its register, so a compare
++    // was a copy and a subtract — MOVE.L, SUB.L #imm, 20 cycles on a 68000, where
++    // CMPI.L is 14. Nor is a 16-bit compare with an immediate widened to 32 bits any
++    // more (x86 avoids 16-bit immediates; on a 68000 they are the cheaper).
+     SDVTList VTs = DAG.getVTList(Op0.getValueType(), MVT::i8);
+-    SDValue Sub = DAG.getNode(M68kISD::SUB, DL, VTs, Op0, Op1);
+-    return SDValue(Sub.getNode(), 1);
++    if (DAG.getNodeIfExists(M68kISD::SUB, VTs, {Op0, Op1}) ||
++        DAG.getNodeIfExists(ISD::SUB, DAG.getVTList(Op0.getValueType()),
++                            {Op0, Op1})) {
++      SDValue Sub = DAG.getNode(M68kISD::SUB, DL, VTs, Op0, Op1);
++      return SDValue(Sub.getNode(), 1);
++    }
++    // CMP's operands are the other way about: (CMP src, dst) sets the flags of
++    // dst - src, as `cmp src, dst` does.
++    return DAG.getNode(M68kISD::CMP, DL, MVT::i8, Op1, Op0);
+   }
+   return DAG.getNode(M68kISD::CMP, DL, MVT::i8, Op0, Op1);
+ }

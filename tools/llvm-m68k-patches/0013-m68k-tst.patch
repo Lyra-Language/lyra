@@ -1,0 +1,81 @@
+diff --git a/llvm/lib/Target/M68k/M68kInstrArithmetic.td b/llvm/lib/Target/M68k/M68kInstrArithmetic.td
+index 1a29c91..ee5c4a5 100644
+--- a/llvm/lib/Target/M68k/M68kInstrArithmetic.td
++++ b/llvm/lib/Target/M68k/M68kInstrArithmetic.td
+@@ -519,6 +519,49 @@ defm CMP8d  : MMxCmp_RM<MxType8d>;
+ defm CMP16d : MMxCmp_RM<MxType16d>;
+ defm CMP32d : MMxCmp_RM<MxType32d>;
+ 
++//===----------------------------------------------------------------------===//
++// TST: a compare with zero, the flags as CMPI #0 sets them (N and Z from the value, V and
++// C cleared) — four cycles on a register where CMPI's are eight, two bytes where it is
++// four. Selected for (CMP 0, x): a data register, (An), (d16,An) or (d8,An,Xn) — never
++// PC-relative, which is the 68020's (and a global is reached through an address register).
++//===----------------------------------------------------------------------===//
++
++/// ------------+------------+------+---------+---------
++///  F  E  D  C | B  A  9  8 | 7  6 | 5  4  3 | 2  1  0
++/// ------------+------------+------+---------+---------
++///  0  1  0  0 | 1  0  1  0 | SIZE |  MODE   |   REG
++/// ------------+------------+------+---------+---------
++let Defs = [CCR] in {
++class MxTst_R<MxType TYPE>
++    : MxInst<(outs), (ins TYPE.ROp:$reg), "tst."#TYPE.Prefix#"\t$reg",
++             [(set CCR, (MxCmp (TYPE.VT 0), TYPE.VT:$reg))]> {
++  let Inst = (descend 0b01001010, !cast<MxEncSize>("MxEncSize"#TYPE.Size).Value,
++                      /*MODE*/0b000, /*REGISTER*/(operand "$reg", 3));
++}
++
++let mayLoad = 1 in {
++class MxTst_M<MxType TYPE, MxOperand MEMOpd, ComplexPattern MEMPat,
++              MxEncMemOp MEM_ENC>
++    : MxInst<(outs), (ins MEMOpd:$mem), "tst."#TYPE.Prefix#"\t$mem",
++             [(set CCR, (MxCmp (TYPE.VT 0), (load MEMPat:$mem)))]> {
++  let Inst = (ascend
++    (descend 0b01001010, !cast<MxEncSize>("MxEncSize"#TYPE.Size).Value, MEM_ENC.EA),
++    MEM_ENC.Supplement);
++}
++
++} // mayLoad
++} // Defs = [CCR]
++
++let AddedComplexity = 10 in
++foreach S = [8, 16, 32] in {
++  defvar TYPE = !cast<MxType>("MxType"#S#"d");
++  defvar MEM = !cast<MxType>("MxType"#S);
++  def TST#S#d : MxTst_R<TYPE>;
++  def TST#S#p : MxTst_M<TYPE, MEM.POp, MEM.PPat, MxEncAddrMode_p<"mem">>;
++  def TST#S#j : MxTst_M<TYPE, MEM.JOp, MEM.JPat, MxEncAddrMode_j<"mem">>;
++  def TST#S#f : MxTst_M<TYPE, MEM.FOp, MEM.FPat, MxEncAddrMode_f<"mem">>;
++}
++
+ // cmp #imm, mem
+ defm CMP8  : MMxCmp_MI<MxType8d>;
+ defm CMP16 : MMxCmp_MI<MxType16d>;
+diff --git a/llvm/test/MC/M68k/Arith/Classes/MxTst.s b/llvm/test/MC/M68k/Arith/Classes/MxTst.s
+new file mode 100644
+index 0000000..690e6b0
+--- /dev/null
++++ b/llvm/test/MC/M68k/Arith/Classes/MxTst.s
+@@ -0,0 +1,21 @@
++; RUN: llvm-mc -triple=m68k -show-encoding %s | FileCheck %s
++
++; TST: 0100 1010 SIZE EA.
++; CHECK:      tst.b  %d0
++; CHECK-SAME: encoding: [0x4a,0x00]
++tst.b	%d0
++; CHECK:      tst.w  %d3
++; CHECK-SAME: encoding: [0x4a,0x43]
++tst.w	%d3
++; CHECK:      tst.l  %d7
++; CHECK-SAME: encoding: [0x4a,0x87]
++tst.l	%d7
++; CHECK:      tst.b  (4,%a0)
++; CHECK-SAME: encoding: [0x4a,0x28,0x00,0x04]
++tst.b	(4,%a0)
++; CHECK:      tst.l  (%a1)
++; CHECK-SAME: encoding: [0x4a,0x91]
++tst.l	(%a1)
++; CHECK:      tst.w  (2,%a0,%d1)
++; CHECK-SAME: encoding: [0x4a,0x70,0x18,0x02]
++tst.w	(2,%a0,%d1)

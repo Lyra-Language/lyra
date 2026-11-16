@@ -1,0 +1,45 @@
+diff --git a/llvm/lib/Target/M68k/M68kInstrInfo.cpp b/llvm/lib/Target/M68k/M68kInstrInfo.cpp
+index fe78024..a30a13d 100644
+--- a/llvm/lib/Target/M68k/M68kInstrInfo.cpp
++++ b/llvm/lib/Target/M68k/M68kInstrInfo.cpp
+@@ -941,6 +941,40 @@ void M68kInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
+     return;
+   }
+ 
++  // Or ahead of what set the flags, where the copy can go there unchanged: the MOVE's
++  // flags are then the setter's to replace, and what reads them after still reads the
++  // setter's. Nothing from the setter to here may read or write the destination or write
++  // the source, and the setter must not read the flags itself (ADDX, SUBX read X and Z).
++  if (MI != MBB.begin()) {
++    MachineBasicBlock::iterator Setter = std::prev(MI);
++    bool Clear = true, SourceRead = false;
++    while (true) {
++      if (Setter->isDebugInstr()) {
++        // Nothing to see.
++      } else if (Setter->readsRegister(DstReg, &RI) ||
++                 Setter->modifiesRegister(DstReg, &RI) ||
++                 Setter->modifiesRegister(SrcReg, &RI) || Setter->isCall() ||
++                 Setter->hasUnmodeledSideEffects()) {
++        Clear = false;
++        break;
++      } else {
++        SourceRead |= Setter->readsRegister(SrcReg, &RI);
++        if (Setter->modifiesRegister(M68k::CCR, &RI))
++          break;
++      }
++      if (Setter == MBB.begin()) {
++        Clear = false;
++        break;
++      }
++      --Setter;
++    }
++    if (Clear && !Setter->readsRegister(M68k::CCR, &RI)) {
++      BuildMI(MBB, Setter, DL, get(Opc), DstReg)
++          .addReg(SrcReg, getKillRegState(KillSrc && !SourceRead));
++      return;
++    }
++  }
++
+   // CCR is live, so we must restore it after the copy. Prepare push/pop ops.
+   // 68000 must use MOVE from SR, 68010+ must use MOVE from CCR. In either
+   // case, upon moving back, MOVE to CCR will mask out the upper byte anyway.

@@ -1,0 +1,188 @@
+diff --git a/llvm/lib/Target/M68k/M68kExpandPseudo.cpp b/llvm/lib/Target/M68k/M68kExpandPseudo.cpp
+index 8fafff3..7800e73 100644
+--- a/llvm/lib/Target/M68k/M68kExpandPseudo.cpp
++++ b/llvm/lib/Target/M68k/M68kExpandPseudo.cpp
+@@ -77,7 +77,8 @@ bool M68kExpandPseudo::ExpandMI(MachineBasicBlock &MBB,
+   /// TODO infer argument size to create less switch cases
+   switch (Opcode) {
+   default:
+-    return false;
++    // Not a pseudo; an ADD or SUB of a small constant made ADDQ or SUBQ, though.
++    return TII->ExpandQuick(MI);
+ 
+   case M68k::MOVI8di:
+     return TII->ExpandMOVI(MIB, MVT::i8);
+diff --git a/llvm/lib/Target/M68k/M68kInstrArithmetic.td b/llvm/lib/Target/M68k/M68kInstrArithmetic.td
+index 51dffa6..1a29c91 100644
+--- a/llvm/lib/Target/M68k/M68kInstrArithmetic.td
++++ b/llvm/lib/Target/M68k/M68kInstrArithmetic.td
+@@ -1115,3 +1115,39 @@ defm FADD : MxFBinaryOp<"add", 0b1100010, 0b1100110, 0b0100010>;
+ defm FSUB : MxFBinaryOp<"sub", 0b1101000, 0b1101100, 0b0101000>;
+ defm FMUL : MxFBinaryOp<"mul", 0b1100011, 0b1100111, 0b0100011>;
+ defm FDIV : MxFBinaryOp<"div", 0b1100000, 0b1100100, 0b0100000>;
++
++//===----------------------------------------------------------------------===//
++// ADDQ and SUBQ: a constant 1 to 8 in the instruction word itself (8 as 0) — on the
++// 68000 eight cycles for a long where ADDI's is sixteen, two bytes where it is six.
++// No pattern selects them: once registers are allocated, M68kExpandPseudo makes one of
++// an ADD or SUB of such a constant (M68kInstrInfo::ExpandQuick).
++//===----------------------------------------------------------------------===//
++
++/// ------------+---------+---+------+---------+---------
++///  F  E  D  C | B  A  9 | 8 | 7  6 | 5  4  3 | 2  1  0
++/// ------------+---------+---+------+---------+---------
++///  0  1  0  1 |  DATA   | S | SIZE |  MODE   |   REG
++/// ------------+---------+---+------+---------+---------
++class MxQuick<string MN, MxType TYPE, bit SUB, bits<3> MODE>
++    : MxInst<(outs TYPE.ROp:$dst),
++             (ins TYPE.ROp:$src, !cast<Operand>("Mxi"#TYPE.Size#"imm"):$opd),
++             MN#"."#TYPE.Prefix#"\t$opd, $dst", []> {
++  let Inst = (descend 0b0101, (operand "$opd", 3), SUB,
++                      !cast<MxEncSize>("MxEncSize"#TYPE.Size).Value, MODE,
++                      (operand "$dst", 3));
++}
++
++let Constraints = "$src = $dst" in {
++// Into a data register: the flags as ADD or SUB of the same constant sets them.
++let Defs = [CCR] in {
++def ADDQ8dq  : MxQuick<"addq", MxType8d,  0, 0b000>;
++def ADDQ16dq : MxQuick<"addq", MxType16d, 0, 0b000>;
++def ADDQ32dq : MxQuick<"addq", MxType32d, 0, 0b000>;
++def SUBQ8dq  : MxQuick<"subq", MxType8d,  1, 0b000>;
++def SUBQ16dq : MxQuick<"subq", MxType16d, 1, 0b000>;
++def SUBQ32dq : MxQuick<"subq", MxType32d, 1, 0b000>;
++} // Defs = [CCR]
++// Into an address register, all 32 bits of it, as ADDA and SUBA: no flags.
++def ADDQ32aq : MxQuick<"addq", MxType32a, 0, 0b001>;
++def SUBQ32aq : MxQuick<"subq", MxType32a, 1, 0b001>;
++} // Constraints
+diff --git a/llvm/lib/Target/M68k/M68kInstrInfo.cpp b/llvm/lib/Target/M68k/M68kInstrInfo.cpp
+index 91b7a2b..79792ce 100644
+--- a/llvm/lib/Target/M68k/M68kInstrInfo.cpp
++++ b/llvm/lib/Target/M68k/M68kInstrInfo.cpp
+@@ -652,6 +652,77 @@ bool M68kInstrInfo::ExpandMOVEM(MachineInstrBuilder &MIB,
+   return true;
+ }
+ 
++bool M68kInstrInfo::ExpandQuick(MachineInstr &MI) const {
++  unsigned Bits = 0;
++  bool Sub = false, Addr = false;
++  switch (MI.getOpcode()) {
++  case M68k::ADD8di:  Bits = 8;  break;
++  case M68k::ADD16di: Bits = 16; break;
++  case M68k::ADD32di: Bits = 32; break;
++  case M68k::SUB8di:  Bits = 8;  Sub = true; break;
++  case M68k::SUB16di: Bits = 16; Sub = true; break;
++  case M68k::SUB32di: Bits = 32; Sub = true; break;
++  case M68k::ADD32ai: Bits = 32; Addr = true; break;
++  case M68k::SUB32ai: Bits = 32; Sub = true; Addr = true; break;
++  default:
++    return false;
++  }
++  const MachineOperand &Dst = MI.getOperand(0), &Src = MI.getOperand(1),
++                       &Imm = MI.getOperand(2);
++  if (!Imm.isImm() || Dst.getReg() != Src.getReg())
++    return false;
++  int64_t Value = SignExtend64(Imm.getImm(), Bits);
++  bool Flipped = Value < 0;
++  if (Flipped) {
++    Value = -Value;
++    Sub = !Sub;
++  }
++
++  // Whether anything reads the flags this sets: the same operation's quick form sets
++  // them as it does, and needs no asking; the opposite one's carry is another, and LEA,
++  // ADDQ or SUBQ into an address register set none (where LLVM's ADDA is said to).
++  MachineBasicBlock &MBB = *MI.getParent();
++  MachineBasicBlock::iterator After = std::next(MachineBasicBlock::iterator(MI));
++  bool FlagsDead =
++      MI.registerDefIsDead(M68k::CCR, &RI) ||
++      (After != MBB.end() &&
++       MBB.computeRegisterLiveness(&RI, M68k::CCR, After, 32) ==
++           MachineBasicBlock::LQR_Dead);
++  if ((Flipped || Addr) && !FlagsDead)
++    return false;
++
++  unsigned Opcode = 0;
++  if (Value >= 1 && Value <= 8) {
++    if (Addr)
++      Opcode = Sub ? M68k::SUBQ32aq : M68k::ADDQ32aq;
++    else if (Bits == 8)
++      Opcode = Sub ? M68k::SUBQ8dq : M68k::ADDQ8dq;
++    else if (Bits == 16)
++      Opcode = Sub ? M68k::SUBQ16dq : M68k::ADDQ16dq;
++    else
++      Opcode = Sub ? M68k::SUBQ32dq : M68k::ADDQ32dq;
++  } else if (Addr && Value <= 32767) {
++    // LEA (d16,An),An: 8 cycles and four bytes, where ADDA.L #imm is 16 and six.
++    BuildMI(MBB, MI, MI.getDebugLoc(), get(M68k::LEA32p), Dst.getReg())
++        .addImm(Sub ? -Value : Value)
++        .addReg(Src.getReg(), getKillRegState(Src.isKill()));
++    MI.eraseFromParent();
++    return true;
++  } else {
++    return false;
++  }
++
++  MachineInstrBuilder Quick =
++      BuildMI(MBB, MI, MI.getDebugLoc(), get(Opcode), Dst.getReg())
++          .addReg(Src.getReg(), getKillRegState(Src.isKill()))
++          .addImm(Value);
++  if (MachineOperand *Flags =
++          Quick->findRegisterDefOperand(M68k::CCR, /*TRI=*/nullptr))
++    Flags->setIsDead(FlagsDead);
++  MI.eraseFromParent();
++  return true;
++}
++
+ /// Expand a single-def pseudo instruction to a two-addr
+ /// instruction with two undef reads of the register being defined.
+ /// This is used for mapping:
+diff --git a/llvm/lib/Target/M68k/M68kInstrInfo.h b/llvm/lib/Target/M68k/M68kInstrInfo.h
+index c88c2f5..3d0cc5d 100644
+--- a/llvm/lib/Target/M68k/M68kInstrInfo.h
++++ b/llvm/lib/Target/M68k/M68kInstrInfo.h
+@@ -323,6 +323,10 @@ public:
+   bool ExpandMOVEM(MachineInstrBuilder &MIB, const MCInstrDesc &Desc,
+                    bool IsRM) const;
+ 
++  /// An ADD or SUB of a constant into a register made ADDQ or SUBQ (1 to 8), or LEA
++  /// (an address register's beyond), where that is the same: false for any other.
++  bool ExpandQuick(MachineInstr &MI) const;
++
+   /// Return a virtual register initialized with the global base register
+   /// value. Output instructions required to initialize the register in the
+   /// function entry block, if necessary.
+diff --git a/llvm/test/MC/M68k/Arith/Classes/MxQuick.s b/llvm/test/MC/M68k/Arith/Classes/MxQuick.s
+new file mode 100644
+index 0000000..37dbc04
+--- /dev/null
++++ b/llvm/test/MC/M68k/Arith/Classes/MxQuick.s
+@@ -0,0 +1,27 @@
++; RUN: llvm-mc -triple=m68k -show-encoding %s | FileCheck %s
++
++; ADDQ and SUBQ: the constant 1 to 8 in bits 11-9, 8 written as 0.
++; CHECK:      addq.b  #1, %d0
++; CHECK-SAME: encoding: [0x52,0x00]
++addq.b	#1, %d0
++; CHECK:      addq.w  #8, %d3
++; CHECK-SAME: encoding: [0x50,0x43]
++addq.w	#8, %d3
++; CHECK:      addq.l  #1, %d0
++; CHECK-SAME: encoding: [0x52,0x80]
++addq.l	#1, %d0
++; CHECK:      subq.b  #1, %d0
++; CHECK-SAME: encoding: [0x53,0x00]
++subq.b	#1, %d0
++; CHECK:      subq.w  #3, %d7
++; CHECK-SAME: encoding: [0x57,0x47]
++subq.w	#3, %d7
++; CHECK:      subq.l  #2, %d1
++; CHECK-SAME: encoding: [0x55,0x81]
++subq.l	#2, %d1
++; CHECK:      addq.l  #4, %sp
++; CHECK-SAME: encoding: [0x58,0x8f]
++addq.l	#4, %sp
++; CHECK:      subq.l  #8, %a0
++; CHECK-SAME: encoding: [0x51,0x88]
++subq.l	#8, %a0
