@@ -784,9 +784,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   a second click never reaches the program to maximize (`ui/WINDOW.md`'s open question 3).
 - **[DONE 11/16] `ui`: a tab's label ends in "…" where it is cut** — `text_overflow:
   TextEllipsis`, CSS's `text-overflow` (lui's too), on any paragraph (COMPLETED.md 11/16).
-- **[OPEN] `ui` focuses nothing at start, and `App` has no first command.** termina-ui asks
-  `FocusKeyed` from its painter's first `on_size`; an `App.start: []Command<e>`, or an
-  `autofocus` on an element, would say it directly.
+- **[DONE 11/16] `App.start`**: commands carried out once before the first frame, so
+  `[FocusKeyed("term")]` focuses from the start (COMPLETED.md 11/16). Termina still asks it
+  from its painter's first `on_size`, and could move to it.
 - **[OPEN] A script's key is a press with no release, and its text no key before it**
   (`ui.script`). A program keeping the modifiers as the last key left them sees Ctrl held
   after `Ctrl+r 'echo'`, which no keyboard does. A key token could press and release.

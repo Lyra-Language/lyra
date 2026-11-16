@@ -7182,6 +7182,72 @@ sprites hero.png slime.png coin.png bat.png ghost.png, selected 3
 // into in a panel that is the dock's only group takes the next key too once a split has moved
 // the panel to its second part. Its identity is its place, so the move is a new identity, and
 // `Ui` moves what it held at the old one after it (`panel_ids`, `follow_moves`); before, the
+// `App.start`: commands carried out once before the first frame, as an update's are. A
+// `FocusKeyed` there focuses the field before any input, so text typed at once lands in it
+// with no click; an `After` there raises its event later; and neither runs a second time.
+func TestRun_UiAppStart(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, Command, Subscription, FocusKeyed, After, host_of }
+import ui.script.{ timed_platform, parse_steps }
+import ui.backend.{ Renderer, TextureId }
+import ui.draw.{ Size, Color }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, FieldSpec, column, text, text_input }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, window, background, ops) => {}
+}
+
+struct State {
+  typed: string = "",
+  ticks: i64 = 0,
+}
+
+data Ev = Typed(string) | Tick
+
+let update = pure (s: State, e: Ev) -> (State, []Command<Ev>) => match e {
+  Typed(value) => (State { s | typed: value }, []),
+  Tick => (State { s | ticks: s.ticks + 1 }, []),
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  let Ok(steps) = parse_steps("'Ada' wait:50") else { return 2 }
+  var platform = timed_platform(steps, Size { w: 300.0, h: 200.0 })
+  var renderer = Blank {}
+  let app = App {
+    view: pure (s: State) -> Node<Ev> => column([
+      text("Name"),
+      text_input(FieldSpec { value: s.typed, on_edit: Typed }).keyed("name"),
+    ]),
+    update: update,
+    subscriptions: (_: State) -> []Subscription<Ev> => [],
+    background: Color { r: 0, g: 0, b: 0 },
+    start: [FocusKeyed("name"), After(10, Tick)],
+  }
+  var host = host_of(app, State {}, platform)
+  while host.step(platform, renderer, fonts) {}
+  println("typed '${host.state.typed}', ticks ${host.state.ticks}")
+  fonts.close()
+  0
+}
+`)
+	want := "typed 'Ada', ticks 1\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // panel started over with no focus and the second key reached nothing.
 func TestRun_UiDockedPanelKeepsItsState(t *testing.T) {
 	t.Parallel()

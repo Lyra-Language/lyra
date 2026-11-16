@@ -156,6 +156,10 @@ pub struct App<s, e> {
   /// state answering them ([Shortcuts]), or none. (An array of at most one: a generic struct's
   /// `None` default is not settled yet, todo.md.)
   shortcuts: []Shortcuts<s, e> = [],
+  /// The commands carried out once, as the program starts, before its first frame — as an
+  /// `update`'s are: the focus on an element at once (`[FocusKeyed("term")]`), a file read, a
+  /// font measured. None by default.
+  start: []Command<e> = [],
   /// What happens when the user asks to close the main window — its close button, or the
   /// system's quit (Cmd+Q) — instead of the program ending at once: the state's event is
   /// raised and the window stays open, and the program asks its own way (unsaved work) and
@@ -491,6 +495,8 @@ pub struct Host<s, e> {
   dialogs: [](i32, (Maybe<string>) -> e) = [],
   next_dialog: i32 = 0,
   last_frame: i64 = -1,
+  /// Whether [App.start]'s commands have been carried out.
+  started: bool = false,
   running: bool = true,
   live: bool = false,
   /// The window as `App.window` last described it, to tell a reload's change from none.
@@ -695,6 +701,12 @@ impl Host<s, e> {
     fonts: mut Fonts
   ) -> bool => {
     let now = platform.now_ms()
+    // The program's first commands, before anything else of its first pass: a font measured or
+    // loaded is there for the pass's layout, a focus asked for found in it.
+    if !self.started {
+      self.started = true
+      self.carry_out(self.app.start, now, platform)
+    }
     self.measure(platform, fonts)
     self.read_ready(now, platform)
     self.deliver_due(now, platform)
@@ -1336,6 +1348,16 @@ impl Host<s, e> {
     self.version += 1
     let (next, commands) = (self.app.update)(self.state, event)
     self.state = next
+    self.carry_out(commands, now, platform)
+  }
+
+  /// `commands` carried out, at `now` — an `update`'s, or [App.start]'s.
+  let carry_out<p> where p: Platform = (
+    self: mut,
+    commands: []Command<e>,
+    now: i64,
+    platform: mut p
+  ) -> void => {
     for command in commands {
       match command {
         WriteFile(path, text, done) => self.waiting.push(done(write_file(path, text))),

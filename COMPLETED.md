@@ -9,6 +9,23 @@ Newest first.
 
 ## Dated log
 
+### 11/16/26 — `App.start`: a program's first commands
+
+`ui` focused nothing when a program started, and an `App` had no way to ask for anything
+before its first event. Termina reached its command line's focus by sending `FocusKeyed` from
+its painter's first `on_size`, a side effect of being laid out.
+
+**`App.start: []Command<e>`**, none by default, is carried out once at the top of the first
+`Host.step`, as an `update`'s commands are. `dispatch`'s command loop became `carry_out`,
+which both use. It runs before that pass measures fonts and lays out, so a `MeasureFont` or
+`LoadFonts` at start is there for the first layout, and a `FocusKeyed` is found in it.
+`Host.started` keeps it to once. An `autofocus` on an element was the other choice the item
+named; a list of commands does that and anything else a program wants at launch.
+
+`TestRun_UiAppStart`: a `start` of `[FocusKeyed("name"), After(10, Tick)]` and text typed
+before any click: `typed 'Ada', ticks 1`, where with no `start` it is `'', 0`. Termina still
+uses its `on_size` route; moving it is left to Termina.
+
 ### 11/16/26 — `text-overflow: ellipsis`, and a tab's label ends in "…"
 
 A tab shrunk by a crowded strip showed its label's first letters cut off bare, "Docu", with
