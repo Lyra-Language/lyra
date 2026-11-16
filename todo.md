@@ -1347,13 +1347,15 @@ sets V on every add. What stands between that and a ROM:
   left is how much the M68k backend spills — `sound` keeps a 340-byte frame — so a note
   costs thousands of cycles, and a song starting notes on all thirteen channels at once
   could still take most of a frame.
-- **[OPEN] The M68k backend, next** (after 0007–0014, COMPLETED 11/16): register pressure —
-  spills and callee-saved MOVEMs are still a tenth of the vertical blank's time (`sound`
-  keeps a 340-byte frame; perhaps fewer callee-saved registers for `fastcc`); a bool
-  sign-extended to be tested (`and.b #1`, `neg.b`, `tst.b`) and masked as it is copied (133
-  `and.b #1` in the hero); the 37 flag saves left, where the compare reads the copy's
-  destination. `moveq` is already used wherever a constant fits. Measure as COMPLETED 11/16
-  says before and after each.
+- **[OPEN] Aggregates through memory on the 68000** (found 11/16): of the hero's vertical
+  blank's 560 stack accesses only about 150 are the register allocator's spills; the rest
+  are Lyra's aggregates — `lowerer.inMemory` passes, returns and keeps every struct through
+  memory on the 68000 (61 `move.l #N, (N,%sp)` building ones). What they are, and whether
+  small structs could travel in registers, is the next measured step; the allocator's side
+  was tried (rematerialization, outlining `sound`: no gain, COMPLETED 11/16).
+- **[OPEN] The M68k backend, smaller items** (after 0007–0017): the 37 `neg.b` left,
+  booleans combined (`&&`, `^`) before a branch; 118 `and.b #1`, mostly a bool masked as it
+  is stored; the 37 flag saves left, where the compare reads the copy's destination.
 - **[DONE 10/16] A Genesis program inlined less crashed**: a `fastcc` struct return popped a
   pointer passed in a register (`tools/llvm-m68k-patches/0004`, COMPLETED 10/16).
 - **[DONE 10/16] clang segfaulted compiling a copy of Sheliak**: a global's 320 KB

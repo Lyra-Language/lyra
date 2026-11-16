@@ -770,7 +770,8 @@ of Markdown.
   copied the register; and a copy between a compare and its branch MOVEA or EXG, not
   wrapped in MOVE from SR and to CCR (0012 regenerates the LLVM tests they change); 0013
   makes a compare with zero TST, never made before, and 0014 moves a copy whose source
-  lives on ahead of the instruction setting the flags (0015 their tests). **A
+  lives on ahead of the instruction setting the flags (0015 their tests); 0016 branches on
+  a boolean's bit rather than sign-extending it first; 0017 keeps a spill's memory operand. **A
   backend change moves every game's timing**: run Vega's `--check`, which plays scripted
   games frame by frame, not lyrac's tests alone.
   **The runtime's `__muldi3` takes a sign-extended pair as a signed 32 × 32** — what LLVM

@@ -1,0 +1,13 @@
+diff --git a/llvm/lib/Target/M68k/M68kInstrInfo.cpp b/llvm/lib/Target/M68k/M68kInstrInfo.cpp
+index a30a13d..c632dde 100644
+--- a/llvm/lib/Target/M68k/M68kInstrInfo.cpp
++++ b/llvm/lib/Target/M68k/M68kInstrInfo.cpp
+@@ -626,6 +626,8 @@ bool M68kInstrInfo::ExpandMOVEM(MachineInstrBuilder &MIB,
+     for (const MachineOperand &Op : MIB->implicit_operands())
+       if (Op.getReg() != M68k::CCR)
+         Built.add(Op);
++    // The stack slot it reaches, so later passes know it touches nothing else.
++    Built.cloneMemRefs(*MIB);
+     MIB->eraseFromParent();
+     return true;
+   }

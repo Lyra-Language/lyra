@@ -260,6 +260,42 @@ The glTF viewer's two notes blamed the missing uniforms for its parameter textur
 second lighting program. The texture still suits it, since it is uploaded once and kept by
 the material, so only the reasoning changed; moving it to uniforms is an `[IDEA]`.
 
+### 11/16/26 — Spilling in the big inlined functions: measured, and mostly not spilling
+
+The music player inlined into the vertical blank keeps 560 stack accesses; the question was
+how much of that the register allocator could save. Little, it turned out:
+- **Rematerializing constants and addresses** — none was, as every M68k MOVE declares a CCR
+  def and LLVM recomputes nothing defining a physical register. Allowed past a dead one,
+  with a flag-keeping form where CCR is live (MOVEA, or the move with the flags saved), it
+  cut the hero's spills 1,091 to 671 and reloads 1,664 to 865, and saved no time: a reload
+  is 16 cycles and `move.l #imm` 12, and the flag-keeping moves cost more. Left out.
+- **Fewer inlined** (`MusicChannel.sound`, `take`, `tick_once` out of line, each alone):
+  every one slower, ordinary frames 49 lines to 53, the worst 163 to 172. Inlining earns its
+  spills.
+- **What the stack traffic is**: 0007 dropped a spill's memory operand when it made it a
+  MOVE (0017 keeps it), which also hid the "Folded Spill" notes. With them back, about 150 of
+  the 560 are spills; the rest are Lyra's aggregates through memory (`lowerer.inMemory`), a
+  Lyra code-generation item now in todo.md.
+
+### 11/16/26 — The M68k backend: a boolean's bit, and what did not pay
+
+`tools/llvm-m68k-patches/0016`: a branch on a boolean got it sign-extended
+(`sign_extend_inreg x, i1`, the target's booleans being 0 or all ones), so AND #1, NEG and a
+test came before it. Nonzero exactly where bit 0 is set, it is that bit — or `x` itself
+where its known bits say 0 or 1, as a bool loaded from memory is. Half the hero's NEG.Bs
+gone; the worst vertical blank 166 lines to 163. Every lyrac and Vega check the same.
+- **Shrink-wrapping changed nothing**: enabled, the hero's object was byte for byte the
+  same — every function needs its callee-saved registers from its entry. Left out.
+- **The raster handler's register saves were not its cost**: the profile put 5% of the
+  frame on its prologue's MOVEM, but splitting the work out (only a line with a change
+  calling it, the entry saving two registers, not seven) left the handler at 18 lines a
+  frame. The time is the wait for the line, which is the design, and the 68000's exception
+  entry, which a per-instruction profile credits to the first instructions it runs.
+  `std.genesis.raster` is as it was.
+- **Two more boolean forms matched nothing in the hero** (an extension already expanded to
+  `(sub 0, (and x, 1))`, and one of a SETCC), so they were left out rather than shipped
+  untested. The 37 NEG.Bs left are booleans combined before their branch.
+
 ### 11/16/26 — The M68k backend: TST, and copies ahead of the flags
 
 Two more (`tools/llvm-m68k-patches/0013`, `0014`; `0015` their LLVM tests): the hero's

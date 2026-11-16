@@ -98,7 +98,21 @@
 #     replace. 90 flag saves in the hero to 37 (the rest the setter reads the copy's
 #     destination).
 #   - 0015: the seven CodeGen/M68k tests 0013–0014 change, regenerated.
-#   With them the hero's vertical blank is 49 lines a frame (59 before 0007), its worst 166.
+#   - 0016: a branch on a boolean got it as (sign_extend_inreg x, i1) — the target's
+#     booleans are 0 or all ones — which became AND #1, NEG and a test. It is nonzero
+#     exactly where x's bit 0 is, so LowerBRCOND branches on that bit, and on x itself where
+#     x is known 0 or 1 (a bool loaded from memory). Half the hero's NEG.Bs.
+#   With them the hero's vertical blank is 49 lines a frame (59 before 0007), its worst 163.
+#   - 0017: a spill 0007 makes a MOVE keeps its memory operand (the stack slot), which it
+#     had dropped: later passes saw an unknown access, and `-print`/asm lost its "Folded
+#     Spill" note. The hero's code is the same.
+#   **Tried and left out**: shrink-wrapping (enableShrinkWrapping) changed nothing in the
+#   hero — every function needs its callee-saved registers from its entry. Rematerializing
+#   constants and addresses (isReMaterializableImpl past the dead CCR def, a flag-keeping
+#   MOVEA or saved-flags move where CCR is live) cut the hero's spills from 1,091 to 671 and
+#   reloads from 1,664 to 865 but no time: a reload is 16 cycles, MOVE #imm 12, and the
+#   flag-keeping moves cost more. Spills are only a quarter of the vertical blank's stack
+#   traffic; the rest is Lyra's aggregates passed and kept in memory (lyra/todo.md).
 #   **A change here moves the timing of every game**: Vega's scripted hero checks judged
 #   one frame, which faster code reached later in the walk (rom_checks.JUDGED_FROM).
 #   Run Vega's --check, not lyrac's tests alone.
