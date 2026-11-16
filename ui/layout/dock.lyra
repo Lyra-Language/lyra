@@ -127,12 +127,22 @@ pub let dock<e> = pure (
     on_change: on_change,
     on_tear: stays
   })
+  // Keyed so the framework finds each dock's panels by key ([DOCK_KEY], [PANEL_KEY]): a panel
+  // moved to another group keeps its scroll, focus and caret (`ui.interact`).
   Node {
     kind: kind,
     tag: "Dock",
-    children: [dock_part(tree, tree, "", panel, on_change, on_close)]
+    children: [Node {
+      dock_part(tree, tree, "", panel, on_change, on_close) | key: DOCK_KEY
+    }]
   }
 }
+
+/// The key of a dock's own child: a panel's identity is matched across frames under it.
+pub const DOCK_KEY: string = "@dock"
+
+/// The key a dock's shown panel has, before its own key: its identity ends with this.
+pub const PANEL_KEY: string = "@panel:"
 
 /// The part of `whole` at `path`, `part`.
 let dock_part<e> = pure (
@@ -160,7 +170,7 @@ let dock_part<e> = pure (
         on_change(dock_reordered(whole, keys[from], to)),
     })
     let shown: []Node<e> = if panels.len() > 0 {
-      [expanded::<e>(panels[selected].content)]
+      [Node { expanded::<e>(panels[selected].content) | key: "${PANEL_KEY}${keys[selected]}" }]
     } else { [] }
     let kind: Kind<e> = DockLeaf(path, keys)
     Node {

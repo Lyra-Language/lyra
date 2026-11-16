@@ -374,7 +374,13 @@ layer — implements the two traits; the display list is the whole contract.
   key, near, side)` (beside another panel, or along the dock's edge with `near` `""`),
   `dock_without`, `dock_select`, `dock_reordered`, `dock_resized`, `dock_keys`. An emptied group
   goes, and a split left one part is that part. A group's leaf is a `DockLeaf(path, keys)`, its
-  path a split's parts `0` and `1` from the root.
+  path a split's parts `0` and `1` from the root. **A panel keeps its framework state when the
+  tree moves it**: identities stay paths, so a panel moved to another group (or whose group a
+  split moves) has a new one, and `Ui` moves what it held at the old one after it — scroll,
+  focus, caret, draft, transitions (`panel_ids`, `follow_moves`, then the tree laid out again).
+  It finds each dock's shown panel by its keys: the dock's child is keyed `DOCK_KEY`, each shown
+  panel `PANEL_KEY` and its key. Within a window: a panel carried to another window starts
+  afresh there.
 - **Several windows** (Vega's design §8): **`App.windows: [Windows { of, view, on_close,
   on_moved }]`** — the windows beside the main one are **the program's data**, as a dock's tree
   is: `of(state)` answers them, each a `WindowSpec` with its `key` and `place`, and the host

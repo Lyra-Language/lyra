@@ -92,6 +92,8 @@ import ui.backend.{
 import ui.draw.{ Point, Rect, Size, Color }
 import ui.text.{ Fonts, offset_at_x, caret_x }
 import ui.layout.{
+  DOCK_KEY,
+  PANEL_KEY,
   Axis,
   Constraints,
   Scroller,
@@ -234,6 +236,9 @@ pub struct Ui {
   /// The window's own buttons pressed and let go on since the host last took them
   /// ([Ui.take_window_buttons]): the framework's to carry out, not the program's.
   window_asked: []WindowButton = [],
+  /// Each dock's shown panels at the last frame, by the dock's identity and the panel's key
+  /// ([panel_ids]): a panel's identity is its place, so one moved has its state moved after it.
+  panels: HashMap<string, string>,
 }
 
 /// A popup open at a frame, by its identity and its anchor's and content's; and, for a modal,
@@ -261,7 +266,8 @@ pub struct Found<e> {
 }
 
 /// No focus, nothing hovered or held, no element's state.
-pub let ui_new = pure () -> Ui => Ui { state: interaction_new(), motions: HashMap.new() }
+pub let ui_new = pure () -> Ui =>
+  Ui { state: interaction_new(), motions: HashMap.new(), panels: HashMap.new() }
 
 /// How far a scroll moves for a line of a wheel, in units.
 pub const SCROLL_LINE: f32 = 40.0
@@ -303,6 +309,23 @@ impl Ui {
     var laid = layout_cached(view, c, fonts, self.state, cache)
     var present: HashMap<string, bool> = HashMap.new()
     note_ids(laid, present)
+    // A dock's panel moved since the last frame — to another group, or its group moved by a
+    // split — is a new place, so a new identity: what the framework held for it at the old
+    // one (its scroll, focus and caret) goes after it, and the tree is laid out again with it.
+    let panels = panel_ids(present)
+    var moves: [](string, string) = []
+    for pair in panels.keys() {
+      let now = panels.get(pair) ?? ""
+      let was = self.panels.get(pair) ?? now
+      if was != now && !present.contains_key(was) { moves.push((was, now)) }
+    }
+    self.panels = panels
+    if moves.len() > 0 {
+      self.follow_moves(moves)
+      laid = layout_cached(view, c, fonts, self.state, cache)
+      present = HashMap.new()
+      note_ids(laid, present)
+    }
     // A tooltip whose element is gone goes with it.
     if !present.contains_key(self.tip_wanted) { self.tip_wanted = "" }
     if !present.contains_key(self.state.tip) { self.state.tip = "" }
@@ -1066,6 +1089,56 @@ impl Ui {
   /// The focus to the element keyed `key` ([Node.keyed]) once a layout has it — the frame
   /// after the one that made it, if that is when it appears.
   pub let focus_keyed = (self: mut, key: string) -> void => { self.focus_wanted = key }
+
+  /// What the framework holds by identity moved after the dock panels in `moves` (each an
+  /// identity and where it went, [relocated]): the focus, hover, press and menus open, each
+  /// element's scroll and caret, its draft, the sizes and hues it was shown at, its transitions,
+  /// and the popups open.
+  let follow_moves = (self: mut, moves: [](string, string)) -> void => {
+    let at = (id: string) -> string => relocated(id, moves)
+    self.state.focus = at(self.state.focus)
+    self.state.hover = at(self.state.hover)
+    self.state.pressed = at(self.state.pressed)
+    self.state.open = at(self.state.open)
+    self.state.tip = at(self.state.tip)
+    self.state.menus = [m in self.state.menus | at(m)]
+    var widgets = HashMap.new::<string, WidgetState>()
+    for id in self.state.widgets.keys() {
+      if let Some(w) = self.state.widgets.get(id) { widgets.insert(at(id), w) }
+    }
+    self.state.widgets = widgets
+    var shown = HashMap.new::<string, Computed>()
+    for id in self.state.shown.keys() {
+      if let Some(c) = self.state.shown.get(id) { shown.insert(at(id), c) }
+    }
+    self.state.shown = shown
+    var drafts = HashMap.new::<string, string>()
+    for id in self.state.drafts.keys() {
+      if let Some(d) = self.state.drafts.get(id) { drafts.insert(at(id), d) }
+    }
+    self.state.drafts = drafts
+    var hues = HashMap.new::<string, f32>()
+    for id in self.state.hues.keys() {
+      if let Some(h) = self.state.hues.get(id) { hues.insert(at(id), h) }
+    }
+    self.state.hues = hues
+    var motions = HashMap.new::<string, Motion>()
+    for id in self.motions.keys() {
+      if let Some(m) = self.motions.get(id) { motions.insert(at(id), m) }
+    }
+    self.motions = motions
+    self.captured = at(self.captured)
+    self.typing_into = at(self.typing_into)
+    self.tip_wanted = at(self.tip_wanted)
+    self.tip_spent = at(self.tip_spent)
+    self.popups = [p in self.popups | OpenPopup {
+      p |
+      id: at(p.id),
+      anchor: at(p.anchor),
+      content: at(p.content),
+      returns: at(p.returns)
+    }]
+  }
 
   /// The window's own buttons pressed and let go on since the last time, taken: minimize,
   /// maximize or restore, close — for the host to carry out.
@@ -2643,6 +2716,36 @@ let drag_at<e> = pure (laid: Laid<e>, at: Point) -> Maybe<Found<e>> => {
 let note_ids<e> = (laid: Laid<e>, present: mut HashMap<string, bool>) -> void => {
   present.insert(laid.id, true)
   for child in laid.children { note_ids(child.laid, present) }
+}
+
+/// Each dock's shown panel among `present`'s identities, by its dock's identity and its key
+/// (`"<dock>|<key>"`): an identity whose last part is [PANEL_KEY]'s, under the nearest
+/// [DOCK_KEY] before it.
+let panel_ids = pure (present: HashMap<string, bool>) -> HashMap<string, string> => {
+  var out = HashMap.new::<string, string>()
+  let marker = "/:${PANEL_KEY}"
+  for id in present.keys() {
+    let Some(at) = id.last_index(marker) else { continue }
+    let key = id.slice(at + marker.len(), id.len())
+    if key.contains('/') { continue }
+    let head = id.slice(0, at)
+    let dock = match head.last_index("/:${DOCK_KEY}") {
+      Some(d) => head.slice(0, d),
+      None => head,
+    }
+    out.insert("${dock}|${key}", id)
+  }
+  out
+}
+
+/// `id` where `moves` (each an identity and where it went) have taken it: under the first move
+/// whose old identity it is or is inside, the new one in its place; itself otherwise.
+let relocated = pure (id: string, moves: [](string, string)) -> string => {
+  for (was, now) in moves {
+    if id == was { return now }
+    if id.starts_with("${was}/") { return "${now}${id.slice(was.len(), id.len())}" }
+  }
+  id
 }
 
 /// Each text field's scroll in `laid` remembered in `ui`.

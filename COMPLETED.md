@@ -9,6 +9,36 @@ Newest first.
 
 ## Dated log
 
+### 11/16/26 — A docked panel's framework state follows it
+
+A panel's scroll, focus and caret were lost whenever the dock's tree moved it, to another
+group or with its group moved by a split. The framework keeps that state by identity, and an
+identity is a path, so the panel came back as a new element. Typing into a field and then
+moving its panel lost the next key.
+
+**Identities stay paths.** The todo item suggested keying a dock's panels by their keys,
+which needs identities that are not wholly hierarchical, and that was tried first. Each
+panel took its identity from the dock and its key, skipping the groups and splits between.
+It broke the rule the framework leans on, that an identity starts with its ancestors' (`find`,
+`along_path`, `within_id`, and the layout's `inside`, which keys `:focus-within` and the
+layout cache). The panel's field was focused and then never found, so no key reached it. A
+group taken from the cache would also have kept a stale focus ring.
+
+**So the state moves instead.** The dock keys its child `DOCK_KEY` and each shown panel
+`PANEL_KEY` and its key. After each layout `Ui` finds every dock's shown panels among the
+identities present (`panel_ids`, `"<dock>|<key>"`) and compares them with the last frame's.
+A panel whose identity changed has everything held at the old one moved after it
+(`follow_moves`, through `relocated`): the focus, hover, press and open menus, each element's
+scroll, caret and draft, the sizes and hues shown, transitions, and the popups open. The tree
+is then laid out again with it. This runs before the pass that drops state of elements gone.
+All the moves are applied at once, so two panels swapping places do not take each other's
+state.
+
+`TestRun_UiDockedPanelKeepsItsState` focuses a field in a dock's only group, types `x`,
+moves the panel into a split's second part by a shortcut, and types `y`: `xy`, where with
+the move left out it is `x`. A panel carried to another window still starts afresh, since
+each window keeps its own `Ui`.
+
 ### 11/16/26 — A modal is heard as a dialog, and keeps the program's shortcuts out
 
 A modal already took every press, wheel turn and Tab while it was open, but two things still

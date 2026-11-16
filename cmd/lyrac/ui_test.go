@@ -7102,6 +7102,107 @@ sprites hero.png slime.png coin.png bat.png ghost.png, selected 3
 // going; a drag of Map put back by Escape; Console opened again by the toolbar, among the
 // sprite editor's tabs; the sprite editor's button pressed; and Console moved along its strip,
 // before Map. The arrangement it leaves is printed. A second play stops mid-drag, where the preview shows below Palettes.
+// A dock's panel keeps its framework state when the tree moves it: a field focused and typed
+// into in a panel that is the dock's only group takes the next key too once a split has moved
+// the panel to its second part. Its identity is its place, so the move is a new identity, and
+// `Ui` moves what it held at the old one after it (`panel_ids`, `follow_moves`); before, the
+// panel started over with no focus and the second key reached nothing.
+func TestRun_UiDockedPanelKeepsItsState(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, Command, Subscription, Shortcuts, Shortcut, host_of }
+import ui.script.{ timed_platform, Played, Waited, Step }
+import ui.backend.{ Renderer, TextureId, Character, Modifiers, KeyPressed, TextTyped, PointerMoved, PointerDown, PointerUp, Primary }
+import ui.draw.{ Size, Point, Color }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, Laid, DockTree, DockPanel, DockTabs, DockGroup, Editable, FieldSpec, Horizontal, dock, dock_tabs, dock_split, text, text_input }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, window, background, ops) => {}
+}
+
+struct State {
+  tree: DockTree,
+  typed: string = "",
+}
+
+data Ev = Changed(DockTree) | Closed(string) | Typed(string) | Moved
+
+let update = pure (s: State, e: Ev) -> (State, []Command<Ev>) => match e {
+  Changed(tree) => (State { s | tree: tree }, []),
+  Typed(value) => (State { s | typed: value }, []),
+  Moved => (State {
+    s |
+    tree: dock_split(Horizontal, 0.5, dock_tabs(["b"]), DockTabs(DockGroup { keys: ["a"], selected: "a" }))
+  }, []),
+  Closed(_) => (s, []),
+}
+
+let view = pure (s: State) -> Node<Ev> => dock(
+  s.tree,
+  (key: string) -> DockPanel<Ev> => if key == "a" {
+    DockPanel { title: "A", content: text_input(FieldSpec { value: s.typed, on_edit: Typed }) }
+  } else {
+    DockPanel { title: "B", content: text("b") }
+  },
+  Changed,
+  Closed
+)
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var platform = timed_platform([Waited(1)], Size { w: 600.0, h: 300.0 })
+  var renderer = Blank {}
+  let app = App {
+    view: view,
+    update: update,
+    subscriptions: (_: State) -> []Subscription<Ev> => [],
+    background: Color { r: 0, g: 0, b: 0 },
+    shortcuts: [Shortcuts { of: (_: State) -> []Shortcut<Ev> => [Shortcut { key: Character('m'), mods: Modifiers { primary: true }, event: Moved }] }],
+  }
+  var host = host_of(app, State { tree: dock_tabs(["a"]) }, platform)
+  let _ = host.step(platform, renderer, fonts)
+  let at = field(host.main_laid(), Point {}) ?? Point { x: -1.0, y: -1.0 }
+  let steps: []Step = [
+    Played(PointerMoved(at)), Played(PointerDown(Primary, at, 1)), Played(PointerUp(Primary, at)),
+    Played(TextTyped("x")), Waited(1),
+    Played(KeyPressed(Character('m'), Modifiers { primary: true })), Waited(1),
+    Played(TextTyped("y")), Waited(1),
+  ]
+  platform.steps = [...platform.steps, ...steps]
+  while platform.next < platform.steps.len() { let _ = host.step(platform, renderer, fonts) }
+  let moved = (field(host.main_laid(), Point {}) ?? Point {}).x > 300.0
+  println("the field moved right: ${moved}; typed '${host.state.typed}'")
+  fonts.close()
+  0
+}
+
+/// The middle of the text field in laid, if there is one.
+let field = pure (laid: ref Laid<Ev>, origin: Point) -> Maybe<Point> => {
+  if let Editable(_) = laid.kind {
+    return Some(Point { x: origin.x + laid.size.w / 2.0, y: origin.y + laid.size.h / 2.0 })
+  }
+  for child in laid.children {
+    if let Some(p) = field(child.laid, Point { x: origin.x + child.at.x, y: origin.y + child.at.y }) { return Some(p) }
+  }
+  None
+}
+`)
+	want := "the field moved right: true; typed 'xy'\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 func TestRun_UiDockExample(t *testing.T) {
 	t.Parallel()
 	skipWithoutText(t)

@@ -765,9 +765,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] Several windows on Linux are unverified** — X11 placing a torn-off window where
   the tab was let go, SDL's capture carrying the drag past the window, and Wayland, where no
   window is placed and so no tab crosses windows. Play `examples/ui/windows.lyra` in the VM.
-- **[OPEN] A docked panel's framework state does not follow it** — identities are paths, so a
-  panel docked elsewhere (or whose group a split moves) starts with no scroll, focus or caret.
-  Keying a dock's panels by their keys needs identities that are not wholly hierarchical (10/27).
+- **[DONE 11/16] A docked panel's framework state follows it** — within a window; identities
+  stay paths and `Ui` moves a moved panel's state after it (COMPLETED.md 11/16). A panel
+  carried to another window still starts afresh there.
 - **[DONE 11/16] A modal is heard as one, and keeps the app's shortcuts out** — a modal
   dialog to AccessKit, the window's tree only the dialog while it is open; `App.shortcuts` and
   menus' wait but a menu inside it (COMPLETED.md 11/16). The Mac's own bar still answers.
