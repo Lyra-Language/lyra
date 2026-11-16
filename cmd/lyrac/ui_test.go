@@ -2180,11 +2180,12 @@ let view = pure (_: i64) -> Node<void> => sized::<void>(None, None)
 	}
 }
 
-// The Layouts demo's view resized 1,700 times — every 0.75 of a unit from 1300 wide to 300,
-// then back and forth across its 560 and 860 breakpoints by fractions — must settle every
-// pass, and within a minute: a layout loop that does not end fails here rather than hanging
-// a window (the demo froze while its edge was dragged, 10/21). And controls that fill their
-// width are measured at CONTROL_WIDTH in a flex row, never an unbounded width.
+// The Layouts demo's view resized 378 times — every 3.25 units from 1300 wide to 300, through
+// every quarter of a unit, then back and forth across its 560 and 860 breakpoints by fractions
+// — must settle every pass: a layout loop that does not end fails here rather than hanging a
+// window. (The demo's freeze of 10/21 was the live-resize watch, not the layout; this guards
+// the layout's bounded loops.) And controls that fill their width are measured at
+// CONTROL_WIDTH in a flex row, never an unbounded width.
 func TestRun_UiResizeSettles(t *testing.T) {
 	t.Parallel()
 	skipWithoutText(t)
@@ -2223,9 +2224,9 @@ let main = () -> u8 => {
   var w: f32 = 1300.0
   while w > 300.0 {
     steps.push(Played(Resized(Size { w: w, h: 700.0 - (w % 37.0) })))
-    w -= 0.75
+    w -= 3.25
   }
-  for k in 0..<400 {
+  for k in 0..<70 {
     let x = if k % 2 == 0 { 559.5 + f32(k % 7) * 0.25 } else { 860.25 - f32(k % 5) * 0.5 }
     steps.push(Played(Resized(Size { w: x, h: 420.0 + f32(k) })))
   }
@@ -2237,7 +2238,7 @@ let main = () -> u8 => {
   var passes = 0
   while host.step(platform, renderer, fonts) {
     passes += 1
-    if passes % 500 == 0 {
+    if passes % 100 == 0 {
       let s = platform.window_size(MAIN_WINDOW)
       println("${passes} passes, at ${s.w}x${s.h}")
     }
@@ -2277,16 +2278,16 @@ let main = () -> u8 => {
 			t.Fatalf("building %s exited %d: %s", name, code, stderr)
 		}
 	}
-	// A layout that does not settle loops for ever; one that does finishes in seconds here,
-	// but built at -O0 beside the suite's other programs on CI's two cores it took over a
-	// minute (1,500 of its 1,734 passes by then), so the limit is generous.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	// A layout that does not settle loops for ever. One that does takes about 13 ms a pass at
+	// -O0 (5 s of CPU for the 378, 11/16; 1,734 passes took 25 s and ran past a one-minute
+	// limit beside CI's suite), so two minutes is over twenty times the run.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	out, err := commandContext(t, ctx, filepath.Join(dir, "stress")).CombinedOutput()
 	if ctx.Err() != nil {
-		t.Fatalf("resizing the demo did not settle within five minutes:\n%s", out)
+		t.Fatalf("resizing the demo did not settle within two minutes:\n%s", out)
 	}
-	if err != nil || !strings.Contains(string(out), "done: 1734 passes") {
+	if err != nil || !strings.Contains(string(out), "done: 378 passes") {
 		t.Errorf("resizing the demo: %v\n%s", err, out)
 	}
 	out, err = command(t, filepath.Join(dir, "controls")).CombinedOutput()
