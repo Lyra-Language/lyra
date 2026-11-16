@@ -1,0 +1,167 @@
+module std.genesis.raster
+//! Raster effects: colours changed partway down the picture, by the VDP's horizontal
+//! interrupt — a palette swapped below a waterline, the sky's colour stepped a few lines at a
+//! time into a gradient. A game gives a table of [Raster]s, each a line and the colour to set
+//! there, and [start]s them as a scene starts; this module's own `@interrupt(hblank)`
+//! handler sets each as the VDP reaches its line, and every vertical blank the colours go
+//! back to the ones the game set (`vdp.color_of`), so each frame starts from the top.
+//!
+//! ```
+//! import std.genesis.raster
+//! import std.genesis.raster.{ Raster }
+//!
+//! // The backdrop darker from line 112, and darker again from 168.
+//! const SKY: [2]Raster = #[
+//!   Raster { line: 112, color: 0, word: 0x0400 },
+//!   Raster { line: 168, color: 0, word: 0x0200 },
+//! ]
+//!
+//! raster.start(SKY, 0, 2, 56)
+//! ```
+//!
+//! **The colours fade with the screen**: `std.genesis.palette`'s fades tell the VDP how far
+//! along they are (`vdp.set_fade`), and each change is shown through it (`vdp.faded`).
+//!
+//! **The vertical blank interrupt must show the sprites** (`sprites.show`, which sends the
+//! colours back first), as every game Vega writes does. **The handler is this module's**: a
+//! program importing it has no `@interrupt(hblank)` of its own. It asks the VDP which line it
+//! is on (`vdp.line_now`) rather than counting interrupts, so one taken late — held off by a
+//! run of writes from the game's loop — still sets every colour due, a few lines down.
+
+import std.genesis.vdp
+
+/// One colour change: from `line` of the picture (1–223; line 0 shows the colour as set) down,
+/// CRAM colour `color` (palette × 16 + index, 0–63) is `word`, as `vdp.rgb` makes it.
+pub struct Raster {
+  line: u16,
+  color: u16,
+  word: u16,
+}
+
+/// The most changes one [start] takes.
+pub const MAX_RASTERS: u16 = 64
+
+/// The changes `table[first]` to `table[first + count - 1]` — in order down the picture — made
+/// each frame from now on, the VDP interrupting every `every` lines (each change's line a
+/// multiple of it; fewer interrupts cost the 68000 less). A `count` of 0 stops them. As a
+/// scene starts.
+pub let start<const N: i64> = (
+  table: ref [N]Raster,
+  first: u16,
+  count: u16,
+  every: u16
+) -> void => {
+  vdp.disable_hblank_interrupt()
+  let taken = if count > MAX_RASTERS { MAX_RASTERS } else { count }
+  for k: u16 in 0..<taken { changes[k] = table[i64(first + k)] }
+  total = taken
+  last_line = 0xFFFF
+  if taken > 0 { make_ready(0) }
+  wrapped = false
+  vdp.send_colors_each_frame(taken > 0)
+  if taken > 0 {
+    let step = if every < 1 { 1 } else if every > 224 { 224 } else { every }
+    vdp.enable_hblank_interrupt(u8(step - 1))
+  }
+}
+
+/// No more changes: the colours stay as the game set them.
+pub let stop = () -> void => {
+  vdp.disable_hblank_interrupt()
+  total = 0
+  vdp.send_colors_each_frame(false)
+}
+
+/// What the VDP runs on its horizontal interrupt: the change made ready, if its line is
+/// next, written in the gap before that line — then any others of that line, and the one
+/// after them made ready. A line no later than the last seen is a new frame's: from the
+/// first change again.
+///
+/// **The gap is narrow.** A 40-cell line's pixel x goes out at `H` 6 + (x + 13) / 2, so its
+/// last pixels go after the counter has moved to the next line (at `H` 165): between line
+/// L - 1's last pixel and line L's first, the counter reads L from `H` 173 to `H` 11 — about
+/// a hundred of the 68000's cycles, fewer than taking the interrupt costs. So the VDP raises
+/// it a line early (on the line before each multiple of [start]'s `every`, which is why a
+/// change's line is a multiple), the handler points the port at the colour, waits for the
+/// counter to reach the line and writes the one word, which the VDP takes in the gap. **The
+/// wait is one read a pass** of the H/V counter: a pass of a few more instructions came round
+/// too late and the colour began some pixels into the line, and so did a frame's first
+/// change while bookkeeping came before the write. Checked in Sheliak, whose beam is
+/// BlastEm's, pixel for pixel, on several frames (`genesis_raster_test.go`). **Not always
+/// exact**: the interrupt waits for the instruction under way, and for a write the game's
+/// loop holds it around, so now and then a colour starts a few pixels into its line — in
+/// the hero's sky, one change in several hundred, 12 pixels. The vertical blank's handler
+/// does not hold it: the runtime lets it in there (a row of music held it off for lines).
+@interrupt(hblank)
+let on_line = () -> void => {
+  let line = vdp.line_now()
+  let fresh = line <= last_line
+  // A new frame with the last one's changes not all made: from the first again. Rare, so
+  // the common way to the write below is a read and two compares, which the gap is narrow
+  // enough to need — a frame's first change, behind this bookkeeping, came pixels late.
+  if fresh && !wrapped { make_ready(0) }
+  if (wrapped && !fresh) || line + 1 < ready_line {
+    if fresh { wrapped = false }
+    last_line = line
+    return
+  }
+  let port = control()
+  let words = data()
+  let beam = counter()
+  unsafe {
+    port.write_volatile(ready_command)
+    port.write_volatile(0)
+  }
+  // To the change's line: one cheap read a pass, as a pass of anything more missed the gap.
+  let until = ready_line << 8
+  while unsafe { beam.read_volatile() } < until {}
+  unsafe { words.write_volatile(ready_word) }
+  wrapped = false
+  last_line = line
+  var k = next + 1
+  while k < total && changes[k].line <= ready_line {
+    unsafe {
+      port.write_volatile(0xC000 | ((changes[k].color & 63) * 2))
+      port.write_volatile(0)
+      words.write_volatile(vdp.faded(changes[k].word))
+    }
+    k += 1
+  }
+  if k < total { make_ready(k) } else {
+    make_ready(0)
+    wrapped = true
+  }
+}
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// Change `k` made ready for the interrupt: its line, CRAM address command and word.
+let make_ready = (k: u16) -> void => {
+  next = k
+  ready_line = changes[k].line
+  ready_command = 0xC000 | ((changes[k].color & 63) * 2)
+  ready_word = vdp.faded(changes[k].word)
+}
+
+let control = pure () -> ^mut u16 => unsafe { pointer_at(0xC00004) }
+
+/// The VDP's H/V counter: the line in its high byte, the place along it in its low.
+let counter = pure () -> ^u16 => unsafe { pointer_at(0xC00008) }
+
+let data = pure () -> ^mut u16 => unsafe { pointer_at(0xC00000) }
+
+/// The changes [start] took, and how many.
+var changes: [64]Raster = #[Raster { line: 0, color: 0, word: 0 }; 64]
+var total: u16 = 0
+
+/// The change made ready: its place among the changes, line, address command and word; and
+/// whether it is the next frame's (the last of this one made).
+var next: u16 = 0
+var ready_line: u16 = 0
+var ready_command: u16 = 0
+var ready_word: u16 = 0
+var wrapped: bool = false
+
+/// The line the last interrupt came on.
+var last_line: u16 = 0xFFFF
+

@@ -75,6 +75,7 @@ pub let init = () -> void => {
   }
   for i: u16 in 0..<32 { z80_poke(QTAIL + i, 0) }
   queue_tail = 0
+  queue_room = 0
   dac_serial = 0
   dac_command = 0
   dac_on = false
@@ -184,13 +185,10 @@ pub let update_music_sampled<const N: i64, const P: i64, const S: i64, const E: 
   follow_chosen(effect_samples, samples, music.dac)
   // The Z80 stopped only while what was made is copied to it: a byte copied a byte.
   take_bus()
-  for i: i16 in 0..<i16(writes) { queue_fm(
-    music_fm[i * 3],
-    music_fm[i * 3 + 1],
-    music_fm[i * 3 + 2]
-  ) }
+  queue_all(music_fm, writes)
   queue_effects(effect_writes)
   queue_tracks()
+  queue_shown()
   send_dac()
   give_bus()
 }
@@ -278,9 +276,7 @@ let track_holds = () -> u16 =>
 
 /// The writes [follow_chosen] asked for, to the driver's queue after the effects'.
 let queue_tracks = () -> void => {
-  for i: i16 in 0..<i16(track_writes) {
-    queue_fm(track_fm[i * 3], track_fm[i * 3 + 1], track_fm[i * 3 + 2])
-  }
+  queue_all(track_fm, track_writes)
   track_writes = 0
 }
 
@@ -308,6 +304,7 @@ pub let update_sampled<const N: i64, const P: i64, const S: i64, const E: i64> =
   take_bus()
   queue_effects(writes)
   queue_tracks()
+  queue_shown()
   send_dac()
   give_bus()
 }
@@ -325,10 +322,9 @@ pub let update<const N: i64, const P: i64> = (
   if tracks { follow_chosen(NO_SAMPLES, NO_BYTES, Dac {}) }
   take_bus()
   queue_effects(writes)
-  if tracks {
-    queue_tracks()
-    send_dac()
-  }
+  if tracks { queue_tracks() }
+  queue_shown()
+  if tracks { send_dac() }
   give_bus()
 }
 
@@ -899,12 +895,42 @@ let effects_frame<const N: i64, const P: i64> = (
   player.fm_frame(steps, patches, effects_fm)
 }
 
-let queue_effects = (writes: i64) -> void => {
-  for i: i16 in 0..<i16(writes) { queue_fm(
-    effects_fm[i * 3],
-    effects_fm[i * 3 + 1],
-    effects_fm[i * 3 + 2]
-  ) }
+let queue_effects = (writes: i64) -> void => queue_all(effects_fm, writes)
+
+/// `count` writes of `fm` (three bytes each: bank, register, value) queued for the driver
+/// — waiting, the bus given back, while the queue is full. The driver sees them at
+/// [queue_shown]: the tail is written once a frame, and the head read only when the room
+/// counted runs out. One loop through pointers: a call a write, each reading the head and
+/// writing the tail, had the queue a fifth of a pattern's first frame (11/16).
+let queue_all<const N: i64> = (fm: ref [N]u8, count: i64) -> void => {
+  if count <= 0 || N < 3 { return }
+  var left = u16(count.min(N / 3))
+  let from: ^u8 = unsafe { &fm[0] }
+  let queue: ^mut u8 = unsafe { pointer_at(0xA00000 + u32(QUEUE)) }
+  // The tail and room kept here through the loop, each counter wrapping as it is meant to:
+  // the 68000 checks every add, and stored a global each time round.
+  var tail = queue_tail
+  var room = queue_room
+  var at: i64 = 0
+  while left > 0 {
+    if room == 0 {
+      queue_tail = tail
+      room_counted()
+      room = queue_room
+    }
+    unsafe {
+      let p = queue.offset(i64(tail))
+      p.write_volatile((from.offset(at)^ & 1) * 2)
+      p.offset(0x100).write_volatile(from.offset(at + 1)^)
+      p.offset(0x200).write_volatile(from.offset(at + 2)^)
+    }
+    at = at.wrapping_add(3)
+    tail = tail.wrapping_add(1) & 0xFF
+    room = room.wrapping_sub(1)
+    left = left.wrapping_sub(1)
+  }
+  queue_tail = tail
+  queue_room = room
 }
 
 /// The DAC as `dac` wants it, made a command for the driver ([send_dac]): a new note's
@@ -1049,19 +1075,25 @@ let block16 = (at: u16, value: u16) -> void => {
   block8(at + 1, u8(value >> 8))
 }
 
-/// `value` to register `reg` of the YM2612's bank `bank`, queued for the driver — waiting,
-/// the bus given back, while the queue is full.
-let queue_fm = (bank: u8, reg: u8, value: u8) -> void => {
-  while ((u16(z80_peek(QHEAD)) + 255 - queue_tail) & 0xFF) == 0 {
+/// The queue's room counted again, what is queued shown the driver first — waiting, the
+/// bus given back, while it is full.
+let room_counted = () -> void => {
+  z80_poke(QTAIL, u8(queue_tail))
+  queue_room = (u16(z80_peek(QHEAD)) + 255 - queue_tail) & 0xFF
+  while queue_room == 0 {
     give_bus()
     for _: i16 in 0..<64 { let _ = unsafe { z80_bus().read_volatile() } }
     take_bus()
+    queue_room = (u16(z80_peek(QHEAD)) + 255 - queue_tail) & 0xFF
   }
-  z80_poke(QUEUE + queue_tail, (bank & 1) * 2)
-  z80_poke(QUEUE + 0x100 + queue_tail, reg)
-  z80_poke(QUEUE + 0x200 + queue_tail, value)
-  queue_tail = (queue_tail + 1) & 0xFF
+}
+
+/// The writes [queue_all] queued shown the driver — before the frame's DAC command, which
+/// the driver must take after them (a sample's stop taken first left it sounding) — and
+/// the room counted again next frame.
+let queue_shown = () -> void => {
   z80_poke(QTAIL, u8(queue_tail))
+  queue_room = 0
 }
 
 /// A byte to the PSG's port.
@@ -1104,6 +1136,9 @@ var effects_fm: [128]u8 = #[0; 128]
 
 /// The queue's next free place.
 var queue_tail: u16 = 0
+
+/// How many more writes the queue has room for, as last counted; 0 to count again.
+var queue_room: u16 = 0
 
 /// The DAC as last told the driver: the command's serial, whether a sample plays, the note
 /// it was started for and whose it is ([follow_dac_from]'s `source`), its rate and level;

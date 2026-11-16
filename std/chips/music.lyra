@@ -97,6 +97,13 @@ pub struct Cell {
   param2: u8 = 0,
 }
 
+impl Cell {
+  /// Whether the cell holds nothing: no note, instrument, volume or effect.
+  pub let blank = pure (self) -> bool =>
+    self.note == EMPTY && self.instrument == EMPTY && self.volume == EMPTY &&
+    self.effect == EMPTY && self.effect2 == EMPTY
+}
+
 /// A song: its orders, from `first_order` of the game's, `rows` rows a pattern, `speed`
 /// ticks a row to start with, and the order it goes back to after its last.
 pub struct Tune {
@@ -224,8 +231,14 @@ pub struct MusicChannel {
   target: i32 = 0,
   sounding: bool = false,
   instrument: i16 = -1,
-  /// The patch last written to the channel; -1 for none (or an effect's since).
+  /// The patch last written to the channel; -1 for none (or an effect's since). And what a
+  /// note's level and panning need of it, kept as it is written ([kept_patch]): its carriers
+  /// (operator 1 the lowest bit), operators 1–4's levels (register 40) and its register B4
+  /// bits — so a note's level reads no patch of the tables (11/16).
   written: i16 = -1,
+  carriers: u8 = 0,
+  levels: [4]u8 = #[0; 4],
+  sensitivity: u8 = 0,
   /// The volume, in 16ths of a step (0–240), and the last given the chip (-1 none yet).
   volume: i16 = 240,
   heard_volume: i16 = -1,
@@ -303,6 +316,12 @@ pub struct MusicPlayer {
   /// worked out for (-1: none): each worked out again only when it changes.
   heard_muted: u16 = 0,
   dac_pitch: i32 = -1,
+  /// Where each channel's pattern starts in the order `starts_of` (of the whole table; -1
+  /// none yet): asked of the tables once an order, on the tick before its first row — a
+  /// checked multiply apiece, a call on the 68000, which the order's first row could not
+  /// spare (11/16).
+  starts: [13]i32 = #[0; 13],
+  starts_of: i32 = -1,
 }
 
 /// A player with nothing playing.
@@ -330,9 +349,21 @@ impl MusicPlayer {
     self.owed = (60 - i16(song.rate.max(1))).max(0)
     self.jump = -1
     self.break_to = -1
+    self.starts_of = -1
     // What the chips were given is kept, so nothing stale is taken as written.
     for k: i16 in 0..<CHANNELS { self.voices[k].restart() }
     for k: i16 in 0..<CHANNELS { self.voices[k].operator = operator_of(k, song.extended) }
+  }
+
+  /// The tables the song is read from changed — an editor's, made again as the song is
+  /// edited while it plays: what the player keeps of them (the order's pattern starts, the
+  /// levels of the patch written to each channel) asked again.
+  pub let tables_changed<d> where d: MusicData = (self: mut, tables: ref d) -> void => {
+    self.starts_of = -1
+    for k: i16 in 0..<CHANNELS {
+      let written = i32(self.voices[k].written)
+      if written >= 0 && written < tables.patches() { self.voices[k].kept_levels(tables.patch(written)) }
+    }
   }
 
   /// The channels the song plays: ten, or with FM 3 extended thirteen.
@@ -389,6 +420,7 @@ impl MusicPlayer {
   ) -> void => {
     let reading = self.tick == 0
     let at = i32(self.song.first_order) + self.order
+    if reading { self.ready_starts(tables, at) }
     // A mute changed: every channel's level worked out again.
     if self.muted != self.heard_muted {
       for k: i16 in 0..<CHANNELS { self.voices[k].steady = false }
@@ -402,12 +434,24 @@ impl MusicPlayer {
       let skipped = self.voices[k].resting() && !is_held(held, k) && k != FIRST_PSG + 2
       if !reading && skipped { continue }
       if reading {
-        let cell = tables.cell(tables.pattern(at, i32(k)) + self.row)
-        self.song_control(cell)
-        if is_held(held, k) {
-          self.voices[k].remember(cell)
+        let cell = tables.cell(self.starts[k] + self.row)
+        if cell.blank() && self.voices[k].unmoved() {
+          // Most of a song's cells: nothing to take, and nothing the row's effects were
+          // doing to stop — the channel stays steady, and [sound] has nothing to work out.
+          // Taken, a blank cell cost the 68000 as much as a note (11/16).
+          // What [read] would change of it; a held channel's cell is only remembered, its
+          // cut and delay left as they were (`TestSMS_MusicSaysWhatTheSharedPlayerSays`).
+          if !is_held(held, k) {
+            self.voices[k].cut_at = -1
+            self.voices[k].delay_at = -1
+          }
         } else {
-          self.voices[k].read(tables, k, cell, self.speed, psg, fm, out)
+          self.song_control(cell)
+          if is_held(held, k) {
+            self.voices[k].remember(cell)
+          } else {
+            self.voices[k].read(tables, k, cell, self.speed, psg, fm, out)
+          }
         }
       } else if self.voices[k].delay_at == self.tick && !is_held(held, k) {
         self.voices[k].delay_at = -1
@@ -437,6 +481,20 @@ impl MusicPlayer {
     self.follow_dac(tables)
     self.key_ch3(fm, out)
     self.advance()
+    if self.tick == 0 {
+      self.ready_starts(tables, i32(self.song.first_order) + self.order)
+    }
+  }
+
+  /// The patterns' starts of order `at` (of the whole table) in [starts], unless they are.
+  let ready_starts<d> where d: MusicData = (
+    self: mut,
+    tables: ref d,
+    at: i32
+  ) -> void => {
+    if self.starts_of == at { return }
+    for k: i16 in 0..<self.channels() { self.starts[k] = tables.pattern(at, i32(k)) }
+    self.starts_of = at
   }
 
   /// FM 3's special mode as the song wants it, and its operators' keys: each operator
@@ -538,15 +596,42 @@ impl MusicChannel {
   /// A song started: what the chip holds kept, the rest new.
   let restart = (self: mut) -> void => {
     let written = self.written
+    let carriers = self.carriers
+    let levels = self.levels
+    let sensitivity = self.sensitivity
     let pan = self.heard_pan
     let sounding = self.sounding
     let dac = self.dac
     self = MusicChannel {}
     self.written = written
+    self.carriers = carriers
+    self.levels = levels
+    self.sensitivity = sensitivity
     self.heard_pan = pan
     self.sounding = sounding
     self.dac = dac
   }
+
+  /// Patch `patch` written to the channel as instrument `ins`: what [sound_fm] needs of it.
+  let kept_patch = (self: mut, ins: i32, patch: ref FmPatch) -> void => {
+    self.written = i16(ins)
+    self.kept_levels(patch)
+  }
+
+  /// What a note's level and panning need of `patch`, the one written to the channel.
+  let kept_levels = (self: mut, patch: ref FmPatch) -> void => {
+    self.carriers = carrier_mask(patch.feedback_algorithm & 7)
+    for o: i16 in 0..<4 { self.levels[o] = patch.ops[o * 7 + 1] & 0x7F }
+    self.sensitivity = patch.sensitivity & 0x37
+  }
+
+  /// Whether no row effect is under way — an arpeggio, a slide, a volume slide or a vibrato,
+  /// each a row's, which a cell without one stops: so a blank cell changes nothing.
+  let unmoved = pure (self) -> bool =>
+    self.arpeggio == 0 &&
+    self.slide == 0 &&
+    self.volume_slide == 0 &&
+    self.vibrato_depth == 0
 
   /// Whether nothing is due on the channel this tick: it is [steady], and no note is delayed
   /// to a tick or cut at one.
@@ -681,8 +766,9 @@ impl MusicChannel {
     self.slide = 0
     self.volume_slide = 0
     self.vibrato_depth = 0
-    self.effect(cell.effect, cell.param)
-    self.effect(cell.effect2, cell.param2)
+    // Most cells have none: an empty one costs the 68000 its `match` otherwise.
+    if cell.effect != EMPTY { self.effect(cell.effect, cell.param) }
+    if cell.effect2 != EMPTY { self.effect(cell.effect2, cell.param2) }
   }
 
   /// Effect `code` with `param`, as the row sets it (the song's control is the player's).
@@ -745,7 +831,7 @@ impl MusicChannel {
         }
         let (bank, reg, value) = patch_write(2, patch, 28)
         out.put_fm(fm, bank, reg, value)
-        self.written = i16(ins)
+        self.kept_patch(ins, patch)
         self.heard_pan = 0xC0
       }
       self.op_keyed = true
@@ -785,7 +871,7 @@ impl MusicChannel {
           let (bank, reg, value) = patch_write(ch, patch, w)
           out.put_fm(fm, bank, reg, value)
         }
-        self.written = i16(ins)
+        self.kept_patch(ins, patch)
         self.heard_pan = 0xC0
       }
       self.keying = true
@@ -876,7 +962,7 @@ impl MusicChannel {
       self.heard_pitch = pitch
       self.heard_volume = level
     } else if is_fm(k) {
-      self.sound_fm(tables, k, pitch, level, fm, out)
+      self.sound_fm(k, pitch, level, fm, out)
     } else {
       self.sound_psg(k, pitch, level, psg, out)
     }
@@ -908,9 +994,8 @@ impl MusicChannel {
     at.clamp(0, n - 1)
   }
 
-  let sound_fm<d> where d: MusicData = (
+  let sound_fm = (
     self: mut,
-    tables: ref d,
     k: i16,
     pitch: i32,
     level: i16,
@@ -922,7 +1007,7 @@ impl MusicChannel {
     let ch = if op > 0 { u8(2) } else { u8(k) }
     let bank: u8 = if ch < 3 { 0 } else { 1 }
     let slot = ch % 3
-    if self.written < 0 || i32(self.written) >= tables.patches() { return }
+    if self.written < 0 { return }
     if pitch != self.heard_pitch {
       let (block, fnum) = fm_pitch(pitch)
       if op > 0 {
@@ -937,17 +1022,16 @@ impl MusicChannel {
       self.heard_pitch = pitch
     }
     if self.pan != self.heard_pan || level != self.heard_volume {
-      let patch = tables.patch(i32(self.written))
       if self.pan != self.heard_pan {
-        out.put_fm(fm, bank, 0xB4 + slot, self.pan | (patch.sensitivity & 0x37))
+        out.put_fm(fm, bank, 0xB4 + slot, self.pan | self.sensitivity)
         self.heard_pan = self.pan
       }
       if level != self.heard_volume {
         // Its carriers quieter — an operator channel's own operator only, if it is one.
-        let carriers = carrier_mask(patch.feedback_algorithm & 7)
+        let carriers = self.carriers
         for o: i16 in 1..<=4 {
           if (carriers >> u8(o - 1)) & 1 == 0 || (op > 0 && op != o) { continue }
-          let base = patch.ops[(o - 1) * 7 + 1] & 0x7F
+          let base = self.levels[o - 1]
           out.put_fm(
             fm,
             bank,
@@ -1012,6 +1096,9 @@ impl MusicChannel {
 pub struct Out {
   psg: i16 = 0,
   fm: i16 = 0,
+  /// Where the next FM write's three bytes go: `fm` × 3, kept so, as the 68000 multiplies
+  /// slowly and each index of three would be checked.
+  fm_at: i16 = 0,
 }
 
 impl Out {
@@ -1022,11 +1109,12 @@ impl Out {
   }
 
   let put_fm = (self: mut, buffer: mut [768]u8, bank: u8, reg: u8, value: u8) -> void => {
-    if self.fm >= 256 { return }
-    let at = self.fm * 3
+    let at = self.fm_at
+    if at < 0 || at > 765 { return }
     buffer[at] = bank
     buffer[at + 1] = reg
     buffer[at + 2] = value
+    self.fm_at = at + 3
     self.fm += 1
   }
 }
@@ -1093,14 +1181,20 @@ pub const FM_FNUMS: [13]i32 = #[
 /// A note (0–127) as its octave and its semitone in it — by subtraction: the 68000 divides
 /// in a call.
 let octave_of = pure (note: i32) -> (i32, i32) => {
-  var n = note
-  var octave: i32 = 0
-  while n >= 12 {
-    n -= 12
-    octave += 1
-  }
-  (octave, n)
+  // From a table: counted down by twelves, a high note took the 68000 ten checked loops.
+  let n = note.clamp(0, 127)
+  (i32(NOTE_OCTAVES[n]), n - i32(NOTE_OCTAVES[n]) * 12)
 }
+
+/// Each MIDI note's octave (C-1 is 0's), for [octave_of].
+const NOTE_OCTAVES: [128]u8 = #[
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+  6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+  8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9,
+  10, 10, 10, 10, 10, 10, 10, 10,
+]
 
 /// The PSG period that plays `pitch` (64ths of a semitone from MIDI 0), before it is held
 /// to the chip's 1–1023: between the semitones either side.
@@ -1109,7 +1203,8 @@ pub let psg_period = pure (pitch: i32) -> i32 => {
   let (octave, semitone) = octave_of(p >> 6)
   let a = PSG_PERIODS[semitone]
   let b = PSG_PERIODS[semitone + 1]
-  let v = (a << 6) - (a - b) * (p & 63)
+  // A whole semitone, most notes, needs no multiply: the 68000 calls one for an `i32`.
+  let v = if (p & 63) == 0 { a << 6 } else { (a << 6) - (a - b) * (p & 63) }
   let shift = octave + 6
   (v + (1 << (shift - 1))) >> shift
 }
@@ -1120,7 +1215,7 @@ pub let fm_pitch = pure (pitch: i32) -> (i32, i32) => {
   let (octave, semitone) = octave_of(p >> 6)
   let a = FM_FNUMS[semitone]
   let b = FM_FNUMS[semitone + 1]
-  let v = (a << 6) + (b - a) * (p & 63)
+  let v = if (p & 63) == 0 { a << 6 } else { (a << 6) + (b - a) * (p & 63) }
   var fnum = (v + 128) >> 8
   var block = octave - 1
   if block < 0 {

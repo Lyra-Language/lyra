@@ -9,30 +9,6 @@ Newest first.
 
 ## Dated log
 
-### 11/16/26 — `TestRun_UiResizeSettles` plays 378 resizes, not 1,734
-
-The test resized the Layouts demo 1,734 times. It swept every 0.75 of a unit from 1300 wide
-to 300, then jittered 400 times across the 560 and 860 breakpoints. Each pass lays the whole
-demo out afresh, about 13 ms at `-O0`. It took 25 s of CPU, and 90 s of wall time alone on a
-loaded Mac today; it had already run past its first one-minute limit beside CI's suite, and
-10/29 raised the limit to five.
-
-**What the count was for.** The 10/21 entry says the demo's freeze was the live-resize watch,
-not the layout: headless, the layout never hung, and every iterative loop in it is bounded.
-So the sweep guards against a hang no particular width has caused, and its fineness bought
-nothing specific. Now:
-- **The sweep:** every 3.25 units, which still lands on every quarter of a unit.
-- **The breakpoints:** 70 jitters, covering each of the 7 and 5 offsets several times.
-- **The total:** 378 passes in 5 s of CPU; the test takes 10 s alone.
-
-The budget is two minutes, set from that measured pass at over twenty times the run.
-
-**The cascade was looked at first.** A profile put about 15% of a pass in
-`ui.style.applied`: each element is matched against every rule, and the eight theme rules
-that are selector lists are split for each. A rewrite without allocations made no measurable
-difference (27 s against 25 s of CPU, within the noise), so it was not kept. Laying out the
-whole tree at each new size is the cost, which is what the test exists to exercise.
-
 ### 11/16/26 — Several windows: AccessKit, subscriptions and a drawn title bar for each
 
 Three things a window beside the main one did not have: VoiceOver heard the main window alone,
@@ -138,6 +114,38 @@ The glTF viewer's two notes blamed the missing uniforms for its parameter textur
 second lighting program. The texture still suits it, since it is uploaded once and kept by
 the material, so only the reasoning changed; moving it to uniforms is an `[IDEA]`.
 
+### 11/16/26 — The music player's row fits the 68000's frame
+
+The hero's theme ran its vertical blank handler 145–177 lines on a row and 302 on a
+pattern's first tick — past the next frame's blank, so that frame's colours and sprites went
+out in the picture. Now 84–99 and 195, every YM2612 and PSG write the same, in the same
+order, over 1,800 frames (Sheliak scratch-patched to log them; the DAC's data left out).
+Measured by the handler's length a frame: a scratch Sheliak logging the clock at the
+runtime stub's `jsr` into it and back; profiled by function with the player's functions
+`@noinline` in a scratch std (which misleads: inlined, it all shares one function's
+registers), then by instruction in the real build.
+- **A blank cell is nothing to do**: `remember` cleared a channel's row effects and its
+  `steady`, so `sound` worked out every channel again every row though most cells hold
+  nothing. A blank cell on a channel no row effect is moving now changes nothing but what
+  `read` clears — and on a held channel not that: only `remember` runs there, a pending cut
+  kept (`TestSMS_MusicSaysWhatTheSharedPlayerSays`, the 16-bit player's oracle, caught it).
+  Rows halved. An empty effect skips `effect`'s `match`.
+- **An order's pattern starts are kept**, asked of the tables on the tick before its first
+  row (a checked `i32` multiply each, a library call on the 68000); the octave is a table
+  (counted down by twelves, a high note took ten checked loops); a whole semitone skips its
+  pitch's multiply; `put_fm` keeps its byte index; a channel keeps its patch's carriers,
+  levels and B4 bits as the patch is written, for a note's level. An editor remaking the
+  tables while a song plays calls `MusicPlayer.tables_changed` (Vega's preview does).
+- **The Z80's queue** (`std.genesis.sound`): a call a write, each reading the head and
+  writing the tail through the Z80's RAM, was a fifth of the worst frame. One loop through
+  pointers, the room counted once and the tail written once — before the frame's DAC
+  command, or a sample's stop came before the writes it used to follow.
+- **What did not pay**: an envelope kept on the channel (a line more on every frame, for
+  nothing measured); the colours sent by DMA (a DMA holds the Z80's bus, and the whistle
+  played flatter, past `whistle_heard`'s 4 Hz, for two lines). A 500 Hz test sample's stop
+  is now judged near 500 Hz (`TestRun_GameMusicPlaysBothChips`): the DAC's rate is the Z80's,
+  3 Hz flat is a whole cycle of the window, and the power at exactly 500 fell to nothing.
+
 ### 11/15/26 — Raster effects on the Genesis: a colour in the gap between two lines
 
 `std.genesis.raster`: a table of colour changes, each from a line of the picture down, made
@@ -152,9 +160,37 @@ by the horizontal interrupt — Vega's raster effects (a sky's gradient, a water
   writes the one word, which lands in the gap.
 - **The wait had to be one read a pass.** Testing the H position too — `v == line && h ≥
   173` — made each pass about 70 slots, so the loop saw the counter only past the gap and
-  the colour began 12 to 44 pixels into its line. `while counter < line << 8 {}` lands every
-  change exactly, with the game's loop writing VRAM throughout or not, on every frame tried.
-  A probe written into RAM and read from a Sheliak save state measured each of these.
+  the colour began 12 to 44 pixels into its line. `while counter < line << 8 {}` lands a
+  change exactly — but not always: the interrupt is taken only between instructions, and
+  not while the game's loop holds it around a write, so now and then one starts 12 to 44
+  pixels in. The test's five frames were exact by luck; over 60, one was late. **What runs
+  before the write had to be short too**: the frame's first change, behind the handler's
+  new-frame bookkeeping, was the late one, every time; with the bookkeeping after the write
+  (a read and two compares before it), 120 frames of the test had none, and the hero's sky
+  one step in 720, 12 pixels. A probe written into RAM and read from a Sheliak save state
+  measured each of these.
+- **The sky flickered, one frame in seven** (11/16): the 68000 takes an interrupt with its
+  own level masked and below, so the vertical blank's handler (level 6) held the horizontal
+  one (4) off for all of it — and on a row of the theme (speed 7) the music in it ran past
+  the sky's first lines, whose steps came late or not at all. The runtime's entry now runs
+  the handler with the mask at 3. Safe for the VDP: horizontal interrupts come only on the
+  picture's lines, and every std writer holds them (`sprites.show` now too, for a vertical
+  blank run late into the picture). The mask at 3 lets a vertical blank in as well, so an
+  overrunning handler's next one is noted and run after it, as a masked one would have been
+  — never inside it. `TestGenesis_RasterEffectsLongBlank` and Vega's `check_hero_sky`, eight
+  frames in a row from a save state, fail with the mask left at 6.
+- **It still flickered in a game played** (11/16): the check held Start from power-on, and
+  held, the hero waits for it to be let go — the overlook's loop never ran. Let go, most
+  frames had their first steps late: the loop's `scroll_bands` and `set_scroll` wrote a
+  screen of line scroll with both interrupts held, into the picture's top. **The line table
+  is RAM's now**: `vdp.begin_lines`/`write_line`/`end_lines` and `set_scroll` in line mode
+  write a copy, and `sprites.show` sends it by DMA in the vertical blank (`send_lines`), the
+  planes' vertical scroll with it so both axes move on one frame — as games do it. The
+  check lets Start go after its first frame. **Left**: a pattern's first tick of the hero's
+  theme costs the 68000 more than a frame (todo.md, `std.chips.music`), found by a profile
+  of that frame — Sheliak scratch-patched to log `bus.clock` per `cpu.pc` and the stub's
+  instructions with the V counter, symbols from `llvm-nm` of the program's object at the
+  ROM's `.text` (0x200).
 - **The handler is std's**, `@interrupt(hblank)` in a module, which lyra-E087 refused on the
   host: the repo's check runs every std file as a host program. The host refusal now skips a
   library file, as `CheckTarget` does.

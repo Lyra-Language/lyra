@@ -759,9 +759,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   window, `Subscription.InWindow(key, subs)` hears one beside it, and `WindowSpec.title_bar`
   draws its own bar (COMPLETED.md 11/16). Untried: a drawn side window's bar on a Linux desktop,
   as the main window's (below).
-- **[DONE 11/16] `TestRun_UiResizeSettles` ran near its budget** — 378 resizes now, not 1,734,
-  10 s alone where it took 90; the budget two minutes, set from a measured pass (COMPLETED.md
-  11/16).
+- **[OPEN] `TestRun_UiResizeSettles` runs near its one-minute budget** — 45–48 s alone at
+  `-O0` on an M-series Mac (10/27), so a loaded parallel suite can time it out. Measure a pass
+  and set the budget from it, or play fewer resizes.
 - **[OPEN] Several windows on Linux are unverified** — X11 placing a torn-off window where
   the tab was let go, SDL's capture carrying the drag past the window, and Wayland, where no
   window is placed and so no tab crosses windows. Play `examples/ui/windows.lyra` in the VM.
@@ -1345,11 +1345,13 @@ sets V on every add. What stands between that and a ROM:
   aggregate too big for registers, made `fastcc` by the optimizer, read the hidden pointer
   from `d0` while its caller passed it in `a0` (10/15). Lyra moves every aggregate through
   memory on the 68000 since (COMPLETED.md 10/15); a reduced IR case would settle it.
-- **[OPEN] `std.chips.music` costs a fifth of a frame on the 68000**: the heroes' extended
-  theme 0.18 of a frame an update (0.29 before steady channels, COMPLETED 10/16). What is left
-  is flat across the channel loop's code — a bool tested in five instructions, overflow checks
-  through the status register, spills — and `MUSIC_STARTS[order * 13 + channel]`, which LLVM
-  widens to an `i64` multiply (`__muldi3`) for its bounds check.
+- **[PARTIAL] `std.chips.music` on the 68000**: the hero's vertical blank handler, theme and
+  all, runs ~58 lines a frame, 84–99 on a row and at most 195 on a pattern's first tick (from
+  55, 145–177 and 302, which overran the frame; COMPLETED 11/16). What is left is the code
+  LLVM's M68k backend makes: ~2,400 cycles a call of `sound` or `sound_fm`, most of it
+  spills (a 340-byte frame) and overflow checks through the status register, so a note
+  costs ~8,000 cycles — a song starting notes on all thirteen channels at once could still
+  take most of a frame. Next: fewer calls a note, or the backend's spilling.
 - **[DONE 10/16] A Genesis program inlined less crashed**: a `fastcc` struct return popped a
   pointer passed in a register (`tools/llvm-m68k-patches/0004`, COMPLETED 10/16).
 - **[DONE 10/16] clang segfaulted compiling a copy of Sheliak**: a global's 320 KB

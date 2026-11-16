@@ -92,9 +92,36 @@ void _start(void) {
  * interrupt convention, which returns with rte but does not save the scratch registers it
  * or its callees clobber. Naked: the whole body is this, with no frame of its own.
  */
+/*
+ * The vertical blank's handler runs with the horizontal interrupt let in (the mask at 3):
+ * a game's handler does its sound there, and a row of music took long enough, masked, that
+ * a raster effect's first colours came lines late or not at all one frame in seven (11/16).
+ * What it writes to the VDP is safe from the raster handler's writes — horizontal
+ * interrupts come only on the picture's lines, and every std writer holds them
+ * (`vdp.hold_vblank`). The mask at 3 lets a vertical blank in too, so one coming while its
+ * handler still runs — an overrun — is not run inside it but noted and run once it ends, as
+ * a masked one would have been.
+ */
+static volatile u8 in_vblank, vblank_missed;
+
+void __lyra_vblank_run(void) {
+    if (in_vblank) {
+        vblank_missed = 1;
+        return;
+    }
+    in_vblank = 1;
+    do {
+        vblank_missed = 0;
+        __asm__ volatile(".short 0x46fc, 0x2300" ::: "memory"); /* move #$2300, sr */
+        __lyra_interrupt_vblank();
+        __asm__ volatile(".short 0x46fc, 0x2700" ::: "memory"); /* move #$2700, sr */
+    } while (vblank_missed);
+    in_vblank = 0;
+}
+
 __attribute__((naked)) void __lyra_vblank_entry(void) {
     __asm__ volatile("movem.l %d0-%d1/%a0-%a1, -(%sp)\n\t"
-                     "jsr __lyra_interrupt_vblank\n\t"
+                     "jsr __lyra_vblank_run\n\t"
                      "movem.l (%sp)+, %d0-%d1/%a0-%a1\n\t"
                      "rte");
 }

@@ -13,12 +13,17 @@ import (
 // 128–159 drifting ten pixels a frame to the right (one frame: ticks 1), 160–191 rippling
 // a quarter turn on (16 pixels at most: 15), and 192 on in no band, at the plane's own speed (the
 // camera's). Each line's stripes must be where its scroll puts them — the VDP's line scroll
-// on, the table written a line a word.
+// on, the table written into RAM a line a word and sent in the vertical blank by
+// sprites.show.
 func TestGenesis_BandsScrollAPlanesLinesApart(t *testing.T) {
 	t.Parallel()
 	genesisToolchainOrSkip(t)
 	out := genesisProgram(t, "bands", `import std.genesis.vdp
+import std.genesis.sprites
 import std.genesis.camera.{ Camera, Band }
+
+@interrupt(vblank)
+let each_frame = () -> void => sprites.show()
 
 const STRIPE: [8]u32 = #[
   0x10000000, 0x10000000, 0x10000000, 0x10000000,
@@ -45,6 +50,7 @@ let main = () -> void => {
   vdp.use_bands(false, true)
   view.scroll_bands(vdp.PLANE_B, 0, 256, BANDS, 1)
   vdp.display_on()
+  vdp.enable_vblank_interrupt()
   loop {}
 }
 `)

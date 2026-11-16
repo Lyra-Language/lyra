@@ -13,8 +13,10 @@ import (
 // (lyra-E087): a handler is called by the runtime's entry stub with nothing, so it takes
 // nothing and returns nothing; it is exported under one fixed name per interrupt, so it
 // is top level, not generic, and the only one of its kind; and it exists only on a
-// console, where the runtime has vectors to put it in.
-func CheckInterruptHandlers(program *ast.Program, tgt target.Target) []diag.Diagnostic {
+// console, where the runtime has vectors to put it in — a program's own, that is: one in
+// the standard library (`std.genesis.raster`'s) is the console's, as the rest of such a
+// module is, so inScope (checkTarget's: not a library file) says which are the program's.
+func CheckInterruptHandlers(program *ast.Program, tgt target.Target, inScope func(file string) bool) []diag.Diagnostic {
 	var diags []diag.Diagnostic
 	report := func(loc ast.Location, format string, args ...any) {
 		diags = append(diags, diag.Diagnostic{
@@ -47,6 +49,8 @@ func CheckInterruptHandlers(program *ast.Program, tgt target.Target) []diag.Diag
 			switch {
 			case !top:
 				report(lambda.GetLocation(), "an `@interrupt(%s)` handler is a top-level function; this one is inside another", lambda.Interrupt)
+			case tgt.Host && !inScope(decl.GetLocation().File):
+				return true
 			case tgt.Host:
 				report(decl.GetLocation(),
 					"`@interrupt(%s)` runs on a console's interrupt, and this program is built for the host; a `lyra.toml` beside it sets the target (`target = \"genesis\"`)",

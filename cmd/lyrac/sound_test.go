@@ -427,13 +427,15 @@ func checkSong(t *testing.T, runtime string, samples []float64, rate int) {
 	if len(samples) < 46*frame {
 		t.Fatalf("%s: only %d samples", runtime, len(samples))
 	}
-	near := func(f float64) float64 {
+	// The DAC's strongest within 1% in frames from..to: its rate is the Z80's, not exact.
+	nearIn := func(from, to int, f float64) float64 {
 		best := 0.0
 		for g := f * 0.99; g <= f*1.01; g += 0.5 {
-			best = math.Max(best, power(2, 22, g))
+			best = math.Max(best, power(from, to, g))
 		}
 		return best
 	}
+	near := func(f float64) float64 { return nearIn(2, 22, f) }
 	for _, f := range []float64{fm, psg, dac} {
 		at, off := power(2, 22, f), power(2, 22, f*1.03)
 		if f == dac {
@@ -446,7 +448,9 @@ func checkSong(t *testing.T, runtime string, samples []float64, rate int) {
 	if late, early := power(28, 46, psg), power(2, 22, psg); late > early/1000 {
 		t.Errorf(runtime+": the PSG's E5 sounds on after its note off: %.3g, against %.3g", late, early)
 	}
-	if late, early := power(28, 46, dac), power(2, 22, dac); late > early/1000 {
+	// Near it, not at it: 3 Hz flat is a whole cycle over these windows, where the power at
+	// 500 Hz falls to nothing — the sample's stop judged by where it misses (11/16).
+	if late, early := nearIn(28, 46, dac), nearIn(2, 22, dac); late > early/1000 {
 		t.Errorf(runtime+": the DAC's sample sounds on after its note off: %.3g, against %.3g", late, early)
 	}
 	if late, early := power(28, 46, fm), power(2, 22, fm); late < early/10 {

@@ -71,6 +71,7 @@ pub let init = () -> void => {
   mode = INIT_REGISTERS[1]
   line_mode = 0
   banded = 0
+  lines_changed = false
   for i: u16 in 0..<64 { shown[i] = 0 }
 }
 
@@ -116,11 +117,32 @@ pub let disable_vblank_interrupt = () -> void => {
 /// picture partway down it (a colour, a scroll).
 pub let enable_hblank_interrupt = (lines: u8) -> void => {
   set_register(10, lines)
+  hblank_on = true
   set_register(0, 0x14)
 }
 
 /// Stop the horizontal interrupt.
-pub let disable_hblank_interrupt = () -> void => set_register(0, 0x04)
+pub let disable_hblank_interrupt = () -> void => {
+  hblank_on = false
+  set_register(0, 0x04)
+}
+
+/// The line of the picture the VDP is drawing (0–223), or past it in the vertical blank: the
+/// high byte of its H/V counter. What an `@interrupt(hblank)` handler asks where it is.
+pub let line_now = () -> u16 => unsafe { hv_counter().read_volatile() >> 8 }
+
+/// CRAM's colour `at` (0–63, palette × 16 + index) set to `color` at once, holding nothing
+/// and keeping no copy — for an `@interrupt(hblank)` handler changing a colour partway down
+/// the picture (`std.genesis.raster`), which nothing else may interrupt. [send_colors_each_frame]
+/// puts the colours back for the next frame's top.
+pub let write_color_now = (at: u16, color: u16) -> void => {
+  set_address(CRAM_WRITE, (at & 63) * 2)
+  write_word(color)
+}
+
+/// Whether [send_colors] sends all 64 colours every vertical blank, queued or not: on while
+/// colours change partway down the picture, so each frame's top starts from [color_of]'s.
+pub let send_colors_each_frame = (on: bool) -> void => { colors_each_frame = on }
 
 /// Wait for the next vertical blank to begin — the time between frames when a game
 /// changes what is shown, once a frame (60 times a second on an NTSC console).
@@ -169,13 +191,36 @@ pub let queue_color = (palette: u16, index: u16, color: u16) -> void => {
 /// The colours [queue_color] changed, all 64 to CRAM; nothing when none did. In the vertical
 /// blank: `sprites.show` calls it first; a game that does not call that, after [wait_vblank].
 pub let send_colors = () -> void => {
-  if !colors_queued { return }
+  if !colors_queued && !colors_each_frame { return }
   colors_queued = false
+  // Written, not sent by DMA: a DMA holds the Z80's bus, and its sample played flatter for
+  // it (11/16), for two lines of the 68000's saved.
   let held = hold_vblank()
   set_address(CRAM_WRITE, 0)
   for i: u16 in 0..<64 { write_word(shown[i]) }
   release_vblank(held)
 }
+
+/// How far the screen has faded toward `color`: `levels` (0–7) of each channel's levels nearer
+/// it, 0 none — what `std.genesis.palette`'s fades set as they step, so [faded] takes a colour
+/// written partway down the picture (`std.genesis.raster`) the same way.
+pub let set_fade = (color: u16, levels: i16) -> void => {
+  fade_color = color
+  fade_levels = levels.clamp(0, 7)
+}
+
+/// CRAM word `color` as the screen's fade ([set_fade]) shows it now.
+pub let faded = (color: u16) -> u16 =>
+  if fade_levels == 0 { color } else { toward(color, fade_color, fade_levels) }
+
+/// CRAM word `a` with every channel `levels` levels nearer `b`'s, none past it: a step of a fade.
+pub let toward = pure (a: u16, b: u16, levels: i16) -> u16 =>
+  channel_toward(
+    a,
+    b,
+    1,
+    levels
+  ) | channel_toward(a, b, 5, levels) | channel_toward(a, b, 9, levels)
 
 /// Whether the vertical blank interrupt is on ([enable_vblank_interrupt]): a game whose
 /// handler calls `sprites.show`, which sends what is queued.
@@ -285,22 +330,28 @@ pub let write_cell = (plane: u16, x: u16, y: u16, word: u16) -> void => {
 /// Scroll `plane` (`PLANE_A` or `PLANE_B`) so its pixel (`x`, `y`) is at the screen's
 /// top-left — the whole screen at once. A plane wraps at its edges, so any position will
 /// do. With line scrolling on ([use_bands]) every line of the plane is given `x`, unless the
-/// plane's lines are its bands', when only `y` is set.
+/// plane's lines are its bands', when only `y` is set — and both go to the VDP with the
+/// lines, in the next vertical blank ([send_lines]).
 pub let set_scroll = (plane: u16, x: i16, y: i16) -> void => {
   let which: u16 = if plane == PLANE_A { 0 } else { 2 }
   let bit: u8 = if plane == PLANE_A { 1 } else { 2 }
-  let held = hold_vblank()
   let word = line_word(i32(x))
-  if line_mode == 0 {
-    set_address(VRAM_WRITE, HSCROLL + which)
-    write_word(word)
-  } else if (banded & bit) == 0 {
-    begin_lines(plane)
-    for _: i16 in 0..<SCREEN_HEIGHT { write_word(word) }
-    end_lines()
+  let down = u16(i32(y) & 1023)
+  if line_mode != 0 {
+    if (banded & bit) == 0 {
+      begin_lines(plane)
+      for _: i16 in 0..<SCREEN_HEIGHT { write_line(word) }
+      end_lines()
+    }
+    lines_down[which / 2] = down
+    lines_changed = true
+    return
   }
+  let held = hold_vblank()
+  set_address(VRAM_WRITE, HSCROLL + which)
+  write_word(word)
   set_address(VSRAM_WRITE, which)
-  write_word(u16(i32(y) & 1023))
+  write_word(down)
   release_vblank(held)
 }
 
@@ -331,17 +382,39 @@ pub let use_bands = (plane_a: bool, plane_b: bool) -> void => {
   set_register(11, line_mode)
 }
 
-/// Point the data port at line 0 of `plane`'s horizontal scroll, a line a word from there:
-/// [line_word]s for the screen's lines in turn, then [end_lines]. Hold the vertical blank
-/// interrupt around it ([hold_vblank]), as for any run of writes.
+/// `plane`'s lines of the horizontal scroll from line 0, a [write_line] each: [line_word]s
+/// for the screen's lines in turn, then [end_lines]. **Into a copy in RAM**, which
+/// [send_lines] sends by DMA in the next vertical blank — written to the VDP from the game's
+/// loop, a screen of lines held the interrupts for most of the picture's top, and a raster
+/// effect's colours came lines late (11/16). So nothing here touches the VDP, or needs
+/// holding.
 pub let begin_lines = (plane: u16) -> void => {
-  // The table holds plane A's word then plane B's for each line: four bytes a line.
-  set_register(15, 4)
-  set_address(VRAM_WRITE, HSCROLL + (if plane == PLANE_A { 0 } else { 2 }))
+  // The table holds plane A's word then plane B's for each line.
+  line_at = if plane == PLANE_A { 0 } else { 1 }
 }
 
-/// The data port back to moving two bytes a word, after [begin_lines].
-pub let end_lines = () -> void => set_register(15, 2)
+/// The next line's word, after [begin_lines].
+pub let write_line = (word: u16) -> void => {
+  if line_at < 2 * 224 { lines[line_at] = word }
+  line_at += 2
+}
+
+/// The lines [begin_lines] began written, to go out in the next vertical blank.
+pub let end_lines = () -> void => { lines_changed = true }
+
+/// The line scroll and the planes' vertical scroll, as [write_line] and [set_scroll] left
+/// them, sent if changed: by DMA, in the vertical blank — `sprites.show` calls it.
+pub let send_lines = () -> void => {
+  if !lines_changed || line_mode == 0 { return }
+  lines_changed = false
+  let from = u32(unsafe { (&lines).address() })
+  dma_to_vram(from, HSCROLL, 2 * 224)
+  let held = hold_vblank()
+  set_address(VSRAM_WRITE, 0)
+  write_word(lines_down[0])
+  write_word(lines_down[1])
+  release_vblank(held)
+}
 
 /// The horizontal scroll word showing the plane from its pixel `x` at the screen's left:
 /// the VDP moves a plane right by its scroll, so the view at x is a scroll of -x.
@@ -398,22 +471,26 @@ pub let dma_run = pure (source: u32, words: u16) -> u16 => {
 /// so once its driver runs. Off before — a Z80 still in reset answers no bus request.
 pub let guard_dma = (on: bool) -> void => { dma_guarded = on }
 
-/// The vertical blank interrupt held off, answering whether it was on — around a run of
-/// writes from the game's loop: an address, then its data. The interrupt's own writes (the
-/// sprite list) move the VDP's address, and a run they land in goes on at theirs: a map
+/// The VDP's interrupts held off — the vertical blank's, and the horizontal one's
+/// ([enable_hblank_interrupt]) — answering which were on, around a run of writes from the
+/// game's loop: an address, then its data. An interrupt's own writes (the sprite list, a
+/// raster's colour) move the VDP's address, and a run they land in goes on at theirs: a map
 /// drawn with the interrupt on lost the rest of a row, black on the screen (10/06). One
 /// that falls due while held is taken as soon as it is let go ([release_vblank]). Every
 /// writer here holds it; a game holds it around its own [set_vram_address] and
 /// [write_word]s.
-pub let hold_vblank = () -> bool => {
-  let on = (mode & 0x20) != 0
-  if on { disable_vblank_interrupt() }
-  on
+pub let hold_vblank = () -> u8 => {
+  let vblank = (mode & 0x20) != 0
+  let hblank = hblank_on
+  if vblank { disable_vblank_interrupt() }
+  if hblank { set_register(0, 0x04) }
+  (if vblank { 1 } else { 0 }) | (if hblank { 2 } else { 0 })
 }
 
-/// The vertical blank interrupt let go after [hold_vblank]: on again if it was on.
-pub let release_vblank = (held: bool) -> void => {
-  if held { enable_vblank_interrupt() }
+/// The interrupts let go after [hold_vblank]: each on again if it was on.
+pub let release_vblank = (held: u8) -> void => {
+  if (held & 2) != 0 { set_register(0, 0x14) }
+  if (held & 1) != 0 { enable_vblank_interrupt() }
 }
 
 /// Point the data port at byte `address` of VRAM, for [write_word]s to follow — how the
@@ -447,11 +524,29 @@ var mode: u8 = 0x04
 var line_mode: u8 = 0
 var banded: u8 = 0
 
+/// The horizontal scroll table in line mode as the VDP holds it — a line's plane A word, then
+/// its plane B word — and each plane's vertical scroll, kept here for [send_lines]; where
+/// [write_line] writes next; whether they changed since last sent.
+var lines: [448]u16 = #[0; 448]
+var lines_down: [2]u16 = #[0; 2]
+var line_at: u16 = 0
+var lines_changed: bool = false
+
 /// The 64 colours as last written ([color_of]).
 var shown: [64]u16 = #[0; 64]
 
 /// Whether [queue_color] has changed a colour [send_colors] has not sent.
 var colors_queued: bool = false
+
+/// The screen's fade ([set_fade]): toward this colour, so many levels.
+var fade_color: u16 = 0
+var fade_levels: i16 = 0
+
+/// Whether the horizontal interrupt is on ([enable_hblank_interrupt]).
+var hblank_on: bool = false
+
+/// Whether [send_colors] sends every colour each vertical blank ([send_colors_each_frame]).
+var colors_each_frame: bool = false
 
 /// Whether [dma_to_vram] takes the Z80's bus ([guard_dma]).
 var dma_guarded: bool = false
@@ -481,6 +576,17 @@ let status = () -> u16 => unsafe { control_port().read_volatile() }
 let control_port = pure () -> ^mut u16 => unsafe { pointer_at(0xC00004) }
 
 let data_port = pure () -> ^mut u16 => unsafe { pointer_at(0xC00000) }
+
+/// One channel of [toward]: the three bits at `shift`, `levels` levels nearer `b`'s, no further.
+let channel_toward = pure (a: u16, b: u16, shift: u16, levels: i16) -> u16 => {
+  let x = i16((a >> shift) & 7)
+  let y = i16((b >> shift) & 7)
+  let v = if y > x { (x + levels).min(y) } else { (x - levels).max(y) }
+  u16(v) << shift
+}
+
+/// The H/V counter: the line in its high byte, the place along it in its low.
+let hv_counter = pure () -> ^u16 => unsafe { pointer_at(0xC00008) }
 
 let data_long_port = pure () -> ^mut u32 => unsafe { pointer_at(0xC00000) }
 

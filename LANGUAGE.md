@@ -975,9 +975,15 @@ target = "genesis"
 - **`@interrupt(vblank)` / `@interrupt(hblank)`** on a top-level `() -> void` function makes it
   what the console runs on that interrupt, once the program enables it
   (`vdp.enable_vblank_interrupt()`, `vdp.enable_hblank_interrupt(lines)`). One per kind, not
-  generic, and never on the host (`lyra-E087`). The runtime's vector enters through a stub
+  generic, and never on the host (`lyra-E087`) — a program's own, that is: the standard
+  library's `std.genesis.raster` has the horizontal one, so a program importing it has none of
+  its own, and checked on the host its module is not refused. The runtime's vector enters through a stub
   that saves the scratch registers, calls the handler — an ordinary function — and returns
-  with `rte`; with no handler, the interrupt does nothing.
+  with `rte`; with no handler, the interrupt does nothing. **The vertical blank's handler runs
+  with the horizontal interrupt let in** (the 68000's mask at 3), so a long one — music on a
+  row — does not hold a raster effect off; a vertical blank coming while its handler still
+  runs is run after it, not inside it. So a handler's own VDP writes hold the interrupts
+  (`vdp.hold_vblank`), as std's do.
   - **A module-level `var` the handler writes is volatile everywhere** — its every load and
     store in and out of the handler — so `frames += 1` in the handler and
     `while frames < 30 {}` in `main` is correct as written. The set is what the handler's own

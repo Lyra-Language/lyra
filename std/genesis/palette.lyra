@@ -59,20 +59,22 @@ pub let step_cycles<const N: i64> = (cycles: ref [N]Cycle) -> void => {
 pub let fade_to = (color: u16, frames: u16) -> void => {
   for i: u16 in 0..<64 { before[i] = vdp.color_of(i / 16, i % 16) }
   var targets: [64]u16 = #[color; 64]
-  fade(targets, frames)
+  faded_to = color
+  fade(targets, frames, true)
 }
 
 /// Every colour back from what it shows to what it showed before the last [fade_to], over
 /// `frames` frames, returning once it is there.
-pub let fade_back = (frames: u16) -> void => fade(before, frames)
+pub let fade_back = (frames: u16) -> void => fade(before, frames, false)
 
 // ── Beneath ──────────────────────────────────────────────────────────────────────────
 
 /// Frames counted by [step_cycles], whose steps fall where a cycle's frames divide it.
 var ticks: u16 = 0
 
-/// The colours before the last [fade_to].
+/// The colours before the last [fade_to], and the colour it faded to.
 var before: [64]u16 = #[0; 64]
+var faded_to: u16 = 0
 
 /// Cycle `c`'s colours one place on (or back).
 let turn = (c: Cycle) -> void => {
@@ -94,8 +96,10 @@ let turn = (c: Cycle) -> void => {
   }
 }
 
-/// Every colour from what it shows to `targets` over `frames` frames, a step a vertical blank.
-let fade = (targets: ref [64]u16, frames: u16) -> void => {
+/// Every colour from what it shows to `targets` over `frames` frames, a step a vertical blank
+/// — `out` to [fade_to]'s colour, else back from it. The VDP is told how far along it is
+/// (`vdp.set_fade`), so colours set partway down the picture (`std.genesis.raster`) fade too.
+let fade = (targets: ref [64]u16, frames: u16, out: bool) -> void => {
   var from: [64]u16 = #[0; 64]
   for i: u16 in 0..<64 { from[i] = vdp.color_of(i / 16, i % 16) }
   let steps = frames.max(1)
@@ -103,6 +107,8 @@ let fade = (targets: ref [64]u16, frames: u16) -> void => {
     for i: u16 in 0..<64 {
       vdp.queue_color(i / 16, i % 16, mixed(from[i], targets[i], k, steps))
     }
+    let levels = i16(k) * 7 / i16(steps)
+    vdp.set_fade(faded_to, if out { levels } else { 7 - levels })
     next_blank()
   }
 }
@@ -126,15 +132,5 @@ let next_blank = () -> void => {
 /// eight levels need — so the whole screen changes together, a channel already there waiting.
 /// Each channel stepped by its own share changed one now and another the frame after, and the
 /// fade looked jumpy (11/13).
-let mixed = pure (a: u16, b: u16, k: u16, steps: u16) -> u16 => {
-  let levels = i16(k) * 7 / i16(steps)
-  channel(a, b, 1, levels) | channel(a, b, 5, levels) | channel(a, b, 9, levels)
-}
-
-/// One channel of [mixed]: the three bits at `shift`, `levels` levels nearer `b`'s, no further.
-let channel = pure (a: u16, b: u16, shift: u16, levels: i16) -> u16 => {
-  let x = i16((a >> shift) & 7)
-  let y = i16((b >> shift) & 7)
-  let v = if y > x { (x + levels).min(y) } else { (x - levels).max(y) }
-  u16(v) << shift
-}
+let mixed = pure (a: u16, b: u16, k: u16, steps: u16) -> u16 =>
+  vdp.toward(a, b, i16(k) * 7 / i16(steps))

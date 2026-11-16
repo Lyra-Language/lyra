@@ -135,25 +135,32 @@ pub let show = () -> void => {
   // partway down the picture; then the streamed sprites' frames, so the table's tiles are
   // there when it is.
   vdp.send_colors()
+  // The line scroll the game's loop wrote into RAM (`std.genesis.camera`'s bands).
+  vdp.send_lines()
   shows = shows.wrapping_add(1)
   for i: u16 in 0..<sends {
     vdp.dma_to_vram(send_source[i], send_tile[i] * 32, send_words[i])
   }
   sends = 0
+  // Held, as the runtime lets the horizontal interrupt into the vertical blank's handler,
+  // and one late enough to run into the picture would have a raster's colour move the
+  // address under the table.
+  let held = vdp.hold_vblank()
   vdp.set_vram_address(vdp.SPRITE_TABLE)
   if count == 0 {
     // One sprite, off the top of the screen and linking nowhere: the table's end.
     for _: u16 in 0..<4 { vdp.write_word(0) }
-    return
+  } else {
+    for i: u16 in 0..<count {
+      let at = i * 4
+      let link = if i + 1 < count { i + 1 } else { 0 }
+      vdp.write_word(table[at])
+      vdp.write_word(table[at + 1] | link)
+      vdp.write_word(table[at + 2])
+      vdp.write_word(table[at + 3])
+    }
   }
-  for i: u16 in 0..<count {
-    let at = i * 4
-    let link = if i + 1 < count { i + 1 } else { 0 }
-    vdp.write_word(table[at])
-    vdp.write_word(table[at + 1] | link)
-    vdp.write_word(table[at + 2])
-    vdp.write_word(table[at + 3])
-  }
+  vdp.release_vblank(held)
 }
 
 /// The list: four words a sprite, in the order the VDP's table holds them, links left 0.

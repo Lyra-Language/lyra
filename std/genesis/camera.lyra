@@ -274,7 +274,6 @@ impl Camera {
     ticks: u32
   ) -> void => {
     let plain = vdp.line_word((i32(self.x) * i32(speed)) >> 8)
-    let held = vdp.hold_vblank()
     vdp.begin_lines(plane)
     var line: i16 = 0
     var k: i64 = 0
@@ -287,7 +286,7 @@ impl Camera {
           (bands[k].top - plane_y).min(vdp.SCREEN_HEIGHT)
         } else { vdp.SCREEN_HEIGHT }
         while line < until {
-          vdp.write_word(plain)
+          vdp.write_line(plain)
           line += 1
         }
       } else {
@@ -298,7 +297,6 @@ impl Camera {
       }
     }
     vdp.end_lines()
-    vdp.release_vblank(held)
   }
 }
 
@@ -395,11 +393,11 @@ let write_band = (band: Band, x: i32, from: i16, lines: i16, ticks: u32) -> void
   if band.wave == 0 {
     if step == 0 {
       let word = vdp.line_word(at >> 8)
-      for _: i16 in 0..<lines { vdp.write_word(word) }
+      for _: i16 in 0..<lines { vdp.write_line(word) }
       return
     }
     for _: i16 in 0..<lines {
-      vdp.write_word(vdp.line_word(at >> 8))
+      vdp.write_line(vdp.line_word(at >> 8))
       at += step
     }
     return
@@ -409,7 +407,7 @@ let write_band = (band: Band, x: i32, from: i16, lines: i16, ticks: u32) -> void
   )
   for _: i16 in 0..<lines {
     let ripple = (i32(sine(phase >> 8)) * i32(band.wave)) >> 7
-    vdp.write_word(vdp.line_word((at >> 8) + ripple))
+    vdp.write_line(vdp.line_word((at >> 8) + ripple))
     at += step
     phase = phase.wrapping_add(band.wave_step)
   }
