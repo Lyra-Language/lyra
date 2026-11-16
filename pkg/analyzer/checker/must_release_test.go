@@ -455,20 +455,147 @@ let main = () -> void => {
 `, "v")
 }
 
-// --- what the one-name rule declines to guess ----------------------------------------
+// --- a nominal type carries the attribute ---------------------------------------------
+//
+// `@must_release(close_fd) type Fd = i32`: a handle that is no struct. Until 11/15 the
+// grammar gave a `type` no attribute slot.
 
-// A pattern binding is an `IdentifierPattern` and not an expression, so there is no
-// per-name type to consult; matching a pattern's shape against the scrutinee's type
-// positionally would be a new structural walk with a case missing for every pattern kind
-// added later (rule 8's family). So a multi-binding pattern falls through to the escape
-// default and stays **silent** — under-reporting, the direction this pass errs in
-// everywhere. This pins that as a known limit rather than leaving it to be rediscovered.
-func TestMustRelease_AMultiBindingPatternIsNotTracked(t *testing.T) {
-	assertClean(t, `
+const fdPrelude = `
+@must_release(close_fd) type Fd = i32
+let open_fd = (n: i32) -> Fd => Fd(n)
+let try_open = (n: i32) -> Maybe<Fd> => Some(Fd(n))
+let close_fd = (fd: Fd) -> void => {}
+let read_fd = (fd: Fd) -> i32 => i32(fd)
+`
+
+func TestMustRelease_ANominalTypeIsTracked(t *testing.T) {
+	assertLeaks(t, fdPrelude+`
+let main = () -> void => {
+  let fd = open_fd(3)
+  read_fd(fd)
+}
+`, "fd")
+	assertClean(t, fdPrelude+`
+let main = () -> void => {
+  let fd = open_fd(3)
+  read_fd(fd)
+  close_fd(fd)
+}
+`)
+	assertLeaks(t, fdPrelude+`
+let main = () -> void => {
+  if let Some(fd) = try_open(3) { read_fd(fd) }
+}
+`, "fd")
+}
+
+// --- a name takes the obligation of its own type ------------------------------------
+//
+// Each name a pattern binds is judged by its own type (tt.Binding), not by being the only
+// name. Until 11/15 a pattern binding more than one name was untracked, and one binding a
+// single name gave it the whole value's obligation whatever its type.
+
+func TestMustRelease_ATupleElementIsTracked(t *testing.T) {
+	assertLeaks(t, `
 let pair = (n: i64) -> (Sound, i64) => (load_sound(n), n)
 let main = () -> void => {
   let (snd, n) = pair(1)
   play_sound(snd)
+}
+`, "snd")
+	assertClean(t, `
+let pair = (n: i64) -> (Sound, i64) => (load_sound(n), n)
+let main = () -> void => {
+  let (snd, n) = pair(1)
+  unload_sound(snd)
+}
+`)
+}
+
+func TestMustRelease_EachResourceInATupleIsItsOwn(t *testing.T) {
+	assertLeaks(t, `
+let two = () -> (Sound, Sound) => (load_sound(1), load_sound(2))
+let main = () -> void => {
+  let (a, b) = two()
+  unload_sound(a)
+}
+`, "b")
+}
+
+func TestMustRelease_AMatchArmOverATupleIsTracked(t *testing.T) {
+	assertLeaks(t, `
+let pair = (n: i64) -> (Sound, i64) => (load_sound(n), n)
+let main = () -> void => {
+  match pair(1) {
+    (s, 0) => unload_sound(s),
+    (s, _) => play_sound(s),
+  }
+}
+`, "s")
+	assertLeaks(t, `
+let both = (n: i64) -> Maybe<(Sound, i64)> => Some((load_sound(n), n))
+let main = () -> void => {
+  if let Some((s, n)) = both(1) { play_sound(s) }
+}
+`, "s")
+}
+
+// `id` is the resource's field, an i64: telling the program to `unload_sound(id)` named a
+// call that does not compile. The resource itself is bound by no name, so nothing is said.
+func TestMustRelease_AFieldBoundOutOfAResourceHoldsNothing(t *testing.T) {
+	assertClean(t, `
+let main = () -> void => {
+  match try_load(1) {
+    Some(Sound { id }) => {},
+    None => {},
+  }
+}
+`)
+}
+
+// A payload of another type is not the scrutinee's resource: in a data type of the
+// program's own, the `Sound` alternative's name holds one and the `i64` one's does not.
+func TestMustRelease_OnlyTheAlternativeHoldingTheResourceOwesIt(t *testing.T) {
+	assertLeaks(t, `
+data Res<t, e> = Good(t) | Bad(e)
+let try_res = (n: i64) -> Res<Sound, i64> => Good(load_sound(n))
+let main = () -> void => {
+  match try_res(1) { Good(s) => play_sound(s), Bad(code) => {} }
+}
+`, "s")
+	assertClean(t, `
+data Res<t, e> = Good(t) | Bad(e)
+let try_res = (n: i64) -> Res<Sound, i64> => Good(load_sound(n))
+let main = () -> void => {
+  match try_res(1) { Good(s) => unload_sound(s), Bad(code) => {} }
+}
+`)
+}
+
+// `w @ Some(s)` is one resource under two names: releasing `s` releases `w`'s, and a
+// release of neither is reported once, on `w`.
+func TestMustRelease_ANameInsideAnAtBindingIsAView(t *testing.T) {
+	assertClean(t, `
+let main = () -> void => {
+  if let w @ Some(s) = try_load(1) { unload_sound(s) }
+}
+`)
+	assertLeaks(t, `
+let main = () -> void => {
+  if let w @ Some(s) = try_load(1) { play_sound(s) }
+}
+`, "w")
+	assertClean(t, `
+let main = () -> void => {
+  let m = try_load(1)
+  match m { w @ Some(s) => unload_sound(s), None => {} }
+}
+`)
+	assertClean(t, `
+let main = () -> void => {
+  let m = load_sound(1)
+  let s @ Sound { id } = m
+  unload_sound(s)
 }
 `)
 }

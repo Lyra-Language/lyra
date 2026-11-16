@@ -1224,13 +1224,14 @@ A struct, union, tuple or fixed array crosses **by value**; a `data` type never 
 
 ### `@must_release(fn)`
 
-On a `struct`: the value names a foreign resource released by `fn`. A binding leaving scope without that call is **`lyra-W022`**. Lyra has no destructors (would break `pure`/`det` and cross FFI ownership).
+On a `struct` or a nominal `type` (`@must_release(close_fd) type Fd = i32`): the value names a foreign resource released by `fn`. A binding leaving scope without that call is **`lyra-W022`**. Lyra has no destructors (would break `pure`/`det` and cross FFI ownership).
 - **A borrow is not a discharge**; only passing to the named function discharges. Passing to an `own` parameter, returning, or storing untrackably (pushing into an array, or assigning to a module-level `var`, included) is an escape.
 - **A helper that releases is a release.** Passing to a parameter the callee releases — calls the release function on, directly, through a `match` payload (`Some(p) => close(p)`), or via another such helper — discharges, as the named function does. Inferred from the body, not declared. A helper that returns or stores its parameter does *not* release it, so its caller is still warned.
-- `Maybe<Sound>` carries the obligation; the unwrapping alternative that sees the value must discharge. Tracked: `match` arm, `if let`, `let … else`, destructuring `let` (incl. `let Some(v) = load_sound(p) else { return }`). Patterns binding more than one name are not tracked.
+- `Maybe<Sound>` carries the obligation; the unwrapping alternative that sees the value must discharge. Tracked: `match` arm, `if let`, `let … else`, destructuring `let` (incl. `let Some(v) = load_sound(p) else { return }`).
+- **A name a pattern binds owes what its own type carries** (11/15): `let (snd, n) = pair(1)` holds `snd`, each resource of a tuple is its own, `Some(Sound { id })` gives `id` nothing, and of a held binding's alternatives only the one binding its resource type is a view of it. A name inside `w @ Some(s)` is a view of `w`: releasing `s` releases `w`'s.
 - Field reads are borrows, and so is **a value chosen from what is already held** (11/02): an `if`, `match`, `??` or block with some path ending in an outer binding or a stored place, as a `match` scrutinee or a `let`'s value (`match if c { a } else { b } { Some(x) => draw(x), … }`, `let t = if c { h.a } else { h.b }`). A release there could be a double free. A name bound inside is judged by what bound it, so `match load(1) { Some(v) => v, … }` still acquires.
 - Warning, not error (under-reports: a release on any branch counts; no `#[allow]`).
-- `struct` only (`type Fd = i32` waits on the grammar). `bindings/raylib`'s `Sound` and `Wave` use it.
+- On a `struct` or a nominal `type`, the only attribute a `type` takes (another is refused). Not on `data`, which is Lyra's own value. `bindings/raylib`'s `Sound` and `Wave` use it.
 - **`@borrowed` on a function** says the resource it answers is someone else's: a binding of its result carries no obligation. raylib's `default_font()` is the case — its `Font` is raylib's static data. On a function whose declared result is not a `@must_release` type (or a wrapper of one) it is an error. It, `@noinline`, `@track_caller` and `@interrupt` are the attributes a top-level `let` takes; any other is an error.
 - **Releasing a borrowed resource is `lyra-W025`** — `unload_font(default_font())`, directly or through a binding or an unwrap: it frees what the lender still uses.
 

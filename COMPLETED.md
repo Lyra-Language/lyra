@@ -9,6 +9,57 @@ Newest first.
 
 ## Dated log
 
+### 11/15/26 — Raster effects on the Genesis: a colour in the gap between two lines
+
+`std.genesis.raster`: a table of colour changes, each from a line of the picture down, made
+by the horizontal interrupt — Vega's raster effects (a sky's gradient, a waterline).
+- **The gap is narrow, and the interrupt costs more than it.** In a 40-cell line pixel x goes
+  out at H 6 + (x + 13) / 2, so a line's last pixels go after the counter has moved on (H
+  165), and between one line's last pixel and the next's first the counter reads the new
+  line from H 173 to H 11: about a hundred 68000 cycles. The interrupt, raised as the counter
+  moves, was entered about 50 slots later, so a colour written at once landed one to two lines
+  late, partway along. Raised a line early (the line before each multiple of `every`), the
+  handler sets CRAM's address first, waits for the counter to reach the change's line and
+  writes the one word, which lands in the gap.
+- **The wait had to be one read a pass.** Testing the H position too — `v == line && h ≥
+  173` — made each pass about 70 slots, so the loop saw the counter only past the gap and
+  the colour began 12 to 44 pixels into its line. `while counter < line << 8 {}` lands every
+  change exactly, with the game's loop writing VRAM throughout or not, on every frame tried.
+  A probe written into RAM and read from a Sheliak save state measured each of these.
+- **The handler is std's**, `@interrupt(hblank)` in a module, which lyra-E087 refused on the
+  host: the repo's check runs every std file as a host program. The host refusal now skips a
+  library file, as `CheckTarget` does.
+- **The colours are the VDP's again each frame**: `send_colors` sends all 64 every vertical
+  blank while effects run, and `hold_vblank` holds the horizontal interrupt too, since its
+  write between a run's address and data moves the address as the vertical one's did.
+- **Fades take them along**: `palette`'s fades tell `vdp.set_fade` how far along they are,
+  and a change is made ready as `vdp.faded` shows it — the hero's overlook fades in with its
+  sky's gradient.
+
+### 11/15/26 — `@must_release` on a nominal type, and by each name's type
+
+The entry listed three things: a `type` could not carry the attribute, a pattern binding
+more than one name was untracked, and `defer` would be the companion. The first two are
+built. `defer` is a language feature of its own, so it is an [IDEA] now.
+- **A `type` takes attributes.** `constrained_type` gained the `attributes` field `struct`
+  and `data` have (tree-sitter-lyra), and the collector reads `@must_release` from it and
+  refuses any other attribute there. The pass needed nothing: a nominal type heads as its
+  own name, so `obligationOf` found the declaration's `MustRelease` once it was set. A
+  handle that is no struct, `type Fd = i32` or one of the bindings' `^u8` handles, can
+  now carry it.
+- **Each name owes what its own type carries.** The pass seeded a payload only where the
+  pattern bound exactly one name, because, its comment said, a pattern binding has no type
+  to consult. The typechecker has recorded one for every binding since the editor wanted
+  them (`tt.Binding`). By type, `let (snd, n) = pair(1)` holds `snd`, each resource in a
+  tuple is its own, and a data type of the program's own is followed through its
+  alternative. The one-name rule also gave a lone name the whole value's obligation
+  whatever its type: `Some(Sound { id })` told the program to `unload_sound(id)`, a call
+  that does not compile. That name now holds nothing. A name inside `w @ Some(s)` is a view
+  of `w`, so releasing `s` discharges it.
+- Checked against 109 programs in lyra, Vega, Termina and Sheliak. The old and the new
+  lyrac report the same W022 and W025 on every one, and a leak seeded into
+  `examples/raylib/breakout.lyra` is still reported.
+
 ### 11/15/26 — `bindings.imgui` checked on Linux
 
 The entry worried about two things on Linux. First, lyrac sorts its `@link`s, so `-lSDL3`

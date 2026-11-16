@@ -464,7 +464,8 @@ starts one before its expression).
   marked in `resourceOf`, so every acquisition path sees it.
 - Unwrapping: `match`/`if let`/destructuring share `arm` over an `unwrapper`; `let … else` is
   handled like a `VarDeclStmt`. `beginUnwrap` also treats an obligation-producing scrutinee
-  expression. A payload is seeded only when the pattern binds exactly one name.
+  expression. Each name a pattern binds takes the obligation of **its own type**
+  (`tt.Binding`, `boundResources`), never its position; a name inside `w @ …` is a view of `w`.
 - Views, not handovers: a named binding's unwrapped payload; field/element/deref reads
   (`isStoredPlaceRead`, looking through a one-expression `unsafe` block); `MemberExpr`/
   `IndexExpr`/`TupleIndexExpr` over a name. A temporary scrutinee's payload *is* the handle.

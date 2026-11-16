@@ -703,9 +703,10 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[DONE 11/10] A bulk `^T → []T` copy**: `xs.push_from(p, n)`, any C-layout element; eight
   binding loops moved (COMPLETED.md, 11/10). Left: no `CBuffer` method over it, since no caller
   copies bytes out of a `CBuffer`; and nothing writes a `[]T` back into C memory in bulk.
-- **[OPEN] `@must_release` extensions:** a `newtype` cannot carry the attribute
-  (`constrained_type` has no attribute slot); a multi-binding pattern is untracked; `defer`
-  would be the natural companion.
+- **[DONE 11/15] `@must_release` on a nominal `type`, and patterns that bind several
+  names** — `@must_release(close_fd) type Fd = i32`; each bound name owes what its own type
+  carries (COMPLETED.md 11/15).
+- **[IDEA] `defer`** as `@must_release`'s companion: the release written beside the acquire.
 - **[DONE 11/02] `W022` reads a value chosen from what is held as a view**, as a scrutinee or a
   `let`'s value, where it told the program to release it (COMPLETED.md, 11/02).
 - **[PARTIAL] SDL3 bindings, driven by examples, towards an NES-style game.** One example

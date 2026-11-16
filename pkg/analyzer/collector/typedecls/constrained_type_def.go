@@ -42,11 +42,23 @@ func collectConstrainedTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx
 		genericParams = ctx.CollectGenericParams(gp)
 	}
 
+	// `@must_release(close_fd) type Fd = i32`: a handle that is no struct carries a
+	// release obligation as a struct does. It is the one attribute a `type` takes; any
+	// other is refused rather than read as nothing.
+	var mustRelease string
+	var mustReleaseLoc ast.Location
+	if attrs := cst.Field(node, "attributes"); attrs != nil {
+		mustRelease, mustReleaseLoc = CollectMustRelease(attrs, ctx)
+		refuseOtherTypeAttributes(attrs, ctx)
+	}
+
 	astNode := &ast.TypeDeclStmt{
-		AstBase:       ast.AstBase{Location: ctx.NodeLocation(node)},
-		Name:          name,
-		NameLocation:  ctx.NodeLocation(nameNode),
-		GenericParams: genericParams,
+		AstBase:        ast.AstBase{Location: ctx.NodeLocation(node)},
+		Name:           name,
+		NameLocation:   ctx.NodeLocation(nameNode),
+		GenericParams:  genericParams,
+		MustRelease:    mustRelease,
+		MustReleaseLoc: mustReleaseLoc,
 		Type: &types.ConstrainedType{
 			Name:        name,
 			Type:        typeType,
@@ -317,4 +329,22 @@ func collectPatternConstraint(node *sitter.Node, ctx *collector_ctx.Ctx) *types.
 		return nil
 	}
 	return &types.PatternConstraint{Pattern: ctx.NodeText(patternNode)}
+}
+
+// refuseOtherTypeAttributes reports every attribute on a `type` but `@must_release`, which
+// is the only one a nominal type's declaration reads.
+func refuseOtherTypeAttributes(attrList *sitter.Node, ctx *collector_ctx.Ctx) {
+	for i := uint(0); i < attrList.ChildCount(); i++ {
+		child := attrList.Child(i)
+		if child.Kind() != "attribute" {
+			continue
+		}
+		nameNode := cst.Field(child, "name")
+		if nameNode == nil || ctx.NodeText(nameNode) == "must_release" {
+			continue
+		}
+		ctx.AddError(child, diag.SeverityError,
+			"unknown attribute `@%s` on a `type`; the only one is `@must_release(f)`",
+			ctx.NodeText(nameNode))
+	}
 }

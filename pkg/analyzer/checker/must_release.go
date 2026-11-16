@@ -75,11 +75,11 @@ import (
 //
 // # What it does not cover
 //
-//   - **Only a `struct` carries the attribute.** That is where a C handle arrives, and
-//     it is the shape raylib's `Sound`/`Wave` and every SDL handle take. A `data` type
-//     is Lyra's own tagged union — marking one would be claiming a Lyra-managed value is
-//     foreign — and a `newtype` (the plausible `type Fd = i32`) cannot carry an
-//     attribute at all until the grammar's constrained_type rule takes an attribute_list.
+//   - **Only a `struct` or a nominal `type` carries the attribute** — where a C handle
+//     arrives: raylib's `Sound`/`Wave` are structs, and `type Fd = i32` or a `^u8` handle
+//     a nominal type (11/15; it heads as its own name, so nothing here changed for it). A
+//     `data` type is Lyra's own tagged union — marking one would be claiming a
+//     Lyra-managed value is foreign.
 //   - **Only a local binding.** A resource stored in a field, an array or a global has a
 //     lifetime this pass cannot see the end of, so storing one is an escape.
 //
@@ -901,19 +901,24 @@ func (c *mustRelease) wrappedResource(t types.Type, loc ast.Location) (resource,
 // end is reported there, which is the rule `block` applies one level out: a scope that
 // acquires is a scope that must discharge.
 //
-// **The payload is seeded only when the pattern binds exactly one name**, which is the
-// whole of how it decides *which* name receives the obligation. A pattern binding is an
-// `IdentifierPattern` and not an expression, so the TypeTable has no per-name type to
-// consult, and matching a pattern's shape against the scrutinee's type positionally would
-// be a new structural walk over both — rule 8's family, with a missing case for every
-// pattern kind added later. One name is unambiguous and covers every wrapper unwrap
-// (`Some(v)`, `Ok(v)`, `Err(e)`), which is what these constructs are for. A multi-binding
-// pattern falls through to the escape default and stays silent, which is the direction
-// this pass errs in everywhere else.
+// **A name receives an obligation by its own type** (`tt.Binding`, which the typechecker
+// records for every pattern binding), never by its position: `boundResources`. So
+// `let (snd, n) = pair(1)` holds `snd` and not `n`, `Some(Sound { id })` gives `id`
+// nothing, and `Err(code)` beside `Ok(s)` is not told to release a `Sound`. Until 11/15 a
+// payload was seeded only where the pattern bound exactly one name, whatever that name's
+// type: a tuple was never tracked, and `Some(Sound { id })` advised `unload_sound(id)`.
+//
+// From a temporary every name whose type carries an obligation owns one, whether or not
+// the whole value does — a tuple carries none, its element does. From a held binding the
+// names of the binding's resource type are views of it. A name inside `w @ …` that carries
+// the resource `w` carries is a view of `w`: one resource, two names.
 type unwrapper struct {
 	scrutinee string   // the binding being destructured; "" when it is not a bare name
 	held      resource // what it holds
 	isHeld    bool
+	// temporary is a scrutinee that is no binding and no view of one — a call, `load(1)`
+	// — so the names its pattern binds are the only hold there is on what it made.
+	temporary bool
 }
 
 // beginUnwrap reads the scrutinee without letting the escape default consume it.
@@ -947,9 +952,89 @@ func (c *mustRelease) beginUnwrap(st heldState, scrutinee ast.Expression) (heldS
 	// name is what says there is no prior binding to take the claim away from.
 	st = c.expr(st, scrutinee)
 	if r, ok := c.resourceOf(scrutinee); ok {
-		return st, unwrapper{held: r, isHeld: true}
+		return st, unwrapper{held: r, isHeld: true, temporary: true}
 	}
-	return st, unwrapper{}
+	return st, unwrapper{temporary: true}
+}
+
+// boundResource is one name a pattern binds whose type carries an obligation.
+type boundResource struct {
+	name string
+	r    resource
+}
+
+// boundResources answers, in source order, each name pat binds whose own type carries an
+// obligation (`tt.Binding`). A name inside a `name @ …` whose holder carries the same
+// resource comes back as a view of the holder (`aliasOf`).
+func (c *mustRelease) boundResources(pat ast.Pattern) []boundResource {
+	if pat == nil {
+		return nil
+	}
+	holderOf := map[string]string{}
+	ast.WalkPattern(pat, func(sub ast.Pattern) bool {
+		if b, ok := sub.(*ast.BindingPattern); ok {
+			for _, inner := range ast.PatternBoundNames(b.Pattern) {
+				if _, outer := holderOf[inner]; !outer {
+					holderOf[inner] = b.Name
+				}
+			}
+		}
+		return true
+	})
+	var out []boundResource
+	byName := map[string]resource{}
+	ast.EachPatternBinding(pat, func(b ast.PatternBinding) {
+		if b.Name == "_" {
+			return
+		}
+		t, ok := c.tt.Binding(b.Loc)
+		if !ok {
+			return
+		}
+		r, carries := c.obligationOf(t, b.Loc)
+		if !carries {
+			return
+		}
+		// Walked outermost first, so a holder is in byName before what it holds.
+		for h := holderOf[b.Name]; h != ""; h = holderOf[h] {
+			if hr, ok := byName[h]; ok && hr.typName == r.typName {
+				r.aliasOf = h
+				if hr.aliasOf != "" {
+					r.aliasOf = hr.aliasOf
+				}
+				break
+			}
+		}
+		byName[b.Name] = r
+		out = append(out, boundResource{name: b.Name, r: r})
+	})
+	return out
+}
+
+// payloadOf is what an alternative or a `let` binds: each name of boundResources, given
+// the obligation it takes from this scrutinee, at loc. From a temporary every name owns
+// (or views the name it is bound inside); from a held binding only names of its resource
+// type are seeded, each a view of the binding — `viewOf` says which binding.
+func (c *mustRelease) payloadOf(u unwrapper, pat ast.Pattern, loc ast.Location, viewOf string) heldState {
+	out := heldState{}
+	if !u.temporary && !u.isHeld {
+		return out
+	}
+	for _, b := range c.boundResources(pat) {
+		r := b.r
+		r.loc = loc
+		if u.isHeld && r.typName == u.held.typName {
+			r.borrowedFrom = u.held.borrowedFrom
+		}
+		if !u.temporary {
+			if r.typName != u.held.typName {
+				continue
+			}
+			r.aliasOf = viewOf
+		}
+		out[b.name] = r
+	}
+	return out
 }
 
 // arm runs one alternative — a `match` arm, or one branch of an `if let` — seeding the
@@ -964,29 +1049,17 @@ func (c *mustRelease) arm(
 ) heldState {
 	out := st.clone()
 	var payload []string
-	owning := u.scrutinee == ""
-	if binds && u.isHeld && pat != nil {
-		if bound := patternBoundNames(pat); len(bound) == 1 {
-			payload = bound
-			r := u.held
-			r.loc = pat.GetLocation()
-			// Inside the alternative the payload stands for the resource, so the
-			// message names the direct call rather than the unwrap that just happened.
-			r.wrapped = false
-			if owning {
-				// The scrutinee was a temporary — `if let Some(v) = load(…)` — so this
-				// alternative is the only place the value is ever visible, and failing
-				// to release it here is a leak with nowhere else to be reported.
-				out[bound[0]] = r
-			} else {
-				// **A named binding keeps its own claim and the payload is a view of
-				// it.** Releasing through the view discharges the binding; merely
-				// *using* the view does not, because the binding outlives this
-				// alternative and may be released later — which is what
-				// `match held { Some(t) => draw(t), … }` does every frame.
-				r.aliasOf = u.scrutinee
-				out[bound[0]] = r
-			}
+	if binds && pat != nil {
+		// From a temporary — `if let Some(v) = load(…)` — this alternative is the only
+		// place the value is ever visible, and failing to release it here is a leak with
+		// nowhere else to be reported. **From a named binding the payload is a view**:
+		// the binding keeps its claim, releasing through the view discharges it, and
+		// merely *using* the view does not, because the binding outlives this alternative
+		// and may be released later — which is what `match held { Some(t) => draw(t), … }`
+		// does every frame.
+		for name, r := range c.payloadOf(u, pat, pat.GetLocation(), u.scrutinee) {
+			out[name] = r
+			payload = append(payload, name)
 		}
 	}
 	out = run(out)
@@ -996,7 +1069,7 @@ func (c *mustRelease) arm(
 	leaked := heldState{}
 	for _, name := range payload {
 		if r, still := out[name]; still {
-			if owning {
+			if r.aliasOf == "" {
 				leaked[name] = r
 			}
 			delete(out, name)
@@ -1081,27 +1154,51 @@ func (c *mustRelease) letElse(
 	return c.bindPayload(st, u, d.Pattern, d.GetLocation())
 }
 
-// bindPayload moves a held scrutinee's obligation onto the single name its pattern binds,
-// for the two constructs whose payload outlives the statement — `let … else` and a plain
-// destructuring `let`. The one-name rule is the `arm` header's, for the same reason.
+// bindPayload moves a scrutinee's obligations onto the names its pattern binds, for the two
+// constructs whose payload outlives the statement — `let … else` and a plain destructuring
+// `let`. Each name takes the obligation of its own type (`boundResources`). From a held
+// binding the claim moves to the one name of its resource type that is not a view of
+// another; with none, or more than one, it stays with the binding.
 func (c *mustRelease) bindPayload(
 	st heldState,
 	u unwrapper,
 	pat ast.Pattern,
 	loc ast.Location,
 ) heldState {
-	if !u.isHeld || pat == nil {
+	if pat == nil {
 		return st
 	}
-	bound := patternBoundNames(pat)
-	if len(bound) != 1 {
+	if u.temporary {
+		for name, r := range c.payloadOf(u, pat, loc, "") {
+			st[name] = r
+		}
 		return st
 	}
+	if !u.isHeld {
+		return st
+	}
+	var owner string
+	for _, b := range c.boundResources(pat) {
+		if b.r.typName != u.held.typName || b.r.aliasOf != "" {
+			continue
+		}
+		if owner != "" {
+			return st
+		}
+		owner = b.name
+	}
+	if owner == "" {
+		return st
+	}
+	payload := c.payloadOf(u, pat, loc, owner)
 	delete(st, u.scrutinee)
-	r := u.held
-	r.loc = loc
-	r.wrapped = false
-	st[bound[0]] = r
+	for name, r := range payload {
+		if name == owner {
+			r.aliasOf = ""
+			r.borrowedFrom = u.held.borrowedFrom
+		}
+		st[name] = r
+	}
 	return st
 }
 

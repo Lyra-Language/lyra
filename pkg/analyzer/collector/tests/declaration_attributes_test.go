@@ -67,3 +67,18 @@ func TestMustReleaseAttribute_OneArgumentIsClean(t *testing.T) {
 		}
 	}
 }
+
+// A `type` takes `@must_release` (11/15), so a handle that is no struct can carry the
+// obligation; it is the one attribute a `type` reads, and any other is refused.
+func TestMustReleaseAttribute_OnANominalType(t *testing.T) {
+	for _, e := range parseAndCollectErrors(t, "@must_release(close_fd) pub type Fd = i32\n") {
+		t.Errorf("unexpected %v", e)
+	}
+	found := false
+	for _, e := range parseAndCollectErrors(t, "@derive(Eq) type Fd = i32\n") {
+		found = found || strings.Contains(e.Error(), "unknown attribute `@derive` on a `type`")
+	}
+	if !found {
+		t.Error("an attribute a `type` does not read should be refused")
+	}
+}
