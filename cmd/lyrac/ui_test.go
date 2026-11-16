@@ -689,6 +689,7 @@ import ui.layout.{
   ProgressRole,
   TableRole,
   RowRole,
+  DialogRole,
   FieldSpec,
   SliderSpec,
   Vertical,
@@ -917,6 +918,7 @@ let role_name = pure (role: Role) -> string => match role {
   ProgressRole => "progress",
   TableRole => "table",
   RowRole => "row",
+  DialogRole => "dialog",
 }
 `)
 	want := `hits a,c,b,c
@@ -1460,7 +1462,7 @@ func TestRun_UiAccessibilityTree(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ sandbox, host_of }
 import ui.script.{ script_platform, ScriptPlatform }
-import ui.backend.{ AxWindow, AxGroup, AxLabel, AxImage, AxButton, AxCheckbox, AxSlider, AxTextInput, AxScroll, AxComboBox, AxListBox, AxOption, AxTabList, AxTab, AxRadio, AxRadioGroup, AxProgress, AxTable, AxRow, AxContainer, Renderer, InputEvent, AccessAction, AccessTree, AccessNode, AxSetValue, AxClick, AxIncrement, AxFocus, AxSetNumber }
+import ui.backend.{ AxWindow, AxGroup, AxLabel, AxImage, AxButton, AxCheckbox, AxSlider, AxTextInput, AxScroll, AxComboBox, AxListBox, AxOption, AxTabList, AxTab, AxRadio, AxRadioGroup, AxProgress, AxTable, AxRow, AxDialog, AxContainer, Renderer, InputEvent, AccessAction, AccessTree, AccessNode, AxSetValue, AxClick, AxIncrement, AxFocus, AxSetNumber }
 import ui.access.{ access_node }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new, Fonts }
@@ -1590,6 +1592,7 @@ let role_name = pure (node: AccessNode) -> string => match node.role {
   AxProgress => "progress",
   AxTable => "table",
   AxRow => "row",
+  AxDialog => "dialog",
   AxContainer => "container",
 }
 `)
@@ -1612,6 +1615,119 @@ after: name Ada, ticked true, volume 7, sent yes
 focus on Name: true
 set number: volume 9
 set as text: volume 7, and as text that is no number 5
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A modal open keeps the program's shortcuts out, as it keeps every other input: Primary+s
+// (`App.shortcuts`) and Primary+o (a drawn menu bar's item, behind the dialog) are heard
+// with it closed and not with it open, while Primary+d, a menu inside the dialog, answers.
+// And assistive technology hears the window as the dialog alone — a modal dialog, labelled
+// as its content — where with it closed it hears what is behind.
+func TestRun_UiModalKeepsShortcutsOut(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, Command, Subscription, Shortcuts, Shortcut, host_of }
+import ui.script.{ timed_platform, parse_steps }
+import ui.backend.{ Renderer, TextureId, Character, Modifiers, Chord, AccessTree, AccessNode, AxWindow, AxDialog, AxButton, AxLabel }
+import ui.draw.{ Size, Color }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, column, text, button, modal, menu_bar, menu_button, Menu, MenuItemEntry, MenuItem }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, window, background, ops) => {}
+}
+
+struct State {
+  open: bool = false,
+  heard: []string = [],
+}
+
+data Ev = Heard(string) | Dismissed
+
+let update = (s: State, e: Ev) -> (State, []Command<Ev>) => match e {
+  Heard(what) => (State { s | heard: [...s.heard, what] }, []),
+  Dismissed => (s, []),
+}
+
+let primary = pure (c: rune) -> Chord => Chord { key: Character(c), mods: Modifiers { primary: true } }
+
+let view = pure (s: State) -> Node<Ev> => modal(
+  column([
+    menu_bar([Menu { label: "File", entries: [MenuItemEntry(MenuItem { label: "Open", on_select: Heard("open"), shortcut: Some(primary('o')) })] }]),
+    button("Behind", Heard("behind")),
+  ]),
+  s.open,
+  Node {
+    column([
+      text("Delete it?"),
+      menu_button(text("More"), [MenuItemEntry(MenuItem { label: "Delete", on_select: Heard("delete"), shortcut: Some(primary('d')) })]),
+    ]) |
+    label: "Confirm",
+  },
+  Dismissed
+)
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  for open in [false, true] {
+    let Ok(steps) = parse_steps("Primary+s Primary+o Primary+d") else { return 2 }
+    var platform = timed_platform(steps, Size { w: 400.0, h: 300.0 })
+    var renderer = Blank {}
+    let app = App {
+      view: view,
+      update: update,
+      subscriptions: (_: State) -> []Subscription<Ev> => [],
+      background: Color { r: 0, g: 0, b: 0 },
+      shortcuts: [Shortcuts { of: (_: State) -> []Shortcut<Ev> => [Shortcut { key: Character('s'), mods: Modifiers { primary: true }, event: Heard("save") }] }],
+    }
+    var host = host_of(app, State { open: open }, platform)
+    while host.step(platform, renderer, fonts) {}
+    println("modal ${if open { "open" } else { "closed" }}: heard ${host.state.heard.join(", ")}")
+    print_tree(platform.access, platform.access.root, 1)
+  }
+  fonts.close()
+  0
+}
+
+let print_tree = (tree: AccessTree, id: u64, depth: i64) -> void => {
+  for node in tree.nodes {
+    if node.id != id { continue }
+    var indent = ""
+    for _ in 0..<depth { indent = "${indent}  " }
+    let role = match node.role {
+      AxWindow => "window",
+      AxDialog => "dialog",
+      AxButton => "button",
+      AxLabel => "label",
+      _ => "other",
+    }
+    let said = if node.label.len() > 0 { " ${node.label}" } else if node.value.len() > 0 { " ${node.value}" } else { "" }
+    println("${indent}${role}${said}")
+    for child in node.children { print_tree(tree, child, depth + 1) }
+  }
+}
+`)
+	want := `modal closed: heard save, open
+  window
+    button File
+    button Behind
+modal open: heard delete
+  window
+    dialog Confirm
+      label Delete it?
+      button More
 `
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)

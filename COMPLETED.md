@@ -9,6 +9,38 @@ Newest first.
 
 ## Dated log
 
+### 11/16/26 — A modal is heard as a dialog, and keeps the program's shortcuts out
+
+A modal already took every press, wheel turn and Tab while it was open, but two things still
+went past it. Its program's shortcuts fired behind it: `App.shortcuts`, and a drawn menu's
+item shortcut whose menu the scrim covered. And VoiceOver heard the dialog as an unnamed
+group, with everything behind it still in reach.
+
+**Shortcuts.** `Host.shortcut_for` asks `ui.layout`'s new `open_modal` first: the innermost
+modal open in the window's tree, found through what floats as the popup walk finds it. With
+one open, `App.shortcuts` and the app's menus' shortcuts are not looked at, and drawn menus
+are looked for inside the dialog alone, so a menu there still answers its own.
+
+**The Mac's own bar is left as it is**: AppKit chooses its items before the program hears the
+key. Edit's Copy and Paste reach a text field in the dialog through it, and turning them off
+would have broken that.
+
+**Assistive technology.** The dialog's holder is now `DialogRole`, heard as `AxDialog`,
+which the AccessKit shim sends as AccessKit's dialog role marked modal (`set_modal`, code 20).
+It is named by the content's label. Content that would be heard only for that label (a
+labelled column, a group) gives it to the dialog, so the name is said once; the first run
+read "Confirm" twice. While the modal is open, `access_tree` builds the window's tree from
+the dialog alone. That is what `aria-modal` asks assistive technology to do, and none of what
+is left out takes input meanwhile.
+
+`TestRun_UiModalKeepsShortcutsOut` plays `Primary+s` (a shortcut), `Primary+o` (a drawn
+menu behind) and `Primary+d` (a menu inside the dialog), with the modal closed and then open,
+and prints the tree each way. It was checked on this Mac too, through the accessibility API
+on a packaged app: with the modal open only the dialog's text and button were found, though
+the button behind it showed through the scrim. Closing it by an `AXPress` brought that button
+back, and opening it again took it away. The dialog element itself, and its name, are not
+listed by that tool, which reports only leaf elements; VoiceOver speaking it was not tried.
+
 ### 11/16/26 — `TestRun_UiResizeSettles` plays 378 resizes, not 1,734
 
 The test resized the Layouts demo 1,734 times. It swept every 0.75 of a unit from 1300 wide

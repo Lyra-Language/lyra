@@ -768,9 +768,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] A docked panel's framework state does not follow it** — identities are paths, so a
   panel docked elsewhere (or whose group a split moves) starts with no scroll, focus or caret.
   Keying a dock's panels by their keys needs identities that are not wholly hierarchical (10/27).
-- **[OPEN] A modal is not heard as one, nor keeps the app's shortcuts out** — VoiceOver hears
-  its dialog as a group (AccessKit has a `Dialog` role and `set_modal`), and `App.shortcuts`
-  and drawn menus' shortcuts still reach the program while one is open (10/26).
+- **[DONE 11/16] A modal is heard as one, and keeps the app's shortcuts out** — a modal
+  dialog to AccessKit, the window's tree only the dialog while it is open; `App.shortcuts` and
+  menus' wait but a menu inside it (COMPLETED.md 11/16). The Mac's own bar still answers.
 - **[OPEN] What a terminal needs of `ui`** — an element the program paints, font faces and
   fallback, raw keys and pointer; designed in `ui/TERMINAL.md` (10/22), for Termina's move
   off ImGui. Steps 1 (`painted`, `PaintDraw`/`PaintText`, `on_size`), 2 (the atlas's pages)

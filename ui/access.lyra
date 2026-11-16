@@ -15,6 +15,10 @@ module ui.access
 //! `label`, since an unnamed group is a stop with nothing to say; and a control is one node,
 //! the text inside a button or beside a checkbox its label rather than nodes of its own.
 //!
+//! **A modal open is all the window holds** ([access_tree]): its dialog, heard as a modal
+//! dialog, and what floats from it — nothing outside it, as `aria-modal` has assistive
+//! technology ignore what is outside, since none of it takes input while it is open.
+//!
 //! **A node's id is its element's identity hashed** (FNV-1a), so it stays the same from one
 //! frame to the next while the element does, which is what lets VoiceOver keep its place.
 
@@ -39,6 +43,7 @@ import ui.backend.{
   AxProgress,
   AxTable,
   AxRow,
+  AxDialog,
   ACCESS_FOCUS,
   ACCESS_CLICK,
   ACCESS_SET_VALUE,
@@ -66,6 +71,8 @@ import ui.layout.{
   ProgressRole,
   TableRole,
   RowRole,
+  DialogRole,
+  open_modal,
   Checkable,
   Radio,
   Ranged,
@@ -85,7 +92,11 @@ pub const WINDOW_KEY: string = "window"
 /// focus outside its nodes, and takes the program down with it.
 pub let access_tree<e> = pure (laid: Laid<e>, focus: string) -> AccessTree => {
   var nodes: []AccessNode = []
-  let children = gather(laid, Point {}, nodes)
+  // A modal open holds the window: what is outside it is not heard while it is.
+  let children = match open_modal(laid) {
+    Some((content, at)) => gather(content, at, nodes),
+    None => gather(laid, Point {}, nodes),
+  }
   let root = access_id(WINDOW_KEY)
   nodes.push(AccessNode {
     key: WINDOW_KEY,
@@ -155,6 +166,7 @@ let heard_as<e> = pure (laid: Laid<e>) -> Maybe<AccessRole> => match laid.role {
   ProgressRole => Some(AxProgress),
   TableRole => Some(AxTable),
   RowRole => Some(AxRow),
+  DialogRole => Some(AxDialog),
 }
 
 /// The node for `laid`, heard as `role`.

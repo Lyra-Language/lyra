@@ -280,6 +280,8 @@ pub data AccessRole =
   | AxProgress
   | AxTable
   | AxRow
+  /// A modal dialog: assistive technology keeps to it while it is open.
+  | AxDialog
   | AxContainer
 
 /// What assistive technology asks of an element.

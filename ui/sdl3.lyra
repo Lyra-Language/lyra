@@ -251,6 +251,7 @@ import ui.backend.{
   AxProgress,
   AxTable,
   AxRow,
+  AxDialog,
   AxListBox,
   AxOption,
   AxContainer,
@@ -823,6 +824,7 @@ let role_code = pure (role: AccessRole) -> i32 => match role {
   AxProgress => 17,
   AxTable => 18,
   AxRow => 19,
+  AxDialog => 20,
   AxContainer => 0,
 }
 

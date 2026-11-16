@@ -97,6 +97,7 @@ static accesskit_role role_of(int role) {
     case 17: return ACCESSKIT_ROLE_PROGRESS_INDICATOR;
     case 18: return ACCESSKIT_ROLE_TABLE;
     case 19: return ACCESSKIT_ROLE_ROW;
+    case 20: return ACCESSKIT_ROLE_DIALOG;
     default: return ACCESSKIT_ROLE_GENERIC_CONTAINER;
   }
 }
@@ -110,6 +111,8 @@ static accesskit_tree_update *snapshot(void *userdata) {
   for (int64_t i = 0; i < s->element_count; i++) {
     element *e = &s->elements[i];
     accesskit_node *node = accesskit_node_new(role_of(e->role));
+    // `ui`'s one dialog is a modal's: nothing outside it takes input while it is open.
+    if (e->role == 20) accesskit_node_set_modal(node);
     if (e->label[0]) accesskit_node_set_label(node, e->label);
     if (e->value[0]) accesskit_node_set_value(node, e->value);
     if (e->description[0]) accesskit_node_set_description(node, e->description);

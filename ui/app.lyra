@@ -116,6 +116,7 @@ import ui.layout.{
   MenuSeparator,
   menu_shortcuts,
   entries_shortcuts,
+  open_modal,
   DockDrop,
   column,
 }
@@ -1387,22 +1388,36 @@ impl Host<s, e> {
   /// The event of the program's shortcut for `key` held with `mods`, if it has one: one of
   /// [App.shortcuts], else an enabled item's of a menu `laid` — the window the key is in —
   /// draws (`menu_shortcuts`), so a menu's shortcut is written once, on its item.
+  ///
+  /// **A modal open in the window keeps them out** (`ui.layout`'s `modal`): nothing outside it
+  /// takes input, so neither the program's shortcuts nor its menus' do, and only a menu inside
+  /// the dialog answers its own. (The Mac's own bar still chooses its items: Edit's reach a
+  /// field in the dialog through it.)
   let shortcut_for = (self, key: Key, mods: Modifiers, laid: Laid<e>) -> Maybe<e> => {
-    for list in self.app.shortcuts {
-      for s in (list.of)(self.state) {
-        if s.key == key && chord_matches(s.mods, mods) { return Some(s.event) }
-      }
+    let modal = open_modal(laid)
+    let inside = match modal {
+      Some((content, _)) => content,
+      None => laid,
     }
-    if !self.native_menus {
-      for list in self.app.menus {
-        for m in (list.of)(self.state) {
-          for (chord, event) in entries_shortcuts(m.entries) {
-            if chord.key == key && chord_matches(chord.mods, mods) { return Some(event) }
+    if modal.is_none() {
+      for list in self.app.shortcuts {
+        for s in (list.of)(self.state) {
+          if s.key == key && chord_matches(s.mods, mods) { return Some(s.event) }
+        }
+      }
+      if !self.native_menus {
+        for list in self.app.menus {
+          for m in (list.of)(self.state) {
+            for (chord, event) in entries_shortcuts(m.entries) {
+              if chord.key == key && chord_matches(chord.mods, mods) {
+                return Some(event)
+              }
+            }
           }
         }
       }
     }
-    for (chord, event) in menu_shortcuts(laid) {
+    for (chord, event) in menu_shortcuts(inside) {
       if chord.key == key && chord_matches(chord.mods, mods) { return Some(event) }
     }
     None

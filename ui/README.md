@@ -314,8 +314,16 @@ layer — implements the two traits; the display list is the whole contract.
   takes the focus when it opens, on its first control, closing the menus and any select's list
   outside it, and gives the focus back to what had it when it closes (`OpenPopup.returns`).
   Escape raises `on_dismiss` (a popup or list open inside it first); a press outside it and the
-  window losing the focus raise nothing. The scrim and the dialog are tags of their own, not
-  parts, so the program's sheets reach `under` as they would without the modal.
+  window losing the focus raise nothing. **Nor do the program's shortcuts reach it** while
+  it is open (`Host.shortcut_for`, by `open_modal`): neither `App.shortcuts` nor its menus'
+  — only a drawn menu inside the dialog answers its own; the Mac's own bar still chooses its
+  items, Edit's reaching a field in the dialog through it. **Assistive technology hears the
+  dialog alone**: `Dialog` is `DialogRole`, `AxDialog` (AccessKit's dialog role, marked
+  modal), named by the content's label — content heard only for that label passing it up,
+  so the name is said once — and while it is open the window's tree holds nothing outside
+  it (`access_tree`), as `aria-modal` has assistive technology ignore what is outside. The
+  scrim and the dialog are tags of their own, not parts, so the program's sheets reach `under`
+  as they would without the modal.
 - **The smaller controls** (`ui/layout/forms.lyra`, `table.lyra`; Vega's design §5) are made of
   the elements every control is, with three of the framework's own beneath them:
   - **`Drags(DragSpec)`**, an element dragged along an axis to change a number — its value at

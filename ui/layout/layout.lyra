@@ -387,6 +387,8 @@ pub data Role =
   | ProgressRole
   | TableRole
   | RowRole
+  /// A modal's dialog ([modal]): heard as a modal dialog, labelled as its content is.
+  | DialogRole
 
 /// A row's axis or a column's.
 pub data Axis = Horizontal | Vertical
@@ -668,7 +670,9 @@ pub let popup<e> = pure (
 /// outside it takes input: a press elsewhere goes nowhere, and Tab keeps the focus inside it.
 /// It takes the focus when it opens, on its first control, and gives it back to what had it
 /// when it closes. Escape raises `on_dismiss`, which the program closes it for; a press outside
-/// it and the window losing the focus raise nothing.
+/// it and the window losing the focus raise nothing. And the program's shortcuts wait while it
+/// is open (`ui.app`'s `App.shortcuts`, and drawn menus' but its own), as does every element
+/// outside it to assistive technology, which hears it as a modal dialog (`ui.access`).
 pub let modal<e> = pure (
   under: Node<e>,
   open: bool,
@@ -676,6 +680,35 @@ pub let modal<e> = pure (
   on_dismiss: e
 ) -> Node<e> =>
   Node { kind: Modal(open, on_dismiss), tag: "Modal", children: [under, content] }
+
+/// The innermost modal open in `laid` (its top-left corner at `origin`): its content — the scrim
+/// holding the dialog — and where that is in the window, or `None` with no modal open. Only what
+/// floats, or holds what does, is looked in: an open modal's content floats.
+pub let open_modal<e> = pure (
+  laid: Laid<e>,
+  origin: Point = Point {}
+) -> Maybe<(Laid<e>, Point)> => {
+  var found: Maybe<(Laid<e>, Point)> = None
+  if let Modal(true, _) = laid.kind {
+    if laid.children.len() > 1 {
+      let scrim = laid.children[1]
+      found = Some((
+        scrim.laid,
+        Point { x: origin.x + scrim.at.x, y: origin.y + scrim.at.y }
+      ))
+    }
+  }
+  for child in laid.children {
+    if child.laid.floats || child.laid.floating {
+      let inner = open_modal(
+        child.laid,
+        Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
+      )
+      if inner.is_some() { found = inner }
+    }
+  }
+  found
+}
 
 /// The identity of option `index` in the list of the select identified as `select`.
 pub let option_id = pure (select: string, index: i64) -> string =>
@@ -2447,17 +2480,23 @@ let lay_docked<e> = (
 }
 
 /// The framework's scrim around a modal's `content` (`ModalScrim`), centring it, and its
-/// holder (`Dialog`): a scroller, so a long one scrolls. Tags of their own rather than parts,
+/// holder (`Dialog`): a scroller, so a long one scrolls, heard as the modal's dialog. Tags of their own rather than parts,
 /// so the program's sheets reach `under` as they would without the modal.
 let modal_scrim<e> = pure (content: Node<e>) -> Node<e> => {
   let centred: Kind<e> = Place(CENTER)
   let wrapping: Kind<e> = Inset(Insets {})
+  // The dialog is named as its content is. Content heard only for its label — a group, as a
+  // labelled column is — gives the label to the dialog, so the name is said once.
+  let plain = content.role.is_none() && role_of(content.kind) == GroupRole
+  let inner = if plain { Node { content | label: "" } } else { content }
   let holder = Node {
     kind: wrapping,
     tag: "Dialog",
     style: Style { overflow_y: Some(OverflowAuto) },
-    children: [content],
+    children: [inner],
     key: "content",
+    role: Some(DialogRole),
+    label: content.label,
   }
   Node { kind: centred, tag: "ModalScrim", children: [holder], key: "scrim" }
 }
