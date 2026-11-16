@@ -9,6 +9,22 @@ Newest first.
 
 ## Dated log
 
+### 11/15/26 — `bindings.imgui` checked on Linux
+
+The entry worried about two things on Linux. First, lyrac sorts its `@link`s, so `-lSDL3`
+comes before the static `-llyra-imgui`, which GNU ld under `--as-needed` might drop. Second,
+the archive is C++ and might need libstdc++. The VM was unreachable, so the check ran in an
+`ubuntu:26.04` container (SDL3 3.4.2, clang 21), with `./build.sh` run inside it.
+- **The order is not a problem.** lyrac already puts Linux libraries in one
+  `--start-group … --end-group` (`linkFlags`). The gallery and components examples link
+  with `-Wl,--as-needed` put before everything, under both `-fuse-ld=bfd` and lld. Both
+  programs need only libm, libSDL3 and libc, and both pass `--check` headless.
+- **No libstdc++.** The archive's undefined symbols outside itself are SDL's and a handful
+  of libc's (`__cxa_atexit` and `__dso_handle` among them). The `std::` names `nm -C` shows
+  are only ImGui's own functions taking a `va_list`, mangled as `std::__va_list`.
+- `TestRun_ImGuiExamplesCheckHeadless` runs both subtests there and passes, where CI skips
+  them for want of SDL3. Nothing changed but `bindings/imgui/build.sh`'s header.
+
 ### 11/15/26 — Defaults in the by-name passes
 
 A filled-in default (`TypeTable.IsDefault`) is its declaration's node inside the caller's

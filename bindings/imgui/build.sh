@@ -21,6 +21,8 @@
 # **No C++ runtime**: compiled with -fno-exceptions -fno-rtti -fno-threadsafe-statics,
 # ImGui references nothing from libc++/libstdc++ (only `__cxa_atexit`, which libc has),
 # so the archive links with the plain C driver lyrac runs — one `@link` on every platform.
+# On Linux the archive's only outside needs are libc's and SDL3's, and the examples link
+# under `-Wl,--as-needed` with GNU ld and lld alike (checked on Ubuntu 26.04, 11/15/26).
 #
 # Needs curl, tar, pkg-config's `sdl3` package and a C++-capable clang ($LYRA_CC, else
 # clang). Exits non-zero, with the reason on stderr, when any is missing.

@@ -644,9 +644,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[DONE 11/15] Defaults in the remaining by-name passes** — captures, `@must_release`,
   the value-range pass, purity and use-after-move's `own` arguments each misread one, a
   dropped trap and a `pure` hole among them; each fixed and probed (COMPLETED.md 11/15).
-- **[OPEN] `bindings.imgui` on Linux is unverified.** `@link` flags are sorted, so `-lSDL3`
-  precedes the static `-llyra-imgui`; check the link under `--as-needed`, and that the
-  archive needs nothing from libstdc++ there either.
+- **[DONE 11/15] `bindings.imgui` on Linux** — on Ubuntu 26.04 the archive builds, needs
+  nothing from libstdc++, and links under `--as-needed` with GNU ld and lld; the examples'
+  test passes there (COMPLETED.md 11/15).
 
 - **[PARTIAL] `lyra-md`, a Markdown renderer, and `site`, a directory builder, as the
   standard library's forcing functions.**
