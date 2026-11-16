@@ -5669,7 +5669,8 @@ let view = pure () -> Node<Ev> => themed::<Ev>(light_theme(), Sheet { rules: [Ru
 
 // CSS's text-overflow: ellipsis (`Style.text_overflow`, `ellipsized`): a paragraph wider than
 // its box is one line, cut by rune to what fits with "…" after it, spaces before the "…"
-// dropped, and "…" alone where nothing more fits; one that fits is itself. And a tab strip too
+// dropped, and "…" alone where nothing more fits; one that fits is itself. Checked as what a
+// cut is rather than where it falls, which is the font's: CI's cuts one letter later. And a tab strip too
 // narrow for its labels shows each one line ending in "…" within its tab, where it was cut bare.
 func TestRun_UiTextEllipsis(t *testing.T) {
 	t.Parallel()
@@ -5687,10 +5688,19 @@ let main = () -> u8 => {
   let font = light_theme().font
   let words = "Hello world, again"
   let full = fonts.lay_out(words, font, UNBOUNDED).width
+  // What a cut is, whatever the font: the text itself where it fits; else a start of it and
+  // "…", no wider than the room, and the longest such (one rune more would not fit).
   for width in [full + 10.0, full * 0.6, full * 0.35, 1.0] {
     let cut = ellipsized(words, font, width, fonts)
+    if cut == words {
+      println("whole")
+      continue
+    }
+    let start = cut.strip_suffix("…") ?? "?"
     let fits = fonts.lay_out(cut, font, UNBOUNDED).width <= width || cut == "…"
-    println("${cut} (fits ${fits})")
+    let longer = "${words.slice(0, start.len() + 1).trim_end()}…"
+    let longest = longer == cut || fonts.lay_out(longer, font, UNBOUNDED).width > width
+    println("cut: a start ${words.starts_with(start)}, fits ${fits}, longest ${longest}, empty ${start.len() == 0}")
   }
   // Four long labels in a strip a quarter of their width: each tab's label one line, cut with
   // "…" inside its tab.
@@ -5736,7 +5746,10 @@ let view = pure () -> Node<Ev> => themed::<Ev>(light_theme(), Sheet {}, [
   ]),
 ])
 `)
-	want := "Hello world, again (fits true)\nHello w… (fits true)\nHell… (fits true)\n… (fits true)\n" +
+	want := "whole\n" +
+		"cut: a start true, fits true, longest true, empty false\n" +
+		"cut: a start true, fits true, longest true, empty false\n" +
+		"cut: a start true, fits true, longest true, empty true\n" +
 		"1 line, inside true | 1 line, inside true | 1 line, inside true | 1 line, inside true\n"
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
