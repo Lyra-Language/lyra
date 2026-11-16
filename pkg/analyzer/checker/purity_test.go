@@ -1327,3 +1327,27 @@ let dirty = pure () -> i64 => Pt.noisy()
 		t.Errorf("expected one report about Pt.noisy, got: %v", diags)
 	}
 }
+
+// A filled-in default's names are its module's, so a `pure` closure is charged for what the
+// default reads there and nothing of the caller's (11/15): the caller's `var limit` was taken
+// for the default's `limit` and the closure refused; and the caller's immutable `let count`
+// stood in for the module's `var count`, so a default reading a mutable global was accepted.
+func TestPurity_ADefaultReadsItsModulesNames(t *testing.T) {
+	assertPurityCount(t, checkPurity(t, `let limit: i64 = 10
+let cap = (x: i64, most: i64 = limit) -> i64 => if x > most { most } else { x }
+let main = () -> void => {
+  var limit = 3
+  limit += 1
+  let f = pure (x: i64) -> i64 => cap(x)
+}`), 0)
+	errs := checkPurity(t, `var count: i64 = 10
+let take = (x: i64, most: i64 = count) -> i64 => if x > most { most } else { x }
+let main = () -> void => {
+  let count = 3
+  let f = pure (x: i64) -> i64 => take(x)
+}`)
+	assertPurityCount(t, errs, 1)
+	if !strings.Contains(errs[0].Message, `reads captured mutable binding "count"`) {
+		t.Errorf("want the mutable global's read, got %q", errs[0].Message)
+	}
+}

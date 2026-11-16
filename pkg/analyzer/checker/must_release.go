@@ -448,6 +448,13 @@ func (c *mustRelease) stmt(st heldState, s ast.Statement) heldState {
 }
 
 func (c *mustRelease) expr(st heldState, e ast.Expression) heldState {
+	// A filled-in default names its declaring module's top level, never a binding of this
+	// function's (TypeTable.IsDefault), so it can neither release nor take one: read as
+	// this function's, a default naming the module's `spare` discharged the caller's own
+	// `spare`, and its lyra-W022 was lost (11/15).
+	if c.tt.IsDefault(e) {
+		return st
+	}
 	switch v := e.(type) {
 	case nil:
 		return st
@@ -606,6 +613,9 @@ func (c *mustRelease) call(st heldState, e *ast.FunctionCallExpr) heldState {
 		return st
 	}
 	for i, arg := range e.Arguments {
+		if c.tt.IsDefault(arg) {
+			continue // the module's value, not this function's binding (see expr)
+		}
 		// A bare name goes to `discharge` and **not** through c.expr: this is the
 		// one position that can leave an obligation in place, so routing it through
 		// the walker would hit the escape default and the release could never be

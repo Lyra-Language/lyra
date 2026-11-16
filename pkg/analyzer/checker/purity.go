@@ -3185,8 +3185,22 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int, map[strin
 		}
 		return true
 	}
+	// inDefault is set while the walk is inside a filled-in default (TypeTable.IsDefault),
+	// whose names are its declaring module's top level, never this body's bindings: read as
+	// this body's, a default naming the module's `limit` was charged as a read of the
+	// caller's `var limit`, and a `pure` closure refused (11/15). Its effects are still this
+	// body's — a default reading a mutable global is such a read here — so it is walked,
+	// with each name looked up past this body's frames, from the module's (frame 0) out.
+	inDefault := false
+	defaults := inf.allocSites.table()
 	var onExpr func(e ast.Expression) bool
 	onExpr = func(e ast.Expression) bool {
+		if !inDefault && defaults.IsDefault(e) {
+			inDefault = true
+			ast.WalkExpr(e, onStmt, onExpr)
+			inDefault = false
+			return false
+		}
 		// An overloaded operator is a call to a trait impl method; charge it as one.
 		// Before the switch, since the operator nodes appear in it for other reasons.
 		// Reported by naming the *operator*, since that is what the author wrote — the
@@ -3228,7 +3242,11 @@ func bodyEffects(c *callable, inf *inference) (Effect, map[string]int, map[strin
 			// also visits its root as an IdentifierExpr, but those nodes are already
 			// counted by the mutation cases above, so double-counting the bit here is
 			// harmless — the *report* is what assignRoots suppresses.)
-			if !c.declares(ex.Name) && inf.capturedMutableAt(c.capture, ex.Name, ex.GetLocation()) {
+			reads := !c.declares(ex.Name) && inf.capturedMutableAt(c.capture, ex.Name, ex.GetLocation())
+			if inDefault {
+				reads = inf.capturedMutableAt(c.capture[:min(len(c.capture), 1)], ex.Name, ex.GetLocation())
+			}
+			if reads {
 				found |= EffectMut
 				if !c.assignRoots[ex] {
 					c.pure(ex.GetLocation(),

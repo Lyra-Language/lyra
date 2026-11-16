@@ -122,6 +122,14 @@ type analyzer struct {
 func (a *analyzer) onStmt(ast.Statement) bool { return true }
 
 func (a *analyzer) onExpr(expr ast.Expression) bool {
+	// A filled-in default is its declaration's node, visited again at every call it is
+	// filled into: analyzed there, a default lambda reading the module's `limit` was given
+	// the caller's `limit` as a capture, which the backend, lowering the default with the
+	// caller's locals hidden, refused as "not in scope where the closure is created"
+	// (11/15). It names only its module's top level, so it captures nothing at a call.
+	if a.tt.IsDefault(expr) {
+		return false
+	}
 	fn, ok := expr.(*ast.LambdaExpr)
 	if !ok {
 		return true
@@ -175,7 +183,7 @@ func directBinders(fn *ast.LambdaExpr, bound map[string]bool) {
 			addPatternNames(bound, p)
 		}
 	}
-	collectInto(bodyOf(fn), bound, nil, false)
+	collectInto(bodyOf(fn), bound, nil, false, nil)
 }
 
 // BodyBinders is every name fn's body binds — `let`/`var`, loop variables, pattern
@@ -227,7 +235,11 @@ func (a *analyzer) capturesOf(fn *ast.LambdaExpr) []Capture {
 		}
 	}
 	reads := map[string]ast.Expression{}
-	collect(bodyOf(fn), bound, reads)
+	// A filled-in default names its declaring module's top level, never a binding of
+	// this lambda's or an enclosing one's (TypeTable.IsDefault): read as this body's, a
+	// default naming the module's `limit` captured the enclosing function's `var limit`
+	// (11/15) — a slot nothing read, and a `pure` closure refused for it.
+	collectInto(bodyOf(fn), bound, reads, true, a.tt.IsDefault)
 
 	var out []Capture
 	for name, read := range reads {
@@ -307,15 +319,19 @@ func bodyOf(fn *ast.LambdaExpr) []ast.Expression {
 // in bound for the same reason a local does — a read of that name can only occur
 // where it is bound.
 func collect(body []ast.Expression, bound map[string]bool, reads map[string]ast.Expression) {
-	collectInto(body, bound, reads, true)
+	collectInto(body, bound, reads, true, nil)
 }
 
 // collectInto is collect with the one knob directBinders needs: `intoLambdas` false stops
 // at a nested lambda, so the binders gathered are the ones this body has in its own right.
 // A flag rather than a second walk, because the binder switch below is exactly the thing
 // that must not exist twice — a kind missing from one copy reads a bound name as free.
-func collectInto(body []ast.Expression, bound map[string]bool, reads map[string]ast.Expression, intoLambdas bool) {
+// `skip`, where given, names subtrees that are not this body's at all: a filled-in default.
+func collectInto(body []ast.Expression, bound map[string]bool, reads map[string]ast.Expression, intoLambdas bool, skip func(ast.Expression) bool) {
 	onExpr := func(e ast.Expression) bool {
+		if skip != nil && skip(e) {
+			return false
+		}
 		switch v := e.(type) {
 		case *ast.IdentifierExpr:
 			// A method-form call's callee names a module-level function, whatever a local

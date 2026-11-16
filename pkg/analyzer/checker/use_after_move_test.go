@@ -630,3 +630,17 @@ let main = () -> void => {
   ys[0] = 7
 }`, 0)
 }
+
+// An `own` parameter's default is the module's value, so filling it in takes nothing of the
+// caller's: a default naming the module's `p` marked the caller's own `p` handed over, and
+// its next read lyra-E019 (11/15).
+func TestMove_AnOwnDefaultTakesNothingOfTheCallers(t *testing.T) {
+	assertMoveErrors(t, movePreamble+`
+let p: shared Person = Person { name: "module" }
+let take = (q: own shared Person = p) -> u8 => 1
+let main = () -> u8 => {
+  let p: shared Person = Person { name: "a" }
+  let a = take()
+  a + peek(p)
+}`, 0)
+}

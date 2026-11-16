@@ -222,3 +222,39 @@ let main = () -> u8 => {
 }
 `, "", "")
 }
+
+// A filled-in default names its declaring module's top level, never a binding of the
+// closure's or an enclosing one's (11/15). Read as the closure's, a default naming the
+// module's `limit` captured the enclosing `var limit` — a slot nothing read — and a default
+// that is itself a lambda, analyzed at the call, captured it too, which the backend refused
+// ("not in scope where the closure is created").
+func TestCaptures_ADefaultIsNotTheEnclosingBinding(t *testing.T) {
+	for name, src := range map[string]string{
+		"a default naming a global": `let limit: i64 = 10
+let cap = (x: i64, most: i64 = limit) -> i64 => if x > most { most } else { x }
+let main = () -> void => {
+  var limit = 3
+  limit += 1
+  let f = (x: i64) -> i64 => cap(x)
+  println("${f(50)} ${limit}")
+}`,
+		"a default that is a lambda": `let limit: i64 = 10
+let run = (f: () -> i64 = () -> i64 => limit + 1) -> i64 => f()
+let main = () -> void => {
+  var limit = 3
+  limit += 1
+  let g = () -> i64 => run()
+  println("${run()} ${g()} ${limit}")
+}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, caps := range analyzeLambdas(t, src) {
+				for _, c := range caps {
+					if c.Name == "limit" {
+						t.Errorf("a lambda captures %q, which only a default names", c.Name)
+					}
+				}
+			}
+		})
+	}
+}

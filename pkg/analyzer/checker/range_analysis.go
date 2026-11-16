@@ -184,6 +184,8 @@ type rangeChecker struct {
 	// addressTaken is every name the current function body takes `&mut` of, anywhere.
 	// Such a name is **never tracked** — see tracked.
 	addressTaken map[string]bool
+	// inDefault is set while a filled-in default is evaluated (see eval).
+	inDefault bool
 }
 
 // topLevel analyzes each function body from a fresh environment. Every function
@@ -504,6 +506,19 @@ func (c *rangeChecker) evalStmt(st rangeEnv, s ast.Statement) rangeEnv {
 func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rangeEnv) {
 	if !st.reachable {
 		return interval{}, false, st
+	}
+	// **A filled-in default knows none of this function's facts** (TypeTable.IsDefault):
+	// it names its declaring module's top level, and it is the declaration's one node,
+	// shared by every call it is filled into — so a fact used here proves it safe for all of
+	// them. Evaluated against the caller's `let big = 1`, the default `big + 1` over the
+	// module's `var big` was marked overflow-free, and wrapped at run time (11/15). From an
+	// empty environment only what holds everywhere (literals, constants) can prove anything,
+	// and the default changes nothing of the caller's.
+	if !c.inDefault && c.tt.IsDefault(e) {
+		c.inDefault = true
+		iv, ok, _ := c.eval(newEnv(), e)
+		c.inDefault = false
+		return iv, ok, st
 	}
 	switch v := e.(type) {
 	case nil:

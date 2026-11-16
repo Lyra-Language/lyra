@@ -9,6 +9,37 @@ Newest first.
 
 ## Dated log
 
+### 11/15/26 — Defaults in the by-name passes
+
+A filled-in default (`TypeTable.IsDefault`) is its declaration's node inside the caller's
+AST, naming its declaring module's top level. Use-after-move and ownership skipped it
+already. The entry listed three passes still unaudited. A probe of each, with a caller
+binding of the default's name, found all three misreading, and two more beside them:
+- **The value-range pass dropped a trap.** The default `big + 1` over the module's
+  `var big`, called where the caller has `let big = 1`, was proved overflow-free and wrapped
+  to `-9223372036854775808`. A default is one node for every caller, so the mark was every
+  caller's. It is now evaluated from an empty environment and changes nothing of the
+  caller's.
+- **Captures took the caller's binding.** A closure calling `cap(x)`, whose default names the
+  module's `limit`, captured the enclosing `var limit`, a slot nothing read. A default that is
+  a lambda was analyzed again at the call, given that capture, and refused by the backend:
+  "captured binding limit is not in scope". This crash predates this work. The read walk now
+  passes over a default (`collectInto`'s `skip`), and so does the program-wide walk.
+- **Purity read it in the caller's scope, both ways wrong.** The caller's `var limit`
+  refused a `pure` closure the default never read. And a caller's immutable `let count`
+  stood in for the module's `var count`, accepting a `pure` closure that read a mutable
+  global through the default: a hole. Purity cannot skip a default, since its effects are the
+  caller's, so it walks it with each name looked up from the module's frame out.
+- **`@must_release` was discharged by it.** A release helper's or an `own` parameter's
+  default naming the module's `spare` took the caller's `spare` as released, and its W022
+  was lost. It now skips a default in `expr` and in a call's arguments.
+- **Use-after-move's `own` arguments** marked the caller's `spare` handed over by the same
+  default, a false lyra-E019 on its next read. `expr` skipped a default, but the `own` loop
+  read the argument's name itself.
+
+Each has a test in its pass's suite that fails without its fix. lyra/CLAUDE.md rule 9 now
+lists every pass and how each treats a default.
+
 ### 11/13/26 — lyra-W004 counts a constructor's use for its type
 
 Termina found `import ui.backend.{ Cursor, Hand }`, with `Arrow` used and `Cursor` written

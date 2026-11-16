@@ -814,3 +814,26 @@ func TestMustRelease_AValueChosenFromFreshOnesIsStillHeld(t *testing.T) {
 		})
 	}
 }
+
+// A filled-in default names its module's top level, so it neither releases nor takes the
+// caller's resource of the same name (11/15): a release helper's or an `own` parameter's
+// default naming the module's `spare` discharged the caller's own `spare`, and its lyra-W022
+// was lost.
+func TestMustRelease_ADefaultIsNotTheCallersResource(t *testing.T) {
+	for name, call := range map[string]string{
+		"a release helper's default": "unload_default()",
+		"an own parameter's default": "adopt_default()",
+	} {
+		t.Run(name, func(t *testing.T) {
+			assertLeaks(t, `
+let spare: Sound = load_sound(0)
+let unload_default = (s: Sound = spare) -> void => unload_sound(s)
+let adopt_default = (s: own Sound = spare) -> void => {}
+let main = () -> void => {
+  let spare = load_sound(1)
+  `+call+`
+}
+`, "spare")
+		})
+	}
+}

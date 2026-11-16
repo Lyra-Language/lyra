@@ -465,6 +465,13 @@ func (c *useAfterMove) call(st moveState, e *ast.FunctionCallExpr) moveState {
 	}
 	for i, arg := range e.Arguments {
 		st = c.expr(st, arg)
+		// A filled-in default is the declaring module's value, never one of this
+		// function's bindings, so an `own` parameter takes nothing of the caller's: a
+		// default naming the module's `spare` marked the caller's own `spare` handed over,
+		// and its next read lyra-E019 (11/15).
+		if c.tt.IsDefault(arg) {
+			continue
+		}
 		p := i + offset
 		if p >= len(params) {
 			continue // unresolvable callee, or a default/variadic position: assume no move

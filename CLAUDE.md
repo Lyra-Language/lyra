@@ -222,8 +222,12 @@ Each of these produces something that looks like it works. Other docs cite them 
      (`collectNestedLambdas`). A pass matching names
      against the function it walks must skip it — the typechecker infers it in its module's
      scope (`inDeclaringModule`), the backend lowers it with the locals hidden, ownership's
-     last-use walks and use-after-move skip it. Captures, `@must_release` and value ranges
-     are not yet audited (todo.md).
+     last-use walks, use-after-move (its `own` arguments too), captures (the read walk and
+     the program-wide one) and `@must_release` skip it, the value-range pass evaluates it
+     from an empty environment (**it is one node for every caller**, so a caller's fact
+     proves it safe for all), and purity walks it with each name looked up past the
+     caller's frames (its effects are still the caller's). A new by-name pass needs the
+     same.
    - **A by-name set consulted where the enclosing scope is the question fails silently.**
      `l.locals` must not decide a desugared UFCS callee (`data.data()` on a parameter named
      `data`) — ask `Callee` first (`calleeIsDeclared`). `captures.globalNames` subtracts a

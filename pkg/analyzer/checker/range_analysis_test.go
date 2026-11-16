@@ -1066,3 +1066,20 @@ let main = () -> void => {
 }
 `, diag.CodeConstantComparison)
 }
+
+// A filled-in default knows none of its caller's facts (11/15): it names its module's
+// top level and is one node shared by every call, so the caller's `let big = 1` proved the
+// module's `big + 1` overflow-free and dropped its trap for every caller — it wrapped at run
+// time.
+func TestRange_Safety_ADefaultKnowsNoneOfItsCallersFacts(t *testing.T) {
+	src := `var big: i64 = 100
+	let bump = (n: i64 = big + 1) -> i64 => n
+	let f = () -> i64 => {
+		let big = 1
+		bump()
+	}
+	let main = () -> u8 => 0`
+	if firstAddIsSafe(t, src) {
+		t.Error("a default's `big + 1` must not be proved safe from the caller's own `big`")
+	}
+}
