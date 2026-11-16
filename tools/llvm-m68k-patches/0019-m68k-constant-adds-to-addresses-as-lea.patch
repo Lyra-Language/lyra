@@ -1,0 +1,343 @@
+diff --git a/llvm/lib/Target/M68k/CMakeLists.txt b/llvm/lib/Target/M68k/CMakeLists.txt
+index 4f03572..dfdde0a 100644
+--- a/llvm/lib/Target/M68k/CMakeLists.txt
++++ b/llvm/lib/Target/M68k/CMakeLists.txt
+@@ -23,6 +23,7 @@ add_llvm_target(M68kCodeGen
+   GISel/M68kInstructionSelector.cpp
+   GISel/M68kLegalizerInfo.cpp
+   GISel/M68kRegisterBankInfo.cpp
++  M68kAddressAdds.cpp
+   M68kAsmPrinter.cpp
+   M68kCollapseMOVEMPass.cpp
+   M68kExpandPseudo.cpp
+diff --git a/llvm/lib/Target/M68k/M68k.h b/llvm/lib/Target/M68k/M68k.h
+index 0dbca6f..ec723f4 100644
+--- a/llvm/lib/Target/M68k/M68k.h
++++ b/llvm/lib/Target/M68k/M68k.h
+@@ -42,6 +42,10 @@ FunctionPass *createM68kGlobalBaseRegPass();
+ /// emission so that all possible MOVEM are already in place.
+ FunctionPass *createM68kCollapseMOVEMPass();
+ 
++/// Makes an ADD or SUB of a constant to an address register's copy a LEA into an
++/// address register, before register allocation.
++FunctionPass *createM68kAddressAddsPass();
++
+ InstructionSelector *
+ createM68kInstructionSelector(const M68kTargetMachine &, const M68kSubtarget &,
+                               const M68kRegisterBankInfo &);
+@@ -51,6 +55,7 @@ void initializeM68kDAGToDAGISelLegacyPass(PassRegistry &);
+ void initializeM68kExpandPseudoPass(PassRegistry &);
+ void initializeM68kGlobalBaseRegPass(PassRegistry &);
+ void initializeM68kCollapseMOVEMPass(PassRegistry &);
++void initializeM68kAddressAddsPass(PassRegistry &);
+ 
+ } // namespace llvm
+ 
+diff --git a/llvm/lib/Target/M68k/M68kAddressAdds.cpp b/llvm/lib/Target/M68k/M68kAddressAdds.cpp
+new file mode 100644
+index 0000000..a6e67e9
+--- /dev/null
++++ b/llvm/lib/Target/M68k/M68kAddressAdds.cpp
+@@ -0,0 +1,158 @@
++//===-- M68kAddressAdds.cpp - Constant adds to addresses as LEA -----------===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++///
++/// \file
++/// An address register plus a constant, made in an address register. The selector
++/// makes every (add x, c) an ADD into a data register, so a pointer living in an
++/// address register — a loop's, stepped past a struct each pass — went out to a data
++/// register, was added to, and came back:
++///
++///   move.l %a0, %d2; addq.l #6, %d2; movea.l %d2, %a0
++///
++/// where `lea (6,%a0), %a0` is one instruction of 8 cycles that touches no flags. Before
++/// register allocation, an ADD or SUB of a 16-bit constant to a copy of an address
++/// register, its flags unread, becomes LEA (d16,An) into a new address register. Where
++/// everything reading the sum takes an address register, that is the sum; otherwise
++/// copies into an address register take it from there, and the rest from a copy.
++///
++//===----------------------------------------------------------------------===//
++
++#include "M68k.h"
++#include "M68kInstrInfo.h"
++#include "M68kSubtarget.h"
++
++#include "llvm/CodeGen/MachineFunctionPass.h"
++#include "llvm/CodeGen/MachineInstrBuilder.h"
++#include "llvm/CodeGen/MachineRegisterInfo.h"
++#include "llvm/Support/MathExtras.h"
++
++using namespace llvm;
++
++#define DEBUG_TYPE "m68k-address-adds"
++#define PASS_NAME "M68k constant adds to addresses as LEA"
++
++namespace {
++
++class M68kAddressAdds : public MachineFunctionPass {
++public:
++  static char ID;
++  M68kAddressAdds() : MachineFunctionPass(ID) {}
++
++  bool runOnMachineFunction(MachineFunction &MF) override;
++
++  void getAnalysisUsage(AnalysisUsage &AU) const override {
++    AU.setPreservesCFG();
++    MachineFunctionPass::getAnalysisUsage(AU);
++  }
++
++  StringRef getPassName() const override { return PASS_NAME; }
++};
++
++char M68kAddressAdds::ID = 0;
++
++} // namespace
++
++INITIALIZE_PASS(M68kAddressAdds, DEBUG_TYPE, PASS_NAME, false, false)
++
++FunctionPass *llvm::createM68kAddressAddsPass() { return new M68kAddressAdds(); }
++
++// Whether each instruction reading \p Reg would take a register of \p RC there.
++static bool everyUseTakes(Register Reg, const TargetRegisterClass *RC,
++                          const MachineRegisterInfo &MRI,
++                          const TargetInstrInfo &TII,
++                          const TargetRegisterInfo &TRI) {
++  for (const MachineOperand &Use : MRI.use_nodbg_operands(Reg)) {
++    const MachineInstr &User = *Use.getParent();
++    if (Use.getSubReg())
++      return false;
++    if (User.isCopy() || User.isPHI()) {
++      Register To = User.getOperand(0).getReg();
++      if (User.getOperand(0).getSubReg() || !To.isVirtual() ||
++          !MRI.getRegClass(To)->hasSubClassEq(RC))
++        return false;
++      continue;
++    }
++    const TargetRegisterClass *Wants =
++        User.getRegClassConstraint(User.getOperandNo(&Use), &TII, &TRI);
++    if (!Wants || !Wants->hasSubClassEq(RC))
++      return false;
++  }
++  return true;
++}
++
++bool M68kAddressAdds::runOnMachineFunction(MachineFunction &MF) {
++  if (skipFunction(MF.getFunction()))
++    return false;
++  MachineRegisterInfo &MRI = MF.getRegInfo();
++  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
++  const TargetRegisterInfo &TRI = *MF.getSubtarget().getRegisterInfo();
++  const TargetRegisterClass *AR = &M68k::AR32RegClass;
++  bool Changed = false;
++
++  for (MachineBasicBlock &MBB : MF) {
++    for (MachineInstr &MI : make_early_inc_range(MBB)) {
++      bool Sub = MI.getOpcode() == M68k::SUB32di;
++      if (MI.getOpcode() != M68k::ADD32di && !Sub)
++        continue;
++      const MachineOperand &Imm = MI.getOperand(2);
++      if (!Imm.isImm() || !MI.registerDefIsDead(M68k::CCR, &TRI))
++        continue;
++      int64_t Value = SignExtend64<32>(Imm.getImm());
++      if (Sub)
++        Value = -Value;
++      if (!isInt<16>(Value))
++        continue;
++      Register Dst = MI.getOperand(0).getReg(), Src = MI.getOperand(1).getReg();
++      if (!Dst.isVirtual() || !Src.isVirtual())
++        continue;
++
++      // The added register a copy of an address register's value.
++      MachineInstr *Copy = MRI.getUniqueVRegDef(Src);
++      if (!Copy || !Copy->isCopy() || Copy->getOperand(1).getSubReg())
++        continue;
++      Register From = Copy->getOperand(1).getReg();
++      if (!From.isVirtual() || !AR->hasSubClassEq(MRI.getRegClass(From)))
++        continue;
++
++      Register Sum = MRI.createVirtualRegister(AR);
++      BuildMI(MBB, MI, MI.getDebugLoc(), TII.get(M68k::LEA32p), Sum)
++          .addImm(Value)
++          .addReg(From);
++      MRI.clearKillFlags(From);
++
++      // Where every use takes an address register — a store, a copy, a phi into a
++      // register that may be one — the sum is the LEA's register itself.
++      if (everyUseTakes(Dst, AR, MRI, TII, TRI)) {
++        MRI.replaceRegWith(Dst, Sum);
++        MI.eraseFromParent();
++        if (MRI.use_nodbg_empty(Src))
++          Copy->eraseFromParent();
++        Changed = true;
++        continue;
++      }
++
++      // Otherwise copies into a register that may be an address register read it.
++      for (MachineOperand &Use : make_early_inc_range(MRI.use_operands(Dst))) {
++        MachineInstr &User = *Use.getParent();
++        if (!User.isCopy() || User.getOperand(0).getSubReg())
++          continue;
++        Register To = User.getOperand(0).getReg();
++        if (To.isVirtual() && MRI.getRegClass(To)->hasSubClassEq(AR))
++          Use.setReg(Sum);
++      }
++      if (!MRI.use_nodbg_empty(Dst))
++        BuildMI(MBB, MI, MI.getDebugLoc(), TII.get(TargetOpcode::COPY), Dst)
++            .addReg(Sum);
++      MI.eraseFromParent();
++      if (MRI.use_nodbg_empty(Src))
++        Copy->eraseFromParent();
++      Changed = true;
++    }
++  }
++  return Changed;
++}
+diff --git a/llvm/lib/Target/M68k/M68kTargetMachine.cpp b/llvm/lib/Target/M68k/M68kTargetMachine.cpp
+index cec0a44..601e903 100644
+--- a/llvm/lib/Target/M68k/M68kTargetMachine.cpp
++++ b/llvm/lib/Target/M68k/M68kTargetMachine.cpp
+@@ -43,6 +43,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeM68kTarget() {
+   initializeM68kExpandPseudoPass(*PR);
+   initializeM68kGlobalBaseRegPass(*PR);
+   initializeM68kCollapseMOVEMPass(*PR);
++  initializeM68kAddressAddsPass(*PR);
+ }
+ 
+ namespace {
+@@ -123,6 +124,7 @@ public:
+   bool addRegBankSelect() override;
+   bool addGlobalInstructionSelect() override;
+   bool addInstSelector() override;
++  void addPreRegAlloc() override;
+   void addPreSched2() override;
+   void addPreEmitPass() override;
+ };
+@@ -169,6 +171,11 @@ bool M68kPassConfig::addGlobalInstructionSelect() {
+   return false;
+ }
+ 
++void M68kPassConfig::addPreRegAlloc() {
++  if (getOptLevel() != CodeGenOptLevel::None)
++    addPass(createM68kAddressAddsPass());
++}
++
+ void M68kPassConfig::addPreSched2() { addPass(createM68kExpandPseudoPass()); }
+ 
+ void M68kPassConfig::addPreEmitPass() {
+diff --git a/llvm/test/CodeGen/M68k/Data/address-adds.ll b/llvm/test/CodeGen/M68k/Data/address-adds.ll
+new file mode 100644
+index 0000000..0dd4731
+--- /dev/null
++++ b/llvm/test/CodeGen/M68k/Data/address-adds.ll
+@@ -0,0 +1,60 @@
++; NOTE: Assertions have been autogenerated by utils/update_llc_test_checks.py UTC_ARGS: --version 6
++; RUN: llc < %s -mtriple=m68k-linux -mcpu=M68000 -verify-machineinstrs | FileCheck %s
++
++; A pointer in an address register stepped by a constant is LEA, not a round trip
++; through a data register.
++
++; Stepped past a struct each pass, and kept in its address register.
++%rec = type { i16, i16, i16 }
++define void @mark_all(ptr %a, i32 %n) {
++; CHECK-LABEL: mark_all:
++; CHECK:         .cfi_startproc
++; CHECK-NEXT:  ; %bb.0: ; %entry
++; CHECK-NEXT:    move.l (8,%sp), %d0
++; CHECK-NEXT:    tst.l %d0
++; CHECK-NEXT:    beq .LBB0_3
++; CHECK-NEXT:  ; %bb.1: ; %loop.preheader
++; CHECK-NEXT:    move.l (4,%sp), %d1
++; CHECK-NEXT:    addq.l #2, %d1
++; CHECK-NEXT:    move.l %d1, %a0
++; CHECK-NEXT:  .LBB0_2: ; %loop
++; CHECK-NEXT:    ; =>This Inner Loop Header: Depth=1
++; CHECK-NEXT:    move.w #1, (%a0)
++; CHECK-NEXT:    lea (6,%a0), %a0
++; CHECK-NEXT:    subq.l #1, %d0
++; CHECK-NEXT:    bne .LBB0_2
++; CHECK-NEXT:  .LBB0_3: ; %done
++; CHECK-NEXT:    rts
++entry:
++  %z = icmp eq i32 %n, 0
++  br i1 %z, label %done, label %loop
++loop:
++  %i = phi i32 [0, %entry], [%i.next, %loop]
++  %p = getelementptr %rec, ptr %a, i32 %i, i32 1
++  store i16 1, ptr %p, align 2
++  %i.next = add nuw nsw i32 %i, 1
++  %c = icmp eq i32 %i.next, %n
++  br i1 %c, label %done, label %loop
++done:
++  ret void
++}
++
++; A pointer stored: the store takes the address register itself.
++define void @store_next(ptr %a, ptr %out) {
++; CHECK-LABEL: store_next:
++; CHECK:         .cfi_startproc
++; CHECK-NEXT:  ; %bb.0:
++; CHECK-NEXT:    move.l (4,%sp), %a0
++; CHECK-NEXT:    move.l (%a0), %a1
++; CHECK-NEXT:    move.w (%a1), (%a0)
++; CHECK-NEXT:    lea (12,%a1), %a0
++; CHECK-NEXT:    move.l (8,%sp), %a1
++; CHECK-NEXT:    move.l %a0, (%a1)
++; CHECK-NEXT:    rts
++  %b = load ptr, ptr %a, align 2
++  %v = load i16, ptr %b, align 2
++  store i16 %v, ptr %a, align 2
++  %n = getelementptr i8, ptr %b, i32 12
++  store ptr %n, ptr %out, align 2
++  ret void
++}
+diff --git a/llvm/test/CodeGen/M68k/Data/post-increment.ll b/llvm/test/CodeGen/M68k/Data/post-increment.ll
+index 8a797b0..b077ba7 100644
+--- a/llvm/test/CodeGen/M68k/Data/post-increment.ll
++++ b/llvm/test/CodeGen/M68k/Data/post-increment.ll
+@@ -168,10 +168,8 @@ define i32 @sum_fields(ptr %a, i32 %n) {
+ ; CHECK-NEXT:    and.l #65535, %d3
+ ; CHECK-NEXT:    add.l %d2, %d3
+ ; CHECK-NEXT:    add.l %d3, %d0
+-; CHECK-NEXT:    move.l %a0, %d2
+-; CHECK-NEXT:    addq.l #6, %d2
++; CHECK-NEXT:    lea (6,%a0), %a0
+ ; CHECK-NEXT:    subq.l #1, %d1
+-; CHECK-NEXT:    movea.l %d2, %a0
+ ; CHECK-NEXT:    bne .LBB4_3
+ ; CHECK-NEXT:    bra .LBB4_4
+ ; CHECK-NEXT:  .LBB4_1:
+diff --git a/llvm/test/CodeGen/M68k/pipeline.ll b/llvm/test/CodeGen/M68k/pipeline.ll
+index a051439..e057ca3 100644
+--- a/llvm/test/CodeGen/M68k/pipeline.ll
++++ b/llvm/test/CodeGen/M68k/pipeline.ll
+@@ -80,6 +80,7 @@
+ ; CHECK-NEXT:      Machine code sinking
+ ; CHECK-NEXT:      Peephole Optimizations
+ ; CHECK-NEXT:      Remove dead machine instructions
++; CHECK-NEXT:      M68k constant adds to addresses as LEA
+ ; CHECK-NEXT:      Detect Dead Lanes
+ ; CHECK-NEXT:      Init Undef Pass
+ ; CHECK-NEXT:      Process Implicit Definitions
+diff --git a/llvm/test/CodeGen/M68k/varargs.ll b/llvm/test/CodeGen/M68k/varargs.ll
+index f2b3c82..a2e8863 100644
+--- a/llvm/test/CodeGen/M68k/varargs.ll
++++ b/llvm/test/CodeGen/M68k/varargs.ll
+@@ -11,10 +11,9 @@ define i32 @test(i32 %X, ...) {
+ ; CHECK-NEXT:    subq.l #8, %sp
+ ; CHECK-NEXT:    .cfi_def_cfa_offset -12
+ ; CHECK-NEXT:    lea (16,%sp), %a0
+-; CHECK-NEXT:    move.l %a0, %d0
+-; CHECK-NEXT:    addq.l #4, %d0
+-; CHECK-NEXT:    move.l %d0, (4,%sp)
+-; CHECK-NEXT:    move.l %d0, (0,%sp)
++; CHECK-NEXT:    lea (4,%a0), %a0
++; CHECK-NEXT:    move.l %a0, (4,%sp)
++; CHECK-NEXT:    move.l %a0, (0,%sp)
+ ; CHECK-NEXT:    move.l (16,%sp), %d0
+ ; CHECK-NEXT:    addq.l #8, %sp
+ ; CHECK-NEXT:    rts

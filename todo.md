@@ -1359,12 +1359,18 @@ sets V on every add. What stands between that and a ROM:
   COMPLETED 11/16). `send_colors`' loop is one MOVE, a SUBQ and a branch.
 - **[OPEN] The M68k backend, smaller items** (after 0007–0018): the 37 `neg.b` left,
   booleans combined (`&&`, `^`) before a branch; 118 `and.b #1`, mostly a bool masked as it
-  is stored; the 37 flag saves left, where the compare reads the copy's destination; a
-  pointer stepped by a constant through a data register (`move.l %a0, %d2; addq.l #6, %d2;
-  movea.l %d2, %a0`, the channel loop's latch too) where `lea (6,%a0), %a0` would do; ALU
-  operations reading `(An)+` (`add.w (%a0)+, %d0`), which 0018 gave only MOVE; and
+  is stored; the 37 flag saves left, where the compare reads the copy's destination; the 79
+  copies from address to data registers left (a pointer compared, `cmp.l` wanting a data
+  register where CMPA would do); a frame address stepped twice (`lea (5295,%sp), %a2; lea
+  (1,%a2), %a0`); ALU operations reading `(An)+` (`add.w (%a0)+, %d0`), which 0018 gave only MOVE; and
   `movea.l`, which the copies 0011 makes print but LLVM's own assembler refuses
   (`move.l %d2, %a0` assembles) — only `-S` output is affected.
+- **[OPEN] `-verify-machineinstrs` refuses `vdp.dma_to_vram`**: eight word MOVEM spills
+  (`MOVM16pm_P`) of a byte register (`dr8`), "Illegal virtual register", in the pinned LLVM
+  without any of our patches too. Harmless so far (a word store of the register holds its
+  byte), but it is why the verifier cannot judge a patch on a whole game.
+- **[DONE 11/16] A pointer stepped through a data register**: `lea (d16,An), An` now
+  (`tools/llvm-m68k-patches/0019`, COMPLETED 11/16).
 - **[DONE 10/16] A Genesis program inlined less crashed**: a `fastcc` struct return popped a
   pointer passed in a register (`tools/llvm-m68k-patches/0004`, COMPLETED 10/16).
 - **[DONE 10/16] clang segfaulted compiling a copy of Sheliak**: a global's 320 KB

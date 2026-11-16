@@ -350,6 +350,25 @@ The glTF viewer's two notes blamed the missing uniforms for its parameter textur
 second lighting program. The texture still suits it, since it is uploaded once and kept by
 the material, so only the reasoning changed; moving it to uniforms is an `[IDEA]`.
 
+### 11/16/26 — A constant added to a pointer is LEA on the 68000
+
+The selector makes every `(add x, c)` an ADD into a data register, so a pointer in an
+address register — a loop's, stepped past a struct each pass — went out to a data register
+and back: `move.l %a0, %d2; addq.l #6, %d2; movea.l %d2, %a0`, 89 times in the hero, where
+`lea (6,%a0), %a0` is one instruction and touches no flags.
+- **A pass before register allocation** (`M68kAddressAdds`, `tools/llvm-m68k-patches/0019`):
+  an ADD or SUB of a 16-bit constant, its flags unread, to a copy of an address register is
+  LEA into a new address register. First the sum went on to a data register for every use
+  that was not a copy — address-to-data copies 163 → 190, more than before; the sum now stays
+  in the address register where everything reading it takes one (a store, a copy, a phi):
+  163 → 79, the code 206 bytes smaller.
+- **It must say it keeps the CFG** (`setPreservesCFG`), or the dominator tree and loops are
+  built again after it (`pipeline.ll`).
+- **Measured**: the hero's vertical blank 49.6 → 49.0 lines a frame on average; chip writes
+  the same as 0018's; the Genesis tests, LLVM's M68k tests and Vega's `--check` pass. The
+  machine verifier's complaint about the hero (`dma_to_vram`) is the pinned LLVM's own, and
+  the same without any patch (todo.md).
+
 ### 11/16/26 — Post-increment on the 68000
 
 The hottest compare in the hero was `vdp.send_colors`' loop, 64 colours to the VDP's port

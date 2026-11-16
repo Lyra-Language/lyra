@@ -119,6 +119,14 @@
 #     extra saves made the first colour late. And an ADD of -n with flags only Z, N or V
 #     branches read is SUBQ, so the count down is `subq.l #1`. The hero's vertical blank
 #     handler 53.7 → 49.6 lines a frame on average, its chip writes the same.
+#   - 0019: a constant added to a pointer in an address register is LEA, where the selector
+#     made every ADD into a data register and the pointer went out and back (`move.l %a0,
+#     %d2; addq.l #6, %d2; movea.l %d2, %a0`, 89 times in the hero). M68kAddressAdds, before
+#     register allocation: an ADD or SUB of a 16-bit constant, its flags unread, to a copy
+#     of an address register becomes `lea (d16,An), Am`, and the sum stays there where
+#     everything reading it takes an address register (a store, a copy, a phi). Copies from
+#     address to data registers 163 → 79, the hero's code 206 bytes smaller, its vertical
+#     blank 49.6 → 49.0 lines.
 #   **Tried and left out**: shrink-wrapping (enableShrinkWrapping) changed nothing in the
 #   hero — every function needs its callee-saved registers from its entry. Rematerializing
 #   constants and addresses (isReMaterializableImpl past the dead CCR def, a flag-keeping
