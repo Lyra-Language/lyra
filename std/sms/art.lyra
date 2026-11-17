@@ -10,6 +10,7 @@ module std.sms.art
 
 import std.sms.collision.{ Shape }
 import std.sms.camera.{ Camera }
+import std.sms.sprites
 import std.sms.entity.{
   Animation,
   Entity,
@@ -71,7 +72,11 @@ impl Animation {
     y: i16,
     tick: u16,
     mirrored: bool = false
-  ) -> void => art.draw_frame(self.sprite, x, y, self.frame_in(art, tick), mirrored)
+  ) -> void => {
+    // Its sprites one figure, which takes its turn whole where the list's sprites take turns.
+    sprites.figure()
+    art.draw_frame(self.sprite, x, y, self.frame_in(art, tick), mirrored)
+  }
 }
 
 impl Entity {

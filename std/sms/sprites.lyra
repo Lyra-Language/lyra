@@ -13,6 +13,10 @@ module std.sms.sprites
 //!
 //! **What is off the screen is left out**, as the chip would wrap it round. A sprite past the
 //! hardware's 64 is dropped, as is the ninth on a line by the chip itself.
+//!
+//! **Sprites added after [take_turns] take turns at the front of the list**, a figure at a
+//! time ([figure]: one picture's sprites, kept together): the chip leaves out the last on a
+//! line, so a different one goes missing each frame — it flickers rather than vanishing.
 
 import std.sms.vdp
 
@@ -25,8 +29,36 @@ pub struct Sprite {
 
 var count: u8 = 0
 
+/// Where the list's sprites taking turns start ([NO_TURNS]: none do), where each figure of
+/// them starts, how many figures, and which figure goes first next.
+const NO_TURNS: u8 = 0xFF
+var turns_from: u8 = 0xFF
+var figure_at: [64]u8 = #[0; 64]
+var figures: u8 = 0
+var first: u8 = 0
+
 /// Start the next frame's list.
-pub let clear = () -> void => { count = 0 }
+pub let clear = () -> void => {
+  count = 0
+  turns_from = NO_TURNS
+}
+
+/// The sprites added from here on in this list take turns at its front: each frame [show]
+/// starts them a figure further on, so where a line holds more than the chip shows a
+/// different figure goes missing each frame. Those added before keep their place, in front.
+pub let take_turns = () -> void => {
+  turns_from = count
+  figure_at[0] = count
+  figures = 1
+}
+
+/// A figure starts here — the sprites one picture is drawn with, which take turns together
+/// (`std.sms.art` begins one for each entity it draws). Nothing before [take_turns].
+pub let figure = () -> void => {
+  if turns_from == NO_TURNS || figures >= vdp.SPRITES || figure_at[figures - 1] == count { return }
+  figure_at[figures] = count
+  figures += 1
+}
 
 /// `s` onto the list.
 pub let add = (s: Sprite) -> void => {
@@ -38,5 +70,12 @@ pub let add = (s: Sprite) -> void => {
 /// The list to the chip, ended after what was added. Call in the vertical blank.
 pub let show = () -> void => {
   vdp.end_sprites(count)
-  vdp.send_sprites()
+  if turns_from < count && figures >= 2 {
+    // A figure further on each frame: written from it, nothing in RAM moved.
+    first += 1
+    if first >= figures { first = 0 }
+    vdp.send_sprites_turned(turns_from, figure_at[first])
+  } else {
+    vdp.send_sprites()
+  }
 }

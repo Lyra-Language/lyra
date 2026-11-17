@@ -244,6 +244,29 @@ pub let send_sprites = () -> void => unsafe {
   } else {}
 }
 
+/// The list to the chip's table as [send_sprites] sends it, but those from `from` on starting at
+/// `at`: `at` up to the end, then `from` up to `at`. The table's order is the chip's, and past
+/// eight on a line it leaves out the last, so a game turning the start round has a different
+/// one go missing each frame (`std.sms.sprites.take_turns`). Call in the vertical blank.
+pub let send_sprites_turned = (from: u8, at: u8) -> void => unsafe {
+  if from >= at || at >= sprite_count {
+    send_sprites()
+    return
+  }
+  vram_address(SPRITE_TABLE)
+  if from > 0 { port_write_bytes(DATA_PORT, &sprite_ys[0], from) } else {}
+  port_write_bytes(DATA_PORT, &sprite_ys[at], sprite_count - at)
+  port_write_bytes(DATA_PORT, &sprite_ys[from], at - from)
+  // The end, unless every sprite is shown: the 65th y is past the table's 64.
+  if sprite_count < SPRITES {
+    port_write_bytes(DATA_PORT, &sprite_ys[sprite_count], 1)
+  } else {}
+  vram_address(SPRITE_TABLE + 128)
+  if from > 0 { port_write_bytes(DATA_PORT, &sprite_pairs[0], from * 2) } else {}
+  port_write_bytes(DATA_PORT, &sprite_pairs[at * 2], (sprite_count - at) * 2)
+  port_write_bytes(DATA_PORT, &sprite_pairs[from * 2], (at - from) * 2)
+}
+
 let set_register = (register: u8, value: u8) -> void => {
   control(value)
   control(WRITE_REGISTER | register)

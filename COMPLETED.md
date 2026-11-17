@@ -9,6 +9,26 @@ Newest first.
 
 ## Dated log
 
+### 11/17/26 — Sprites take turns on a crowded line
+
+Past twenty sprites on a line (or 320 pixels of them) the Genesis's VDP leaves out the last
+in its list, and the Master System's past eight: the same sprites vanish every frame. Games
+of the time had them take turns instead, so each flickers. Vega counts a scene's budget as
+placed and, where a line can crowd, its generated `draw` asks for it.
+- **`sprites.take_turns()`**: what is added after it starts a figure further on each frame
+  (`figure`, begun by `std.<console>.art` for each entity it draws, so an entity's pieces go
+  missing together, not as holes). What was added before keeps its place in front — a game's
+  player. On the Genesis the turn is in the order `show` writes the table and links it; nothing
+  is moved.
+- **On the Master System, rotating the list in RAM was too slow**: three reversals after the
+  wait for the vertical blank ran the table's write into the picture, which `smscheck`'s strict
+  VDP refuses (writes 21 T-states apart on line 3). The table is now written in three runs from
+  where they lie (`vdp.send_sprites_turned`), as fast as one; and a counter that wraps replaces
+  the turn's modulo, on both consoles.
+- `sprite_turns_test.go` plays 24 sprites on a Genesis line and 10 on a Master System one:
+  without turns the last ones are missing every frame, with them two frames running miss
+  different ones.
+
 ### 11/17/26 — Spills ahead of the flags on the 68000, and a profile that misled
 
 Ranked in the profiling build (the player's functions kept out of line by `@noinline`, so

@@ -10,6 +10,7 @@ module std.genesis.art
 
 import std.genesis.collision.{ Shape }
 import std.genesis.camera.{ Camera }
+import std.genesis.sprites
 import std.genesis.entity.{
   Animation,
   Entity,
@@ -120,8 +121,11 @@ impl Animation {
     mirrored: bool = false,
     angle: i16 = 0,
     size: i16 = 100
-  ) -> void =>
+  ) -> void => {
+    // Its sprites one figure, which takes its turn whole where the list's sprites take turns.
+    sprites.figure()
     art.draw_frame(self.sprite, x, y, self.frame_in(art, tick), mirrored, angle, size)
+  }
 }
 
 impl Entity {
