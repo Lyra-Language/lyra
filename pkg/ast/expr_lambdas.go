@@ -58,6 +58,8 @@ type LambdaExpr struct {
 	// TrackCaller is `@track_caller` on the declaration: a trap inside the function names
 	// the place it was called from rather than its own line (the backend's trackCaller).
 	TrackCaller bool
+	// Vouches is `@vouched` on the declaration: its bound is asserted, not checked (Vouched).
+	Vouches     bool
 	IsUnsafe    bool
 	IsPure      bool
 	IsDet       bool
@@ -157,4 +159,13 @@ func AssociatedName(target types.Type, name string) (string, bool) {
 		return head + "." + name, ok
 	}
 	return "", false
+}
+
+// Vouched reports whether the function asserts its effect bound rather than having it
+// checked: `@vouched unsafe pure` (or `det`, `noalloc`), as `unsafe extern pure` asserts a
+// foreign one's. Its body is not walked for the bound, and a call costs what the bound says.
+// For a function whose effect no caller can see though the checker would charge it — memory
+// filled on first use and only read after. `unsafe pure` alone is checked like any `pure`.
+func (e *LambdaExpr) Vouched() bool {
+	return e.Vouches && e.IsUnsafe && !e.IsExtern && (e.IsPure || e.IsDet || e.IsNoAlloc)
 }

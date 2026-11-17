@@ -822,6 +822,15 @@ A trait method whose first parameter is not `Self` (`zero: () -> Self`, `from_js
 
 - **`lyra-W018`**: a top-level function or trait-impl method with no observable effect that does not say `pure`. Nothing is refused: a `pure` function may call an unannotated one inferred clean. The bound decides **where blame lands** when an effect is later added — at the `println` in a marked helper, versus at the `pure` caller of an unmarked one.
 - Only `pure` warns (`det`/`noalloc` candidates are too common to be useful). Not warned: inline closures, `main`, impl methods whose trait declares the bound. No `#[allow]` exists.
+- **`@vouched` asserts the bound rather than having it checked** (11/16), as `unsafe extern
+  pure` does for C: on an `unsafe` function declaring `pure`, `det` or `noalloc` (else refused
+  where written), its body is not walked for the bound, and a call costs what the bound says —
+  `pure` callers included (`ast.LambdaExpr.Vouched`). For an effect no caller can see though the
+  checker would charge it: memory filled on first use and only read after, as Vega's Genesis
+  maps unpack into RAM through `<map>_cells` the first time a `pure` collision test reads them.
+  **`unsafe pure` without it is checked** like any `pure` (`std.ffi`'s `data` is written so).
+  The backend gives `pure` no meaning (no `readnone`), so a vouched function's write is never
+  dropped.
 - On a **trait-impl method** the advice is to bound the **trait**, not the impl: a
   `where t: Trait` call is scored against every impl, so only the trait's bound is
   something a generic caller can rely on — and an impl inherits it, so writing it there
@@ -1171,6 +1180,10 @@ compiler checks each type crosses (`pkg/backend/FFI.md` has the table and the ba
 - Only storage has an address: `&f()` is `lyra-E059`; `^` on a non-pointer is `lyra-E060`.
 - **A binding a raw pointer may point into lives to the end of its scope**, not to its last use: its address taken (`&xs[0]`), or named in a call whose result carries a raw pointer (`xs.data()`, `s.cstring_ptr()`, a program's own `first_of(xs)`, a `CBuffer` a function returns; 11/02). So the pointer can be read on a later line, and C can keep it past the call that received it, until a later one. **What such a binding borrows from lives as long**: a comprehension clause's or `for` loop's element keeps its source, and a `match` arm's, `if let`'s or destructuring `let`'s binding the value it takes apart — `[c in strings | unsafe { c.data() }]` keeps `strings` (11/11). **So does a temporary such a binding's initializer made**: `let p = unsafe { word(7).cstring_ptr() }` keeps `word(7)`'s string to the end of `p`'s scope, where until 11/11 it was freed at the `;`. Past the scope's end, or a `push` that reallocates, it dangles; and so does a temporary under a pointer *reassigned* (`p = word(8).cstring_ptr()`), which lasts its statement.
 - Arithmetic is `p.offset(n) -> ^T` only (elements, signed, preserves mutability). No `p[i]`.
+- **`p^` given to a `ref` parameter lends what `p` points at, in place** (11/16), as a binding
+  is lent — `unsafe { p^ }` too: `total(unsafe { view()^ })` reads the array through the pointer,
+  where it was copied first (onto the 68000's stack, 7 KB for a map). A write through another
+  pointer during the call is seen through the `ref`. `TestExec_ARefThroughAPointerIsLentInPlace`.
 - **`p.address() -> u64`** is the pointer as a number, in bytes — what hardware is told about
   memory (the Genesis's Z80 plays a sample from the cartridge at its address); `pointer_at`
   takes it back. It reaches nothing through the pointer, so it needs no `unsafe`.

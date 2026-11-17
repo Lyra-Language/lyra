@@ -979,8 +979,8 @@ func (c *purityChecker) exprVisitor(capture []scopeBindings, enclosing *ast.Lamb
 // sink attached, so every site the fixpoint would charge a purity-violating effect for
 // is reported — from the same arms, against the same frames (see callable.reportPure).
 func (c *purityChecker) reportPureLambda(lam *ast.LambdaExpr, defCapture []scopeBindings) {
-	if lam.IsExtern {
-		return // no body to walk; the declaration is the contract (externEffects)
+	if lam.IsExtern || lam.Vouched() {
+		return // no body to walk, or one the bound is asserted over: the declaration is the contract
 	}
 	cb := lambdaCallable(lam, defCapture, c.inference)
 	cb.reportPure = c.report
@@ -2733,6 +2733,11 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, inf *inferen
 		// No body to walk, and no reason to walk one: what a foreign function does is
 		// what its declaration claims. See externEffects.
 		return externEffects(lam), nil, nil, nil
+	}
+	if lam.Vouched() {
+		// `unsafe pure` (or `det`, `noalloc`): the bound is the function's word, as an
+		// extern's is — but Lyra code, so not EffectHost.
+		return externBoundEffects(lam), nil, nil, nil
 	}
 	return bodyEffects(lambdaCallable(lam, defCapture, inf), inf)
 }

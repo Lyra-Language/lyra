@@ -379,9 +379,13 @@ func collectDeclarationAttributes(node *sitter.Node, value ast.Expression, ctx *
 				collectBankedAttribute(attr, value, ctx)
 				continue
 			}
+			if name == "vouched" {
+				collectVouchedAttribute(attr, value, ctx)
+				continue
+			}
 			if name != "borrowed" {
 				ctx.AddError(attr, diag.SeverityError,
-					"unknown attribute `@%s` on a declaration; a table takes `@banked`, and a function `@borrowed`, `@noinline`, `@track_caller` or `@interrupt(vblank)`", name)
+					"unknown attribute `@%s` on a declaration; a table takes `@banked`, and a function `@borrowed`, `@noinline`, `@track_caller`, `@vouched` or `@interrupt(vblank)`", name)
 				continue
 			}
 			if cst.Field(attr, "args") != nil {
@@ -433,6 +437,29 @@ func collectNoInlineAttribute(attr *sitter.Node, value ast.Expression, ctx *coll
 		return
 	}
 	lambda.NoInline = true
+}
+
+// collectVouchedAttribute reads `@vouched`: the function's effect bound is asserted rather
+// than checked (ast.LambdaExpr.Vouched). It must be `unsafe` — what nothing checked is the
+// writer's word — and declare a bound to vouch for; a vouched body may be anything.
+func collectVouchedAttribute(attr *sitter.Node, value ast.Expression, ctx *collector_ctx.Ctx) {
+	if cst.Field(attr, "args") != nil {
+		ctx.AddError(attr, diag.SeverityError, "`@vouched` takes no arguments")
+	}
+	lambda, ok := value.(*ast.LambdaExpr)
+	if !ok {
+		ctx.AddError(attr, diag.SeverityError, "`@vouched` asserts a function's `pure`, `det` or `noalloc`, so it goes on a function declaration")
+		return
+	}
+	if !lambda.IsUnsafe {
+		ctx.AddError(attr, diag.SeverityError, "`@vouched` goes on an `unsafe` function: a bound nothing checks is the writer's word, as `unsafe extern pure` is")
+		return
+	}
+	if !lambda.IsPure && !lambda.IsDet && !lambda.IsNoAlloc {
+		ctx.AddError(attr, diag.SeverityError, "`@vouched` vouches for a bound the function declares: write `pure`, `det` or `noalloc`")
+		return
+	}
+	lambda.Vouches = true
 }
 
 // collectTrackCallerAttribute reads `@track_caller`: a trap inside the function names its

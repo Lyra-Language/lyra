@@ -901,6 +901,16 @@ func (l *lowerer) promoteVariadicArg(block *ir.Block, argExpr ast.Expression, v 
 // backend cannot fold — is lowered at each use and has no storage: a path rooted at one is
 // a temporary too. Lending one by `ref` asked lvalueAddress for a slot it never had (11/10).
 func (l *lowerer) argumentAddress(block *ir.Block, arg ast.Expression) (value.Value, *ir.Block, error) {
+	// `p^` (in an `unsafe` block or not) is storage the pointer names: lent in place, as a
+	// binding is. Materialized, a map's cells read through a pointer into a scene's RAM were
+	// copied onto the 68000's stack at every call — 7 KB a call (11/16).
+	if d, ok := ast.UnsafeBlockValue(arg).(*ast.DerefExpr); ok && d.Operand != nil {
+		ptr, block, err := l.lowerExpr(block, d.Operand)
+		if err != nil {
+			return nil, nil, err
+		}
+		return ptr, block, nil
+	}
 	if isLValuePath(arg) && l.namesStorage(arg) {
 		loc, block, err := l.lvalueAddress(block, arg)
 		if err != nil {

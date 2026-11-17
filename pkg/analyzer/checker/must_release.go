@@ -1385,16 +1385,4 @@ func isStoredPlaceRead(e ast.Expression) bool {
 // unsafeBlockValue is the expression an `unsafe { e }` block holding exactly that one
 // expression yields, or e itself. A block with statements before its value is left alone:
 // what those statements did is not a place read.
-func unsafeBlockValue(e ast.Expression) ast.Expression {
-	for {
-		u, ok := e.(*ast.UnsafeBlockExpr)
-		if !ok || u.Body == nil || len(u.Body.Statements) != 1 {
-			return e
-		}
-		s, ok := u.Body.Statements[0].(*ast.ExpressionStmt)
-		if !ok || s.Expression == nil {
-			return e
-		}
-		e = s.Expression
-	}
-}
+func unsafeBlockValue(e ast.Expression) ast.Expression { return ast.UnsafeBlockValue(e) }

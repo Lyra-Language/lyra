@@ -3,7 +3,9 @@ module std.compress
 //! inside zip, gzip and PNG — and [deflate] does it, [zlib_deflate] wrapped as zlib (RFC
 //! 1950) with its [adler32]; [gunzip] reads a gzip file (RFC 1952: its header, DEFLATE, its
 //! checksum), [lzma_decode] and [lzma2_decode] undo LZMA and LZMA2 — 7z's and xz's — and
-//! [crc32] is the checksum zip, gzip and PNG are checked with.
+//! [crc32] is the checksum zip, gzip and PNG are checked with. [lz_pack] and [lz_unpack] are an LZ
+//! made for a small processor to undo — LZ4's sequences, the offsets big-endian — which Vega's
+//! Genesis games keep their tiles and maps in (`std.genesis.pack` unpacks it on the 68000).
 //!
 //! ```
 //! import std.compress.{ deflate, inflate, crc32 }
@@ -313,6 +315,88 @@ pub let lzma2_decode = pure (data: []u8) -> Result<[]u8, string> => {
     var rc = range_decoder(data, at, at + packed)?
     decode_lzma_chunk(decoder, rc, out, out.len() + unpacked, false)?
     at += packed
+  }
+  Ok(out)
+}
+
+/// `data` packed for a small processor to unpack: LZ4's sequences, the offsets big-endian —
+/// what Vega's Genesis games keep their tiles and maps in, and `std.genesis.pack` unpacks
+/// on the 68000. A sequence is a token byte, the count of literals in its high four bits and
+/// a match's length less 4 in its low four, 15 in either saying more follows, a byte at a time
+/// (each 255 saying one more comes); then the literals; then, unless the output is complete,
+/// the match: how far back it starts in what is unpacked (1 to 65,535), two bytes, high first,
+/// and its length's more. A match may overlap the bytes it copies. The size unpacked is not in
+/// the stream: whoever unpacks it is told ([lz_unpack]); nothing packs to nothing. Hash chains over four-byte prefixes,
+/// and a match put off by a byte when a longer one starts at the next.
+pub let lz_pack = pure (data: ref []u8) -> []u8 => {
+  let n = data.len()
+  var out: []u8 = []
+  var m = LzMatcher { head: [-1; LZ_HASH], prev: [-1; n.max(1)] }
+  // The first byte not yet written, as a literal or in a match.
+  var start: i64 = 0
+  var i: i64 = 0
+  while i < n {
+    let (length, distance) = m.longest(data, i)
+    m.insert(data, i)
+    if length < LZ_MIN {
+      i += 1
+      continue
+    }
+    // A longer match from the next byte: this one a literal, that one tried next.
+    if i + 1 < n {
+      let (next, _) = m.longest(data, i + 1)
+      if next > length {
+        i += 1
+        continue
+      }
+    }
+    lz_sequence(out, data, start, i, length, distance)
+    for k in i + 1..<i + length { m.insert(data, k) }
+    i += length
+    start = i
+  }
+  if start < n {
+    let literals = n - start
+    out.push(u8(literals.min(15) << 4))
+    lz_more(out, literals)
+    for k in start..<n { out.push(data[k]) }
+  }
+  out
+}
+
+/// The `size` bytes [lz_pack] packed into `packed`, or what is wrong with it: a sequence
+/// cut off, a match reaching before the start, or more than `size` bytes.
+pub let lz_unpack = pure (packed: ref []u8, size: i64) -> Result<[]u8, string> => {
+  var out: []u8 = []
+  var at: i64 = 0
+  while out.len() < size {
+    if at >= packed.len() { return Err("the stream ends before its last sequence") }
+    let token = i64(packed[at])
+    at += 1
+    var literals = token >> 4
+    if literals == 15 {
+      let (more, after) = lz_read_more(packed, at)?
+      literals += more
+      at = after
+    }
+    if at + literals > packed.len() { return Err("a sequence's literals run past the stream") }
+    if out.len() + literals > size { return Err("the stream holds more than ${size} bytes") }
+    for k in at..<at + literals { out.push(packed[k]) }
+    at += literals
+    if out.len() == size { break }
+    if at + 2 > packed.len() { return Err("a match's offset is cut off") }
+    let distance = (i64(packed[at]) << 8) | i64(packed[at + 1])
+    at += 2
+    var length = (token & 15) + LZ_MIN
+    if token & 15 == 15 {
+      let (more, after) = lz_read_more(packed, at)?
+      length += more
+      at = after
+    }
+    if distance == 0 || distance > out.len() { return Err("a match reaches before the start") }
+    if out.len() + length > size { return Err("the stream holds more than ${size} bytes") }
+    let from = out.len() - distance
+    for k in 0..<length { out.push(out[from + k]) }
   }
   Ok(out)
 }
@@ -1242,3 +1326,105 @@ let normalize = (rc: mut RangeDecoder) -> void => {
 }
 
 let be16 = pure (data: []u8, at: i64) -> i64 => (i64(data[at]) << 8) | i64(data[at + 1])
+
+// ── LZ ───────────────────────────────────────────────────────────────────────
+
+/// [lz_pack]'s shortest match, the farthest back one reaches, the links a chain is followed,
+/// and the slots in its hash table of four-byte prefixes.
+const LZ_MIN: i64 = 4
+const LZ_WINDOW: i64 = 65535
+const LZ_CHAIN: i64 = 256
+const LZ_HASH: i64 = 65536
+
+/// [lz_pack]'s hash chains: for each hash of four bytes, the latest position with it
+/// (`head`), and for each position the one before it with the same hash (`prev`) — `-1` for
+/// none. The window is the input's whole length, which the tables an asset is are short.
+struct LzMatcher {
+  head: []i64,
+  prev: []i64,
+}
+
+impl LzMatcher {
+  /// Position `at` entered in its chain, if four bytes start there.
+  let insert = (self: mut, data: ref []u8, at: i64) -> void => {
+    if at + LZ_MIN > data.len() { return }
+    let h = lz_hash(data, at)
+    self.prev[at] = self.head[h]
+    self.head[h] = at
+  }
+
+  /// The longest match for the bytes at `at`, as its length and distance — `(0, 0)` if
+  /// there is none of [LZ_MIN] bytes.
+  let longest = pure (self, data: ref []u8, at: i64) -> (i64, i64) => {
+    if at + LZ_MIN > data.len() { return (0, 0) }
+    let limit = data.len() - at
+    var best = LZ_MIN - 1
+    var best_distance: i64 = 0
+    var candidate = self.head[lz_hash(data, at)]
+    var chain = LZ_CHAIN
+    while candidate >= 0 && at - candidate <= LZ_WINDOW && chain > 0 {
+      if data[candidate + best] == data[at + best] {
+        var k: i64 = 0
+        while k < limit && data[candidate + k] == data[at + k] { k += 1 }
+        if k > best {
+          best = k
+          best_distance = at - candidate
+          if k == limit { break }
+        }
+      }
+      candidate = self.prev[candidate]
+      chain -= 1
+    }
+    if best_distance == 0 { (0, 0) } else { (best, best_distance) }
+  }
+}
+
+/// The hash table slot of the four bytes at `at`.
+let lz_hash = pure (data: ref []u8, at: i64) -> i64 => {
+  let key = (i64(data[at]) << 24) | (i64(data[at + 1]) << 16) | (i64(data[at + 2]) << 8) | i64(data[at + 3])
+  (key.wrapping_mul(2654435761) >> 16) & (LZ_HASH - 1)
+}
+
+/// A sequence: the literals `data[from..<to]`, then a match of `length` bytes `distance` back.
+let lz_sequence = (
+  out: mut []u8,
+  data: ref []u8,
+  from: i64,
+  to: i64,
+  length: i64,
+  distance: i64
+) -> void => {
+  let literals = to - from
+  let more = length - LZ_MIN
+  out.push(u8((literals.min(15) << 4) | more.min(15)))
+  lz_more(out, literals)
+  for k in from..<to { out.push(data[k]) }
+  out.push(u8(distance >> 8))
+  out.push(u8(distance & 0xFF))
+  lz_more(out, more)
+}
+
+/// A count's bytes past the 15 its token holds: 255 for each 255 more, then the rest.
+let lz_more = (out: mut []u8, count: i64) -> void => {
+  if count < 15 { return }
+  var left = count - 15
+  while left >= 255 {
+    out.push(255)
+    left -= 255
+  }
+  out.push(u8(left))
+}
+
+/// The count a token's 15 goes on to, read from `at`, and where the reading ended.
+let lz_read_more = pure (packed: ref []u8, at: i64) -> Result<(i64, i64), string> => {
+  var more: i64 = 0
+  var k = at
+  loop {
+    if k >= packed.len() { return Err("a count runs past the stream") }
+    let b = i64(packed[k])
+    k += 1
+    more += b
+    if b != 255 { break }
+  }
+  Ok((more, k))
+}

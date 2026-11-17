@@ -1,0 +1,98 @@
+module std.genesis.pack
+//! Packed data unpacked on the 68000: what `std.compress.lz_pack` made — LZ4's sequences,
+//! the offsets big-endian — into RAM ([unpack]), and tiles through RAM into video memory
+//! ([load_tiles]). Vega's games keep their tile sets, sprites and maps packed in the
+//! cartridge and unpack a scene's as it starts, into an area of RAM the game declares.
+//!
+//! ```
+//! import std.genesis.pack
+//!
+//! var area: [4096]u16 = #[0; 4096]
+//!
+//! // MEADOW_PACKED: lz_pack of 1280 bytes of tiles, from tile 1 on.
+//! unsafe { pack.load_tiles(1, MEADOW_PACKED, 1280, &mut area[0]) }
+//! ```
+//!
+//! **Pointers, not indexes**: every byte read and written is one through a pointer stepped
+//! past it, which the 68000 does with `(An)+` — an index checked against the table's length
+//! at each byte cost several times as much. So nothing here checks the stream: it is the
+//! game's own, made by its build, and a wrong size or a corrupt table writes where it says.
+
+import std.genesis.vdp
+
+/// `size` bytes unpacked from `packed` to `to` on: a sequence's literals copied, then its
+/// match copied from what is unpacked already, a byte at a time (a match may overlap
+/// itself: a run is a match one byte back). `unsafe`: it writes `size` bytes from `to`,
+/// whatever is there.
+pub let unpack<const N: i64> = unsafe (
+  packed: ref [N]u8,
+  to: ^mut u8,
+  size: u32
+) -> void => {
+  var from: ^u8 = &packed[0]
+  var out = to
+  var left = size
+  while left > 0 {
+    let token = from^
+    from = from.offset(1)
+    var literals = u32(token >> 4)
+    if literals == 15 { literals += more(from) }
+    left -= literals
+    while literals > 0 {
+      out^ = from^
+      out = out.offset(1)
+      from = from.offset(1)
+      literals -= 1
+    }
+    if left == 0 { break }
+    let distance = (u32(from^) << 8) | u32(from.offset(1)^)
+    from = from.offset(2)
+    var length = u32(token & 15) + 4
+    if (token & 15) == 15 { length += more(from) }
+    left -= length
+    var back: ^u8 = out.offset(-i64(distance))
+    while length > 0 {
+      out^ = back^
+      out = out.offset(1)
+      back = back.offset(1)
+      length -= 1
+    }
+  }
+}
+
+/// Tiles into video memory from tile `first` on: `bytes` of them (32 a tile) unpacked from
+/// `packed` into RAM at `area`, then written to the VDP — as `vdp.load_tiles` writes a
+/// table of them. `area` must hold `bytes`, and start on an even address.
+pub let load_tiles<const N: i64> = unsafe (
+  first: u16,
+  packed: ref [N]u8,
+  bytes: u32,
+  area: ^mut u8
+) -> void => {
+  unpack(packed, area, bytes)
+  var word: ^u16 = pointer_at(area.address())
+  var left = bytes / 2
+  let held = vdp.hold_vblank()
+  vdp.set_vram_address(first * 32)
+  while left > 0 {
+    vdp.write_word(word^)
+    word = word.offset(1)
+    left -= 1
+  }
+  vdp.release_vblank(held)
+}
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// A count's bytes past the 15 its token holds — each 255 saying another follows — read
+/// from `from` on, which is moved past them.
+let more = unsafe (from: mut ^u8) -> u32 => {
+  var total: u32 = 0
+  loop {
+    let b = from^
+    from = from.offset(1)
+    total += u32(b)
+    if b != 255 { break }
+  }
+  total
+}
