@@ -1074,16 +1074,21 @@ pub struct Computed {
 /// top-level elements, which a sheet reaches from outside as Vue's scoped styles do), and what
 /// its parent passes down.
 pub struct Cascade {
+  /// The theme in force, its `elements` empty: its rules are `theme_rules`, and kept once, a
+  /// cascade is cheaper to compare — which the layout cache does at every element.
   theme: Theme,
-  globals: []Rule = [],
+  /// The theme's element rules, and below the global ones, each as [compiled]: taken apart
+  /// once, as the cascade gains them, rather than at each element they are matched against.
+  theme_rules: []Compiled = [],
+  globals: []Compiled = [],
   component: string = "",
   /// The component's own classes, for a `Component.class::part` rule.
   component_classes: string = "",
-  scoped: []Rule = [],
-  outer_scoped: []Rule = [],
+  scoped: []Compiled = [],
+  outer_scoped: []Compiled = [],
   /// The rules of the component around, while this is one of its own top-level elements: so
   /// `.row { gap: 8 }` in a page's sheet reaches the row a component it calls is made of.
-  roots: []Rule = [],
+  roots: []Compiled = [],
   /// The window's layer, beneath every sheet, on the tree's root alone: the overflow the
   /// window gives the view at its root ([ui.app.App.window_overflow]), which a sheet's rule
   /// for the root, or the root's own style, overrides — as CSS's viewport takes its overflow
@@ -1095,7 +1100,8 @@ pub struct Cascade {
 /// The cascade at the root of a tree drawn in `theme`, the window's layer empty.
 pub let cascade_root = pure (theme: Theme) -> Cascade =>
   Cascade {
-    theme: theme,
+    theme: Theme { theme | elements: Sheet {} },
+    theme_rules: compiled(theme.elements.rules),
     inherited: Computed { color: theme.colors.text, font: theme.font }
   }
 
@@ -1110,33 +1116,30 @@ impl Cascade {
     inline: ref Style,
     under: []Rule = []
   ) -> Style => {
-    var out = applied(under, tag, classes, self.window)
-    out = applied(self.theme.elements.rules, tag, classes, out)
-    out = applied(self.globals, tag, classes, out)
+    // The element's classes and states, split once for every layer.
+    let have = classes.split(" ")
+    var out = applied(compiled(under), tag, have, self.window)
+    out = applied(self.theme_rules, tag, have, out)
+    out = applied(self.globals, tag, have, out)
     // The sheet of the component around, on this component's own top-level elements, beneath
     // the component's own sheet.
-    out = applied(self.roots, tag, classes, out)
-    out = applied(self.scoped, tag, classes, out)
+    out = applied(self.roots, tag, have, out)
+    out = applied(self.scoped, tag, have, out)
     if part.len() > 0 && self.component.len() > 0 {
       // `Component::part`, then the more specific `Component.class::part`, each in order.
-      var parts: []Rule = []
+      let component_have = self.component_classes.split(" ")
+      var parts: []Style = []
       var ranked: [](i64, i64) = []
-      for rules in [self.theme.elements.rules, self.globals, self.outer_scoped] {
+      for rules in [self.theme_rules, self.globals, self.outer_scoped] {
         for rule in rules {
-          for one in rule.selector.split(",") {
-            let rank = part_specificity(
-              one.trim(),
-              self.component,
-              self.component_classes,
-              part,
-              classes
-            )
-            if rank > 0 { ranked.push((rank, parts.len())) }
+          for one in rule.selectors {
+            let r = one.part_rank(self.component, component_have, part, have)
+            if r > 0 { ranked.push((r, parts.len())) }
           }
-          parts.push(rule)
+          parts.push(rule.style)
         }
       }
-      for (_, k) in by_rank(ranked) { out = parts[k].style.over(out) }
+      for (_, k) in by_rank(ranked) { out = parts[k].over(out) }
     }
     inline.over(out)
   }
@@ -1217,8 +1220,9 @@ impl Cascade {
   /// its text takes the theme's colour and font again.
   pub let themed = pure (self: ref, theme: Theme, sheet: Sheet) -> Cascade => Cascade {
     self |
-    theme: theme,
-    globals: [...self.globals, ...sheet.rules],
+    theme: Theme { theme | elements: Sheet {} },
+    theme_rules: compiled(theme.elements.rules),
+    globals: [...self.globals, ...compiled(sheet.rules)],
     inherited: Computed { self.inherited | color: theme.colors.text, font: theme.font },
   }
 
@@ -1233,7 +1237,7 @@ impl Cascade {
     self |
     component: name,
     component_classes: classes,
-    scoped: sheet.rules,
+    scoped: compiled(sheet.rules),
     outer_scoped: self.scoped,
     roots: self.scoped,
   }
@@ -1245,25 +1249,94 @@ impl Cascade {
     Cascade { self | inherited: computed, roots: [], window: Style {} }
 }
 
-/// `base` with the rules of one layer matching an element of `tag` and `classes` laid over it,
-/// least specific first and, among equals, in order — a selector list a rule for each of its
-/// selectors. A part selector is no rule of a layer's.
+/// A rule with its selectors taken apart ([Selector]), each of a selector list its own, as
+/// the cascade matches it.
+pub struct Compiled {
+  selectors: []Selector,
+  style: Style,
+}
+
+/// `rules` as the cascade matches them, each selector parsed once.
+pub let compiled = pure (rules: []Rule) -> []Compiled =>
+  [rule in rules | Compiled { selectors: selectors_of(rule.selector), style: rule.style }]
+
+/// One selector of a rule's list, taken apart: the tag it names (`""` for any) and the classes
+/// and pseudo-classes it asks for (each as [compound] lists it) — and for a part rule
+/// (`Component.class::part:state`) those are the component's, `part` names the part and
+/// `part_asks` its states. `never` marks one that matches nothing: empty, or with a `::` that
+/// is not one part with only states after it.
+pub struct Selector {
+  tag: string = "",
+  asks: []string = [],
+  part: string = "",
+  part_asks: []string = [],
+  never: bool = false,
+}
+
+/// The selectors of a list (`Button.primary, .card`), each trimmed.
+let selectors_of = pure (list: string) -> []Selector =>
+  if list.contains(",") { [one in list.split(",") | selector_of(one.trim())] } else {
+    [selector_of(list.trim())]
+  }
+
+/// `text`, one selector, taken apart.
+let selector_of = pure (text: string) -> Selector => {
+  if text.len() == 0 { return Selector { never: true } }
+  if !text.contains("::") {
+    let (tag, asks) = compound(text)
+    return Selector { tag: tag, asks: asks }
+  }
+  let halves = text.split("::")
+  if halves.len() != 2 { return Selector { never: true } }
+  let (name, of_part) = compound(halves[1])
+  if name.len() == 0 || !of_part.all((a) => a.starts_with(":")) {
+    return Selector { never: true }
+  }
+  let (tag, of_component) = compound(halves[0])
+  Selector { tag: tag, asks: of_component, part: name, part_asks: of_part }
+}
+
+impl Selector {
+  /// How specific this is for an element of `tag` whose classes and states are `have` — as
+  /// [specificity] says; 0 for a part selector.
+  pub let rank = pure (self: ref, tag: string, have: ref []string) -> i64 => {
+    if self.never || self.part.len() > 0 { return 0 }
+    if self.tag.len() > 0 && self.tag != tag { return 0 }
+    if !holds(self.asks, have) { return 0 }
+    (if self.tag.len() > 0 { 1 } else { 0 }) + 10 * self.asks.len()
+  }
+
+  /// How specific this part selector is for part `part` of a component tagged `component`
+  /// with `component_have`, the part itself in the states `own` — as [part_specificity] says.
+  pub let part_rank = pure (
+    self: ref,
+    component: string,
+    component_have: ref []string,
+    part: string,
+    own: ref []string
+  ) -> i64 => {
+    if self.never || self.part.len() == 0 || self.part != part || self.tag != component {
+      return 0
+    }
+    if !holds(self.asks, component_have) || !holds(self.part_asks, own) { return 0 }
+    1 + 10 * (self.asks.len() + self.part_asks.len())
+  }
+}
+
+/// `base` with the rules of one layer matching an element of `tag` whose classes and states are
+/// `have` laid over it, least specific first and, among equals, in order — a selector list a
+/// rule for each of its selectors. A part selector is no rule of a layer's.
 let applied = pure (
-  rules: []Rule,
+  rules: ref []Compiled,
   tag: string,
-  classes: string,
+  have: ref []string,
   base: ref Style
 ) -> Style => {
   var ranked: [](i64, i64) = []
   for k, rule in rules {
-    if rule.selector.contains(",") {
-      for one in rule.selector.split(",") {
-        let rank = specificity(one.trim(), tag, classes)
-        if rank > 0 { ranked.push((rank, k)) }
-      }
-    } else {
-      let rank = specificity(rule.selector.trim(), tag, classes)
-      if rank > 0 { ranked.push((rank, k)) }
+    for one in rule.selectors {
+      let r = one.rank(tag, have)
+      if r > 0 { ranked.push((r, k)) }
     }
   }
   var out = base
@@ -1297,44 +1370,15 @@ pub let part_specificity = pure (
   classes: string,
   part: string,
   own: string = ""
-) -> i64 => {
-  let halves = selector.split("::")
-  if halves.len() != 2 { return 0 }
-  let (name, of_part) = compound(halves[1])
-  if name != part || !of_part.all((a) => a.starts_with(":")) { return 0 }
-  let (tag, of_component) = compound(halves[0])
-  if tag != component || !holds(
-    of_component,
-    classes
-  ) || !holds(of_part, own) { return 0 }
-  1 + 10 * (of_component.len() + of_part.len())
-}
+) -> i64 =>
+  selector_of(selector).part_rank(component, classes.split(" "), part, own.split(" "))
 
 /// How specific `selector` is for an element of `tag` with `classes` — its classes, and its
 /// states as pseudo-classes (`:hover`; [PSEUDO_CLASSES]): 1 for its tag and 10 for each class
 /// or pseudo-class it asks for (`Button.primary:hover` is 21), every one of which the element
 /// must have; 0 when it does not match (a part selector never does).
-pub let specificity = pure (selector: string, tag: string, classes: string) -> i64 => {
-  if selector.len() == 0 || !may_name(
-    selector,
-    tag
-  ) || selector.contains("::") { return 0 }
-  let (want, asks) = compound(selector)
-  if want.len() > 0 && want != tag { return 0 }
-  if !holds(asks, classes) { return 0 }
-  (if want.len() > 0 { 1 } else { 0 }) + 10 * asks.len()
-}
-
-/// Whether `selector` can be about an element of `tag`: it names no tag, or that one. Asked
-/// before [compound] takes it apart — every element is matched against every rule of its
-/// sheets, and most rules name another tag.
-let may_name = pure (selector: string, tag: string) -> bool => {
-  if selector.starts_with(".") || selector.starts_with(":") { return true }
-  match selector.strip_prefix(tag) {
-    Some(rest) => rest.len() == 0 || rest.starts_with(".") || rest.starts_with(":"),
-    None => false,
-  }
-}
+pub let specificity = pure (selector: string, tag: string, classes: string) -> i64 =>
+  selector_of(selector).rank(tag, classes.split(" "))
 
 /// The states an element can be in, as CSS's pseudo-classes: the pointer over it or inside it,
 /// pressed on it or inside it (`active`), the focus on it, on it from the keyboard
@@ -1359,18 +1403,20 @@ pub const PSEUDO_CLASSES: []string = [
 pub let compound = pure (text: string) -> (string, []string) => {
   var tag = ""
   var asks: []string = []
-  var piece = ""
+  // Where the piece being read starts, and the mark before it (`' '` for the tag).
+  var start = 0
   var mark = ' '
-  for c in text {
+  for i, c in text {
     if c == '.' || c == ':' {
-      if mark == ' ' { tag = piece } else { asks.push(asked(mark, piece)) }
-      piece = ""
+      if mark == ' ' { tag = text.slice(start, i) } else {
+        asks.push(asked(mark, text.slice(start, i)))
+      }
+      start = i + 1
       mark = c
-    } else {
-      piece = "${piece}${c}"
     }
   }
-  if mark == ' ' { tag = piece } else { asks.push(asked(mark, piece)) }
+  let last = text.slice(start, text.len())
+  if mark == ' ' { tag = last } else { asks.push(asked(mark, last)) }
   (tag, asks)
 }
 
@@ -1378,11 +1424,9 @@ pub let compound = pure (text: string) -> (string, []string) => {
 let asked = pure (mark: rune, name: string) -> string =>
   if mark == ':' { ":${name}" } else { name }
 
-/// Whether every one of `asks` — each named, none empty — is among `have` (space-separated).
-let holds = pure (asks: []string, have: string) -> bool => {
-  let mine = have.split(" ")
-  asks.all((a) => a.len() > 0 && a != ":" && mine.any((c) => c == a))
-}
+/// Whether every one of `asks` — each named, none empty — is among `have`.
+let holds = pure (asks: ref []string, have: ref []string) -> bool =>
+  asks.all((a) => a.len() > 0 && a != ":" && have.any((c) => c == a))
 
 /// `color` at `opacity` times its own alpha.
 pub let faded = pure (color: Color, opacity: f32) -> Color =>

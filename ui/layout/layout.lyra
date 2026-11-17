@@ -1329,11 +1329,26 @@ pub let layout_cached<e> = (
       },
     }
   }
-  let laid = lay(root, c, root_cascade(seen.window_overflow), fonts, seen, "#", cache)
+  let at = root_cascade_in(cache, seen.window_overflow)
+  let laid = lay(root, c, at, fonts, seen, "#", cache)
   // The root given back is the whole of last frame given back: its entries stand as they were.
   if cache.laid_out > 0 { cache.last = cache.now }
   cache.now = HashMap.new::<string, Cached<e>>()
   place_floats(laid, seen.viewport.size)
+}
+
+/// [root_cascade] for `overflow`, kept in `cache` from the frame before when it was made for the
+/// same overflow.
+let root_cascade_in<e> = (
+  cache: mut LayoutCache<e>,
+  overflow: Maybe<Overflow>
+) -> Cascade => {
+  if let Some(known) = cache.root {
+    if known.0 == overflow { return known.1 }
+  }
+  let made = root_cascade(overflow)
+  cache.root = Some((overflow, made))
+  made
 }
 
 /// The cascade a tree's root is styled at: the light theme, and the window's overflow, if any,
@@ -1436,6 +1451,10 @@ pub struct LayoutCache<e> {
   now: HashMap<string, Cached<e>>,
   laid_out: i64 = 0,
   reused: i64 = 0,
+  /// The cascade the root was styled at, and the window's overflow it was made for: the light
+  /// theme's rules compiled once, not every frame — a frame whose root is reused from last
+  /// frame's styles nothing else.
+  root: Maybe<(Maybe<Overflow>, Cascade)> = None,
 }
 
 /// One element's layout, and what it was laid out from.

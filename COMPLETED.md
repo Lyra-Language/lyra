@@ -9,6 +9,35 @@ Newest first.
 
 ## Dated log
 
+### 11/17/26 — The cascade parses a sheet's selectors once
+
+The cascade took every rule's selector apart for every element it styled. For each element and
+rule, `applied` split a selector list, trimmed each piece and built its compound a character
+at a time, and `holds` split the element's classes again for each rule. The light theme's 75
+rules met every element that way.
+
+Each layer of `Cascade` is now `[]Compiled`: a rule's style and its `Selector`s, each a tag,
+the classes and states asked for, and for a part rule the part and its states. A sheet is
+compiled once, as the cascade gains it (`cascade_root`, `themed`, `in_component`). Matching is
+then a string compare of the tag and a look through the element's classes, split once per
+element for every layer.
+- **`Cascade.theme` holds the theme without its rules**, which are in `theme_rules`, so the
+  layout cache's compare of a cascade, made at every element, does not meet them twice.
+- **The layout cache keeps the root's cascade** (`LayoutCache.root`, for the window's
+  overflow it was made with). Compiling the light theme every frame had made a cached frame a
+  fifth slower than before, since a frame whose root is reused styles nothing else.
+- **`compound` slices its text** rather than building each name a character at a time.
+- **`specificity` and `part_specificity` stay**, as a compile of one selector and its rank.
+
+Measured on the layouts demo with 40 cards at `-O2`:
+- 400 fresh layouts take 1.35 s, where they took 3.89 s.
+- 4000 frames from the cache take 1.27 s, where they took 1.28 s.
+
+A dump of every laid-out element's size and style at three widths is byte for byte what it
+was. The allocation-free rewrite of `applied` tried on 11/16 ("The cascade was looked at
+first") still parsed every rule at every element, which is why it showed nothing. There is no
+index by tag: a compiled rule that names another tag costs one compare.
+
 ### 11/17/26 — Cheaper extensions on the 68000
 
 Ranked by clocks in the hero's vertical blank, the todo list's smaller items were small

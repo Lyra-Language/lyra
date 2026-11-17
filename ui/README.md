@@ -191,6 +191,9 @@ layer — implements the two traits; the display list is the whole contract.
   more specific `Card.big::label`, from the theme, the global sheets and the sheet of the
   component around the part's), and inline style. Within a layer the more specific (tag 1, class 10, both 11),
   then the later. `color`, `font` and `opacity` are inherited, opacity multiplied.
+  **A sheet's selectors are parsed once**, as the cascade gains the sheet (`compiled`, a
+  `Selector` each of a list), not at each element. The element's classes are split once for
+  every layer, and the layout cache keeps the root's compiled light theme between frames.
 - **Text is shaped once a paragraph and broken afterwards**, at a simple reading of UAX #14's
   opportunities (spaces, a hyphen inside a word, ideographs; a newline is a paragraph), with
   trailing spaces hanging. **A paragraph is shaped a run at a time**, each run the characters

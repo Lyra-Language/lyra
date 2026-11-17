@@ -844,9 +844,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/17] A sheet sets the window's overflow** — `App.window_overflow` is a layer
   beneath every sheet on the root (`Cascade.window`), no longer its inline style
   (COMPLETED.md 11/17).
-- **[OPEN] The cascade parses selectors per element.** `applied` splits and trims every rule's
-  selector for every element it styles, so each rule a theme gains slows every layout; parse
-  them once into a sheet (by tag and class) and the whole tree gets faster.
+- **[DONE 11/17] The cascade parses a sheet's selectors once**, as it gains the sheet, not per
+  element: a fresh layout of the layouts demo is 2.9 times faster, and cached frames are as fast
+  as before (COMPLETED.md 11/17). No index by tag: a compiled rule's tag test is one compare.
 - **[DONE 10/22] Transitions** — CSS's `transition` in `Style` and lui, `ui.motion`, paint-only
   properties blended after layout, sizes through the next; the effects demo (COMPLETED.md, 10/22).
 - **[OPEN] Animations beyond transitions**: `@keyframes`/`animation`, `transitionend`-style events
