@@ -9,6 +9,31 @@ Newest first.
 
 ## Dated log
 
+### 11/17/26 — Spills ahead of the flags on the 68000, and a profile that misled
+
+Ranked in the profiling build (the player's functions kept out of line by `@noinline`, so
+their clocks have names), the largest cost was `sound`'s saving of eleven registers: 4.5%
+of the vertical blank, three quarters of its calls returning after one compare.
+Shrink-wrapping it took three changes and stopped at a fourth (a function that can panic
+has a second exit, so nothing post-dominates its body). **In the real build `sound` is
+inlined**, and there is no such call: rank in the real build, and use the profiling one only
+to name what the real one shows.
+- **Ranked there, single-register MOVEMs were the largest thing the compiler's** (3.7%),
+  nearly all reloads the allocator put between a compare and its branch, where the flags are
+  live and 0007's MOVE could not go. **The MOVE now goes ahead of what set the flags**
+  (`tools/llvm-m68k-patches/0022`) where the setter does not read them and nothing from it to
+  the spill touches the register, the base or memory the slot may be — as 0014 does for
+  copies. 135 → 48 in the hero; the vertical blank 47.40 → 46.59 lines a frame.
+- **A boolean loaded to branch on is compared in memory** (`cmpi.b #1, (8,%a0)`): the
+  legalizer's `AssertZext` over the load kept the compare's memory form from matching. 31
+  more such compares, 66 bytes, no measurable time.
+- **Left out: `AllowRegisterRenaming`.** M68k never set it, so every instruction says its
+  registers must stay as allocated, and no post-allocation pass sinks or renames a copy
+  (the first thing in shrink-wrapping's way). Set, it saved 64 bytes and no time; it changes
+  what every such pass may do, so it waits for a reason.
+- Chip writes the same; the Genesis tests, LLVM's M68k tests (two new: a MIR test of the
+  four cases, an IR one of the compare) and Vega's `--check` pass.
+
 ### 11/17/26 — The cascade parses a sheet's selectors once
 
 The cascade took every rule's selector apart for every element it styled. For each element and

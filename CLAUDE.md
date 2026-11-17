@@ -776,7 +776,8 @@ of Markdown.
   loop strength reduction for it where every stream a loop steps through can be one; 0019 adds a
   constant to a pointer in its address register (LEA) rather than through a data register; 0020
   spills a byte register with a byte MOVE; 0021 makes an any-extension no instruction and a zero
-  extension into another register or from memory `moveq #0` and the narrow move. **A
+  extension into another register or from memory `moveq #0` and the narrow move. 0022 moves
+  a spill or reload where the flags are live ahead of what set them, as a MOVE. **A
   backend change moves every game's timing**: run Vega's `--check`, which plays scripted
   games frame by frame, not lyrac's tests alone.
   **The runtime's `__muldi3` takes a sign-extended pair as a signed 32 × 32** — what LLVM

@@ -1369,7 +1369,10 @@ sets V on every add. What stands between that and a ROM:
 - **[DONE 11/17] Cheaper extensions on the 68000**: an any-extension is no instruction, a
   zero extension elsewhere or from memory `moveq #0` and the move, 8 to 16 bits `and.w`
   (`tools/llvm-m68k-patches/0021`, COMPLETED 11/17). 38 `and.l #65535` are left, in place.
-- **[OPEN] The M68k backend, smaller items** (after 0007–0021): the 37 `neg.b` left,
+- **[DONE 11/17] Spills ahead of the flags on the 68000**: a reload between a compare and
+  its branch is a MOVE above the compare, not MOVEM (`tools/llvm-m68k-patches/0022`,
+  COMPLETED 11/17). 48 single-register MOVEMs are left.
+- **[OPEN] The M68k backend, smaller items** (after 0007–0022): the 37 `neg.b` left,
   booleans combined (`&&`, `^`) before a branch; 118 `and.b #1`, mostly a bool masked as it
   is stored; the 37 flag saves left, where the compare reads the copy's destination; the 79
   copies from address to data registers left (a pointer compared, `cmp.l` wanting a data

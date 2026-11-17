@@ -143,6 +143,12 @@
 #     say they set the flags, which their expansions always did. `and.l #65535` 217 → 38 and
 #     `and.l #255` 175 → 10 in the hero, the code 1,942 bytes smaller, the vertical blank
 #     47.58 → 47.40 lines.
+#   - 0022: a spill or reload where the flags are live — the allocator puts reloads between
+#     a compare and its branch — is still a MOVE, put ahead of what set the flags, where
+#     the setter does not read them and nothing from it to the spill touches the register,
+#     the base or memory the slot may be. 135 single-register MOVEMs in the hero → 48, its
+#     vertical blank 47.40 → 46.59 lines. And a compare of a loaded value seen through an
+#     AssertZext (a boolean's load) takes the compare's memory form, `cmpi.b #1, (8,%a0)`.
 #   **Tried and left out**: shrink-wrapping (enableShrinkWrapping) changed nothing in the
 #   hero — every function needs its callee-saved registers from its entry. Rematerializing
 #   constants and addresses (isReMaterializableImpl past the dead CCR def, a flag-keeping
