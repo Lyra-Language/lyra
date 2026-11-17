@@ -6158,6 +6158,83 @@ let main = () -> u8 => {
 	}
 }
 
+// The window's overflow (`App.window_overflow`) is a layer beneath every sheet, on the root
+// alone (`Cascade.window`), as CSS's viewport takes the root element's overflow: the root
+// takes it when nothing sets the root's, a sheet's rule for the root beats it — which the
+// root's inline style, where it was set until 11/17, did not let one — and so does the root's
+// own style, and the root's children never see it.
+func TestRun_UiWindowOverflowIsBeneathTheSheets(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, Command, Subscription, Host, host_of }
+import ui.script.{ timed_platform, ScriptPlatform, Waited }
+import ui.backend.{ Renderer, TextureId }
+import ui.draw.{ Size, Color }
+import ui.text.{ fonts_new, Fonts }
+import ui.style.{ Style, Sheet, Rule, light_theme, Overflow, OverflowVisible, OverflowHidden, OverflowClip, OverflowScroll, OverflowAuto }
+import ui.layout.{ Node, Laid, column, sized, themed }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, window, background, ops) => {}
+}
+
+let rows = pure () -> []Node<void> => [i in 0..<40 | sized::<void>(Some(100.0), Some(30.0))]
+
+let name = pure (o: Overflow) -> string => match o {
+  OverflowVisible => "visible",
+  OverflowHidden => "hidden",
+  OverflowClip => "clip",
+  OverflowScroll => "scroll",
+  OverflowAuto => "auto",
+}
+
+let root_of = (view: Node<void>, overflow: Overflow) -> Laid<void> => {
+  var fonts = fonts_new()
+  let app = App {
+    view: pure (_: i64) -> Node<void> => view,
+    update: pure (s: i64, _: void) -> (i64, []Command<void>) => (s, []),
+    subscriptions: (_: i64) -> []Subscription<void> => [],
+    background: Color { r: 0, g: 0, b: 0 },
+    window_overflow: overflow,
+  }
+  var platform = timed_platform([Waited(1)], Size { w: 200.0, h: 300.0 })
+  var renderer = Blank {}
+  var host = host_of(app, 0, platform)
+  while platform.next < platform.steps.len() { let _ = host.step(platform, renderer, fonts) }
+  host.main_laid()
+}
+
+let say = (what: string, laid: Laid<void>) -> void => {
+  let child = if laid.children.len() > 0 { name(laid.children[0].laid.style.overflow_y) } else { "none" }
+  println("${what}: root ${name(laid.style.overflow_x)} ${name(laid.style.overflow_y)}, child ${child}")
+}
+
+let main = () -> u8 => {
+  say("default", root_of(column::<void>(rows()), OverflowAuto))
+  say("window clip", root_of(column::<void>(rows()), OverflowClip))
+  let sheet = Sheet { rules: [Rule { selector: "Themed", style: Style { overflow_y: Some(OverflowHidden) } }] }
+  say("sheet", root_of(themed::<void>(light_theme(), sheet, [column::<void>(rows())]), OverflowAuto))
+  say("inline", root_of(column::<void>(rows()).with_style(Style { overflow_x: Some(OverflowVisible) }), OverflowAuto))
+  0
+}
+`)
+	want := "default: root auto auto, child visible\n" +
+		"window clip: root clip clip, child visible\n" +
+		"sheet: root auto hidden, child visible\n" +
+		"inline: root visible auto, child visible\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // CSS's text-overflow: ellipsis (`Style.text_overflow`, `ellipsized`): a paragraph wider than
 // its box is one line, cut by rune to what fits with "…" after it, spaces before the "…"
 // dropped, and "…" alone where nothing more fits; one that fits is itself. Checked as what a

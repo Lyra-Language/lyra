@@ -1112,6 +1112,9 @@ pub struct Interaction {
   tip_at: Point = Point {},
   /// The window as media queries see it; a size of nothing for the constraints' own.
   viewport: Viewport = Viewport {},
+  /// What the window does with a root that does not fit it, beneath every sheet's rule for the
+  /// root ([Cascade.window]); `None` outside a window.
+  window_overflow: Maybe<Overflow> = None,
   /// What each element moving a property that changes sizes shows now (`ui.motion`), by
   /// identity: laid out with those properties until they arrive.
   shown: HashMap<string, Computed>,
@@ -1274,6 +1277,21 @@ pub struct FieldLook {
 pub let layout<e> = (root: Node<e>, c: Constraints, fonts: mut Fonts) -> Laid<e> =>
   layout_with(root, c, fonts, interaction_new())
 
+/// `root` laid out as [layout] does, as a window's root is: overflowing it as `overflow` says
+/// where neither the root's own style nor a sheet's rule for it says otherwise
+/// ([Cascade.window]) — what [ui.app.App.window_overflow] does to the view.
+pub let layout_in_window<e> = (
+  root: Node<e>,
+  c: Constraints,
+  fonts: mut Fonts,
+  overflow: Overflow
+) -> Laid<e> => layout_with(
+  root,
+  c,
+  fonts,
+  Interaction { interaction_new() | window_overflow: Some(overflow) }
+)
+
 /// `root` laid out as [layout] does, with the framework's state: the focused, hovered and
 /// pressed elements' classes, scroll offsets and text fields' carets.
 pub let layout_with<e> = (
@@ -1311,11 +1329,22 @@ pub let layout_cached<e> = (
       },
     }
   }
-  let laid = lay(root, c, cascade_root(light_theme()), fonts, seen, "#", cache)
+  let laid = lay(root, c, root_cascade(seen.window_overflow), fonts, seen, "#", cache)
   // The root given back is the whole of last frame given back: its entries stand as they were.
   if cache.laid_out > 0 { cache.last = cache.now }
   cache.now = HashMap.new::<string, Cached<e>>()
   place_floats(laid, seen.viewport.size)
+}
+
+/// The cascade a tree's root is styled at: the light theme, and the window's overflow, if any,
+/// as the layer beneath every sheet.
+let root_cascade = pure (overflow: Maybe<Overflow>) -> Cascade => {
+  let root = cascade_root(light_theme())
+  match overflow {
+    Some(o) =>
+      Cascade { root | window: Style { overflow_x: Some(o), overflow_y: Some(o) } },
+    None => root,
+  }
 }
 
 /// `laid` with each floating element that has an [Anchor] placed against its anchor within a

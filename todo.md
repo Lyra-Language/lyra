@@ -841,8 +841,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/16] Scrollbars: width, a stable gutter and auto-hiding** — `scrollbar_width`,
   `scrollbar_gutter`, `scrollbar_autohide` (lui's too); the track and thumb still style colour and
   radius only (COMPLETED.md 11/16).
-- **[OPEN] The window's overflow is inline style**, so it beats any sheet's rule for the root;
-  a sheet cannot set the window's overflow. CSS's root-propagation rule would fix it.
+- **[DONE 11/17] A sheet sets the window's overflow** — `App.window_overflow` is a layer
+  beneath every sheet on the root (`Cascade.window`), no longer its inline style
+  (COMPLETED.md 11/17).
 - **[OPEN] The cascade parses selectors per element.** `applied` splits and trims every rule's
   selector for every element it styles, so each rule a theme gains slows every layout; parse
   them once into a sheet (by tag and class) and the whole tree gets faster.

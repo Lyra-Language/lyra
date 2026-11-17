@@ -9,6 +9,29 @@ Newest first.
 
 ## Dated log
 
+### 11/17/26 — A sheet sets the window's overflow
+
+The host gave the view's root `App.window_overflow` by writing it into the root's inline style
+(`in_window`), where the root's own style did not set one. Inline style beats every sheet, so a
+sheet's rule for the root could not change what the window does with a view too big for it.
+
+CSS's viewport takes its overflow from the root element. So the window's overflow is now a
+layer of the cascade of its own, `Cascade.window`, beneath the theme and every sheet:
+- The host sets `Interaction.window_overflow` for each window before laying it out.
+  `layout_cached` starts the root's cascade with it (`root_cascade`).
+- `Cascade.inside` empties the layer, so the root's children never see it.
+- The layer is part of the root's cascade, which is in the layout cache's key, so changing it
+  lays the root out again.
+
+`in_window` is gone. `layout_in_window(root, c, fonts, overflow)` lays a view out as a window
+would, which is what Vega's torn-window check used it for.
+
+`TestRun_UiWindowOverflowIsBeneathTheSheets` checks four cases:
+- the root takes the window's overflow, auto or clip, when nothing else sets it;
+- a sheet's `Themed { overflow-y: hidden }` beats it on that axis alone;
+- the root's inline style beats it;
+- the root's child stays visible.
+
 ### 11/16/26 — Packed tiles and maps for the Genesis: an LZ, and what the language needed
 
 Vega's Genesis games kept every tile and map as raw tables in the cartridge. Measured on the

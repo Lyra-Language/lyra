@@ -1084,10 +1084,15 @@ pub struct Cascade {
   /// The rules of the component around, while this is one of its own top-level elements: so
   /// `.row { gap: 8 }` in a page's sheet reaches the row a component it calls is made of.
   roots: []Rule = [],
+  /// The window's layer, beneath every sheet, on the tree's root alone: the overflow the
+  /// window gives the view at its root ([ui.app.App.window_overflow]), which a sheet's rule
+  /// for the root, or the root's own style, overrides — as CSS's viewport takes its overflow
+  /// from the root element's.
+  window: Style = Style {},
   inherited: Computed,
 }
 
-/// The cascade at the root of a tree drawn in `theme`.
+/// The cascade at the root of a tree drawn in `theme`, the window's layer empty.
 pub let cascade_root = pure (theme: Theme) -> Cascade =>
   Cascade {
     theme: theme,
@@ -1105,7 +1110,7 @@ impl Cascade {
     inline: ref Style,
     under: []Rule = []
   ) -> Style => {
-    var out = applied(under, tag, classes, Style {})
+    var out = applied(under, tag, classes, self.window)
     out = applied(self.theme.elements.rules, tag, classes, out)
     out = applied(self.globals, tag, classes, out)
     // The sheet of the component around, on this component's own top-level elements, beneath
@@ -1234,9 +1239,10 @@ impl Cascade {
   }
 
   /// The cascade for the children of an element computed as `computed`: below a component's
-  /// own top-level elements, the sheet of the component around reaches no further.
+  /// own top-level elements, the sheet of the component around reaches no further, and the
+  /// window's layer is the root's alone.
   pub let inside = pure (self: ref, computed: ref Computed) -> Cascade =>
-    Cascade { self | inherited: computed, roots: [] }
+    Cascade { self | inherited: computed, roots: [], window: Style {} }
 }
 
 /// `base` with the rules of one layer matching an element of `tag` and `classes` laid over it,

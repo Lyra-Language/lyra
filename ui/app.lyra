@@ -96,7 +96,7 @@ import ui.backend.{
 import ui.draw.{ Point, Size, Rect, Color }
 import ui.text.{ Fonts, FontSpec, FontMetrics, FontFile, GlyphAtlas, glyph_atlas }
 import bindings.freetype.{ HintNone, HintLight }
-import ui.style.{ Viewport, Style, Overflow, OverflowAuto, light_theme }
+import ui.style.{ Viewport, Overflow, OverflowAuto, light_theme }
 import ui.layout.{
   Node,
   Laid,
@@ -144,8 +144,9 @@ pub struct App<s, e> {
   resize_x: bool = true,
   resize_y: bool = true,
   /// What the window does with a view that does not fit it — CSS's `overflow` on the page:
-  /// scrolled, with bars while it does not fit, by default. Set on the view's root unless its
-  /// own style says otherwise.
+  /// scrolled, with bars while it does not fit, by default. The view's root takes it beneath
+  /// every sheet ([ui.style.Cascade.window]), so the root's own style, or a sheet's rule for
+  /// it, says otherwise.
   window_overflow: Overflow = OverflowAuto,
   /// The window as the program's code describes it now — lui's `window_spec` — which the
   /// host follows under `lyrac run --live`: a reload swaps this function's body, and a change
@@ -554,17 +555,6 @@ let host_window<e> = pure (
     cache: layout_cache::<e>(),
     painted_sizes: HashMap.new::<string, Size>(),
   }
-}
-
-/// `view` as the window's root: filling it, and overflowing it as `overflow` says on each
-/// axis its own style leaves unset.
-pub let in_window<e> = pure (view: Node<e>, overflow: Overflow) -> Node<e> => Node {
-  view |
-  style: Style {
-    view.style |
-    overflow_x: view.style.overflow_x.or(Some(overflow)),
-    overflow_y: view.style.overflow_y.or(Some(overflow)),
-  },
 }
 
 /// The boxes in the window of what in `laid` (at `origin`) moves the window — marked
@@ -981,9 +971,10 @@ impl Host<s, e> {
       self.windows[k].ui.state.viewport = viewport_of(platform, id)
       self.windows[k].ui.now = platform.now_ms()
       self.windows[k].ui.touching = platform.scroll_touching()
+      self.windows[k].ui.state.window_overflow = Some(self.overflow_of(k))
       let laid_at = self.version
       let laid = self.windows[k].ui.frame_within(
-        in_window(self.view_of(k), self.overflow_of(k)),
+        self.view_of(k),
         tight(platform.window_size(id)),
         fonts,
         self.windows[k].cache

@@ -120,8 +120,10 @@ layer — implements the two traits; the display list is the whole contract.
   hit-test only finds what is inside every clip around it. **A scroller lends its parent no
   min-content width beyond its padding**, as CSS's, and has no automatic least size in flex.
   **The window scrolls**: the host lays the root out tight to the window and gives it
-  `App.window_overflow` (`OverflowAuto` unless set; lui's `<window overflow>`), which the
-  root's own style beats. `scroll(child, axis)` is a wrapper with `overflow` on its axis, which
+  `App.window_overflow` (`OverflowAuto` unless set; lui's `<window overflow>`) as a layer
+  beneath every sheet, on the root alone (`Cascade.window`, through `Interaction.window_overflow`):
+  CSS's viewport takes its overflow from the root element, so the root's own style or a sheet's
+  rule for it beats it. `layout_in_window` lays a view out as a window would. `scroll(child, axis)` is a wrapper with `overflow` on its axis, which
   fills that axis when bounded (Flutter's).
 - **Transitions are CSS's** (`Style.transition: []Transition` — a property by its CSS name or
   `all`, a duration and delay in milliseconds, a `Timing`; lui's `transition` and longhands).
