@@ -142,7 +142,11 @@ layer — implements the two traits; the display list is the whole contract.
   `Interaction.shown`, keyed into the cache, so a moving element lays out each frame (and at
   once on the frame it starts, never showing its target first). An `auto` size, gradients of
   different shapes and shadows inset on one side only switch at the midpoint. State is by
-  identity in `Ui.motions`, dropped with the element; the clock is `Platform.now_ms`, which the
+  identity in `Ui.motions`, dropped with the element. **Parts outside the laid-out elements
+  transition as elements do**: a scroller's `ScrollTrack` and `ScrollThumb` (a thumb's `:hover`
+  fading in), and a field's `TextInput::placeholder`, `::caret` and `::selection`, styled under
+  the field's states (`TextInput:focus::placeholder`) — each moved on under its element's
+  identity and `#thumb-y` or `#placeholder`, its arrivals raising nothing. The clock is `Platform.now_ms`, which the
   host hands `Ui.now`. **The host draws every frame while anything moves and idles once it has
   arrived**; `ScriptPlatform`'s `wait:N` steps its clock a frame at a time, so a script plays a
   transition deterministically. **An arrival is an event** (CSS's `transitionend`):

@@ -3641,6 +3641,77 @@ let find = pure (laid: Laid<void>, key: string) -> Laid<void> => {
 	}
 }
 
+// Parts styled outside the laid-out elements transition too: a field's placeholder and caret as
+// it takes the focus (`TextInput:focus::placeholder`), and a scrollbar's thumb under the
+// pointer. They switched at once until 11/17 — the walk moving transitions on visited only
+// elements, and a field's parts were computed with none of its states.
+func TestRun_UiPartsTransition(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new }
+import ui.draw.{ Size, Color }
+import ui.text.{ Fonts, fonts_new }
+import ui.style.{ Style, Rule, Sheet, Transition, TimingLinear, OverflowAuto, light_theme }
+import ui.layout.{ Node, Laid, FieldSpec, LayoutCache, layout_cache, column, sized, text_input, themed, tight }
+
+data Ev = Typed(string)
+
+let main = () -> u8 => {
+  var ui = ui_new()
+  var fonts = fonts_new()
+  var cache: LayoutCache<Ev> = layout_cache()
+  let first = at(ui, cache, fonts, 0)
+  ui.state.focus = find(first, "name").id
+  ui.state.hover = "${find(first, "list").id}#thumb-y"
+  for now in [0, 50, 100, 150] {
+    let laid = at(ui, cache, fonts, now)
+    let Some(look) = find(laid, "name").field else { return 1 }
+    let Some(bars) = find(laid, "list").scroller else { return 2 }
+    let thumb = bars.thumb_y.background ?? Color { r: 9, g: 9, b: 9 }
+    println("t=${now}: placeholder ${look.color.r}, caret ${look.caret_color.r}, thumb ${thumb.r}")
+  }
+  0
+}
+
+let at = (ui: mut Ui, cache: mut LayoutCache<Ev>, fonts: mut Fonts, now: i64) -> Laid<Ev> => {
+  ui.now = now
+  ui.frame_within(view(), tight(Size { w: 300.0, h: 300.0 }), fonts, cache)
+}
+
+let view = pure () -> Node<Ev> => themed::<Ev>(light_theme(), sheet, [column([
+  text_input::<Ev>(FieldSpec { value: "", placeholder: "Name", on_edit: Typed }).keyed("name"),
+  column([i in 0..<10 | sized::<Ev>(Some(50.0), Some(30.0))]).keyed("list").with_style(Style { height: Some(100.0), overflow_y: Some(OverflowAuto) }),
+])])
+
+let fade = [Transition { property: "color", duration: 100.0, timing: TimingLinear }]
+let fill = [Transition { property: "background-color", duration: 100.0, timing: TimingLinear }]
+
+let sheet = Sheet { rules: [
+  Rule { selector: "TextInput::placeholder", style: Style { color: Some(Color { r: 200, g: 0, b: 0 }), transition: Some(fade) } },
+  Rule { selector: "TextInput:focus::placeholder", style: Style { color: Some(Color { r: 0, g: 0, b: 0 }) } },
+  Rule { selector: "TextInput::caret", style: Style { background: Some(Color { r: 0, g: 0, b: 0 }), transition: Some(fill) } },
+  Rule { selector: "TextInput:focus::caret", style: Style { background: Some(Color { r: 100, g: 0, b: 0 }) } },
+  Rule { selector: "ScrollThumb", style: Style { background: Some(Color { r: 0, g: 0, b: 0 }), transition: Some(fill) } },
+  Rule { selector: "ScrollThumb:hover", style: Style { background: Some(Color { r: 200, g: 0, b: 0 }) } },
+] }
+
+let find = pure (laid: Laid<Ev>, key: string) -> Laid<Ev> => {
+  if laid.id.ends_with(key) { return laid }
+  for c in laid.children {
+    let f = find(c.laid, key)
+    if f.id.ends_with(key) { return f }
+  }
+  laid
+}
+`)
+	want := "t=0: placeholder 200, caret 0, thumb 0\n" +
+		"t=50: placeholder 100, caret 50, thumb 100\n" +
+		"t=100: placeholder 0, caret 100, thumb 200\n" +
+		"t=150: placeholder 0, caret 100, thumb 200\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // States as CSS's pseudo-classes: a compound's and a part rule's specificity, a class of a
 // state's name no longer matching it; :hover and :active reaching every element round the one
 // they name; :focus from the pointer without :focus-visible, and from Tab with it; :focus-within

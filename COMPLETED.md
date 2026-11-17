@@ -9,6 +9,34 @@ Newest first.
 
 ## Dated log
 
+### 11/17/26 — Scrollbars and a field's parts transition
+
+A scroller's `ScrollTrack` and `ScrollThumb`, and a field's `TextInput::placeholder`,
+`::caret` and `::selection`, are styled inside layout and kept as values on the laid-out
+element (`Scroller.track`/`thumb_x`/`thumb_y`, a field's look). They are not elements the
+frame's transition walk visits, so a rule's `transition` on them did nothing: a thumb's hover
+or a placeholder fading on focus switched at once.
+
+**Each part is moved on as an element is**, under its element's identity and a suffix
+(`<id>#thumb-y`, `<id>#placeholder`). `Ui.part_moved` advances it with `ui.motion` as `moved`
+does an element. Its motion is kept while its element is in the tree (`part_present`), and it
+follows a dock move (`relocated` takes `<id>#…` as it does `<id>/…`). Its arrivals raise
+nothing: `on_transition_end` is the element's. A field keeps its parts' computed styles
+(`FieldLook.parts`, an array of one so the parts are not carried inline by every `Laid`).
+Its colours are made from them in one place, `field_inked`, both in layout and in the frame
+after the parts have moved. So a field's text and caret now also follow a colour its element,
+or an ancestor, is moving through. An element whose parts have a transition counts as moving
+(`parts_move`, into `Laid.moves`), so the frame looks in.
+
+**Found on the way: a thumb's `:hover` and `:active` did not reach the layout cache.**
+`state_under`, the cache's key for the state reaching an element, counted a held identity
+inside the element only as `<id>/…`. A thumb hovered or held is `<id>#thumb-y`, so a scroller
+the cache gave back kept the thumb it had been laid out with: the hover's colour showed only
+once something else laid the scroller out again. It now counts `<id>#…` too.
+
+Test: `TestRun_UiPartsTransition` (a placeholder and caret on `:focus`, a thumb on `:hover`,
+frame by frame through the layout cache).
+
 ### 11/17/26 — An array parameter written `_`
 
 A `ui.app` host whose state was an array (`App<[]string, e>`) did not build: "destructuring

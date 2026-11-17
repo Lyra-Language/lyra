@@ -165,6 +165,8 @@ import ui.layout.{
   focusable,
   byte_at,
   SLIDER_THUMB,
+  FieldParts,
+  field_inked,
 }
 import ui.style.{ OverflowClip, Computed }
 import ui.motion.{ Motion, advance, shown_at, in_motion, moves_sizes }
@@ -408,7 +410,9 @@ impl Ui {
       if !present.contains_key(id) { let _ = self.state.widgets.remove(id) }
     }
     for id in self.motions.keys() {
-      if !present.contains_key(id) { let _ = self.motions.remove(id) }
+      if !present.contains_key(id) && !part_present(id, present) {
+        let _ = self.motions.remove(id)
+      }
     }
     // Transitions moved on to `now`, blended into what is drawn; a size that just started
     // moving is laid out again at once, so the frame never shows it at its target.
@@ -580,6 +584,28 @@ impl Ui {
     } else if self.motions.contains_key(laid.id) { let _ = self.motions.remove(laid.id) }
     style = Computed { style | opacity: product * style.own_opacity }
     if changed && !own_color && laid.style.color == ink { style = Computed { style | color: inked } }
+    // Its scrollbars' and a field's parts, moved on as an element's are, under identities of
+    // their own; a field's colours made again from its parts and the colour it shows.
+    let scroller = match laid.scroller {
+      Some(s) => Some(Scroller {
+        s |
+        track: self.part_moved("${laid.id}#track", s.track),
+        thumb_x: self.part_moved("${laid.id}#thumb-x", s.thumb_x),
+        thumb_y: self.part_moved("${laid.id}#thumb-y", s.thumb_y),
+      }),
+      None => None,
+    }
+    var field = laid.field
+    if let Some(look) = laid.field {
+      for p in look.parts {
+        let parts = FieldParts {
+          placeholder: self.part_moved("${laid.id}#placeholder", p.placeholder),
+          caret: self.part_moved("${laid.id}#caret", p.caret),
+          selection: self.part_moved("${laid.id}#selection", p.selection),
+        }
+        field = Some(field_inked(look, parts, style.color))
+      }
+    }
     let below = changed ||
       (style.opacity - laid.style.opacity).abs() > 0.0001 ||
       style.color != laid.style.color
@@ -593,7 +619,20 @@ impl Ui {
         below
       ) })
     }
-    Laid { laid | style: style, children: children }
+    Laid { laid | style: style, children: children, scroller: scroller, field: field }
+  }
+
+  /// A part's style — a scrollbar's track or thumb, a field's placeholder, caret or selection —
+  /// as it shows at `now`, moved on under `id` as an element's is ([moved]). Its arrivals raise
+  /// nothing: `on_transition_end` is its element's.
+  let part_moved = (self: mut, id: string, goal: ref Computed) -> Computed => {
+    if goal.transition.len() == 0 {
+      if self.motions.contains_key(id) { let _ = self.motions.remove(id) }
+      return goal
+    }
+    let (motion, _, _) = advance(self.motions.get(id), goal, self.now)
+    self.motions.insert(id, motion)
+    shown_at(motion, self.now)
   }
 
   /// The events `input` raises in `laid` — the frame the user is looking at — and the
@@ -2920,10 +2959,30 @@ let panel_ids = pure (present: HashMap<string, bool>) -> HashMap<string, string>
 let relocated = pure (id: string, moves: [](string, string)) -> string => {
   for (was, now) in moves {
     if id == was { return now }
-    if id.starts_with("${was}/") { return "${now}${id.slice(was.len(), id.len())}" }
+    if id.starts_with("${was}/") || id.starts_with("${was}#") {
+      return "${now}${id.slice(was.len(), id.len())}"
+    }
   }
   id
 }
+
+/// The parts whose transitions a frame keeps under their element's identity and a suffix
+/// ([Ui.part_moved]).
+const PARTS_MOVED: []string = [
+  "#track",
+  "#thumb-x",
+  "#thumb-y",
+  "#placeholder",
+  "#caret",
+  "#selection"
+]
+
+/// Whether `id` is one of those parts of an element in `present`.
+let part_present = pure (id: string, present: ref HashMap<string, bool>) -> bool =>
+  PARTS_MOVED.any((part) => {
+    if !id.ends_with(part) { return false }
+    present.contains_key(id.slice(0, id.len() - part.len()))
+  })
 
 /// Each text field's scroll in `laid` remembered in `ui`.
 let keep_field_scrolls<e> = (laid: Laid<e>, ui: mut Ui) -> void => {

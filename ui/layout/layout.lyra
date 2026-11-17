@@ -1275,7 +1275,9 @@ pub data Content = Blank | Prose(TextBlock) | Bitmap(
 
 /// How a text field is drawn: its text's colour (the placeholder's while it is empty), how
 /// far its text is scrolled, the caret's and the selection's ends across its text (each from
-/// the text's start), their colours, how tall a line is, and whether it has the focus.
+/// the text's start), their colours, how tall a line is, and whether it has the focus. Also
+/// whether it is empty and its parts' styles, which the colours are made from ([field_inked]):
+/// a frame moves those on as their transitions say, as an element's (`ui.interact`).
 pub struct FieldLook {
   color: Color,
   scroll: f32 = 0.0,
@@ -1286,7 +1288,56 @@ pub struct FieldLook {
   selection_color: Color,
   line_height: f32 = 0.0,
   focused: bool = false,
+  empty: bool = false,
+  /// One, or none: in an array, so a field's parts are not carried inline by every element.
+  parts: []FieldParts = [],
 }
+
+/// A text field's parts as the cascade styles them: `TextInput::placeholder`, `::caret` and
+/// `::selection`, each under the field's classes and states (`TextInput:focus::placeholder`).
+pub struct FieldParts {
+  placeholder: Computed,
+  caret: Computed,
+  selection: Computed,
+}
+
+/// `look` with its colours made from `parts` and the field's own colour `ink`: the
+/// placeholder's while it is empty, and the caret's and the selection's backgrounds — or where
+/// they set none, the field's colour (faded, for the selection).
+pub let field_inked = pure (
+  look: ref FieldLook,
+  parts: ref FieldParts,
+  ink: Color
+) -> FieldLook =>
+  FieldLook {
+    look |
+    color: if look.empty { parts.placeholder.color } else { ink },
+    caret_color: parts.caret.background ?? ink,
+    selection_color: parts.selection.background ?? faded(ink, 0.25),
+    parts: [parts],
+  }
+
+/// Whether a scroller's bars or a field's parts have a transition, which makes their element
+/// one a frame moves on ([Laid.moves]).
+let parts_move = pure (
+  scroller: ref Maybe<Scroller>,
+  field: ref Maybe<FieldLook>
+) -> bool => {
+  if let Some(s) = scroller {
+    if transitions(s.track) || transitions(s.thumb_x) || transitions(s.thumb_y) { return true }
+  }
+  if let Some(look) = field {
+    for p in look.parts {
+      return transitions(p.placeholder) ||
+        transitions(p.caret) ||
+        transitions(p.selection)
+    }
+  }
+  false
+}
+
+/// Whether `style` lists a transition.
+let transitions = pure (style: ref Computed) -> bool => style.transition.len() > 0
 
 /// `root` laid out within `c`, in the light theme until a [themed] node says otherwise, its
 /// text set in `fonts`, with nothing focused, hovered or scrolled.
@@ -1617,7 +1668,10 @@ let laid_children<e> = pure (node: Node<e>) -> []Node<e> => match node.kind {
 /// The framework's state that reaches the element identified as `id` and those inside it:
 /// focus, hover and press among them, and each one's own state — as a string to compare.
 let state_under = pure (ui: ref Interaction, id: string) -> string => {
-  let inside = (other: string) -> bool => other == id || other.starts_with("${id}/")
+  // Its own parts too: a scrollbar's thumb hovered or held is `<id>#thumb-y`, and missed, a
+  // cached scroller kept the thumb it had (11/17).
+  let inside = (other: string) -> bool =>
+    other == id || other.starts_with("${id}/") || other.starts_with("${id}#")
   // A window maximized or put back shows its maximize button otherwise (`window_buttons`) —
   // and is resized, so it is all laid out again then anyway.
   var out = if ui.viewport.maximized { "maximized" } else { "" }
@@ -2066,7 +2120,9 @@ let lay_fresh<e> = (
     field: body.field,
     children: children,
     scroller: scroller,
-    moves: styled.goal.transition.len() > 0 || children.any((p) => p.laid.moves),
+    moves: styled.goal.transition.len() > 0 ||
+      parts_move(scroller, body.field) ||
+      children.any((p) => p.laid.moves),
     floating: children.any((p) => p.laid.floats || p.laid.floating),
     disabled: node.disabled,
     transition_end: node.transition_end,
@@ -3060,17 +3116,27 @@ let lay_field<e> = (
   scrolled = scrolled.max(0.0)
   let part = (name: string) -> Computed =>
     ctx.cascade.compute("TextInput", "", name, Style {})
-  let look = FieldLook {
-    color: if empty { part("placeholder").color } else { style.color },
-    scroll: scrolled,
-    caret: caret,
-    selection_from: caret.min(anchor),
-    selection_to: caret.max(anchor),
-    caret_color: part("caret").background ?? style.color,
-    selection_color: part("selection").background ?? faded(style.color, 0.25),
-    line_height: line,
-    focused: ctx.ui.focus == ctx.id,
+  let parts = FieldParts {
+    placeholder: part("placeholder"),
+    caret: part("caret"),
+    selection: part("selection"),
   }
+  let look = field_inked(
+    FieldLook {
+      color: style.color,
+      scroll: scrolled,
+      caret: caret,
+      selection_from: caret.min(anchor),
+      selection_to: caret.max(anchor),
+      caret_color: style.color,
+      selection_color: style.color,
+      line_height: line,
+      focused: ctx.ui.focus == ctx.id,
+      empty: empty,
+    },
+    parts,
+    style.color
+  )
   Body::<e> {
     size: size,
     content: Prose(block),

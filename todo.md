@@ -855,8 +855,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/17] A `ui.app` host whose state is an array does not build**: any `[]T` parameter
   written `_` (a view's `(_: s)`) was refused; a pattern naming the whole array now binds it,
   generic ones under their substitution. COMPLETED.md 11/17.
-- **[OPEN] Scrollbars and a field's placeholder, caret and selection do not transition**:
-  they are styled outside the laid-out elements the walk visits (a slider's parts are inside).
+- **[DONE 11/17] Scrollbars and a field's placeholder, caret and selection do not transition**:
+  each is moved on under its element's identity, a field's colours made again from its parts;
+  a thumb's hover now reaches the layout cache's key. COMPLETED.md 11/17.
 - **[OPEN] An idle `ui` window ignores SIGTERM** until the next event: SDL turns the signal into
   a quit only when it pumps, and the loop is asleep in `SDL_WaitEventTimeout` with no timeout.
   `pkill` left demo windows open; a bounded wait (or SDL's quit-on-signal waking it) would fix it.
