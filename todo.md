@@ -1366,10 +1366,10 @@ sets V on every add. What stands between that and a ROM:
   (1,%a2), %a0`); ALU operations reading `(An)+` (`add.w (%a0)+, %d0`), which 0018 gave only MOVE; and
   `movea.l`, which the copies 0011 makes print but LLVM's own assembler refuses
   (`move.l %d2, %a0` assembles) — only `-S` output is affected.
-- **[OPEN] `-verify-machineinstrs` refuses `vdp.dma_to_vram`**: eight word MOVEM spills
-  (`MOVM16pm_P`) of a byte register (`dr8`), "Illegal virtual register", in the pinned LLVM
-  without any of our patches too. Harmless so far (a word store of the register holds its
-  byte), but it is why the verifier cannot judge a patch on a whole game.
+- **[OPEN] `-verify-machineinstrs` refuses `draw_with$GameArt`**: "MBB has allocatable
+  live-in" right after instruction selection, in the pinned LLVM without our patches too
+  (likely a select pseudo's flags). It is why the verifier cannot judge a patch on a whole
+  game. Its first complaint, byte registers in word spills (`dma_to_vram`), 0020 fixed.
 - **[DONE 11/16] A pointer stepped through a data register**: `lea (d16,An), An` now
   (`tools/llvm-m68k-patches/0019`, COMPLETED 11/16).
 - **[DONE 10/16] A Genesis program inlined less crashed**: a `fastcc` struct return popped a

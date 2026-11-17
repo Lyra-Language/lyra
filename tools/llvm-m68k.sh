@@ -127,6 +127,13 @@
 #     everything reading it takes an address register (a store, a copy, a phi). Copies from
 #     address to data registers 163 → 79, the hero's code 206 bytes smaller, its vertical
 #     blank 49.6 → 49.0 lines.
+#   - 0020: a byte register spilled or reloaded where the flags are dead is a byte MOVE,
+#     not MOVEM.W (which has no byte form): 0007 made MOVEs only of word and long
+#     registers, and 816 of the hero's spills and reloads were bytes. The MOVE reaches the
+#     word slot's low byte, one past it, so it agrees with a MOVEM.W of the same slot where
+#     the flags are live; byte spill pseudos (MOVM8pm_P, MOVM8mp_P) give the register its
+#     class, which the verifier refused in `vdp.dma_to_vram`. The vertical blank 49.0 →
+#     48.6 lines, the code 1,522 bytes smaller.
 #   **Tried and left out**: shrink-wrapping (enableShrinkWrapping) changed nothing in the
 #   hero — every function needs its callee-saved registers from its entry. Rematerializing
 #   constants and addresses (isReMaterializableImpl past the dead CCR def, a flag-keeping

@@ -379,6 +379,24 @@ The glTF viewer's two notes blamed the missing uniforms for its parameter textur
 second lighting program. The texture still suits it, since it is uploaded once and kept by
 the material, so only the reasoning changed; moving it to uniforms is an `[IDEA]`.
 
+### 11/16/26 — Byte spills as MOVEs on the 68000
+
+Re-ranked by measured clocks, outside `main` and the raster handler's wait, the vertical
+blank's single-register MOVEMs were the largest thing left that was the compiler's (the
+first, `dma_to_vram`'s DMA trigger, is the DMA itself). 816 of the hero's were `movem.w`
+spills and reloads of byte registers: MOVEM has no byte form, so a byte has a word's slot,
+and 0007 made MOVEs only of word and long registers.
+- **A byte MOVE at the slot's low byte** (`tools/llvm-m68k-patches/0020`), one past it on
+  the big-endian 68000, so it reads and writes what a MOVEM.W of the same slot does where
+  the flags are live. **The first try put the +1 on the MOVEM kept too**, an odd address:
+  the hero showed the panic's red, and seven Genesis tests failed at once.
+- **Byte spill pseudos** (`MOVM8pm_P`, `MOVM8mp_P`) give the register its class: the word
+  pseudo holding a `dr8` was what `-verify-machineinstrs` refused in `dma_to_vram`. Its next
+  complaint (`draw_with$GameArt`) is the pinned LLVM's own (todo.md).
+- **Measured**: 816 → 59 single-register `movem.w`; the code 1,522 bytes smaller; the
+  vertical blank 49.0 → 48.6 lines a frame on average; chip writes the same; the Genesis
+  tests, LLVM's M68k tests (PR57660 regenerated) and Vega's `--check` pass.
+
 ### 11/16/26 — A constant added to a pointer is LEA on the 68000
 
 The selector makes every `(add x, c)` an ADD into a data register, so a pointer in an
