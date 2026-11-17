@@ -606,13 +606,13 @@ neither way of writing an **optional child** works. `shared` on a plain field is
   `smscheck` and `statetest` use it (COMPLETED.md 11/13).
 - **[DONE 11/09] A deflate compressor** — `std.compress.deflate`/`zlib_deflate`, and
   `write_png` filters and deflates its rows (COMPLETED.md, 11/09).
-- **[DONE 10/19] Markup for `bindings.imgui.ui`** — `.lui` files generated into Lyra by
 - **[DONE 11/16] An LZ for the 68000** — `std.compress.lz_pack`/`lz_unpack` and
   `std.genesis.pack`, which Vega's Genesis games keep their tiles and maps in; with it
   `@vouched` and `p^` lent in place to a `ref` (COMPLETED.md 11/16).
 - **[IDEA] `pack.unpack` a word at a time**: it copies a byte at a time; a literal run or a
   match of 2 bytes or more back could move words (`move.w (a0)+, (a1)+`) where both ends are
   even — measure a scene's start before and after.
+- **[DONE 10/19] Markup for `bindings.imgui.ui`** — `.lui` files generated into Lyra by
   `tools/lui`, not a Lyra grammar change (COMPLETED.md, 10/19).
 - **[DONE 10/21] `.lui`: components called across files** — `<import src="other.lui"/>`
   reads its components, checks calls and imports the module (COMPLETED.md, 10/21).
