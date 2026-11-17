@@ -29,6 +29,52 @@ placed and, where a line can crowd, its generated `draw` asks for it.
   without turns the last ones are missing every frame, with them two frames running miss
   different ones.
 
+### 11/17/26 — Transitions: a shortened change back, font sizes, and an event on arrival
+
+Three of the gaps "Animations beyond transitions" listed, all inside `ui.motion` and the frame
+that runs it. `@keyframes` and transforms stay open.
+
+**A change back is shortened**, by CSS's reversing shortening factor. A hover left halfway
+used to ease back over the whole duration. Now:
+- Each `Moving` keeps `reversing`, where a change back would return to, and `factor`, the share
+  of its duration it was given.
+- A new target equal to a running transition's `reversing` is a change back. It takes
+  `eased × factor + (1 − factor)` of the duration (clamped to 0…1) and returns towards where
+  the running one was going.
+- So a change back of a change back composes. On at 0 (200 ms), off at 50, and on at 75 takes
+  175 ms.
+- A negative delay is shortened with it, as CSS's is.
+
+**`font-size` and `line-height` change sizes**, beside padding and the rest:
+- They reach the next layout through `with_layout` and `layout_key`, and text inheriting the
+  moving font follows it, since the children's cascade inherits what the parent is laid out with.
+- A line height of 0, the font's own, has no number to blend from, so it switches midway.
+- Glyphs are rasterized at whole pixel sizes, so a fractional size each frame adds few glyphs
+  to the atlas.
+
+**An arrival raises an event**, as CSS's `transitionend` does:
+- `Node.on_transition_end(f)` (lui's `on_transition_end={…}`) raises `f(property)` with the
+  CSS name, once a property, the frame it arrives.
+- `advance` answers the properties that arrived. `Ui.ended` keeps a frame's, de-duplicated
+  because a frame that starts a size moving runs `moved` twice.
+- The host walks the frame for them after the layout (`transition_events`) beside `on_size`'s
+  events, and dispatches them in the same rounds.
+- A transition replaced before it arrives raises nothing, as CSS gives `transitioncancel`
+  rather than an end.
+- `Node.map` maps the handler, and `same_node` ignores it as it ignores `Pressable`'s event.
+
+Tests:
+- `TestRun_UiTransitionsReverseResizeTextAndEnd` checks the composed change back, the font size
+  blending into its text, the line height switching, and the events through a host. The events
+  are opacity and background for a 30 ms change back, none for the hover it replaced, then two
+  for the last hover.
+- `TestRun_UiTransitions` and `TestRun_UiTransitionsDrawOnlyWhileMoving` changed only where a
+  change back is now shorter: every box arrives by t=700, and a host draws 31 frames, not 37.
+
+**Found on the way**: a host whose state is an array (`App<[]string, e>`) does not build. The
+backend refuses any pattern on a `[]T` in a destructuring, and says so with no location. The
+test keeps its log in a struct. It is in todo.md.
+
 ### 11/17/26 — Spills ahead of the flags on the 68000, and a profile that misled
 
 Ranked in the profiling build (the player's functions kept out of line by `@noinline`, so

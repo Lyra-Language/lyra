@@ -129,20 +129,26 @@ layer — implements the two traits; the display list is the whole contract.
   `all`, a duration and delay in milliseconds, a `Timing`; lui's `transition` and longhands).
   When a property an element's transition names changes its computed value — a class, a state,
   the program's state, `@media` on a resize — it moves from **what is shown now** to the new
-  value (so a change back mid-way retargets from where it is); one not named jumps, and the
-  first frame an element is seen moves nothing. Opacity, colours (premultiplied, as CSS),
+  value (so a change back mid-way retargets from where it is) — and **a change back towards
+  where a running transition started is shortened** to the share it had come, eased (CSS's
+  reversing shortening factor, which composes when that one is reversed again); one not named
+  jumps, and the first frame an element is seen moves nothing. Opacity, colours (premultiplied, as CSS),
   radius, shadows (pair by pair, padded with transparent ones), a gradient of one kind and
   stop count, and both blurs **only change what is drawn**: `Ui.frame_within` blends them into
   the laid-out tree after layout — an opacity multiplied into everything inside, a colour
   passed to text that inherits it — and the layout cache gives the element back untouched.
-  Padding, gaps, sizes and border width **change sizes**: they reach the next layout through
+  Padding, gaps, sizes, border width, `font-size` and `line-height` (a line height of 0, the
+  font's own, switching midway) **change sizes**, text inheriting a moving font following it: they reach the next layout through
   `Interaction.shown`, keyed into the cache, so a moving element lays out each frame (and at
   once on the frame it starts, never showing its target first). An `auto` size, gradients of
   different shapes and shadows inset on one side only switch at the midpoint. State is by
   identity in `Ui.motions`, dropped with the element; the clock is `Platform.now_ms`, which the
   host hands `Ui.now`. **The host draws every frame while anything moves and idles once it has
   arrived**; `ScriptPlatform`'s `wait:N` steps its clock a frame at a time, so a script plays a
-  transition deterministically.
+  transition deterministically. **An arrival is an event** (CSS's `transitionend`):
+  `Node.on_transition_end(f)` (lui's `on_transition_end={…}`) raises `f(property)`, the CSS name,
+  for each property the frame it arrives — `Ui.ended` keeps the frame's, and the host raises
+  them after the layout, as it does `on_size` — but not for one replaced before arriving.
 - **Media rules** (`Rule.media`, CSS's `@media`): a rule may hold while the viewport —
   the window's logical size and the system's look (`Viewport`, which the host passes in
   `Interaction.viewport`) — meets any of its `Media` conditions (min/max width and height,

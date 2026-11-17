@@ -1092,7 +1092,7 @@ func TestLui_UiTargetPopup(t *testing.T) {
 }
 
 // The controls Vega's panels need, in the ui target (ui/VEGA.md §9): `<Picture>`, a
-// `tooltip` and a `tooltip-node`, `<Modal>` over what it covers, `<NumberField>` (its text the
+// `tooltip` and a `tooltip-node`, `on_transition_end` (on a `<Separator>`), `<Modal>` over what it covers, `<NumberField>` (its text the
 // label scrubbed), `<RadioGroup>` of `<Option>`s or `options={…}`, a lone `<Radio>`,
 // `<Separator/>` with and without text, `<Progress>`, `<Disclosure>`, `<Splitter>` across and
 // down, `<Table>` of `<TableColumn>`s and `<TableRow>`s (a `<for>` among them), `<Dock>` that
@@ -1152,7 +1152,7 @@ func TestLui_UiTargetPanelControls(t *testing.T) {
         <RadioGroup options={s.names} selected={s.shape} on_change={Shape}/>
         <Radio chosen={s.shape == 0} on_choose={Pick}>Alone</Radio>
         <Separator/>
-        <Separator>Frames</Separator>
+        <Separator on_transition_end={Shut}>Frames</Separator>
         <Progress value="0.25"/>
         <Disclosure title="More" open={s.open} on_toggle={Toggle}>
           <Text>inside</Text>
@@ -1204,7 +1204,7 @@ func TestLui_UiTargetPanelControls(t *testing.T) {
 		`radio_group(s.names, s.shape, Shape)`,
 		`radio("Alone", s.shape == 0, Pick)`,
 		`separator::<Ev>(),`,
-		`separator::<Ev>("Frames")`,
+		`separator::<Ev>("Frames").on_transition_end(Shut)`,
 		`progress::<Ev>(0.25)`,
 		`disclosure("More", s.open, text("inside"), Toggle)`,
 		`button("Tip", Pick).tooltip_node(text("structured"))`,
@@ -1240,6 +1240,7 @@ func TestLui_UiTargetPanelControls(t *testing.T) {
 		{`<Progress value="0.25"/>`, `<Progress/>`, ":52", "<Progress> needs value"},
 		{`title="More" open={s.open}`, `title="More"`, ":53", "<Disclosure> needs open"},
 		{`tooltip-node={text("structured")}`, `tooltip-node="structured"`, ":56", "tooltip-node is a node in braces"},
+		{`on_transition_end={Shut}`, `on_transition_end="Shut"`, ":51", "on_transition_end is a handler in braces"},
 		{`<TableColumn width="120">`, `<TableColumn>`, ":60", "<TableColumn> needs width"},
 		{`<TableRow><Text>last`, `<Text>x</Text><TableRow><Text>last`, ":68", "<Table> holds <TableColumn>s and <TableRow>s, not <Text>"},
 		{` on_resize={Resized}`, ``, ":59", "<Table> needs on_resize"},

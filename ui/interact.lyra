@@ -195,6 +195,9 @@ pub struct Ui {
   /// started moving a property that changes sizes.
   motions: HashMap<string, Motion>,
   now: i64 = 0,
+  /// The transitions that arrived in the last frame, each an element's identity and the
+  /// property's CSS name — what the host raises the element's `on_transition_end` with.
+  ended: [](string, string) = [],
   /// Rubber-banding: whether fingers are on the trackpad (the host sets it from
   /// `Platform.scroll_touching` each frame), and when the pulls past an end last eased back
   /// ([Ui.relax]).
@@ -410,6 +413,7 @@ impl Ui {
     // Transitions moved on to `now`, blended into what is drawn; a size that just started
     // moving is laid out again at once, so the frame never shows it at its target.
     self.resized = false
+    self.ended = []
     var shown = self.moved(
       laid,
       laid.style.opacity / laid.style.own_opacity.max(0.0001),
@@ -560,8 +564,16 @@ impl Ui {
     var style = laid.style
     var own_color = false
     if laid.style.transition.len() > 0 {
-      let (motion, sized) = advance(self.motions.get(laid.id), laid.style, self.now)
+      let (motion, sized, ended) = advance(
+        self.motions.get(laid.id),
+        laid.style,
+        self.now
+      )
       if sized { self.resized = true }
+      for property in ended {
+        let one = (laid.id, property)
+        if !self.ended.any((x) => x == one) { self.ended.push(one) }
+      }
       style = shown_at(motion, self.now)
       own_color = motion.moving.any((m) => m.property == "color")
       self.motions.insert(laid.id, motion)

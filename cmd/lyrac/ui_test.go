@@ -3424,7 +3424,7 @@ t=150 fade 0.25 (child 0.25), named 150,75,0 radius 10, pad 30 tall, every 0.625
 t=250 fade 0 (child 0), named 200,100,0 radius 10, pad 50 tall, every 0.5 blur 8; laid out 4; moving false
 t=400 fade 0 (child 0), named 200,100,0 radius 10, pad 50 tall, every 0.5 blur 8; laid out 3; moving false
 again t=600 fade 0.5 (child 0.5), named 100,50,0 radius 10, pad 50 tall, every 0.75 blur 4
-again t=700 fade 0.25 (child 0.25), named 150,75,0 radius 10, pad 50 tall, every 0.625 blur 6
+again t=700 fade 0 (child 0), named 200,100,0 radius 10, pad 50 tall, every 0.5 blur 8
 again t=1100 fade 0 (child 0), named 200,100,0 radius 10, pad 50 tall, every 0.5 blur 8
 back t=1150 fade 0 (child 0), named 200,100,0 radius 0, pad 50 tall, every 0.5 blur 8
 back t=1250 fade 0.5 (child 0.5), named 100,50,0 radius 0, pad 50 tall, every 0.75 blur 4
@@ -3435,7 +3435,8 @@ back t=1250 fade 0.5 (child 0.5), named 100,50,0 radius 0, pad 50 tall, every 0.
 }
 
 // A host draws a frame a pass while a transition moves and none once it has arrived, however
-// long the wait: 15 frames across a second holding a 200 ms fade. Leaving mid-way eases back.
+// long the wait: 15 frames across a second holding a 200 ms fade. Leaving mid-way eases back,
+// and coming back before that arrives takes only the share it had come (about 96 ms).
 func TestRun_UiTransitionsDrawOnlyWhileMoving(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ sandbox, running, step_running }
@@ -3497,9 +3498,150 @@ let find = pure (laid: Laid<void>, key: string) -> Laid<void> => {
 `)
 	want := `t=1000: 15 frames, opacity 0.2
 t=1100: 22 frames, opacity 0.584
-t=3100: 37 frames, opacity 0.2
-end: 37 frames
+t=3100: 31 frames, opacity 0.2
+end: 31 frames
 `
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// What CSS transitions do beyond blending, frame by frame at clock times set by hand:
+//   - A change back mid-way is shortened to the share the transition had come (CSS's
+//     reversing shortening factor), and a change back of that one again by its own share.
+//   - `font-size` blends, and text inheriting it follows.
+//   - `line-height` from the font's own (0) switches midway.
+//
+// Then through a host: an element's `on_transition_end` is raised with each property as it
+// arrives, never for a transition replaced before arriving, and a shortened change back raises
+// its own when it gets there.
+func TestRun_UiTransitionsReverseResizeTextAndEnd(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new }
+import ui.app.{ App, Command, Subscription, host_of }
+import ui.script.{ timed_platform, Played, Waited, Step }
+import ui.backend.{ Renderer, TextureId, PointerMoved }
+import ui.draw.{ Size, Point, Color }
+import ui.text.{ Fonts, fonts_new }
+import ui.style.{ Style, Rule, Sheet, Transition, TimingLinear, light_theme }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, sized, text, themed, tight }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, window, background, ops) => {}
+}
+
+let main = () -> u8 => {
+  var ui = ui_new()
+  var fonts = fonts_new()
+  var cache: LayoutCache<void> = layout_cache()
+  let _ = at(ui, cache, fonts, 0, false)
+  // On at 0 (200 ms), off at 50 (a quarter of the way: 50 ms back), on again at 75 (half of
+  // that back: 0.5 * 0.25 + 0.75 = 0.875 of 200 ms, so 175 ms).
+  for (now, on) in [(0, true), (50, true), (50, false), (75, false), (75, true), (110, true), (250, true)] {
+    let laid = at(ui, cache, fonts, now, on)
+    println("t=${now} ${if on { "on" } else { "off" }}: fade ${round3(find(laid, "fade").style.opacity)}, words ${find(laid, "words").style.font.size} (text ${find(laid, "label").style.font.size}), lines ${find(laid, "lines").style.font.line_height}")
+  }
+
+  let Ok(played) = played_out() else { return 1 }
+  println("ended: ${played}")
+  0
+}
+
+/// The frame at now, everything on or off.
+let at = (ui: mut Ui, cache: mut LayoutCache<void>, fonts: mut Fonts, now: i64, on: bool) -> Laid<void> => {
+  ui.now = now
+  ui.frame_within(view(on), tight(Size { w: 300.0, h: 300.0 }), fonts, cache)
+}
+
+let mark = pure (base: string, on: bool) -> string => if on { "${base} on" } else { base }
+
+let view = pure (on: bool) -> Node<void> => themed::<void>(light_theme(), sheet, [column([
+  sized::<void>(Some(100.0), Some(20.0)).with_class(mark("fade", on)).keyed("fade"),
+  column([text::<void>("Big").keyed("label")]).with_class(mark("words", on)).keyed("words"),
+  column([text::<void>("Tall")]).with_class(mark("lines", on)).keyed("lines"),
+])])
+
+let sheet = Sheet { rules: [
+  Rule { selector: ".fade", style: Style { opacity: Some(1.0), transition: Some([Transition { property: "opacity", duration: 200.0, timing: TimingLinear }]) } },
+  Rule { selector: ".fade.on", style: Style { opacity: Some(0.0) } },
+  Rule { selector: ".words", style: Style { font_size: Some(10.0), transition: Some([Transition { property: "font-size", duration: 200.0, timing: TimingLinear }]) } },
+  Rule { selector: ".words.on", style: Style { font_size: Some(20.0) } },
+  Rule { selector: ".lines", style: Style { line_height: Some(0.0), transition: Some([Transition { property: "line-height", duration: 200.0, timing: TimingLinear }]) } },
+  Rule { selector: ".lines.on", style: Style { line_height: Some(30.0) } },
+] }
+
+/// A box with transitions of 100 ms on its opacity and background under the pointer, through a
+/// host: over it, away after 30 ms (each change back 30 ms long), and over it for good.
+let played_out = () -> Result<string, string> => {
+  let steps: []Step = [
+    Waited(1),
+    Played(PointerMoved(Point { x: 50.0, y: 50.0 })),
+    Waited(30),
+    Played(PointerMoved(Point { x: 50.0, y: 350.0 })),
+    Waited(16), Waited(16), Waited(16),
+    Played(PointerMoved(Point { x: 50.0, y: 50.0 })),
+    Waited(50), Waited(50), Waited(50),
+  ]
+  var platform = timed_platform(steps, Size { w: 200.0, h: 400.0 })
+  var renderer = Blank {}
+  var fonts = fonts_new()
+  let app = App {
+    view: pure (_: Log) -> Node<string> => themed::<string>(light_theme(), hover_sheet, [column([sized::<string>(Some(100.0), Some(100.0)).with_class("box").keyed("box").on_transition_end((property: string) -> string => property)])]),
+    update: pure (log: Log, said: string) -> (Log, []Command<string>) => (Log { said: [...log.said, said] }, []),
+    subscriptions: (_: Log) -> []Subscription<string> => [],
+    background: Color { r: 0, g: 0, b: 0 },
+  }
+  var host = host_of(app, Log {}, platform)
+  var log: []string = []
+  while platform.next < platform.steps.len() {
+    let _ = host.step(platform, renderer, fonts)
+    let now = host.state.said
+    for i in log.len()..<now.len() { log.push("${now[i]} by t=${platform.clock}") }
+  }
+  Ok(log.join(", "))
+}
+
+/// What the program heard, in order. (A struct: a host whose state is an array does not build —
+/// todo.md.)
+struct Log {
+  said: []string = [],
+}
+
+let hover_sheet = Sheet { rules: [
+  Rule { selector: ".box", style: Style { opacity: Some(1.0), background: Some(Color { r: 0, g: 0, b: 0 }), transition: Some([Transition { property: "all", duration: 100.0, timing: TimingLinear }]) } },
+  Rule { selector: ".box:hover", style: Style { opacity: Some(0.5), background: Some(Color { r: 200, g: 0, b: 0 }) } },
+] }
+
+let round3 = pure (x: f32) -> f32 => f32((x * 1000.0).round()) / 1000.0
+
+let find = pure (laid: Laid<void>, key: string) -> Laid<void> => {
+  if laid.id.ends_with(key) { return laid }
+  for c in laid.children {
+    let f = find(c.laid, key)
+    if f.id.ends_with(key) { return f }
+  }
+  laid
+}
+`)
+	want := "t=0 on: fade 1, words 10 (text 10), lines 0\n" +
+		"t=50 on: fade 0.75, words 12.5 (text 12.5), lines 0\n" +
+		"t=50 off: fade 0.75, words 12.5 (text 12.5), lines 0\n" +
+		"t=75 off: fade 0.875, words 11.25 (text 11.25), lines 0\n" +
+		"t=75 on: fade 0.875, words 11.25 (text 11.25), lines 0\n" +
+		"t=110 on: fade 0.7, words 13 (text 13), lines 0\n" +
+		"t=250 on: fade 0, words 20 (text 20), lines 30\n" +
+		// The change back at 31 is 30 ms long (seen by the script's next step, 79, not 131);
+		// the hover it replaced raises nothing; the last hover's arrive at 179 (seen by 229).
+		"ended: opacity by t=79, background-color by t=79, opacity by t=229, background-color by t=229\n"
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}

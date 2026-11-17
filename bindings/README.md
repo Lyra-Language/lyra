@@ -568,7 +568,8 @@ The example's interface is `examples/imgui/components_view.lui`.
   `WindowSpec`, for `App.windows` — and a file has any number, each named; unnamed is the main
   window's `window_spec`. Every element takes `class`, `part`, `key` (its identity, `.keyed`),
   `label` (for assistive technology), `style`, `window-drag` (bare: a title bar the program
-  draws), `tooltip="…"` (or `{…}`, a string) and `tooltip-node={…}` (a node) — **a
+  draws), `tooltip="…"` (or `{…}`, a string), `tooltip-node={…}` (a node) and
+  `on_transition_end={…}` (a handler given each arriving property's CSS name) — **a
   component's call too**, on the component's own node (a prop of that name is the prop), so
   `<tile class="wide"/>` spans its grid's columns. A `<for>` holding several elements makes an
   array of them each pass, `flatten`ed in place.

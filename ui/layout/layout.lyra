@@ -151,6 +151,9 @@ pub struct Node<e> {
   /// What it is to assistive technology in place of what its kind makes it ([Node.with_role]):
   /// a table's rows, which are radio buttons to the keyboard.
   role: Maybe<Role> = None,
+  /// The event each of its transitions raises on arriving, given the property's CSS name
+  /// ([Node.on_transition_end]).
+  transition_end: Maybe<(string) -> e> = None,
 }
 
 /// What an element does with its children, its space and its input. Built by the functions
@@ -864,6 +867,13 @@ impl Node<e> {
   /// but on one of its controls, moves the window, as the system's title bar's would.
   pub let window_drag = pure (self) -> Node<e> => Node { self | drags_window: true }
 
+  /// The node raising `ended(property)` as each of its transitions arrives — CSS's
+  /// `transitionend`, `property` its CSS name (`"background-color"`): once a property, the
+  /// frame it gets there. A transition another change replaces before it arrives raises
+  /// nothing; one a change back shortens raises as it arrives, shortened.
+  pub let on_transition_end = pure (self, ended: (string) -> e) -> Node<e> =>
+    Node { self | transition_end: Some(ended) }
+
   /// The node with every event its controls raise passed through `f` — a component written
   /// for its own event type, placed in a tree of another's (Elm's `Html.map`):
   /// `settings_panel(s).map(SettingsSaid)`.
@@ -880,6 +890,10 @@ impl Node<e> {
     drags_window: self.drags_window,
     tip: [t in self.tip | t.map(f)],
     role: self.role,
+    transition_end: match self.transition_end {
+      Some(ended) => Some((property: string) -> b => f(ended(property))),
+      None => None,
+    },
   }
 
   /// A painted element ([painted]) taking input raw ([RawInput]): every key and the text it
@@ -1200,6 +1214,8 @@ pub struct Laid<e> {
   moves: bool = false,
   /// Whether it takes no input ([Node.disabled]).
   disabled: bool = false,
+  /// What its transitions raise as they arrive ([Node.on_transition_end]).
+  transition_end: Maybe<(string) -> e> = None,
   /// Whether it floats over everything (an open select's list, a popup's content): painted
   /// after the whole tree, outside every clip, and hit before anything else (`ui.interact`'s
   /// `hit`); where it goes against the element it floats from ([place_floats]); and whether
@@ -2053,6 +2069,7 @@ let lay_fresh<e> = (
     moves: styled.goal.transition.len() > 0 || children.any((p) => p.laid.moves),
     floating: children.any((p) => p.laid.floats || p.laid.floating),
     disabled: node.disabled,
+    transition_end: node.transition_end,
     drags_window: node.drags_window,
     tipped: node.tip.len() > 0,
     description: if node.tip.len() > 0 { words_in(node.tip[0]) } else { "" },

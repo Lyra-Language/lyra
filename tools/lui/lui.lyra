@@ -1414,8 +1414,9 @@ data UiShape =
 /// The attributes every ui element takes: its classes, the part of its component it is, its
 /// key, its label for assistive technology, its inline style, whether it is disabled (bare, or
 /// `disabled={condition}`), whether a press on it moves the window (`window-drag`, bare: a
-/// title bar the program draws), and its tooltip — text (`tooltip="…"`, or `{…}` a string) or
-/// a node (`tooltip-node={…}`).
+/// title bar the program draws), its tooltip — text (`tooltip="…"`, or `{…}` a string) or
+/// a node (`tooltip-node={…}`) — and what its transitions raise as they arrive
+/// (`on_transition_end={Faded}`, given the property's CSS name).
 const UI_COMMON = [
   "class",
   "part",
@@ -1425,7 +1426,8 @@ const UI_COMMON = [
   "disabled",
   "window-drag",
   "tooltip",
-  "tooltip-node"
+  "tooltip-node",
+  "on_transition_end"
 ]
 
 impl Writer {
@@ -1800,6 +1802,12 @@ impl Writer {
             return Err("${a.line}: tooltip-node is a node in braces: tooltip-node={…}; text is tooltip=\"…\"")
           }
           out = "${out}.tooltip_node(${code})"
+        },
+        "on_transition_end" => {
+          let Braced(code) = a.value else {
+            return Err("${a.line}: on_transition_end is a handler in braces, given the property's name: on_transition_end={Faded}")
+          }
+          out = "${out}.on_transition_end(${code})"
         },
         "style" => {
           self.use("Style")

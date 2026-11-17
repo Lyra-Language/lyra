@@ -985,6 +985,8 @@ impl Host<s, e> {
       var events: []e = []
       sized_events(laid, self.windows[k].painted_sizes, sizes, events)
       self.windows[k].painted_sizes = sizes
+      let ended = self.windows[k].ui.ended
+      if ended.len() > 0 { transition_events(laid, ended, events) }
       if events.len() == 0 || rounds >= SIZE_ROUNDS { return laid }
       let now = platform.now_ms()
       for event in events { self.dispatch(event, now, platform) }
@@ -1576,6 +1578,20 @@ impl Host<s, e> {
   let fire = (self: mut, period: i64, now: i64) -> void => {
     self.fired = [...[f in self.fired | f.0 != period | f], (period, now)]
   }
+}
+
+/// The events the elements of `laid` raise for the transitions that arrived this frame (`ended`,
+/// each an element's identity and a property) — [Node.on_transition_end] — into `events`, in the
+/// order they arrived.
+let transition_events<e> = (
+  laid: Laid<e>,
+  ended: [](string, string),
+  events: mut []e
+) -> void => {
+  if let Some(raise) = laid.transition_end {
+    for (id, property) in ended { if id == laid.id { events.push(raise(property)) } }
+  }
+  for child in laid.children { transition_events(child.laid, ended, events) }
 }
 
 /// Below `laid`: each painted element with an `on_size`, its size put in `sizes`, and its

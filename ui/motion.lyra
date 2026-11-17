@@ -15,6 +15,14 @@ module ui.motion
 //! **What does not blend switches at the midpoint**, as CSS's discrete animation does: two
 //! gradients of different kinds or stop counts, shadows inset on one side only, a size that is
 //! `auto` on one side.
+//!
+//! **A change back mid-way is shortened**, as CSS's reversing shortening factor makes it: back
+//! towards where a running transition started, the new one takes the share of its duration the
+//! old one had come — eased — so a hover left halfway eases back in half the time.
+//!
+//! **An arrival is told** ([advance]'s third answer, each property by its CSS name): `ui.interact`
+//! keeps them for a frame and the host raises an element's `on_transition_end` with each, as
+//! CSS's `transitionend`. A transition replaced before it arrives is not told.
 
 import ui.style.{
   Computed,
@@ -29,6 +37,7 @@ import ui.style.{
   TimingSteps,
   Insets,
 }
+import ui.text.{ FontSpec }
 import ui.draw.{ Color, BoxShadow, Gradient, ColorStop, LinearGradient, RadialGradient }
 
 /// Every property that transitions, by its CSS name: first those that only change what is
@@ -56,6 +65,8 @@ pub const SIZED: []string = [
   "min-height",
   "max-height",
   "border-width",
+  "font-size",
+  "line-height",
 ]
 
 /// The names a `transition` may give besides those: every property, and `background` for
@@ -75,7 +86,10 @@ pub struct Motion {
 }
 
 /// One property moving from what was shown to its target: started at `start` (the clock's
-/// milliseconds), waiting `delay`, taking `duration`, paced by `timing`.
+/// milliseconds), waiting `delay`, taking `duration`, paced by `timing`. `reversing` is where a
+/// change back would return to — CSS's reversing-adjusted start value: `from`, or for a
+/// transition that is itself a change back, where the one it reversed was going — and `factor`
+/// the share of its transition's duration it was given (CSS's reversing shortening factor).
 pub struct Moving {
   property: string,
   from: Computed,
@@ -84,26 +98,31 @@ pub struct Moving {
   duration: f32,
   delay: f32,
   timing: Timing,
+  reversing: Computed,
+  factor: f32 = 1.0,
 }
 
 /// `motion` moved on to `target` at `now`: each property whose target changed starts moving
 /// from what is shown now — mid-flight too, as CSS retargets — if a transition names it, and
-/// jumps if none does; what has arrived stops. Also whether a property that changes sizes
-/// started, which the layout just made must take in.
+/// jumps if none does; what has arrived stops. Back towards where a running transition started,
+/// the new one is shortened to the share the old one had come (CSS's reversing shortening).
+/// Also whether a property that changes sizes started, which the layout just made must take
+/// in, and the properties whose transitions arrived by `now`, by their CSS names.
 pub let advance = pure (
   motion: ref Maybe<Motion>,
   target: ref Computed,
   now: i64
-) -> (Motion, bool) => {
+) -> (Motion, bool, []string) => {
   // First seen: nothing moves — a transition is a change, and there was none.
   let fresh = Motion { target: target }
   let was = match motion {
     Some(m) => m,
-    None => return (fresh, false),
+    None => return (fresh, false, []),
   }
   let shown = shown_at(was, now)
   var moving: []Moving = []
   var sized = false
+  let ended = [m in was.moving | arrived(m, now) | m.property]
   for property in [...PAINTED, ...SIZED] {
     if !differs(was.target, target, property) {
       for m in was.moving { if m.property == property && !arrived(
@@ -113,20 +132,34 @@ pub let advance = pure (
       continue
     }
     let Some(spec) = transition_for(target.transition, property) else { continue }
-    if spec.duration + spec.delay <= 0.0 { continue }
+    // A change back towards where the running transition started takes the share of the
+    // duration that one had come, its timing applied: a quarter of the way back is a quarter.
+    var factor: f32 = 1.0
+    var reversing = shown
+    for m in was.moving {
+      let running = m.property == property && !arrived(m, now)
+      if !running || differs(m.reversing, target, property) { continue }
+      factor = (eased(m, now) * m.factor + (1.0 - m.factor)).clamp(0.0, 1.0)
+      reversing = m.to
+    }
+    let duration = spec.duration * factor
+    let delay = if spec.delay < 0.0 { spec.delay * factor } else { spec.delay }
+    if duration + delay <= 0.0 { continue }
     moving.push(Moving {
       property: property,
       from: shown,
       to: target,
       start: now,
-      duration: spec.duration,
-      delay: spec.delay,
+      duration: duration,
+      delay: delay,
       timing: spec.timing,
+      reversing: reversing,
+      factor: factor,
     })
     if SIZED.any((p) => p == property) { sized = true }
   }
   let next = Motion { target: target, moving: moving }
-  (next, sized)
+  (next, sized, ended)
 }
 
 /// What `motion` shows at `now`: its target, each moving property at its place.
@@ -160,12 +193,17 @@ pub let with_layout = pure (style: ref Computed, shown: ref Computed) -> Compute
     min_height: shown.min_height,
     max_height: shown.max_height,
     border_width: shown.border_width,
+    font: FontSpec {
+      style.font |
+      size: shown.font.size,
+      line_height: shown.font.line_height,
+    },
   }
 
 /// The properties that change sizes, as text: the layout cache's key for a moving element.
 pub let layout_key = pure (s: ref Computed) -> string => {
   let p = s.padding
-  "${p.top},${p.right},${p.bottom},${p.left};${s.gap},${s.row_gap},${s.column_gap};${s.width ?? -1.0},${s.height ?? -1.0},${s.min_width ?? -1.0},${s.max_width ?? -1.0},${s.min_height ?? -1.0},${s.max_height ?? -1.0};${s.border_width}"
+  "${p.top},${p.right},${p.bottom},${p.left};${s.gap},${s.row_gap},${s.column_gap};${s.width ?? -1.0},${s.height ?? -1.0},${s.min_width ?? -1.0},${s.max_width ?? -1.0},${s.min_height ?? -1.0},${s.max_height ?? -1.0};${s.border_width};${s.font.size},${s.font.line_height}"
 }
 
 /// The transition `transitions` gives `property`: the last entry naming it, `all` or a
@@ -274,6 +312,8 @@ pub let differs = pure (a: ref Computed, b: ref Computed, property: string) -> b
     "min-height" => a.min_height != b.min_height,
     "max-height" => a.max_height != b.max_height,
     "border-width" => apart(a.border_width, b.border_width),
+    "font-size" => apart(a.font.size, b.font.size),
+    "line-height" => apart(a.font.line_height, b.font.line_height),
     _ => false,
   }
 
@@ -327,6 +367,22 @@ pub let blended = pure (
       Computed { into | max_height: mix_size(from.max_height, to.max_height, p) },
     "border-width" =>
       Computed { into | border_width: mix(from.border_width, to.border_width, p) },
+    "font-size" => Computed {
+      into |
+      font: FontSpec { into.font | size: mix(from.font.size, to.font.size, p) },
+    },
+    // A line height of 0 is the font's own: no number to blend from, so it switches midway.
+    "line-height" => Computed {
+      into |
+      font: FontSpec {
+        into.font |
+        line_height: if from.font.line_height <= 0.0 || to.font.line_height <= 0.0 {
+          if p < 0.5 { from.font.line_height } else { to.font.line_height }
+        } else {
+          mix(from.font.line_height, to.font.line_height, p)
+        },
+      },
+    },
     _ => into,
   }
 
