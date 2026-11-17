@@ -183,6 +183,43 @@ var destructuringParamCases = []struct {
 		 }`,
 		0,
 	},
+	{
+		// An array parameter written `_`, or `xs @ _`, names the whole value and needs no
+		// array pattern machinery. Every pattern on an array was refused until 11/17, so a
+		// `ui.app` host whose state was an array, whose views take `(_: s)`, did not build.
+		"an array parameter written _ or a name @ _",
+		`let ignore = (_: []string) -> i64 => 1
+		 let count = (xs @ _: []string) -> i64 => xs.len()
+		 let main = () -> u8 => {
+		   let names = ["a", "b", "c"]
+		   u8(ignore(names) + count(names) + names.len())
+		 }`,
+		7,
+	},
+	{
+		// `own`: the callee owes the array's release, its pattern naming none of it.
+		"an own array parameter written _",
+		`let take = (_: own []string) -> i64 => 2
+		 let main = () -> u8 => u8(take(["p", "q"]))`,
+		2,
+	},
+	{
+		"an array parameter through a type over it",
+		`type Names = []string
+		 let ignore = (_: Names) -> i64 => 4
+		 let main = () -> u8 => u8(ignore(Names(["a"])))`,
+		4,
+	},
+	{
+		// The generic shape a host's view takes: `(_: s)` at s = []string.
+		"a generic parameter written _ at an array",
+		`let ignore = (_: s) -> i64 => 5
+		 let main = () -> u8 => {
+		   let names = ["a"]
+		   u8(ignore(names) + names.len())
+		 }`,
+		6,
+	},
 }
 
 func TestExec_DestructuringParameters(t *testing.T) {

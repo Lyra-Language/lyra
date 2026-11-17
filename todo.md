@@ -852,10 +852,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[PARTIAL] Animations beyond transitions**: a change back is shortened, `font-size` and
   `line-height` transition, and `on_transition_end` raises an arrival (COMPLETED.md 11/17).
   Left: `@keyframes`/`animation`, and transforms (there are none yet).
-- **[OPEN] A `ui.app` host whose state is an array does not build**: `App<[]string, e>` fails
-  in the backend with "destructuring an array with a pattern is not implemented yet", no
-  location given (`patternMatcher` refuses any pattern on a `[]T`, a bare name or `_` too).
-  A struct holding the array builds.
+- **[DONE 11/17] A `ui.app` host whose state is an array does not build**: any `[]T` parameter
+  written `_` (a view's `(_: s)`) was refused; a pattern naming the whole array now binds it,
+  generic ones under their substitution. COMPLETED.md 11/17.
 - **[OPEN] Scrollbars and a field's placeholder, caret and selection do not transition**:
   they are styled outside the laid-out elements the walk visits (a slider's parts are inside).
 - **[OPEN] An idle `ui` window ignores SIGTERM** until the next event: SDL turns the signal into

@@ -3595,25 +3595,19 @@ let played_out = () -> Result<string, string> => {
   var renderer = Blank {}
   var fonts = fonts_new()
   let app = App {
-    view: pure (_: Log) -> Node<string> => themed::<string>(light_theme(), hover_sheet, [column([sized::<string>(Some(100.0), Some(100.0)).with_class("box").keyed("box").on_transition_end((property: string) -> string => property)])]),
-    update: pure (log: Log, said: string) -> (Log, []Command<string>) => (Log { said: [...log.said, said] }, []),
-    subscriptions: (_: Log) -> []Subscription<string> => [],
+    view: pure (_: []string) -> Node<string> => themed::<string>(light_theme(), hover_sheet, [column([sized::<string>(Some(100.0), Some(100.0)).with_class("box").keyed("box").on_transition_end((property: string) -> string => property)])]),
+    update: pure (log: []string, said: string) -> ([]string, []Command<string>) => ([...log, said], []),
+    subscriptions: (_: []string) -> []Subscription<string> => [],
     background: Color { r: 0, g: 0, b: 0 },
   }
-  var host = host_of(app, Log {}, platform)
+  var host = host_of(app, [], platform)
   var log: []string = []
   while platform.next < platform.steps.len() {
     let _ = host.step(platform, renderer, fonts)
-    let now = host.state.said
+    let now = host.state
     for i in log.len()..<now.len() { log.push("${now[i]} by t=${platform.clock}") }
   }
   Ok(log.join(", "))
-}
-
-/// What the program heard, in order. (A struct: a host whose state is an array does not build —
-/// todo.md.)
-struct Log {
-  said: []string = [],
 }
 
 let hover_sheet = Sheet { rules: [

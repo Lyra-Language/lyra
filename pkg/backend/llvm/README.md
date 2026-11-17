@@ -432,8 +432,9 @@ bare `[...rest]` are borrows. **`[head, ...tail]`** binds a *fresh* box
 bound in an **arm-scoped frame** (an unmatched arm's slot is uninitialized). A guard's false
 edge gets its own block that releases that frame first.
 
-Loud errors: rest not last, nested non-scalar element patterns, destructuring an array in a
-`let`/parameter.
+Loud errors: rest not last, nested non-scalar element patterns, an array pattern (`[a, b]`)
+in a `let`/parameter. A pattern naming the whole array there — `_`, `xs`, `xs @ _` — binds it
+as it is (`arrayWholeMatcher`).
 
 ## Assignment through a place (`lvalue.go`)
 

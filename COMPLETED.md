@@ -9,6 +9,31 @@ Newest first.
 
 ## Dated log
 
+### 11/17/26 — An array parameter written `_`
+
+A `ui.app` host whose state was an array (`App<[]string, e>`) did not build: "destructuring
+an array with a pattern is not implemented yet", with no location. The host was not the
+cause. **Every `[]T` parameter written `_` was refused**, in any program:
+`let f = (_: []i64) -> i64 => 1` did not build, and a host's views take `(_: s)`.
+
+`patternMatcher` refused every pattern on an array, because an array pattern (`[a, ...rest]`)
+is a length test the match driver builds over its own blocks and cannot be one test/bind
+pair. A pattern naming the whole value needs none of that. `arrayWholeMatcher` now takes
+`_`, a name and `name @ _`, which test nothing and bind the array as it is. It never sends
+the array through `unboxSharedData`, which would read a `[]T`'s pointer as a box. An array
+pattern proper is still refused, now named in the message, and the front end refuses it in
+a parameter first. The array is found through a newtype too.
+
+**A generic parameter's pattern was matched against its unsubstituted type.**
+`bindDestructuredParameter` handed `patternMatcher` the written `s`, not `[]string`. At an
+array that sent the pointer to be unboxed ("match scrutinee is a pointer to a non-box
+type"). It now applies the specialization's bindings first.
+
+Tests: `TestExec_DestructuringParameters` (`_` and `xs @ _`, `own`, a newtype, generic,
+under ASan as well) and `TestExec_DestructuringAWholeArray` (the `let`, `if let` and
+`let … else` forms under ASan). The transitions test's host keeps its log as `[]string`
+again rather than in a struct.
+
 ### 11/17/26 — Sprites take turns on a crowded line
 
 Past twenty sprites on a line (or 320 pixels of them) the Genesis's VDP leaves out the last
@@ -71,9 +96,8 @@ Tests:
 - `TestRun_UiTransitions` and `TestRun_UiTransitionsDrawOnlyWhileMoving` changed only where a
   change back is now shorter: every box arrives by t=700, and a host draws 31 frames, not 37.
 
-**Found on the way**: a host whose state is an array (`App<[]string, e>`) does not build. The
-backend refuses any pattern on a `[]T` in a destructuring, and says so with no location. The
-test keeps its log in a struct. It is in todo.md.
+**Found on the way**: a host whose state is an array (`App<[]string, e>`) did not build — an
+array parameter written `_`, fixed the same day (the entry above).
 
 ### 11/17/26 — Spills ahead of the flags on the 68000, and a profile that misled
 

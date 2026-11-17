@@ -261,6 +261,29 @@ func TestExec_DestructuringManagedPayload(t *testing.T) {
 	}
 }
 
+// A pattern naming a whole array — `name @ _`, a bare name — binds it in each statement
+// form, the names owning what they hold where they outlive the statement: every pattern
+// on an array was refused until 11/17. Run under ASan, since a `let`'s name takes a
+// reference of its own (ownDestructuredNames) and the array's literal is released too.
+func TestExec_DestructuringAWholeArray(t *testing.T) {
+	t.Parallel()
+	src := `let main = () -> u8 => {
+	   let ys = ["a" ++ "b", "c"]
+	   let all @ _ = ys
+	   let kept @ _ = ["d" ++ "e"]
+	   var out = 0
+	   if let zs = ys { out += zs.len() }
+	   let ws @ _ = ["f" ++ "g", "h", "i"] else { return 1 }
+	   u8(out + all.len() + kept.len() + ws.len() + ys.len())
+	 }`
+	if got := buildAndRun(t, src); got != 10 {
+		t.Errorf("exited %d; want 10", got)
+	}
+	if got := buildAndRunASan(t, lookClang(t), src); got != 10 {
+		t.Errorf("ASan run exited %d; want 10", got)
+	}
+}
+
 // A refutable pattern in an irrefutable position is refused rather than bound on a
 // path where the match may not hold. (The typechecker does not reject it today, so
 // this is the backend's own "never emit wrong code" guard.)

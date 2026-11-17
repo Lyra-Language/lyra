@@ -39,12 +39,8 @@ func (l *lowerer) patternMatcher(block *ir.Block, val value.Value, valType types
 	func(*ir.Block, ast.Pattern) error,
 	error,
 ) {
-	if _, ok := valType.(types.DynamicArrayType); ok {
-		// An array pattern is a length test plus per-element tests, which the array
-		// match driver expresses over its own block structure (match_array.go). It
-		// does not fit the single test/bind pair, so it is a loud error rather than a
-		// half-working path.
-		return nil, nil, fmt.Errorf("llvm: destructuring an array with a pattern is not implemented yet — use `match`")
+	if _, ok := l.stripNewtype(valType).(types.DynamicArrayType); ok {
+		return arrayWholeMatcher(l, val)
 	}
 	// A raw pointer is never a `shared` box, whatever it points at, so it is matched as
 	// the value it is. unboxSharedData decides by LLVM shape alone, so handed one it
@@ -63,6 +59,61 @@ func (l *lowerer) patternMatcher(block *ir.Block, val value.Value, valType types
 	}
 	bind := func(b *ir.Block, pat ast.Pattern) error {
 		return l.aggPatternBind(b, scrut, pat, valType)
+	}
+	return test, bind, nil
+}
+
+// arrayWholeMatcher is patternMatcher's pair for an array value, which takes only a pattern
+// naming the whole value: `_`, `xs`, `xs @ _`. Those test nothing and bind the array as it
+// is — never through unboxSharedData, which would read a `[]T`'s pointer as a box. Until
+// 11/17 every pattern on an array was refused, and with it every parameter written
+// `(_: []string)`: a `ui.app` host whose state was an array, whose views take `(_: s)`, could
+// not be built.
+//
+// An array pattern proper (`[x, ...rest]`) is a length test plus per-element tests, which the
+// array match driver expresses over its own block structure (match_array.go). It does not fit
+// the single test/bind pair, so it is a loud error rather than a half-working path.
+func arrayWholeMatcher(l *lowerer, val value.Value) (
+	func(*ir.Block, ast.Pattern) (value.Value, error),
+	func(*ir.Block, ast.Pattern) error,
+	error,
+) {
+	var whole func(ast.Pattern) bool
+	whole = func(pat ast.Pattern) bool {
+		switch p := pat.(type) {
+		case *ast.WildcardPattern, *ast.IdentifierPattern:
+			return true
+		case *ast.BindingPattern:
+			return whole(p.Pattern)
+		}
+		return false
+	}
+	refused := func(pat ast.Pattern) error {
+		return fmt.Errorf("llvm: destructuring an array with the pattern `%s` is not implemented yet — use `match`", pat.GetName())
+	}
+	test := func(_ *ir.Block, pat ast.Pattern) (value.Value, error) {
+		if !whole(pat) {
+			return nil, refused(pat)
+		}
+		return nil, nil
+	}
+	var bind func(*ir.Block, ast.Pattern) error
+	bind = func(b *ir.Block, pat ast.Pattern) error {
+		switch p := pat.(type) {
+		case *ast.WildcardPattern:
+			return nil
+		case *ast.IdentifierPattern:
+			if p.Name != "_" {
+				l.bindValue(b, p.Name, val)
+			}
+			return nil
+		case *ast.BindingPattern:
+			if p.Name != "_" {
+				l.bindValue(b, p.Name, val)
+			}
+			return bind(b, p.Pattern)
+		}
+		return refused(pat)
 	}
 	return test, bind, nil
 }
@@ -339,7 +390,10 @@ func (l *lowerer) bindDestructuredParameter(entry *ir.Block, param ast.Parameter
 		entry.NewStore(val, slot)
 		l.addManagedBinding(slot, param.Type)
 	}
-	test, bind, err := l.patternMatcher(entry, val, param.Type)
+	// The written type, under this specialization's bindings: `(_: s)` at s = []string is an
+	// array parameter, which the matcher must know (the unsubstituted `s` sent its pointer
+	// to be unboxed as a `shared` box).
+	test, bind, err := l.patternMatcher(entry, val, l.applyTypeSubst(param.Type))
 	if err != nil {
 		return err
 	}
