@@ -5979,6 +5979,95 @@ let main = () -> u8 => {
 	}
 }
 
+// Rubber-banding: a trackpad's scroll up from the top pulls the window's content past its
+// start — by less than the fingers moved (`rubber_band`) — holds there while the fingers stay on
+// the trackpad, and springs back to the start once they lift. Momentum (a scroll with the fingers
+// off) pulls a quarter as far, and springs back with no lift to wait for. A wheel's scroll at the
+// top never pulls.
+func TestRun_UiRubberBand(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, Command, Subscription, Host, host_of }
+import ui.script.{ timed_platform, ScriptPlatform, Played, Waited }
+import ui.backend.{ Renderer, TextureId, Scrolled, PointerMoved }
+import ui.draw.{ Size, Point, Color }
+import ui.text.{ fonts_new, Fonts }
+import ui.layout.{ Node, column, sized }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, window, background, ops) => {}
+}
+
+let app = pure () -> App<i64, void> => App {
+  view: pure (_: i64) -> Node<void> => column::<void>([i in 0..<40 | sized::<void>(Some(100.0), Some(30.0))]),
+  update: pure (s: i64, _: void) -> (i64, []Command<void>) => (s, []),
+  subscriptions: (_: i64) -> []Subscription<void> => [],
+  background: Color { r: 0, g: 0, b: 0 },
+}
+
+let offset = pure (host: Host<i64, void>) -> f32 => match host.main_laid().scroller {
+  Some(sc) => sc.offset.y,
+  None => 999.0,
+}
+
+let play = (host: mut Host<i64, void>, platform: mut ScriptPlatform, renderer: mut Blank, fonts: mut Fonts) -> void => {
+  while platform.next < platform.steps.len() { let _ = host.step(platform, renderer, fonts) }
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  var held: f32 = 0.0
+  for (precise, fingers) in [(true, true), (true, false), (false, false)] {
+    var platform = timed_platform([Waited(1), Played(PointerMoved(Point { x: 50.0, y: 50.0 }))], Size { w: 200.0, h: 300.0 })
+    platform.precise_scrolls = precise
+    platform.touching = fingers
+    var renderer = Blank {}
+    var host = host_of(app(), 0, platform)
+    play(host, platform, renderer, fonts)
+    // Two lines up from the top: 80 units the fingers moved.
+    platform.steps = [...platform.steps, Played(Scrolled(0.0, -2.0)), Waited(16)]
+    play(host, platform, renderer, fonts)
+    let pulled = offset(host)
+    if !precise {
+      println("a wheel at the top: offset ${pulled}")
+      continue
+    }
+    if !fingers {
+      // Momentum's share of the same 80 units: a quarter of the pull, drawn through the curve.
+      println("momentum pulls less: ${pulled < -1.0 && pulled > held / 2.0}")
+      platform.steps = [...platform.steps, Waited(500), Waited(16), Waited(16)]
+      play(host, platform, renderer, fonts)
+      println("momentum's pull back at ${offset(host)}")
+      continue
+    }
+    held = pulled
+    println("pulled past the start: ${pulled < -1.0}, by less than the fingers: ${pulled > -80.0}")
+    platform.steps = [...platform.steps, Waited(500), Waited(16)]
+    play(host, platform, renderer, fonts)
+    println("fingers held: ${(offset(host) - pulled).abs() < 0.01}")
+    platform.touching = false
+    platform.steps = [...platform.steps, Waited(500), Waited(16), Waited(16)]
+    play(host, platform, renderer, fonts)
+    println("fingers lifted: back at ${offset(host)}")
+  }
+  0
+}
+`)
+	want := "pulled past the start: true, by less than the fingers: true\nfingers held: true\nfingers lifted: back at 0\n" +
+		"momentum pulls less: true\nmomentum's pull back at 0\na wheel at the top: offset 0\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // CSS's text-overflow: ellipsis (`Style.text_overflow`, `ellipsized`): a paragraph wider than
 // its box is one line, cut by rune to what fits with "…" after it, spaces before the "…"
 // dropped, and "…" alone where nothing more fits; one that fits is itself. Checked as what a

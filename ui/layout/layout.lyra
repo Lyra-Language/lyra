@@ -751,6 +751,15 @@ let cut_at = pure (runes: []rune, n: i64) -> string => {
   "${[r in runes.slice(0, end) | "${r}"].join("")}…"
 }
 
+/// How far content pulled `pull` past an end shows past it, in a port `size` long: Apple's
+/// rubber band, `(1 - 1 / (|pull| × 0.55 / size + 1)) × size` — the first of the pull nearly
+/// whole, then less and less, and never as far as `size`.
+pub let rubber_band = pure (pull: f32, size: f32) -> f32 => {
+  if pull.abs() < 0.0001 || size <= 0.0 { return 0.0 }
+  let shown = (1.0 - 1.0 / (pull.abs() * 0.55 / size + 1.0)) * size
+  if pull < 0.0 { -shown } else { shown }
+}
+
 /// The innermost modal open in `laid` (its top-left corner at `origin`): its content — the scrim
 /// holding the dialog — and where that is in the window, or `None` with no modal open. Only what
 /// floats, or holds what does, is looked in: an open modal's content floats.
@@ -1124,6 +1133,11 @@ pub struct WidgetState {
   /// Whether it was at its end when last scrolled (or has not been): a scroller that follows
   /// its end (`scroll_follow`) is kept there while this holds.
   following: bool = true,
+  /// How far a trackpad has pulled it past an end, down and across, in units the fingers
+  /// moved — negative past the start, positive past the end. Drawn through [rubber_band], and
+  /// let go back to the end once the fingers lift (`ui.interact`'s rubber-banding).
+  pull: f32 = 0.0,
+  pull_x: f32 = 0.0,
   grab: f32 = 0.0,
   caret: i64 = 0,
   anchor: i64 = 0,
@@ -1556,7 +1570,7 @@ let state_under = pure (ui: ref Interaction, id: string) -> string => {
   }
   for (key, w) in ui.widgets.entries() {
     if inside(key) {
-      out = "${out}|${key}:${w.scroll ?? -1.0}:${w.scroll_x ?? -1.0}:${w.following}:${w.caret}:${w.anchor}:${w.field_scroll}"
+      out = "${out}|${key}:${w.scroll ?? -1.0}:${w.scroll_x ?? -1.0}:${w.following}:${w.caret}:${w.anchor}:${w.field_scroll}:${w.pull}:${w.pull_x}"
     }
   }
   // An element whose sizes are moving lays out afresh each frame they move.
@@ -1880,15 +1894,18 @@ let lay_fresh<e> = (
       w: (body.size.w - port.w).max(0.0),
       h: (body.size.h - port.h).max(0.0)
     }
+    // Within its room, and past an end by what a trackpad pulled, through the rubber band.
     offset = Point {
       x: if ox == OverflowClip {
         0.0
-      } else { (held.scroll_x ?? start.x).clamp(0.0, spare.w) },
+      } else {
+        (held.scroll_x ?? start.x).clamp(0.0, spare.w) + rubber_band(held.pull_x, port.w)
+      },
       y: if oy == OverflowClip { 0.0 } else if style.scroll_follow && held.following {
         // At its end it stays there, however far the content grew.
-        spare.h
+        spare.h + rubber_band(held.pull, port.h)
       } else {
-        (held.scroll ?? start.y).clamp(0.0, spare.h)
+        (held.scroll ?? start.y).clamp(0.0, spare.h) + rubber_band(held.pull, port.h)
       },
     }
     shown = port
@@ -2200,7 +2217,10 @@ impl Scroller {
         track.h.min(20.0),
         track.h
       ) }
-      let at = if spare.h <= 0.0 { 0.0 } else { (track.h - long) * self.offset.y / spare.h }
+      // Kept on its track while the content is pulled past an end (rubber-banding).
+      let at = if spare.h <= 0.0 { 0.0 } else {
+        ((track.h - long) * self.offset.y / spare.h).clamp(0.0, (track.h - long).max(0.0))
+      }
       out.push(Bar {
         axis: Vertical,
         track: track,
@@ -2218,7 +2238,9 @@ impl Scroller {
         track.w.min(20.0),
         track.w
       ) }
-      let at = if spare.w <= 0.0 { 0.0 } else { (track.w - long) * self.offset.x / spare.w }
+      let at = if spare.w <= 0.0 { 0.0 } else {
+        ((track.w - long) * self.offset.x / spare.w).clamp(0.0, (track.w - long).max(0.0))
+      }
       out.push(Bar {
         axis: Horizontal,
         track: track,

@@ -39,6 +39,7 @@ bool lyra_gpu_read(void *g, uint32_t *out, int64_t cap, int64_t *w, int64_t *h) 
 void lyra_gpu_pin_contents(void *window) { (void)window; }
 void lyra_gpu_watch_scrolls(void) {}
 bool lyra_gpu_scroll_precise(void) { return false; }
+bool lyra_gpu_scroll_touching(void) { return false; }
 bool lyra_gpu_set_see_through(void *window, bool on) { (void)window; (void)on; return false; }
 bool lyra_gpu_set_backdrop_blur(void *window, int32_t radius) { (void)window; (void)radius; return false; }
 bool lyra_gpu_see_through_state(void *window) { (void)window; return false; }

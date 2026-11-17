@@ -350,6 +350,9 @@ bool lyra_gpu_set_backdrop_blur(SDL_Window *window, int32_t radius) {
 // each scroll as AppKit dispatches it, during SDL's own pump, so the flag holds for the wheel
 // events that pump makes.
 static bool last_precise = false;
+// Whether fingers are on the trackpad, by the scroll's phase: began or moving, until it ended or
+// was cancelled. A momentum scroll after the lift has no phase, and leaves it false.
+static bool touching = false;
 static id scroll_monitor = nil;
 
 void lyra_gpu_watch_scrolls(void) {
@@ -357,8 +360,13 @@ void lyra_gpu_watch_scrolls(void) {
     scroll_monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskScrollWheel
                                                           handler:^NSEvent *(NSEvent *event) {
         last_precise = event.hasPreciseScrollingDeltas;
+        NSEventPhase phase = event.phase;
+        if (phase & (NSEventPhaseBegan | NSEventPhaseChanged | NSEventPhaseMayBegin)) touching = true;
+        if (phase & (NSEventPhaseEnded | NSEventPhaseCancelled)) touching = false;
         return event;
     }];
 }
 
 bool lyra_gpu_scroll_precise(void) { return last_precise; }
+
+bool lyra_gpu_scroll_touching(void) { return touching; }

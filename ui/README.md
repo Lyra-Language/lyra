@@ -97,7 +97,15 @@ layer — implements the two traits; the display list is the whole contract.
   with nothing to tell them apart, so `bindings.gpu`'s `watch_scrolls` notes each macOS scroll's
   `hasPreciseScrollingDeltas` and `wheel_input` takes a trackpad's back to points and units, a
   wheel's as lines of `SCROLL_LINE`; and `SDL_MAC_SCROLL_MOMENTUM` is on, so a flick carries on
-  after the fingers lift. Elsewhere every value is lines, as before. A thumb drags, a track click pages, and the arrows, Page
+  after the fingers lift. Elsewhere every value is lines, as before. **A trackpad rubber-bands**:
+  scrolled past an end where nothing under the pointer can move, the innermost scroller on that
+  axis is pulled past it (`WidgetState.pull`, `pull_x`, in units the fingers moved), drawn
+  through Apple's curve (`rubber_band`), held while the fingers stay down
+  (`Platform.scroll_touching`, the shim reading each scroll's phase), and eased back from the
+  moment they lift (`Ui.relax`, to `1/e` in 80 ms, `animating` while any is pulled). The
+  system's momentum after a lift pulls only a quarter as far (`MOMENTUM_PULL`), so a flick into an
+  edge bounces off it. Scrolling back takes the pull first; the scrollbar's thumb stays on its
+  track. A wheel never pulls (`Platform.scroll_precise`). A thumb drags, a track click pages, and the arrows, Page
   Up/Down, Home and End scroll the scroller under the pointer or around the focus (not inside a
   slider or a field); Tab scrolls what it focuses into view in each scroller around it.
   **Scrollbars overlay the content**, 8 thick and 2 in from the edge, a thumb at least 20 long,

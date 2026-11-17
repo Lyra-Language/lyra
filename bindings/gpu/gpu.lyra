@@ -47,6 +47,10 @@ pub let watch_scrolls = () -> void => unsafe { lyra_gpu_watch_scrolls() }
 /// before [watch_scrolls].
 pub let scroll_precise = () -> bool => unsafe { lyra_gpu_scroll_precise() }
 
+/// Whether fingers are on the trackpad now, by the phase of the last scroll it sent: from its
+/// start until it ended or was cancelled. False off macOS, or before [watch_scrolls].
+pub let scroll_touching = () -> bool => unsafe { lyra_gpu_scroll_touching() }
+
 /// Whether `window` has Metal layers and every one is pinned ([pin_contents]): for a test.
 pub let pinned_state = (window: Window) -> bool =>
   unsafe { lyra_gpu_pinned_state(window) }
@@ -188,6 +192,7 @@ unsafe extern lyra_gpu_create: (window: Window) -> Gpu
 unsafe extern lyra_gpu_pin_contents: (window: Window) -> void
 unsafe extern lyra_gpu_watch_scrolls: () -> void
 unsafe extern lyra_gpu_scroll_precise: () -> bool
+unsafe extern lyra_gpu_scroll_touching: () -> bool
 unsafe extern lyra_gpu_pinned_state: (window: Window) -> bool
 unsafe extern lyra_gpu_set_see_through: (window: Window, on: bool) -> bool
 unsafe extern lyra_gpu_set_backdrop_blur: (window: Window, radius: i32) -> bool

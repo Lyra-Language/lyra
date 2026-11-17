@@ -195,6 +195,11 @@ pub struct Ui {
   /// started moving a property that changes sizes.
   motions: HashMap<string, Motion>,
   now: i64 = 0,
+  /// Rubber-banding: whether fingers are on the trackpad (the host sets it from
+  /// `Platform.scroll_touching` each frame), and when the pulls past an end last eased back
+  /// ([Ui.relax]).
+  touching: bool = false,
+  relaxed_at: i64 = 0,
   resized: bool = false,
   /// The element taking input raw that a press on it gave the pointer to, until it is let go;
   /// `""` for none.
@@ -269,6 +274,17 @@ pub struct Found<e> {
 pub let ui_new = pure () -> Ui =>
   Ui { state: interaction_new(), motions: HashMap.new(), panels: HashMap.new() }
 
+/// How much of a scroll with the fingers off — the system's momentum after a flick — pulls past
+/// an end: a flick into an edge bounces off it rather than piling up there.
+const MOMENTUM_PULL: f32 = 0.25
+
+/// How quickly a pull past an end eases back: to `1/e` of itself in this many milliseconds.
+const PULL_EASE_MS: f32 = 80.0
+
+/// How far along `axis` `w` is pulled past an end.
+let pull_of = pure (w: WidgetState, axis: Axis) -> f32 =>
+  if axis == Horizontal { w.pull_x } else { w.pull }
+
 /// How far a scroll moves for a line of a wheel, in units.
 pub const SCROLL_LINE: f32 = 40.0
 
@@ -304,6 +320,8 @@ impl Ui {
     fonts: mut Fonts,
     cache: mut LayoutCache<e>
   ) -> Laid<e> => {
+    // A pull past an end eased back towards it, before the frame lays it out.
+    self.relax()
     self.state.shown = self.sizes_shown()
     self.tip_rested()
     var laid = layout_cached(view, c, fonts, self.state, cache)
@@ -449,6 +467,7 @@ impl Ui {
   /// Whether a transition is moving anything at `now` — while one is, the host draws every
   /// frame.
   pub let animating = pure (self: ref) -> bool => {
+    if self.pulled() { return true }
     for (
       _,
       motion
@@ -1179,7 +1198,7 @@ impl Ui {
     PointerDown(Middle, at, _) => middle_on_tab(laid, at),
     PointerUp(Primary, at) => self.pointer_up(laid, at),
     Scrolled(across, down) => {
-      self.scrolled(laid, across, down)
+      self.scrolled(laid, across, down, platform.scroll_precise())
       []
     },
     KeyPressed(key, mods) => self.key_pressed(laid, key, mods, platform),
@@ -1679,7 +1698,13 @@ impl Ui {
   /// is: each axis scrolls the innermost element under the pointer that the user may scroll
   /// that way and that can still move that way, and passes to the one around it when it
   /// cannot — as a browser does.
-  let scrolled<e> = (self: mut, laid: Laid<e>, across: f32, down: f32) -> void => {
+  let scrolled<e> = (
+    self: mut,
+    laid: Laid<e>,
+    across: f32,
+    down: f32,
+    precise: bool
+  ) -> void => {
     let path = hit(laid, self.pointer)
     // A tab strip, which shows no bar, scrolls across by the wheel either way: a mouse's wheel
     // only turns down.
@@ -1694,14 +1719,104 @@ impl Ui {
     let moves: [](Axis, f32) = [(Horizontal, across), (Vertical, down)]
     for (axis, by) in moves {
       if by.abs() < 0.0001 { continue }
+      // A trackpad's scroll goes first to a scroller it has pulled past an end, and pulls one
+      // past its end where none under the pointer can move (rubber-banding).
+      if precise {
+        if self.pull_back(path, axis, by * SCROLL_LINE) { continue }
+      }
+      var took = false
       for i in (path.len() - 1)..>=0 {
         let f = path[i]
         let Some(sc) = f.laid.scroller else { continue }
         let o = if axis == Horizontal { sc.x } else { sc.y }
         if !user_scrolls(o) { continue }
-        if self.scroll_by(f.laid.id, sc, axis, by * SCROLL_LINE) { break }
+        if self.scroll_by(f.laid.id, sc, axis, by * SCROLL_LINE) {
+          took = true
+          break
+        }
+      }
+      if precise && !took {
+        for i in (path.len() - 1)..>=0 {
+          let f = path[i]
+          let Some(sc) = f.laid.scroller else { continue }
+          let o = if axis == Horizontal { sc.x } else { sc.y }
+          if !user_scrolls(o) { continue }
+          self.set_pull(
+            f.laid.id,
+            axis,
+            pull_of(self.widget(f.laid.id), axis) + by * SCROLL_LINE * self.outward()
+          )
+          break
+        }
       }
     }
+  }
+
+  /// `by` along `axis` to the innermost scroller in `path` a trackpad has pulled past an end
+  /// on that axis, if one is: further past it, or back towards it — and past the end itself,
+  /// the rest scrolls the content again. Whether one took it.
+  let pull_back<e> = (self: mut, path: []Found<e>, axis: Axis, by: f32) -> bool => {
+    for i in (path.len() - 1)..>=0 {
+      let f = path[i]
+      let Some(sc) = f.laid.scroller else { continue }
+      let pull = pull_of(self.widget(f.laid.id), axis)
+      if pull.abs() < 0.0001 { continue }
+      // Further out, the fingers' whole move or momentum's share; back in, all of it.
+      let further = (by < 0.0) == (pull < 0.0)
+      let next = pull + (if further { by * self.outward() } else { by })
+      if (next < 0.0) == (pull < 0.0) && next.abs() > 0.0001 {
+        self.set_pull(f.laid.id, axis, next)
+      } else {
+        // Back past the end: the stretch let go, and what is left of the scroll scrolls it.
+        self.set_pull(f.laid.id, axis, 0.0)
+        let _ = self.scroll_by(f.laid.id, sc, axis, next)
+      }
+      return true
+    }
+    false
+  }
+
+  /// The element identified as `id` pulled `pull` past an end along `axis`.
+  let set_pull = (self: mut, id: string, axis: Axis, pull: f32) -> void => {
+    let state = self.widget(id)
+    self.state.widgets.insert(
+      id,
+      if axis == Horizontal { WidgetState { state | pull_x: pull } } else {
+        WidgetState { state | pull: pull }
+      }
+    )
+  }
+
+  /// How much of a scroll further past an end pulls it: all, with the fingers on the trackpad;
+  /// [MOMENTUM_PULL] of it after they lift, the system's momentum.
+  let outward = pure (self: ref) -> f32 => if self.touching { 1.0 } else { MOMENTUM_PULL }
+
+  /// Every pull past an end eased back towards it once the fingers are off the trackpad —
+  /// momentum still coming or not, which pulls it only a share ([MOMENTUM_PULL]), so a flick
+  /// bounces: by `e^(-dt / PULL_EASE_MS)` a frame, let go under half a unit. The spring of
+  /// rubber-banding.
+  let relax = (self: mut) -> void => {
+    let dt = self.now - self.relaxed_at
+    self.relaxed_at = self.now
+    if self.touching || dt <= 0 { return }
+    let keep = (-f32(dt) / PULL_EASE_MS).exp()
+    for id in self.state.widgets.keys() {
+      let Some(w) = self.state.widgets.get(id) else { continue }
+      if w.pull.abs() < 0.0001 && w.pull_x.abs() < 0.0001 { continue }
+      let eased = (p: f32) -> f32 => if (p * keep).abs() < 0.5 { 0.0 } else { p * keep }
+      self.state.widgets.insert(
+        id,
+        WidgetState { w | pull: eased(w.pull), pull_x: eased(w.pull_x) }
+      )
+    }
+  }
+
+  /// Whether anything is pulled past an end — the host draws every frame until it is back.
+  let pulled = pure (self: ref) -> bool => {
+    for (_, w) in self.state.widgets.entries() {
+      if w.pull.abs() > 0.0001 || w.pull_x.abs() > 0.0001 { return true }
+    }
+    false
   }
 
   /// The element identified as `id`, scrolling as `sc` does, moved `by` along `axis` within

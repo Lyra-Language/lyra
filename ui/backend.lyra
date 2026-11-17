@@ -85,6 +85,12 @@ pub trait Platform {
   /// where the program has not said ([Fonts.hinting_given]); the host asks it once. No, by
   /// default.
   unhinted_text: (Self) -> bool = (self) => false
+  /// Whether the scroll last heard was a trackpad's — precise, the content following the fingers
+  /// and pulled past an end by them (rubber-banding) — rather than a wheel's lines. No, by default.
+  scroll_precise: (Self) -> bool = (self) => false
+  /// Whether fingers are on the trackpad now: content pulled past an end stays while they are,
+  /// and springs back once they lift. No, by default.
+  scroll_touching: (Self) -> bool = (self) => false
   /// The text on the clipboard; `""` when there is none.
   clipboard: (Self) -> string
   set_clipboard: (mut Self, string) -> void

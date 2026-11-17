@@ -9,6 +9,49 @@ Newest first.
 
 ## Dated log
 
+### 11/16/26 — A trackpad rubber-bands past an end
+
+Scrolled past an end, a `ui` scroller stopped flat. A Mac's own scroll views stretch past it
+while the fingers keep going and spring back when they lift. Now a `ui` scroller does the same,
+for a trackpad. A wheel does not, as on the Mac.
+
+**The pull is kept apart from the offset.** `WidgetState` holds how far a trackpad has pulled a
+scroller past an end on each axis (`pull`, `pull_x`), in the units the fingers moved, negative
+past the start. Offsets are clamped to the content at every layout and keyed into the layout
+cache, so the pull rides outside the clamp: the laid offset is the clamped one plus
+`rubber_band(pull, port)`, Apple's curve `(1 - 1 / (|pull| × 0.55 / size + 1)) × size`. The first
+of the pull shows nearly whole, then less and less, never as far as the port. The cache key
+carries the pulls. The scrollbar's thumb is clamped to its track.
+
+**Which scroller stretches.** A precise scroll (`Platform.scroll_precise`, the shim's flag, now
+asked by `Ui`) goes first to a scroller in the pointer's path that is already pulled on that
+axis. Further out stretches it more; back in uses up the pull, and what is left past zero
+scrolls the content again. Otherwise it scrolls as before. Where nothing under the pointer could
+move, the innermost scroller on that axis takes it as pull.
+
+**The spring.** The shim now also reads each scroll's phase, fingers down from began or changed
+until ended or cancelled (`scroll_touching`), which the host hands `Ui` each frame. Before each
+layout `Ui.relax` eases every pull by `e^(-dt / 80 ms)` from the moment the fingers lift, and lets
+it go under half a unit. `animating` holds while anything is pulled, so the host draws until it
+is back.
+
+**Momentum bounces.** The first version waited for scrolls to stop before springing back, and
+let momentum pull as far as fingers do. Tried by hand, it held a stretch after the lift and then
+snapped back. A probe stepping the host and logging each pass showed why. macOS momentum after a
+lift arrives as more precise scrolls for most of a second, which kept the spring from starting.
+A flick into an edge also piled its momentum into the pull, past where the curve shows any
+difference, so the content sat stretched and then jumped home. Now the spring starts at the lift
+whether momentum is still coming or not. A scroll further past an end with the fingers off pulls
+only `MOMENTUM_PULL` (a quarter) as far, so momentum and the spring meet in a short bounce: a
+flick into the top went about 45 units past it and eased straight back.
+
+`TestRun_UiRubberBand` on the script platform (`precise_scrolls`, `touching`): two lines up from
+the top pull the content past its start by less than the 80 units the fingers moved. It holds
+through half a second with the fingers down, and is back at 0 half a second after they lift. The
+same scroll with the fingers off pulls less than half as far and springs back, and a wheel's two
+lines at the top leave it at 0. Checked by hand, slow stretches and flicks into both ends: it
+felt right.
+
 ### 11/16/26 — A trackpad scrolls as far as the fingers go
 
 A `ui` window scrolled about four times as far as a trackpad's fingers moved, and stopped dead

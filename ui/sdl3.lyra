@@ -280,7 +280,8 @@ import bindings.gpu.{
   set_see_through,
   set_backdrop_blur,
   watch_scrolls,
-  scroll_precise
+  scroll_precise,
+  scroll_touching
 }
 import ui.interact.{ SCROLL_LINE }
 import bindings.accesskit.{ AccessRequestRaw }
@@ -563,6 +564,8 @@ impl Platform for SdlPlatform {
   }
   held = (self) => modifiers_of(modifiers())
   unhinted_text = (self) => apple()
+  scroll_precise = (self) => scroll_precise()
+  scroll_touching = (self) => scroll_touching()
   wake_for = (self, fds) => {
     let _ = wake.watch(fds)
   }

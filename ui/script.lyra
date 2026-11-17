@@ -139,6 +139,10 @@ pub struct ScriptPlatform {
   /// Whether it says the system draws its text unhinted ([Platform.unhinted_text]), as Apple's
   /// do — apart from `apple_keys`, so the shortcuts can be Apple's while text stays as it was.
   unhinted: bool = false,
+  /// Whether its scrolls are a trackpad's ([Platform.scroll_precise]), and whether fingers are
+  /// on it now ([Platform.scroll_touching]) — for rubber-banding, as a script sets them.
+  precise_scrolls: bool = false,
+  touching: bool = false,
   native_menus: bool = false,
   menus: []NativeMenu = [],
   /// The window's state; whether it has the system's frame; the areas a drawn title bar was
@@ -297,6 +301,8 @@ impl Platform for ScriptPlatform {
   // It never waits: each pass plays the next step.
   wake_for = (self, fds) => {}
   unhinted_text = pure (self) => self.unhinted
+  scroll_precise = pure (self) => self.precise_scrolls
+  scroll_touching = pure (self) => self.touching
   scale = pure (self, id) => self.units * self.interface
   set_interface_scale = (self, factor) => {
     self.interface = factor

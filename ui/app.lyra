@@ -980,6 +980,7 @@ impl Host<s, e> {
     loop {
       self.windows[k].ui.state.viewport = viewport_of(platform, id)
       self.windows[k].ui.now = platform.now_ms()
+      self.windows[k].ui.touching = platform.scroll_touching()
       let laid_at = self.version
       let laid = self.windows[k].ui.frame_within(
         in_window(self.view_of(k), self.overflow_of(k)),
