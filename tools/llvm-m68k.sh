@@ -134,6 +134,15 @@
 #     the flags are live; byte spill pseudos (MOVM8pm_P, MOVM8mp_P) give the register its
 #     class, which the verifier refused in `vdp.dma_to_vram`. The vertical blank 49.0 →
 #     48.6 lines, the code 1,522 bytes smaller.
+#   - 0021: extensions cost less. Every zero extension was an `and.l` (16 cycles), and so
+#     was every *any* extension, whose high bits nothing reads: an anyext is now a
+#     subregister (no instruction) and an any-extending load the plain load (MOVAX
+#     pseudos); a zero extension into another register, or from memory, is `moveq #0` and
+#     the narrow move (8 cycles from a register, 12 fewer from memory) unless the address
+#     reads the register; a byte zero-extended to a word is `and.w`. The extension pseudos
+#     say they set the flags, which their expansions always did. `and.l #65535` 217 → 38 and
+#     `and.l #255` 175 → 10 in the hero, the code 1,942 bytes smaller, the vertical blank
+#     47.58 → 47.40 lines.
 #   **Tried and left out**: shrink-wrapping (enableShrinkWrapping) changed nothing in the
 #   hero — every function needs its callee-saved registers from its entry. Rematerializing
 #   constants and addresses (isReMaterializableImpl past the dead CCR def, a flag-keeping

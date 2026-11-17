@@ -1,0 +1,1417 @@
+diff --git a/llvm/lib/Target/M68k/M68kExpandPseudo.cpp b/llvm/lib/Target/M68k/M68kExpandPseudo.cpp
+index 94d355e..4644fad 100644
+--- a/llvm/lib/Target/M68k/M68kExpandPseudo.cpp
++++ b/llvm/lib/Target/M68k/M68kExpandPseudo.cpp
+@@ -108,6 +108,43 @@ bool M68kExpandPseudo::ExpandMI(MachineBasicBlock &MBB,
+   case M68k::MOVZXd32d16:
+     return TII->ExpandMOVSZX_RR(MIB, false, MVT::i32, MVT::i16);
+ 
++  case M68k::MOVAXd16j8:
++    return TII->ExpandMOVSZX_RM(MIB, false, TII->get(M68k::MOV8dj), MVT::i16,
++                                MVT::i8, /*Extend=*/false);
++  case M68k::MOVAXd32j8:
++    return TII->ExpandMOVSZX_RM(MIB, false, TII->get(M68k::MOV8dj), MVT::i32,
++                                MVT::i8, /*Extend=*/false);
++  case M68k::MOVAXd32j16:
++    return TII->ExpandMOVSZX_RM(MIB, false, TII->get(M68k::MOV16rj), MVT::i32,
++                                MVT::i16, /*Extend=*/false);
++  case M68k::MOVAXd16p8:
++    return TII->ExpandMOVSZX_RM(MIB, false, TII->get(M68k::MOV8dp), MVT::i16,
++                                MVT::i8, /*Extend=*/false);
++  case M68k::MOVAXd32p8:
++    return TII->ExpandMOVSZX_RM(MIB, false, TII->get(M68k::MOV8dp), MVT::i32,
++                                MVT::i8, /*Extend=*/false);
++  case M68k::MOVAXd32p16:
++    return TII->ExpandMOVSZX_RM(MIB, false, TII->get(M68k::MOV16rp), MVT::i32,
++                                MVT::i16, /*Extend=*/false);
++  case M68k::MOVAXd16f8:
++    return TII->ExpandMOVSZX_RM(MIB, false, TII->get(M68k::MOV8df), MVT::i16,
++                                MVT::i8, /*Extend=*/false);
++  case M68k::MOVAXd32f8:
++    return TII->ExpandMOVSZX_RM(MIB, false, TII->get(M68k::MOV8df), MVT::i32,
++                                MVT::i8, /*Extend=*/false);
++  case M68k::MOVAXd32f16:
++    return TII->ExpandMOVSZX_RM(MIB, false, TII->get(M68k::MOV16rf), MVT::i32,
++                                MVT::i16, /*Extend=*/false);
++  case M68k::MOVAXd16q8:
++    return TII->ExpandMOVSZX_RM(MIB, false, TII->get(M68k::MOV8dq), MVT::i16,
++                                MVT::i8, /*Extend=*/false);
++  case M68k::MOVAXd32q8:
++    return TII->ExpandMOVSZX_RM(MIB, false, TII->get(M68k::MOV8dq), MVT::i32,
++                                MVT::i8, /*Extend=*/false);
++  case M68k::MOVAXd32q16:
++    return TII->ExpandMOVSZX_RM(MIB, false, TII->get(M68k::MOV16dq), MVT::i32,
++                                MVT::i16, /*Extend=*/false);
++
+   case M68k::MOVSXd16j8:
+     return TII->ExpandMOVSZX_RM(MIB, true, TII->get(M68k::MOV8dj), MVT::i16,
+                                 MVT::i8);
+diff --git a/llvm/lib/Target/M68k/M68kInstrData.td b/llvm/lib/Target/M68k/M68kInstrData.td
+index 7c53368..b24291e 100644
+--- a/llvm/lib/Target/M68k/M68kInstrData.td
++++ b/llvm/lib/Target/M68k/M68kInstrData.td
+@@ -697,8 +697,13 @@ def MOVI32ri : MxPseudoMove_DI<MxType32r>;
+ /// what registers are allocated for the operands and if they overlap we just
+ /// extend the value if the registers are completely different we need to move
+ /// first.
++//
++/// They set the flags: the expansion's `ext`, `and`, `moveq` and `move` all do.
++///
++/// `A` is an any-extending load, `MOVAX`: the plain load into the low part, the rest left as
++/// it was. Its register form is no instruction at all (a subregister, below).
+ foreach EXT = ["S", "Z"] in {
+-  let hasSideEffects = 0 in {
++  let hasSideEffects = 0, Defs = [CCR] in {
+ 
+     def MOV#EXT#Xd16d8  : MxPseudoMove_RR<MxType16d,  MxType8d>;
+     def MOV#EXT#Xd32d8  : MxPseudoMove_RR<MxType32d,  MxType8d>;
+@@ -729,6 +734,24 @@ foreach EXT = ["S", "Z"] in {
+   }
+ }
+ 
++let hasSideEffects = 0, mayLoad = 1, Defs = [CCR] in {
++  def MOVAXd16j8   : MxPseudoMove_RM<MxType16d,  MxType8.JOp>;
++  def MOVAXd32j8   : MxPseudoMove_RM<MxType32d,  MxType8.JOp>;
++  def MOVAXd32j16  : MxPseudoMove_RM<MxType32d, MxType16.JOp>;
++
++  def MOVAXd16p8   : MxPseudoMove_RM<MxType16d,  MxType8.POp>;
++  def MOVAXd32p8   : MxPseudoMove_RM<MxType32d,  MxType8.POp>;
++  def MOVAXd32p16  : MxPseudoMove_RM<MxType32d, MxType16.POp>;
++
++  def MOVAXd16f8   : MxPseudoMove_RM<MxType16d,  MxType8.FOp>;
++  def MOVAXd32f8   : MxPseudoMove_RM<MxType32d,  MxType8.FOp>;
++  def MOVAXd32f16  : MxPseudoMove_RM<MxType32d, MxType16.FOp>;
++
++  def MOVAXd16q8   : MxPseudoMove_RM<MxType16d,  MxType8.QOp>;
++  def MOVAXd32q8   : MxPseudoMove_RM<MxType32d,  MxType8.QOp>;
++  def MOVAXd32q16  : MxPseudoMove_RM<MxType32d,  MxType16.QOp>;
++}
++
+ /// This group of instructions is similar to the group above but DOES NOT do
+ /// any value extension, they just load a smaller register into the lower part
+ /// of another register if operands' real registers are different or does
+@@ -766,15 +789,12 @@ def: Pat<(MxSExtLoadi32i16 MxCP_ARID:$src), (MOVSXd32p16 MxARID16:$src)>;
+ def: Pat<(MxSExtLoadi32i16 MxCP_ARII:$src), (MOVSXd32f16 MxARII16:$src)>;
+ def: Pat<(MxSExtLoadi32i16 MxCP_PCD:$src),  (MOVSXd32q16 MxPCD16:$src)>;
+ 
+-// i16 <- zext i8
+-def: Pat<(i16 (zext i8:$src)),
+-          (EXTRACT_SUBREG (MOVZXd32d8 MxDRD8:$src), MxSubRegIndex16Lo)>;
+-def: Pat<(MxZExtLoadi16i8 MxCP_ARI:$src),
+-          (EXTRACT_SUBREG (MOVZXd32j8 MxARI8:$src), MxSubRegIndex16Lo)>;
+-def: Pat<(MxZExtLoadi16i8 MxCP_ARID:$src),
+-          (EXTRACT_SUBREG (MOVZXd32p8 MxARID8:$src), MxSubRegIndex16Lo)>;
+-def: Pat<(MxZExtLoadi16i8 MxCP_ARII:$src),
+-          (EXTRACT_SUBREG (MOVZXd32f8 MxARII8:$src), MxSubRegIndex16Lo)>;
++// i16 <- zext i8: a word's AND, `and.w #255` — the long one costs twice the cycles for
++// bits nothing reads.
++def: Pat<(i16 (zext i8:$src)), (MOVZXd16d8 MxDRD8:$src)>;
++def: Pat<(MxZExtLoadi16i8 MxCP_ARI:$src), (MOVZXd16j8 MxARI8:$src)>;
++def: Pat<(MxZExtLoadi16i8 MxCP_ARID:$src), (MOVZXd16p8 MxARID8:$src)>;
++def: Pat<(MxZExtLoadi16i8 MxCP_ARII:$src), (MOVZXd16f8 MxARII8:$src)>;
+ def: Pat<(MxZExtLoadi16i8 MxCP_PCD :$src), (MOVZXd16q8 MxPCD8 :$src)>;
+ 
+ // i32 <- zext i8
+@@ -791,31 +811,34 @@ def: Pat<(MxZExtLoadi32i16 MxCP_ARID:$src), (MOVZXd32p16 MxARID16:$src)>;
+ def: Pat<(MxZExtLoadi32i16 MxCP_ARII:$src), (MOVZXd32f16 MxARII16:$src)>;
+ def: Pat<(MxZExtLoadi32i16 MxCP_PCD :$src), (MOVZXd32q16 MxPCD16 :$src)>;
+ 
++// anyext: the high bits are anything, so a register's is its subregister — no instruction —
++// and a load's is the plain load into the low part (MOVAX). They were zero extensions, an
++// `and.l #65535` (16 cycles) for bits nothing reads.
+ // i16 <- anyext i8
+ def: Pat<(i16 (anyext i8:$src)),
+-          (EXTRACT_SUBREG (MOVZXd32d8 MxDRD8:$src), MxSubRegIndex16Lo)>;
+-def: Pat<(MxExtLoadi16i8 MxCP_ARI:$src),
+-          (EXTRACT_SUBREG (MOVZXd32j8 MxARI8:$src), MxSubRegIndex16Lo)>;
+-def: Pat<(MxExtLoadi16i8 MxCP_ARID:$src),
+-          (EXTRACT_SUBREG (MOVZXd32p8 MxARID8:$src), MxSubRegIndex16Lo)>;
+-def: Pat<(MxExtLoadi16i8 MxCP_ARII:$src),
+-          (EXTRACT_SUBREG (MOVZXd32f8 MxARII8:$src), MxSubRegIndex16Lo)>;
+-def: Pat<(MxExtLoadi16i8 MxCP_PCD:$src),
+-          (EXTRACT_SUBREG (MOVZXd32q8 MxPCD8:$src), MxSubRegIndex16Lo)>;
++          (INSERT_SUBREG (i16 (IMPLICIT_DEF)), MxDRD8:$src, MxSubRegIndex8Lo)>;
++def: Pat<(MxExtLoadi16i8 MxCP_ARI:$src), (MOVAXd16j8 MxARI8:$src)>;
++def: Pat<(MxExtLoadi16i8 MxCP_ARID:$src), (MOVAXd16p8 MxARID8:$src)>;
++def: Pat<(MxExtLoadi16i8 MxCP_ARII:$src), (MOVAXd16f8 MxARII8:$src)>;
++def: Pat<(MxExtLoadi16i8 MxCP_PCD:$src), (MOVAXd16q8 MxPCD8:$src)>;
+ 
+ // i32 <- anyext i8
+-def: Pat<(i32 (anyext i8:$src)), (MOVZXd32d8 MxDRD8:$src)>;
+-def: Pat<(MxExtLoadi32i8 MxCP_ARI :$src), (MOVZXd32j8 MxARI8 :$src)>;
+-def: Pat<(MxExtLoadi32i8 MxCP_ARID:$src), (MOVZXd32p8 MxARID8:$src)>;
+-def: Pat<(MxExtLoadi32i8 MxCP_ARII:$src), (MOVZXd32f8 MxARII8:$src)>;
+-def: Pat<(MxExtLoadi32i8 MxCP_PCD:$src), (MOVZXd32q8 MxPCD8:$src)>;
++def: Pat<(i32 (anyext i8:$src)),
++          (INSERT_SUBREG (i32 (IMPLICIT_DEF)),
++            (INSERT_SUBREG (i16 (IMPLICIT_DEF)), MxDRD8:$src, MxSubRegIndex8Lo),
++            MxSubRegIndex16Lo)>;
++def: Pat<(MxExtLoadi32i8 MxCP_ARI :$src), (MOVAXd32j8 MxARI8 :$src)>;
++def: Pat<(MxExtLoadi32i8 MxCP_ARID:$src), (MOVAXd32p8 MxARID8:$src)>;
++def: Pat<(MxExtLoadi32i8 MxCP_ARII:$src), (MOVAXd32f8 MxARII8:$src)>;
++def: Pat<(MxExtLoadi32i8 MxCP_PCD:$src), (MOVAXd32q8 MxPCD8:$src)>;
+ 
+ // i32 <- anyext i16
+-def: Pat<(i32 (anyext i16:$src)), (MOVZXd32d16 MxDRD16:$src)>;
+-def: Pat<(MxExtLoadi32i16 MxCP_ARI :$src), (MOVZXd32j16 MxARI16 :$src)>;
+-def: Pat<(MxExtLoadi32i16 MxCP_ARID:$src), (MOVZXd32p16 MxARID16:$src)>;
+-def: Pat<(MxExtLoadi32i16 MxCP_ARII:$src), (MOVZXd32f16 MxARII16:$src)>;
+-def: Pat<(MxExtLoadi32i16 MxCP_PCD:$src), (MOVZXd32q16 MxPCD16:$src)>;
++def: Pat<(i32 (anyext i16:$src)),
++          (INSERT_SUBREG (i32 (IMPLICIT_DEF)), MxDRD16:$src, MxSubRegIndex16Lo)>;
++def: Pat<(MxExtLoadi32i16 MxCP_ARI :$src), (MOVAXd32j16 MxARI16 :$src)>;
++def: Pat<(MxExtLoadi32i16 MxCP_ARID:$src), (MOVAXd32p16 MxARID16:$src)>;
++def: Pat<(MxExtLoadi32i16 MxCP_ARII:$src), (MOVAXd32f16 MxARII16:$src)>;
++def: Pat<(MxExtLoadi32i16 MxCP_PCD:$src), (MOVAXd32q16 MxPCD16:$src)>;
+ 
+ // trunc patterns
+ def : Pat<(i16 (trunc i32:$src)),
+diff --git a/llvm/lib/Target/M68k/M68kInstrInfo.cpp b/llvm/lib/Target/M68k/M68kInstrInfo.cpp
+index e3c98d5..e61fc74 100644
+--- a/llvm/lib/Target/M68k/M68kInstrInfo.cpp
++++ b/llvm/lib/Target/M68k/M68kInstrInfo.cpp
+@@ -499,6 +499,16 @@ bool M68kInstrInfo::ExpandMOVSZX_RR(MachineInstrBuilder &MIB, bool IsSigned,
+   MachineBasicBlock &MBB = *MIB->getParent();
+   DebugLoc DL = MIB->getDebugLoc();
+ 
++  // Into another register a zero extension is `moveq #0` and the narrow move, 8 cycles,
++  // where the move and the `and.l` it would be are 20 (the `and.w` 12).
++  if (!IsSigned && Dst != SSrc) {
++    LLVM_DEBUG(dbgs() << "MOVEQ and move\n");
++    AddZeroAndMove(MBB, MIB.getInstr(), DL, Dst, MVTDst, MVTSrc)
++        .addReg(Src);
++    MIB->eraseFromParent();
++    return true;
++  }
++
+   if (Dst != SSrc) {
+     LLVM_DEBUG(dbgs() << "Move and " << '\n');
+     BuildMI(MBB, MIB.getInstr(), DL, get(Move), Dst).addReg(SSrc);
+@@ -517,13 +527,59 @@ bool M68kInstrInfo::ExpandMOVSZX_RR(MachineInstrBuilder &MIB, bool IsSigned,
+   return true;
+ }
+ 
++/// A data register cleared with `moveq #0` before `I`, and the move of a narrower value into
++/// its low part begun — the caller adds the source. The move says it reads and writes the
++/// whole register, so nothing after register allocation takes the clear for dead.
++MachineInstrBuilder M68kInstrInfo::AddZeroAndMove(MachineBasicBlock &MBB,
++                                                  MachineBasicBlock::iterator I,
++                                                  DebugLoc DL, Register Dst,
++                                                  MVT MVTDst, MVT MVTSrc,
++                                                  const MCInstrDesc *Load) const {
++  Register Dst32 =
++      MVTDst == MVT::i32
++          ? Dst
++          : Register(RI.getMatchingMegaReg(
++                Dst, RI.getRegClass(M68k::DR32RegClassID)));
++  assert(Dst32 && "No viable MEGA register available");
++  Register SubDst = RI.getSubReg(Dst32, MVTSrc == MVT::i8
++                                            ? M68k::MxSubRegIndex8Lo
++                                            : M68k::MxSubRegIndex16Lo);
++  assert(SubDst && "No viable SUB register available");
++  BuildMI(MBB, I, DL, get(M68k::MOVQ), Dst32).addImm(0);
++  const MCInstrDesc &Move =
++      Load ? *Load : get(MVTSrc == MVT::i8 ? M68k::MOV8dd : M68k::MOV16dd);
++  return BuildMI(MBB, I, DL, Move, SubDst)
++      .addReg(Dst32, RegState::Implicit)
++      .addReg(Dst32, RegState::ImplicitDefine);
++}
++
+ bool M68kInstrInfo::ExpandMOVSZX_RM(MachineInstrBuilder &MIB, bool IsSigned,
+                                     const MCInstrDesc &Desc, MVT MVTDst,
+-                                    MVT MVTSrc) const {
++                                    MVT MVTSrc, bool Extend) const {
+   LLVM_DEBUG(dbgs() << "Expand " << *MIB.getInstr() << " to LOAD and ");
+ 
+   Register Dst = MIB->getOperand(0).getReg();
+ 
++  // A zero-extending load is `moveq #0` and the narrow load, 12 cycles fewer than the load
++  // and an `and.l` — unless the address reads the register, which the clear would change.
++  bool AddressReadsDst = false;
++  for (unsigned K = 1; K < MIB->getNumOperands(); ++K) {
++    const MachineOperand &MO = MIB->getOperand(K);
++    if (MO.isReg() && MO.getReg() && RI.regsOverlap(MO.getReg(), Dst))
++      AddressReadsDst = true;
++  }
++  if (Extend && !IsSigned && !AddressReadsDst) {
++    LLVM_DEBUG(dbgs() << "MOVEQ before\n");
++    MachineInstrBuilder Load =
++        AddZeroAndMove(*MIB->getParent(), MIB.getInstr(), MIB->getDebugLoc(),
++                       Dst, MVTDst, MVTSrc, &Desc);
++    for (unsigned K = 1; K < MIB->getNumOperands(); ++K)
++      Load.add(MIB->getOperand(K));
++    Load.setMemRefs(MIB->memoperands());
++    MIB->eraseFromParent();
++    return true;
++  }
++
+   // We need the subreg of Dst to make instruction verifier happy because the
+   // real machine instruction consumes and produces values of the same size and
+   // the registers the will be used here fall into different classes and this
+@@ -538,6 +594,13 @@ bool M68kInstrInfo::ExpandMOVSZX_RM(MachineInstrBuilder &MIB, bool IsSigned,
+   MIB->setDesc(Desc);
+   MIB->getOperand(0).setReg(SubDst);
+ 
++  // An any-extending load is only that: the rest of the register is whatever it was.
++  if (!Extend) {
++    LLVM_DEBUG(dbgs() << "nothing\n");
++    MIB.addReg(Dst, RegState::ImplicitDefine);
++    return true;
++  }
++
+   MachineBasicBlock::iterator I = MIB.getInstr();
+   I++;
+   MachineBasicBlock &MBB = *MIB->getParent();
+diff --git a/llvm/lib/Target/M68k/M68kInstrInfo.h b/llvm/lib/Target/M68k/M68kInstrInfo.h
+index 3d0cc5d..d934805 100644
+--- a/llvm/lib/Target/M68k/M68kInstrInfo.h
++++ b/llvm/lib/Target/M68k/M68kInstrInfo.h
+@@ -311,9 +311,16 @@ public:
+   bool ExpandMOVSZX_RR(MachineInstrBuilder &MIB, bool IsSigned, MVT MVTDst,
+                        MVT MVTSrc) const;
+ 
+-  /// Move from memory and extend
++  /// Move from memory and extend (or, without `Extend`, leave the rest as it was)
+   bool ExpandMOVSZX_RM(MachineInstrBuilder &MIB, bool IsSigned,
+-                       const MCInstrDesc &Desc, MVT MVTDst, MVT MVTSrc) const;
++                       const MCInstrDesc &Desc, MVT MVTDst, MVT MVTSrc,
++                       bool Extend = true) const;
++
++  /// `moveq #0` into a data register and the start of a narrower move into it
++  MachineInstrBuilder AddZeroAndMove(MachineBasicBlock &MBB,
++                                     MachineBasicBlock::iterator I, DebugLoc DL,
++                                     Register Dst, MVT MVTDst, MVT MVTSrc,
++                                     const MCInstrDesc *Load = nullptr) const;
+ 
+   /// Push/Pop to/from stack
+   bool ExpandPUSH_POP(MachineInstrBuilder &MIB, const MCInstrDesc &Desc,
+diff --git a/llvm/test/CodeGen/M68k/Arith/bitwise.ll b/llvm/test/CodeGen/M68k/Arith/bitwise.ll
+index 9a4f40b..67f4c08 100644
+--- a/llvm/test/CodeGen/M68k/Arith/bitwise.ll
++++ b/llvm/test/CodeGen/M68k/Arith/bitwise.ll
+@@ -9,8 +9,8 @@ define zeroext i8 @andb(i8 zeroext %a, i8 zeroext %b) nounwind {
+ ; CHECK-NEXT:    move.b (11,%sp), %d0
+ ; CHECK-NEXT:    move.b (7,%sp), %d1
+ ; CHECK-NEXT:    and.b %d0, %d1
+-; CHECK-NEXT:    move.l %d1, %d0
+-; CHECK-NEXT:    and.l #255, %d0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    move.b %d1, %d0
+ ; CHECK-NEXT:    rts
+   %1 = and i8 %a, %b
+   ret i8 %1
+@@ -22,8 +22,8 @@ define zeroext i16 @andw(i16 zeroext %a, i16 zeroext %b) nounwind {
+ ; CHECK-NEXT:    move.w (10,%sp), %d0
+ ; CHECK-NEXT:    move.w (6,%sp), %d1
+ ; CHECK-NEXT:    and.w %d0, %d1
+-; CHECK-NEXT:    move.l %d1, %d0
+-; CHECK-NEXT:    and.l #65535, %d0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    move.w %d1, %d0
+ ; CHECK-NEXT:    rts
+   %1 = and i16 %a, %b
+   ret i16 %1
+@@ -46,8 +46,8 @@ define zeroext i8 @orb(i8 zeroext %a, i8 zeroext %b) nounwind {
+ ; CHECK-NEXT:    move.b (11,%sp), %d0
+ ; CHECK-NEXT:    move.b (7,%sp), %d1
+ ; CHECK-NEXT:    or.b %d0, %d1
+-; CHECK-NEXT:    move.l %d1, %d0
+-; CHECK-NEXT:    and.l #255, %d0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    move.b %d1, %d0
+ ; CHECK-NEXT:    rts
+   %1 = or i8 %a, %b
+   ret i8 %1
+@@ -59,8 +59,8 @@ define zeroext i16 @orw(i16 zeroext %a, i16 zeroext %b) nounwind {
+ ; CHECK-NEXT:    move.w (10,%sp), %d0
+ ; CHECK-NEXT:    move.w (6,%sp), %d1
+ ; CHECK-NEXT:    or.w %d0, %d1
+-; CHECK-NEXT:    move.l %d1, %d0
+-; CHECK-NEXT:    and.l #65535, %d0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    move.w %d1, %d0
+ ; CHECK-NEXT:    rts
+   %1 = or i16 %a, %b
+   ret i16 %1
+@@ -83,8 +83,8 @@ define zeroext i8 @eorb(i8 zeroext %a, i8 zeroext %b) nounwind {
+ ; CHECK-NEXT:    move.b (11,%sp), %d0
+ ; CHECK-NEXT:    move.b (7,%sp), %d1
+ ; CHECK-NEXT:    eor.b %d0, %d1
+-; CHECK-NEXT:    move.l %d1, %d0
+-; CHECK-NEXT:    and.l #255, %d0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    move.b %d1, %d0
+ ; CHECK-NEXT:    rts
+   %1 = xor i8 %a, %b
+   ret i8 %1
+@@ -96,8 +96,8 @@ define zeroext i16 @eorw(i16 zeroext %a, i16 zeroext %b) nounwind {
+ ; CHECK-NEXT:    move.w (10,%sp), %d0
+ ; CHECK-NEXT:    move.w (6,%sp), %d1
+ ; CHECK-NEXT:    eor.w %d0, %d1
+-; CHECK-NEXT:    move.l %d1, %d0
+-; CHECK-NEXT:    and.l #65535, %d0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    move.w %d1, %d0
+ ; CHECK-NEXT:    rts
+   %1 = xor i16 %a, %b
+   ret i16 %1
+diff --git a/llvm/test/CodeGen/M68k/Arith/divide-by-constant.ll b/llvm/test/CodeGen/M68k/Arith/divide-by-constant.ll
+index b25fa59..a6aa82c 100644
+--- a/llvm/test/CodeGen/M68k/Arith/divide-by-constant.ll
++++ b/llvm/test/CodeGen/M68k/Arith/divide-by-constant.ll
+@@ -37,8 +37,8 @@ define zeroext i8 @test3(i8 zeroext %x, i8 zeroext %c) {
+ ; CHECK-LABEL: test3:
+ ; CHECK:         .cfi_startproc
+ ; CHECK-NEXT:  ; %bb.0: ; %entry
++; CHECK-NEXT:    moveq #0, %d0
+ ; CHECK-NEXT:    move.b (11,%sp), %d0
+-; CHECK-NEXT:    and.l #255, %d0
+ ; CHECK-NEXT:    muls #171, %d0
+ ; CHECK-NEXT:    moveq #9, %d1
+ ; CHECK-NEXT:    lsr.w %d1, %d0
+@@ -128,7 +128,7 @@ define i8 @test8(i8 %x) nounwind {
+ ; CHECK:       ; %bb.0:
+ ; CHECK-NEXT:    move.b (7,%sp), %d0
+ ; CHECK-NEXT:    lsr.b #1, %d0
+-; CHECK-NEXT:    and.l #255, %d0
++; CHECK-NEXT:    and.w #255, %d0
+ ; CHECK-NEXT:    muls #211, %d0
+ ; CHECK-NEXT:    moveq #13, %d1
+ ; CHECK-NEXT:    lsr.w %d1, %d0
+@@ -143,7 +143,7 @@ define i8 @test9(i8 %x) nounwind {
+ ; CHECK:       ; %bb.0:
+ ; CHECK-NEXT:    move.b (7,%sp), %d0
+ ; CHECK-NEXT:    lsr.b #2, %d0
+-; CHECK-NEXT:    and.l #255, %d0
++; CHECK-NEXT:    and.w #255, %d0
+ ; CHECK-NEXT:    muls #71, %d0
+ ; CHECK-NEXT:    moveq #11, %d1
+ ; CHECK-NEXT:    lsr.w %d1, %d0
+diff --git a/llvm/test/CodeGen/M68k/Atomics/cmpxchg.ll b/llvm/test/CodeGen/M68k/Atomics/cmpxchg.ll
+index eb5c72d..5234c52 100644
+--- a/llvm/test/CodeGen/M68k/Atomics/cmpxchg.ll
++++ b/llvm/test/CodeGen/M68k/Atomics/cmpxchg.ll
+@@ -10,12 +10,12 @@ define i1 @cmpxchg_i8_monotonic_monotonic(i8 %cmp, i8 %new, ptr %mem) nounwind {
+ ; NO-ATOMIC:       ; %bb.0:
+ ; NO-ATOMIC-NEXT:    lea (-20,%sp), %sp
+ ; NO-ATOMIC-NEXT:    movem.l %d2, (16,%sp) ; 8-byte Folded Spill
++; NO-ATOMIC-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-NEXT:    move.b (31,%sp), %d0
+-; NO-ATOMIC-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-NEXT:    move.l %d0, (8,%sp)
+ ; NO-ATOMIC-NEXT:    move.b (27,%sp), %d2
+-; NO-ATOMIC-NEXT:    move.l %d2, %d0
+-; NO-ATOMIC-NEXT:    and.l #255, %d0
++; NO-ATOMIC-NEXT:    moveq #0, %d0
++; NO-ATOMIC-NEXT:    move.b %d2, %d0
+ ; NO-ATOMIC-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-NEXT:    move.l (32,%sp), %d0
+ ; NO-ATOMIC-NEXT:    move.l %d0, (%sp)
+@@ -49,11 +49,11 @@ define i16 @cmpxchg_i16_release_monotonic(i16 %cmp, i16 %new, ptr %mem) nounwind
+ ; NO-ATOMIC-LABEL: cmpxchg_i16_release_monotonic:
+ ; NO-ATOMIC:       ; %bb.0:
+ ; NO-ATOMIC-NEXT:    lea (-12,%sp), %sp
++; NO-ATOMIC-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-NEXT:    move.w (22,%sp), %d0
+-; NO-ATOMIC-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-NEXT:    move.l %d0, (8,%sp)
++; NO-ATOMIC-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-NEXT:    move.l (24,%sp), %d0
+ ; NO-ATOMIC-NEXT:    move.l %d0, (%sp)
+diff --git a/llvm/test/CodeGen/M68k/Atomics/rmw.ll b/llvm/test/CodeGen/M68k/Atomics/rmw.ll
+index 64d8541..e25c315 100644
+--- a/llvm/test/CodeGen/M68k/Atomics/rmw.ll
++++ b/llvm/test/CodeGen/M68k/Atomics/rmw.ll
+@@ -11,8 +11,8 @@ define i8 @atomicrmw_add_i8(i8 %val, ptr %ptr) {
+ ; NO-ATOMIC-000-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-000-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-000-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-000-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-000-NEXT:    move.b (19,%sp), %d0
+-; NO-ATOMIC-000-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (%sp)
+@@ -25,8 +25,8 @@ define i8 @atomicrmw_add_i8(i8 %val, ptr %ptr) {
+ ; NO-ATOMIC-010-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-010-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-010-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-010-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-010-NEXT:    move.b (19,%sp), %d0
+-; NO-ATOMIC-010-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (%sp)
+@@ -71,8 +71,8 @@ define i16 @atomicrmw_sub_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-000-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-000-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-000-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-000-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-000-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-000-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (%sp)
+@@ -85,8 +85,8 @@ define i16 @atomicrmw_sub_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-010-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-010-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-010-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-010-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-010-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-010-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (%sp)
+@@ -241,8 +241,8 @@ define i8 @atomicrmw_or_i8(i8 %val, ptr %ptr) {
+ ; NO-ATOMIC-000-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-000-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-000-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-000-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-000-NEXT:    move.b (19,%sp), %d0
+-; NO-ATOMIC-000-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (%sp)
+@@ -255,8 +255,8 @@ define i8 @atomicrmw_or_i8(i8 %val, ptr %ptr) {
+ ; NO-ATOMIC-010-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-010-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-010-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-010-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-010-NEXT:    move.b (19,%sp), %d0
+-; NO-ATOMIC-010-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (%sp)
+@@ -303,8 +303,8 @@ define i16 @atmoicrmw_nand_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-000-NEXT:    .cfi_def_cfa_offset -16
+ ; NO-ATOMIC-000-NEXT:    movem.l %d2, (8,%sp) ; 8-byte Folded Spill
+ ; NO-ATOMIC-000-NEXT:    move.w (18,%sp), %d2
+-; NO-ATOMIC-000-NEXT:    move.l %d2, %d0
+-; NO-ATOMIC-000-NEXT:    and.l #65535, %d0
++; NO-ATOMIC-000-NEXT:    moveq #0, %d0
++; NO-ATOMIC-000-NEXT:    move.w %d2, %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (%sp)
+@@ -321,8 +321,8 @@ define i16 @atmoicrmw_nand_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-010-NEXT:    .cfi_def_cfa_offset -16
+ ; NO-ATOMIC-010-NEXT:    movem.l %d2, (8,%sp) ; 8-byte Folded Spill
+ ; NO-ATOMIC-010-NEXT:    move.w (18,%sp), %d2
+-; NO-ATOMIC-010-NEXT:    move.l %d2, %d0
+-; NO-ATOMIC-010-NEXT:    and.l #65535, %d0
++; NO-ATOMIC-010-NEXT:    moveq #0, %d0
++; NO-ATOMIC-010-NEXT:    move.w %d2, %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (%sp)
+@@ -593,8 +593,8 @@ define i8 @atomicrmw_i8_umin(i8 %val, ptr %ptr) {
+ ; NO-ATOMIC-000-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-000-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-000-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-000-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-000-NEXT:    move.b (19,%sp), %d0
+-; NO-ATOMIC-000-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (%sp)
+@@ -607,8 +607,8 @@ define i8 @atomicrmw_i8_umin(i8 %val, ptr %ptr) {
+ ; NO-ATOMIC-010-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-010-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-010-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-010-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-010-NEXT:    move.b (19,%sp), %d0
+-; NO-ATOMIC-010-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (%sp)
+@@ -661,8 +661,8 @@ define i16 @atomicrmw_umax_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-000-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-000-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-000-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-000-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-000-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-000-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (%sp)
+@@ -675,8 +675,8 @@ define i16 @atomicrmw_umax_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-010-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-010-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-010-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-010-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-010-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-010-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (%sp)
+@@ -729,8 +729,8 @@ define i16 @atomicrmw_xchg_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-000-NEXT:  ; %bb.0: ; %entry
+ ; NO-ATOMIC-000-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-000-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-000-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-000-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-000-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (%sp)
+@@ -743,8 +743,8 @@ define i16 @atomicrmw_xchg_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-010-NEXT:  ; %bb.0: ; %entry
+ ; NO-ATOMIC-010-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-010-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-010-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-010-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-010-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (%sp)
+diff --git a/llvm/test/CodeGen/M68k/Bits/btst.ll b/llvm/test/CodeGen/M68k/Bits/btst.ll
+index 0038402..d56cd93 100644
+--- a/llvm/test/CodeGen/M68k/Bits/btst.ll
++++ b/llvm/test/CodeGen/M68k/Bits/btst.ll
+@@ -7,7 +7,6 @@ define fastcc i16 @switch_to_btst(i16 %a) nounwind {
+ ; CHECK-NEXT:    cmpi.w #11, %d0
+ ; CHECK-NEXT:    bhi .LBB0_3
+ ; CHECK-NEXT:  ; %bb.1: ; %entry
+-; CHECK-NEXT:    and.l #65535, %d0
+ ; CHECK-NEXT:    move.l #3612, %d1
+ ; CHECK-NEXT:    btst %d0, %d1
+ ; CHECK-NEXT:    beq .LBB0_3
+diff --git a/llvm/test/CodeGen/M68k/CodeModel/Large/Atomics/cmpxchg.ll b/llvm/test/CodeGen/M68k/CodeModel/Large/Atomics/cmpxchg.ll
+index 5074a97..81b8c0b 100644
+--- a/llvm/test/CodeGen/M68k/CodeModel/Large/Atomics/cmpxchg.ll
++++ b/llvm/test/CodeGen/M68k/CodeModel/Large/Atomics/cmpxchg.ll
+@@ -80,12 +80,12 @@ define i1 @cmpxchg_i8_monotonic_monotonic(i8 %cmp, i8 %new, ptr %mem) nounwind {
+ ; NO-ATOMIC:       ; %bb.0:
+ ; NO-ATOMIC-NEXT:    lea (-20,%sp), %sp
+ ; NO-ATOMIC-NEXT:    movem.l %d2, (16,%sp) ; 8-byte Folded Spill
++; NO-ATOMIC-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-NEXT:    move.b (31,%sp), %d0
+-; NO-ATOMIC-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-NEXT:    move.l %d0, (8,%sp)
+ ; NO-ATOMIC-NEXT:    move.b (27,%sp), %d2
+-; NO-ATOMIC-NEXT:    move.l %d2, %d0
+-; NO-ATOMIC-NEXT:    and.l #255, %d0
++; NO-ATOMIC-NEXT:    moveq #0, %d0
++; NO-ATOMIC-NEXT:    move.b %d2, %d0
+ ; NO-ATOMIC-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-NEXT:    move.l (32,%sp), %d0
+ ; NO-ATOMIC-NEXT:    move.l %d0, (%sp)
+@@ -100,12 +100,12 @@ define i1 @cmpxchg_i8_monotonic_monotonic(i8 %cmp, i8 %new, ptr %mem) nounwind {
+ ; NO-ATOMIC-PIC:       ; %bb.0:
+ ; NO-ATOMIC-PIC-NEXT:    lea (-20,%sp), %sp
+ ; NO-ATOMIC-PIC-NEXT:    movem.l %d2, (16,%sp) ; 8-byte Folded Spill
++; NO-ATOMIC-PIC-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-PIC-NEXT:    move.b (31,%sp), %d0
+-; NO-ATOMIC-PIC-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-PIC-NEXT:    move.l %d0, (8,%sp)
+ ; NO-ATOMIC-PIC-NEXT:    move.b (27,%sp), %d2
+-; NO-ATOMIC-PIC-NEXT:    move.l %d2, %d0
+-; NO-ATOMIC-PIC-NEXT:    and.l #255, %d0
++; NO-ATOMIC-PIC-NEXT:    moveq #0, %d0
++; NO-ATOMIC-PIC-NEXT:    move.b %d2, %d0
+ ; NO-ATOMIC-PIC-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-PIC-NEXT:    move.l (32,%sp), %d0
+ ; NO-ATOMIC-PIC-NEXT:    move.l %d0, (%sp)
+@@ -154,11 +154,11 @@ define i16 @cmpxchg_i16_release_monotonic(i16 %cmp, i16 %new, ptr %mem) nounwind
+ ; NO-ATOMIC-LABEL: cmpxchg_i16_release_monotonic:
+ ; NO-ATOMIC:       ; %bb.0:
+ ; NO-ATOMIC-NEXT:    lea (-12,%sp), %sp
++; NO-ATOMIC-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-NEXT:    move.w (22,%sp), %d0
+-; NO-ATOMIC-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-NEXT:    move.l %d0, (8,%sp)
++; NO-ATOMIC-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-NEXT:    move.l (24,%sp), %d0
+ ; NO-ATOMIC-NEXT:    move.l %d0, (%sp)
+@@ -169,11 +169,11 @@ define i16 @cmpxchg_i16_release_monotonic(i16 %cmp, i16 %new, ptr %mem) nounwind
+ ; NO-ATOMIC-PIC-LABEL: cmpxchg_i16_release_monotonic:
+ ; NO-ATOMIC-PIC:       ; %bb.0:
+ ; NO-ATOMIC-PIC-NEXT:    lea (-12,%sp), %sp
++; NO-ATOMIC-PIC-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-PIC-NEXT:    move.w (22,%sp), %d0
+-; NO-ATOMIC-PIC-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-PIC-NEXT:    move.l %d0, (8,%sp)
++; NO-ATOMIC-PIC-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-PIC-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-PIC-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-PIC-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-PIC-NEXT:    move.l (24,%sp), %d0
+ ; NO-ATOMIC-PIC-NEXT:    move.l %d0, (%sp)
+diff --git a/llvm/test/CodeGen/M68k/CodeModel/Large/Atomics/rmw.ll b/llvm/test/CodeGen/M68k/CodeModel/Large/Atomics/rmw.ll
+index 273d21a..7e7d4f1 100644
+--- a/llvm/test/CodeGen/M68k/CodeModel/Large/Atomics/rmw.ll
++++ b/llvm/test/CodeGen/M68k/CodeModel/Large/Atomics/rmw.ll
+@@ -16,8 +16,8 @@ define i8 @atomicrmw_add_i8(i8 %val, ptr %ptr) {
+ ; NO-ATOMIC-000-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-000-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-000-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-000-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-000-NEXT:    move.b (19,%sp), %d0
+-; NO-ATOMIC-000-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (%sp)
+@@ -30,8 +30,8 @@ define i8 @atomicrmw_add_i8(i8 %val, ptr %ptr) {
+ ; NO-ATOMIC-010-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-010-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-010-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-010-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-010-NEXT:    move.b (19,%sp), %d0
+-; NO-ATOMIC-010-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (%sp)
+@@ -44,8 +44,8 @@ define i8 @atomicrmw_add_i8(i8 %val, ptr %ptr) {
+ ; NO-ATOMIC-PIC-000-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-PIC-000-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-PIC-000-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-PIC-000-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.b (19,%sp), %d0
+-; NO-ATOMIC-PIC-000-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l %d0, (%sp)
+@@ -58,8 +58,8 @@ define i8 @atomicrmw_add_i8(i8 %val, ptr %ptr) {
+ ; NO-ATOMIC-PIC-010-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-PIC-010-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-PIC-010-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-PIC-010-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.b (19,%sp), %d0
+-; NO-ATOMIC-PIC-010-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l %d0, (%sp)
+@@ -132,8 +132,8 @@ define i16 @atomicrmw_sub_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-000-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-000-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-000-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-000-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-000-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-000-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (%sp)
+@@ -146,8 +146,8 @@ define i16 @atomicrmw_sub_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-010-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-010-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-010-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-010-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-010-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-010-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (%sp)
+@@ -160,8 +160,8 @@ define i16 @atomicrmw_sub_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-PIC-000-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-PIC-000-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-PIC-000-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-PIC-000-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-PIC-000-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l %d0, (%sp)
+@@ -174,8 +174,8 @@ define i16 @atomicrmw_sub_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-PIC-010-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-PIC-010-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-PIC-010-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-PIC-010-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-PIC-010-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l %d0, (%sp)
+@@ -460,8 +460,8 @@ define i8 @atomicrmw_or_i8(i8 %val, ptr %ptr) {
+ ; NO-ATOMIC-000-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-000-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-000-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-000-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-000-NEXT:    move.b (19,%sp), %d0
+-; NO-ATOMIC-000-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (%sp)
+@@ -474,8 +474,8 @@ define i8 @atomicrmw_or_i8(i8 %val, ptr %ptr) {
+ ; NO-ATOMIC-010-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-010-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-010-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-010-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-010-NEXT:    move.b (19,%sp), %d0
+-; NO-ATOMIC-010-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (%sp)
+@@ -488,8 +488,8 @@ define i8 @atomicrmw_or_i8(i8 %val, ptr %ptr) {
+ ; NO-ATOMIC-PIC-000-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-PIC-000-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-PIC-000-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-PIC-000-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.b (19,%sp), %d0
+-; NO-ATOMIC-PIC-000-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l %d0, (%sp)
+@@ -502,8 +502,8 @@ define i8 @atomicrmw_or_i8(i8 %val, ptr %ptr) {
+ ; NO-ATOMIC-PIC-010-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-PIC-010-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-PIC-010-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-PIC-010-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.b (19,%sp), %d0
+-; NO-ATOMIC-PIC-010-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l %d0, (%sp)
+@@ -578,8 +578,8 @@ define i16 @atmoicrmw_nand_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-000-NEXT:    .cfi_def_cfa_offset -16
+ ; NO-ATOMIC-000-NEXT:    movem.l %d2, (8,%sp) ; 8-byte Folded Spill
+ ; NO-ATOMIC-000-NEXT:    move.w (18,%sp), %d2
+-; NO-ATOMIC-000-NEXT:    move.l %d2, %d0
+-; NO-ATOMIC-000-NEXT:    and.l #65535, %d0
++; NO-ATOMIC-000-NEXT:    moveq #0, %d0
++; NO-ATOMIC-000-NEXT:    move.w %d2, %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (%sp)
+@@ -596,8 +596,8 @@ define i16 @atmoicrmw_nand_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-010-NEXT:    .cfi_def_cfa_offset -16
+ ; NO-ATOMIC-010-NEXT:    movem.l %d2, (8,%sp) ; 8-byte Folded Spill
+ ; NO-ATOMIC-010-NEXT:    move.w (18,%sp), %d2
+-; NO-ATOMIC-010-NEXT:    move.l %d2, %d0
+-; NO-ATOMIC-010-NEXT:    and.l #65535, %d0
++; NO-ATOMIC-010-NEXT:    moveq #0, %d0
++; NO-ATOMIC-010-NEXT:    move.w %d2, %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (%sp)
+@@ -614,8 +614,8 @@ define i16 @atmoicrmw_nand_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-PIC-000-NEXT:    .cfi_def_cfa_offset -16
+ ; NO-ATOMIC-PIC-000-NEXT:    movem.l %d2, (8,%sp) ; 8-byte Folded Spill
+ ; NO-ATOMIC-PIC-000-NEXT:    move.w (18,%sp), %d2
+-; NO-ATOMIC-PIC-000-NEXT:    move.l %d2, %d0
+-; NO-ATOMIC-PIC-000-NEXT:    and.l #65535, %d0
++; NO-ATOMIC-PIC-000-NEXT:    moveq #0, %d0
++; NO-ATOMIC-PIC-000-NEXT:    move.w %d2, %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l %d0, (%sp)
+@@ -632,8 +632,8 @@ define i16 @atmoicrmw_nand_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-PIC-010-NEXT:    .cfi_def_cfa_offset -16
+ ; NO-ATOMIC-PIC-010-NEXT:    movem.l %d2, (8,%sp) ; 8-byte Folded Spill
+ ; NO-ATOMIC-PIC-010-NEXT:    move.w (18,%sp), %d2
+-; NO-ATOMIC-PIC-010-NEXT:    move.l %d2, %d0
+-; NO-ATOMIC-PIC-010-NEXT:    and.l #65535, %d0
++; NO-ATOMIC-PIC-010-NEXT:    moveq #0, %d0
++; NO-ATOMIC-PIC-010-NEXT:    move.w %d2, %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l %d0, (%sp)
+@@ -1148,8 +1148,8 @@ define i8 @atomicrmw_i8_umin(i8 %val, ptr %ptr) {
+ ; NO-ATOMIC-000-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-000-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-000-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-000-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-000-NEXT:    move.b (19,%sp), %d0
+-; NO-ATOMIC-000-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (%sp)
+@@ -1162,8 +1162,8 @@ define i8 @atomicrmw_i8_umin(i8 %val, ptr %ptr) {
+ ; NO-ATOMIC-010-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-010-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-010-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-010-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-010-NEXT:    move.b (19,%sp), %d0
+-; NO-ATOMIC-010-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (%sp)
+@@ -1176,8 +1176,8 @@ define i8 @atomicrmw_i8_umin(i8 %val, ptr %ptr) {
+ ; NO-ATOMIC-PIC-000-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-PIC-000-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-PIC-000-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-PIC-000-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.b (19,%sp), %d0
+-; NO-ATOMIC-PIC-000-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l %d0, (%sp)
+@@ -1190,8 +1190,8 @@ define i8 @atomicrmw_i8_umin(i8 %val, ptr %ptr) {
+ ; NO-ATOMIC-PIC-010-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-PIC-010-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-PIC-010-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-PIC-010-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.b (19,%sp), %d0
+-; NO-ATOMIC-PIC-010-NEXT:    and.l #255, %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l %d0, (%sp)
+@@ -1280,8 +1280,8 @@ define i16 @atomicrmw_umax_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-000-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-000-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-000-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-000-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-000-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-000-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (%sp)
+@@ -1294,8 +1294,8 @@ define i16 @atomicrmw_umax_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-010-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-010-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-010-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-010-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-010-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-010-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (%sp)
+@@ -1308,8 +1308,8 @@ define i16 @atomicrmw_umax_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-PIC-000-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-PIC-000-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-PIC-000-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-PIC-000-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-PIC-000-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l %d0, (%sp)
+@@ -1322,8 +1322,8 @@ define i16 @atomicrmw_umax_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-PIC-010-NEXT:  ; %bb.0:
+ ; NO-ATOMIC-PIC-010-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-PIC-010-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-PIC-010-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-PIC-010-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l %d0, (%sp)
+@@ -1412,8 +1412,8 @@ define i16 @atomicrmw_xchg_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-000-NEXT:  ; %bb.0: ; %entry
+ ; NO-ATOMIC-000-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-000-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-000-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-000-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-000-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-000-NEXT:    move.l %d0, (%sp)
+@@ -1426,8 +1426,8 @@ define i16 @atomicrmw_xchg_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-010-NEXT:  ; %bb.0: ; %entry
+ ; NO-ATOMIC-010-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-010-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-010-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-010-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-010-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-010-NEXT:    move.l %d0, (%sp)
+@@ -1440,8 +1440,8 @@ define i16 @atomicrmw_xchg_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-PIC-000-NEXT:  ; %bb.0: ; %entry
+ ; NO-ATOMIC-PIC-000-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-PIC-000-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-PIC-000-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-PIC-000-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-PIC-000-NEXT:    move.l %d0, (%sp)
+@@ -1454,8 +1454,8 @@ define i16 @atomicrmw_xchg_i16(i16 %val, ptr %ptr) {
+ ; NO-ATOMIC-PIC-010-NEXT:  ; %bb.0: ; %entry
+ ; NO-ATOMIC-PIC-010-NEXT:    lea (-12,%sp), %sp
+ ; NO-ATOMIC-PIC-010-NEXT:    .cfi_def_cfa_offset -16
++; NO-ATOMIC-PIC-010-NEXT:    moveq #0, %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.w (18,%sp), %d0
+-; NO-ATOMIC-PIC-010-NEXT:    and.l #65535, %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l %d0, (4,%sp)
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l (20,%sp), %d0
+ ; NO-ATOMIC-PIC-010-NEXT:    move.l %d0, (%sp)
+diff --git a/llvm/test/CodeGen/M68k/Control/cmp.ll b/llvm/test/CodeGen/M68k/Control/cmp.ll
+index d0f26f1..13da69c 100644
+--- a/llvm/test/CodeGen/M68k/Control/cmp.ll
++++ b/llvm/test/CodeGen/M68k/Control/cmp.ll
+@@ -81,9 +81,7 @@ define i64 @test3(i64 %x) nounwind {
+ ; CHECK:       ; %bb.0:
+ ; CHECK-NEXT:    move.l (8,%sp), %d0
+ ; CHECK-NEXT:    or.l (4,%sp), %d0
+-; CHECK-NEXT:    seq %d0
+-; CHECK-NEXT:    move.l %d0, %d1
+-; CHECK-NEXT:    and.l #255, %d1
++; CHECK-NEXT:    seq %d1
+ ; CHECK-NEXT:    and.l #1, %d1
+ ; CHECK-NEXT:    moveq #0, %d0
+ ; CHECK-NEXT:    rts
+@@ -103,7 +101,6 @@ define i64 @test4(i64 %x) nounwind {
+ ; CHECK-NEXT:    subq.l #1, %d2
+ ; CHECK-NEXT:    subx.l %d0, %d1
+ ; CHECK-NEXT:    slt %d1
+-; CHECK-NEXT:    and.l #255, %d1
+ ; CHECK-NEXT:    and.l #1, %d1
+ ; CHECK-NEXT:    movem.l (0,%sp), %d2 ; 8-byte Folded Reload
+ ; CHECK-NEXT:    addq.l #4, %sp
+@@ -145,7 +142,6 @@ define i32 @test7(i64 %res) nounwind {
+ ; CHECK:       ; %bb.0: ; %entry
+ ; CHECK-NEXT:    tst.l (4,%sp)
+ ; CHECK-NEXT:    seq %d0
+-; CHECK-NEXT:    and.l #255, %d0
+ ; CHECK-NEXT:    and.l #1, %d0
+ ; CHECK-NEXT:    rts
+ entry:
+@@ -159,7 +155,6 @@ define i32 @test8(i64 %res) nounwind {
+ ; CHECK:       ; %bb.0: ; %entry
+ ; CHECK-NEXT:    cmpi.l #3, (4,%sp)
+ ; CHECK-NEXT:    scs %d0
+-; CHECK-NEXT:    and.l #255, %d0
+ ; CHECK-NEXT:    and.l #1, %d0
+ ; CHECK-NEXT:    rts
+ entry:
+@@ -175,7 +170,6 @@ define i32 @test11(i64 %l) nounwind {
+ ; CHECK-NEXT:    and.l #-32768, %d0
+ ; CHECK-NEXT:    cmpi.l #32768, %d0
+ ; CHECK-NEXT:    seq %d0
+-; CHECK-NEXT:    and.l #255, %d0
+ ; CHECK-NEXT:    and.l #1, %d0
+ ; CHECK-NEXT:    rts
+ entry:
+@@ -233,17 +227,20 @@ define zeroext i1 @test15(i32 %bf.load, i32 %n) {
+ ; CHECK-LABEL: test15:
+ ; CHECK:         .cfi_startproc
+ ; CHECK-NEXT:  ; %bb.0:
++; CHECK-NEXT:    subq.l #4, %sp
++; CHECK-NEXT:    .cfi_def_cfa_offset -8
++; CHECK-NEXT:    movem.l %d2, (0,%sp) ; 8-byte Folded Spill
+ ; CHECK-NEXT:    moveq #16, %d0
+-; CHECK-NEXT:    move.l (4,%sp), %d1
++; CHECK-NEXT:    move.l (8,%sp), %d1
+ ; CHECK-NEXT:    lsr.l %d0, %d1
+-; CHECK-NEXT:    cmp.l (8,%sp), %d1
+-; CHECK-NEXT:    scc %d0
++; CHECK-NEXT:    cmp.l (12,%sp), %d1
++; CHECK-NEXT:    scc %d2
+ ; CHECK-NEXT:    tst.l %d1
+-; CHECK-NEXT:    seq %d1
+-; CHECK-NEXT:    or.b %d0, %d1
+-; CHECK-NEXT:    move.l %d1, %d0
+-; CHECK-NEXT:    and.l #255, %d0
++; CHECK-NEXT:    seq %d0
++; CHECK-NEXT:    or.b %d2, %d0
+ ; CHECK-NEXT:    and.l #1, %d0
++; CHECK-NEXT:    movem.l (0,%sp), %d2 ; 8-byte Folded Reload
++; CHECK-NEXT:    addq.l #4, %sp
+ ; CHECK-NEXT:    rts
+   %bf.lshr = lshr i32 %bf.load, 16
+   %cmp2 = icmp eq i32 %bf.lshr, 0
+@@ -296,10 +293,9 @@ define void @test20(i32 %bf.load, i8 %x1, ptr %b_addr) {
+ ; CHECK-NEXT:    move.l #16777215, %d0
+ ; CHECK-NEXT:    and.l (8,%sp), %d0
+ ; CHECK-NEXT:    sne %d1
+-; CHECK-NEXT:    and.l #255, %d1
+ ; CHECK-NEXT:    and.l #1, %d1
++; CHECK-NEXT:    moveq #0, %d2
+ ; CHECK-NEXT:    move.b (15,%sp), %d2
+-; CHECK-NEXT:    and.l #255, %d2
+ ; CHECK-NEXT:    add.l %d1, %d2
+ ; CHECK-NEXT:    sne %d1
+ ; CHECK-NEXT:    and.b #1, %d1
+diff --git a/llvm/test/CodeGen/M68k/Control/non-cmov-switch.ll b/llvm/test/CodeGen/M68k/Control/non-cmov-switch.ll
+index d03a50c..36acba8 100644
+--- a/llvm/test/CodeGen/M68k/Control/non-cmov-switch.ll
++++ b/llvm/test/CodeGen/M68k/Control/non-cmov-switch.ll
+@@ -16,7 +16,6 @@ define internal void @select_i32(i32 %self, ptr nonnull %value) {
+ ; M68000-NEXT:    move.w %d2, %ccr
+ ; M68000-NEXT:    bne .LBB0_2
+ ; M68000-NEXT:  ; %bb.1: ; %start
+-; M68000-NEXT:    and.l #255, %d1
+ ; M68000-NEXT:    and.l #1, %d1
+ ; M68000-NEXT:    tst.l %d1
+ ; M68000-NEXT:    bne .LBB0_3
+@@ -41,7 +40,6 @@ define internal void @select_i32(i32 %self, ptr nonnull %value) {
+ ; M68020-NEXT:    move.w %d2, %ccr
+ ; M68020-NEXT:    bne .LBB0_2
+ ; M68020-NEXT:  ; %bb.1: ; %start
+-; M68020-NEXT:    and.l #255, %d1
+ ; M68020-NEXT:    and.l #1, %d1
+ ; M68020-NEXT:    tst.l %d1
+ ; M68020-NEXT:    bne .LBB0_3
+@@ -86,7 +84,6 @@ define internal void @select_i16(i16 %self, ptr nonnull %value) {
+ ; M68000-NEXT:    move.w %d2, %ccr
+ ; M68000-NEXT:    bne .LBB1_2
+ ; M68000-NEXT:  ; %bb.1: ; %start
+-; M68000-NEXT:    and.l #255, %d1
+ ; M68000-NEXT:    and.w #1, %d1
+ ; M68000-NEXT:    tst.w %d1
+ ; M68000-NEXT:    bne .LBB1_3
+@@ -111,7 +108,6 @@ define internal void @select_i16(i16 %self, ptr nonnull %value) {
+ ; M68020-NEXT:    move.w %d2, %ccr
+ ; M68020-NEXT:    bne .LBB1_2
+ ; M68020-NEXT:  ; %bb.1: ; %start
+-; M68020-NEXT:    and.l #255, %d1
+ ; M68020-NEXT:    and.w #1, %d1
+ ; M68020-NEXT:    tst.w %d1
+ ; M68020-NEXT:    bne .LBB1_3
+diff --git a/llvm/test/CodeGen/M68k/Control/setcc.ll b/llvm/test/CodeGen/M68k/Control/setcc.ll
+index 3ae8187..999c755 100644
+--- a/llvm/test/CodeGen/M68k/Control/setcc.ll
++++ b/llvm/test/CodeGen/M68k/Control/setcc.ll
+@@ -8,7 +8,6 @@ define zeroext i16 @t1(i16 zeroext %x) nounwind readnone ssp {
+ ; CHECK:       ; %bb.0: ; %entry
+ ; CHECK-NEXT:    cmpi.w #26, (6,%sp)
+ ; CHECK-NEXT:    shi %d0
+-; CHECK-NEXT:    and.l #255, %d0
+ ; CHECK-NEXT:    and.l #1, %d0
+ ; CHECK-NEXT:    lsl.l #5, %d0
+ ; CHECK-NEXT:    rts
+@@ -23,7 +22,6 @@ define zeroext i16 @t2(i16 zeroext %x) nounwind readnone ssp {
+ ; CHECK:       ; %bb.0: ; %entry
+ ; CHECK-NEXT:    cmpi.w #26, (6,%sp)
+ ; CHECK-NEXT:    scs %d0
+-; CHECK-NEXT:    and.l #255, %d0
+ ; CHECK-NEXT:    and.l #1, %d0
+ ; CHECK-NEXT:    lsl.l #5, %d0
+ ; CHECK-NEXT:    rts
+@@ -41,9 +39,7 @@ define fastcc i64 @t3(i64 %x) nounwind readnone ssp {
+ ; CHECK-NEXT:    moveq #0, %d2
+ ; CHECK-NEXT:    sub.l #18, %d1
+ ; CHECK-NEXT:    subx.l %d2, %d0
+-; CHECK-NEXT:    scs %d0
+-; CHECK-NEXT:    move.l %d0, %d1
+-; CHECK-NEXT:    and.l #255, %d1
++; CHECK-NEXT:    scs %d1
+ ; CHECK-NEXT:    and.l #1, %d1
+ ; CHECK-NEXT:    lsl.l #6, %d1
+ ; CHECK-NEXT:    move.l %d2, %d0
+@@ -89,8 +85,8 @@ define zeroext i1 @t6(i32 %a) {
+ ; CHECK-NEXT:    move.l (4,%sp), %d1
+ ; CHECK-NEXT:    lsr.l %d0, %d1
+ ; CHECK-NEXT:    eori.b #1, %d1
+-; CHECK-NEXT:    move.l %d1, %d0
+-; CHECK-NEXT:    and.l #255, %d0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    move.b %d1, %d0
+ ; CHECK-NEXT:    rts
+ entry:
+   %.lobit = lshr i32 %a, 31
+diff --git a/llvm/test/CodeGen/M68k/Data/load-extend.ll b/llvm/test/CodeGen/M68k/Data/load-extend.ll
+index 687d3f2..528c801 100644
+--- a/llvm/test/CodeGen/M68k/Data/load-extend.ll
++++ b/llvm/test/CodeGen/M68k/Data/load-extend.ll
+@@ -7,8 +7,8 @@ define i32 @"test_zext_pcd_i8_to_i32"() {
+ ; CHECK-LABEL: test_zext_pcd_i8_to_i32:
+ ; CHECK:         .cfi_startproc
+ ; CHECK-NEXT:  ; %bb.0:
++; CHECK-NEXT:    moveq #0, %d0
+ ; CHECK-NEXT:    move.b (__unnamed_1+16,%pc), %d0
+-; CHECK-NEXT:    and.l #255, %d0
+ ; CHECK-NEXT:    rts
+   %p = getelementptr inbounds i8, ptr @0, i32 16
+   %val = load i8, ptr %p
+@@ -20,8 +20,8 @@ define i16 @"test_zext_pcd_i8_to_i16"() {
+ ; CHECK-LABEL: test_zext_pcd_i8_to_i16:
+ ; CHECK:         .cfi_startproc
+ ; CHECK-NEXT:  ; %bb.0:
++; CHECK-NEXT:    moveq #0, %d0
+ ; CHECK-NEXT:    move.b (__unnamed_1+16,%pc), %d0
+-; CHECK-NEXT:    and.w #255, %d0
+ ; CHECK-NEXT:    rts
+   %p = getelementptr inbounds i8, ptr @0, i32 16
+   %val = load i8, ptr %p
+@@ -33,8 +33,8 @@ define i32 @"test_zext_pcd_i16_to_i32"() {
+ ; CHECK-LABEL: test_zext_pcd_i16_to_i32:
+ ; CHECK:         .cfi_startproc
+ ; CHECK-NEXT:  ; %bb.0:
++; CHECK-NEXT:    moveq #0, %d0
+ ; CHECK-NEXT:    move.w (__unnamed_1+16,%pc), %d0
+-; CHECK-NEXT:    and.l #65535, %d0
+ ; CHECK-NEXT:    rts
+   %p = getelementptr inbounds i16, ptr @0, i32 8
+   %val = load i16, ptr %p
+@@ -46,9 +46,7 @@ define i16 @test_anyext_pcd_i8_to_i16() nounwind {
+ ; CHECK-LABEL: test_anyext_pcd_i8_to_i16:
+ ; CHECK:       ; %bb.0:
+ ; CHECK-NEXT:    move.b (__unnamed_1+4,%pc), %d0
+-; CHECK-NEXT:    and.l #255, %d0
+ ; CHECK-NEXT:    lsl.w #8, %d0
+-; CHECK-NEXT:    ; kill: def $wd0 killed $wd0 killed $d0
+ ; CHECK-NEXT:    rts
+   %copyload = load i8, ptr getelementptr inbounds nuw (i8, ptr @0, i32 4)
+   %insert_ext = zext i8 %copyload to i16
+@@ -61,7 +59,6 @@ define i32 @test_anyext_pcd_i8_to_i32() nounwind {
+ ; CHECK:       ; %bb.0:
+ ; CHECK-NEXT:    moveq #24, %d1
+ ; CHECK-NEXT:    move.b (__unnamed_1+4,%pc), %d0
+-; CHECK-NEXT:    and.l #255, %d0
+ ; CHECK-NEXT:    lsl.l %d1, %d0
+ ; CHECK-NEXT:    rts
+   %copyload = load i8, ptr getelementptr inbounds nuw (i8, ptr @0, i32 4)
+@@ -75,7 +72,6 @@ define i32 @test_anyext_pcd_i16_to_i32() nounwind {
+ ; CHECK:       ; %bb.0:
+ ; CHECK-NEXT:    moveq #16, %d1
+ ; CHECK-NEXT:    move.w (__unnamed_1+4,%pc), %d0
+-; CHECK-NEXT:    and.l #65535, %d0
+ ; CHECK-NEXT:    lsl.l %d1, %d0
+ ; CHECK-NEXT:    rts
+   %copyload = load i16, ptr getelementptr inbounds nuw (i8, ptr @0, i32 4)
+diff --git a/llvm/test/CodeGen/M68k/Data/post-increment.ll b/llvm/test/CodeGen/M68k/Data/post-increment.ll
+index b077ba7..00eca43 100644
+--- a/llvm/test/CodeGen/M68k/Data/post-increment.ll
++++ b/llvm/test/CodeGen/M68k/Data/post-increment.ll
+@@ -162,10 +162,10 @@ define i32 @sum_fields(ptr %a, i32 %n) {
+ ; CHECK-NEXT:    move.l %d2, %a0
+ ; CHECK-NEXT:  .LBB4_3: ; %loop
+ ; CHECK-NEXT:    ; =>This Inner Loop Header: Depth=1
++; CHECK-NEXT:    moveq #0, %d2
+ ; CHECK-NEXT:    move.w (%a0), %d2
+-; CHECK-NEXT:    and.l #65535, %d2
++; CHECK-NEXT:    moveq #0, %d3
+ ; CHECK-NEXT:    move.w (-2,%a0), %d3
+-; CHECK-NEXT:    and.l #65535, %d3
+ ; CHECK-NEXT:    add.l %d2, %d3
+ ; CHECK-NEXT:    add.l %d3, %d0
+ ; CHECK-NEXT:    lea (6,%a0), %a0
+diff --git a/llvm/test/CodeGen/M68k/Data/sext-i1.ll b/llvm/test/CodeGen/M68k/Data/sext-i1.ll
+index 2be5224..e35ab50 100644
+--- a/llvm/test/CodeGen/M68k/Data/sext-i1.ll
++++ b/llvm/test/CodeGen/M68k/Data/sext-i1.ll
+@@ -22,7 +22,6 @@ define void @sext_inreg_i1_to_i16(i1 %val, ptr %ptr) {
+ ; CHECK:         .cfi_startproc
+ ; CHECK-NEXT:  ; %bb.0: ; %entry
+ ; CHECK-NEXT:    move.b (7,%sp), %d0
+-; CHECK-NEXT:    and.l #255, %d0
+ ; CHECK-NEXT:    and.w #1, %d0
+ ; CHECK-NEXT:    neg.w %d0
+ ; CHECK-NEXT:    move.l (8,%sp), %a0
+@@ -39,7 +38,6 @@ define void @sext_inreg_i1_to_i32(i1 %val, ptr %ptr) {
+ ; CHECK:         .cfi_startproc
+ ; CHECK-NEXT:  ; %bb.0: ; %entry
+ ; CHECK-NEXT:    move.b (7,%sp), %d0
+-; CHECK-NEXT:    and.l #255, %d0
+ ; CHECK-NEXT:    and.l #1, %d0
+ ; CHECK-NEXT:    neg.l %d0
+ ; CHECK-NEXT:    move.l (8,%sp), %a0
+diff --git a/llvm/test/CodeGen/M68k/Data/zero-extend.ll b/llvm/test/CodeGen/M68k/Data/zero-extend.ll
+new file mode 100644
+index 0000000..4414dca
+--- /dev/null
++++ b/llvm/test/CodeGen/M68k/Data/zero-extend.ll
+@@ -0,0 +1,86 @@
++; NOTE: Assertions have been autogenerated by utils/update_llc_test_checks.py
++; RUN: llc < %s -mtriple=m68k-linux -mcpu=M68000 -verify-machineinstrs | FileCheck %s
++
++; A zero extension is `moveq #0` and the narrow move where the value goes to another
++; register or comes from memory, an AND where it stays in place, and nothing at all where
++; the high bits are anything.
++
++; Into another register, the value live after it: `moveq #0` and the move.
++define i32 @into_another(i16 %a, i16 %b) {
++; CHECK-LABEL: into_another:
++; CHECK:         .cfi_startproc
++; CHECK-NEXT:  ; %bb.0:
++; CHECK-NEXT:    move.w (6,%sp), %d0
++; CHECK-NEXT:    add.w (10,%sp), %d0
++; CHECK-NEXT:    moveq #0, %d1
++; CHECK-NEXT:    move.w %d0, %d1
++; CHECK-NEXT:    ext.l %d0
++; CHECK-NEXT:    sub.l %d1, %d0
++; CHECK-NEXT:    rts
++  %x = add i16 %a, %b
++  %z = zext i16 %x to i32
++  %w = sext i16 %x to i32
++  %r = sub i32 %w, %z
++  ret i32 %r
++}
++
++; From memory: `moveq #0`, then the load.
++define i32 @from_memory(ptr %p) {
++; CHECK-LABEL: from_memory:
++; CHECK:         .cfi_startproc
++; CHECK-NEXT:  ; %bb.0:
++; CHECK-NEXT:    move.l (4,%sp), %a0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    move.w (%a0), %d0
++; CHECK-NEXT:    rts
++  %v = load i16, ptr %p
++  %z = zext i16 %v to i32
++  ret i32 %z
++}
++
++; A byte into a word: a word's AND.
++define i16 @byte_to_word(i8 %a, i8 %b) {
++; CHECK-LABEL: byte_to_word:
++; CHECK:         .cfi_startproc
++; CHECK-NEXT:  ; %bb.0:
++; CHECK-NEXT:    move.b (7,%sp), %d0
++; CHECK-NEXT:    add.b (11,%sp), %d0
++; CHECK-NEXT:    and.w #255, %d0
++; CHECK-NEXT:    rts
++  %x = add i8 %a, %b
++  %z = zext i8 %x to i16
++  ret i16 %z
++}
++
++; The address's index is the register loaded: the clear would move the address, so the
++; load and an AND.
++define i32 @index_is_the_destination(ptr %p, i32 %i) {
++; CHECK-LABEL: index_is_the_destination:
++; CHECK:         .cfi_startproc
++; CHECK-NEXT:  ; %bb.0:
++; CHECK-NEXT:    move.l (8,%sp), %d0
++; CHECK-NEXT:    move.l (4,%sp), %a0
++; CHECK-NEXT:    move.b (0,%a0,%d0), %d0
++; CHECK-NEXT:    and.l #255, %d0
++; CHECK-NEXT:    rts
++  %a = getelementptr i8, ptr %p, i32 %i
++  %v = load i8, ptr %a
++  %z = zext i8 %v to i32
++  ret i32 %z
++}
++
++; The high bits shifted out: no extension.
++define i32 @shifted_out(ptr %p) {
++; CHECK-LABEL: shifted_out:
++; CHECK:         .cfi_startproc
++; CHECK-NEXT:  ; %bb.0:
++; CHECK-NEXT:    move.l (4,%sp), %a0
++; CHECK-NEXT:    move.b (%a0), %d0
++; CHECK-NEXT:    moveq #24, %d1
++; CHECK-NEXT:    lsl.l %d1, %d0
++; CHECK-NEXT:    rts
++  %v = load i8, ptr %p
++  %z = zext i8 %v to i32
++  %s = shl i32 %z, 24
++  ret i32 %s
++}
+diff --git a/llvm/test/CodeGen/M68k/ShiftRotate/asr.ll b/llvm/test/CodeGen/M68k/ShiftRotate/asr.ll
+index 3c89b53..346f294 100644
+--- a/llvm/test/CodeGen/M68k/ShiftRotate/asr.ll
++++ b/llvm/test/CodeGen/M68k/ShiftRotate/asr.ll
+@@ -9,8 +9,8 @@ define zeroext i8 @asrb(i8 zeroext %a, i8 zeroext %b) nounwind {
+ ; CHECK-NEXT:    move.b (11,%sp), %d0
+ ; CHECK-NEXT:    move.b (7,%sp), %d1
+ ; CHECK-NEXT:    asr.b %d0, %d1
+-; CHECK-NEXT:    move.l %d1, %d0
+-; CHECK-NEXT:    and.l #255, %d0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    move.b %d1, %d0
+ ; CHECK-NEXT:    rts
+   %1 = ashr i8 %a, %b
+   ret i8 %1
+@@ -22,8 +22,8 @@ define zeroext i16 @asrw(i16 zeroext %a, i16 zeroext %b) nounwind {
+ ; CHECK-NEXT:    move.w (10,%sp), %d0
+ ; CHECK-NEXT:    move.w (6,%sp), %d1
+ ; CHECK-NEXT:    asr.w %d0, %d1
+-; CHECK-NEXT:    move.l %d1, %d0
+-; CHECK-NEXT:    and.l #65535, %d0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    move.w %d1, %d0
+ ; CHECK-NEXT:    rts
+   %1 = ashr i16 %a, %b
+   ret i16 %1
+diff --git a/llvm/test/CodeGen/M68k/ShiftRotate/lsl.ll b/llvm/test/CodeGen/M68k/ShiftRotate/lsl.ll
+index c4fae6a..8d1849d 100644
+--- a/llvm/test/CodeGen/M68k/ShiftRotate/lsl.ll
++++ b/llvm/test/CodeGen/M68k/ShiftRotate/lsl.ll
+@@ -9,8 +9,8 @@ define zeroext i8 @lslb(i8 zeroext %a, i8 zeroext %b) nounwind {
+ ; CHECK-NEXT:    move.b (11,%sp), %d0
+ ; CHECK-NEXT:    move.b (7,%sp), %d1
+ ; CHECK-NEXT:    lsl.b %d0, %d1
+-; CHECK-NEXT:    move.l %d1, %d0
+-; CHECK-NEXT:    and.l #255, %d0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    move.b %d1, %d0
+ ; CHECK-NEXT:    rts
+   %1 = shl i8 %a, %b
+   ret i8 %1
+@@ -22,8 +22,8 @@ define zeroext i16 @lslw(i16 zeroext %a, i16 zeroext %b) nounwind {
+ ; CHECK-NEXT:    move.w (10,%sp), %d0
+ ; CHECK-NEXT:    move.w (6,%sp), %d1
+ ; CHECK-NEXT:    lsl.w %d0, %d1
+-; CHECK-NEXT:    move.l %d1, %d0
+-; CHECK-NEXT:    and.l #65535, %d0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    move.w %d1, %d0
+ ; CHECK-NEXT:    rts
+   %1 = shl i16 %a, %b
+   ret i16 %1
+diff --git a/llvm/test/CodeGen/M68k/ShiftRotate/lsr.ll b/llvm/test/CodeGen/M68k/ShiftRotate/lsr.ll
+index bec92a5..4233fda 100644
+--- a/llvm/test/CodeGen/M68k/ShiftRotate/lsr.ll
++++ b/llvm/test/CodeGen/M68k/ShiftRotate/lsr.ll
+@@ -9,8 +9,8 @@ define zeroext i8 @lsrb(i8 zeroext %a, i8 zeroext %b) nounwind {
+ ; CHECK-NEXT:    move.b (11,%sp), %d0
+ ; CHECK-NEXT:    move.b (7,%sp), %d1
+ ; CHECK-NEXT:    lsr.b %d0, %d1
+-; CHECK-NEXT:    move.l %d1, %d0
+-; CHECK-NEXT:    and.l #255, %d0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    move.b %d1, %d0
+ ; CHECK-NEXT:    rts
+   %1 = lshr i8 %a, %b
+   ret i8 %1
+@@ -22,8 +22,8 @@ define zeroext i16 @lsrw(i16 zeroext %a, i16 zeroext %b) nounwind {
+ ; CHECK-NEXT:    move.w (10,%sp), %d0
+ ; CHECK-NEXT:    move.w (6,%sp), %d1
+ ; CHECK-NEXT:    lsr.w %d0, %d1
+-; CHECK-NEXT:    move.l %d1, %d0
+-; CHECK-NEXT:    and.l #65535, %d0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    move.w %d1, %d0
+ ; CHECK-NEXT:    rts
+   %1 = lshr i16 %a, %b
+   ret i16 %1
+diff --git a/llvm/test/CodeGen/M68k/ShiftRotate/rol.ll b/llvm/test/CodeGen/M68k/ShiftRotate/rol.ll
+index bb2c071..abccd62 100644
+--- a/llvm/test/CodeGen/M68k/ShiftRotate/rol.ll
++++ b/llvm/test/CodeGen/M68k/ShiftRotate/rol.ll
+@@ -13,8 +13,8 @@ define zeroext i8 @rolb(i8 zeroext %a, i8 zeroext %b) nounwind {
+ ; CHECK-NEXT:    move.b (11,%sp), %d0
+ ; CHECK-NEXT:    move.b (7,%sp), %d1
+ ; CHECK-NEXT:    rol.b %d0, %d1
+-; CHECK-NEXT:    move.l %d1, %d0
+-; CHECK-NEXT:    and.l #255, %d0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    move.b %d1, %d0
+ ; CHECK-NEXT:    rts
+   %1 = tail call i8 @llvm.fshl.i8(i8 %a, i8 %a, i8 %b)
+   ret i8 %1
+@@ -26,8 +26,8 @@ define zeroext i16 @rolw(i16 zeroext %a, i16 zeroext %b) nounwind {
+ ; CHECK-NEXT:    move.w (10,%sp), %d0
+ ; CHECK-NEXT:    move.w (6,%sp), %d1
+ ; CHECK-NEXT:    rol.w %d0, %d1
+-; CHECK-NEXT:    move.l %d1, %d0
+-; CHECK-NEXT:    and.l #65535, %d0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    move.w %d1, %d0
+ ; CHECK-NEXT:    rts
+   %1 = tail call i16 @llvm.fshl.i16(i16 %a, i16 %a, i16 %b)
+   ret i16 %1
+diff --git a/llvm/test/CodeGen/M68k/ShiftRotate/ror.ll b/llvm/test/CodeGen/M68k/ShiftRotate/ror.ll
+index 7848db4..56947ec 100644
+--- a/llvm/test/CodeGen/M68k/ShiftRotate/ror.ll
++++ b/llvm/test/CodeGen/M68k/ShiftRotate/ror.ll
+@@ -13,8 +13,8 @@ define zeroext i8 @rorb(i8 zeroext %a, i8 zeroext %b) nounwind {
+ ; CHECK-NEXT:    move.b (11,%sp), %d0
+ ; CHECK-NEXT:    move.b (7,%sp), %d1
+ ; CHECK-NEXT:    ror.b %d0, %d1
+-; CHECK-NEXT:    move.l %d1, %d0
+-; CHECK-NEXT:    and.l #255, %d0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    move.b %d1, %d0
+ ; CHECK-NEXT:    rts
+   %1 = tail call i8 @llvm.fshr.i8(i8 %a, i8 %a, i8 %b)
+   ret i8 %1
+@@ -26,8 +26,8 @@ define zeroext i16 @rorw(i16 zeroext %a, i16 zeroext %b) nounwind {
+ ; CHECK-NEXT:    move.w (10,%sp), %d0
+ ; CHECK-NEXT:    move.w (6,%sp), %d1
+ ; CHECK-NEXT:    ror.w %d0, %d1
+-; CHECK-NEXT:    move.l %d1, %d0
+-; CHECK-NEXT:    and.l #65535, %d0
++; CHECK-NEXT:    moveq #0, %d0
++; CHECK-NEXT:    move.w %d1, %d0
+ ; CHECK-NEXT:    rts
+   %1 = tail call i16 @llvm.fshr.i16(i16 %a, i16 %a, i16 %b)
+   ret i16 %1

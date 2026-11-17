@@ -9,6 +9,27 @@ Newest first.
 
 ## Dated log
 
+### 11/17/26 — Cheaper extensions on the 68000
+
+Ranked by clocks in the hero's vertical blank, the todo list's smaller items were small
+(`and.b #1` 1.1%, flag saves 0.2%); the zero extensions beside them, `and.l #65535` and
+`and.l #255`, were 3.5%, 392 of them. Each is 16 cycles, and three things made them:
+- **An any-extension was a zero extension.** `anyext`, whose high bits nothing reads (an
+  argument widened for a call, a value about to be shifted), took the same `and.l` as
+  `zext`. It is a subregister now, no instruction, and an any-extending load the plain
+  load (`MOVAX` pseudos) — `tools/llvm-m68k-patches/0021`.
+- **A zero extension into another register was a `move.l` and an `and.l`**, 20 cycles,
+  where `moveq #0` and the narrow move are 8; from memory the clear goes before the load,
+  12 fewer, **unless the address reads the register** — a `(d8,An,Dn)` whose index is the
+  destination would move (`Data/zero-extend.ll` holds both).
+- **A byte widened to a word used a long AND**; it is `and.w #255`.
+- The extension pseudos now say they set the flags, which every expansion of them did.
+- **Measured**: `and.l #65535` 217 → 38 and `and.l #255` 175 → 10 in the hero, the code
+  1,942 bytes smaller, the vertical blank 47.58 → 47.40 lines a frame (worst 156 → 154),
+  chip writes the same. One LLVM test (`cmp.ll`'s `test15`) now saves a register: an
+  `or.b` whose result must be `%d0` with one value more live. The Genesis tests, LLVM's M68k
+  tests (18 regenerated) and Vega's `--check` pass.
+
 ### 11/17/26 — A sheet sets the window's overflow
 
 The host gave the view's root `App.window_overflow` by writing it into the root's inline style
