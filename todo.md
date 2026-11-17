@@ -805,8 +805,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   (COMPLETED.md 11/16).
 - **[DONE 10/22] `ui.text`: the atlas's pages** — a page a texture, added when a glyph fits
   in none, the least recently drawn emptied past `ATLAS_PAGES` (COMPLETED.md, 10/22).
-- **[OPEN] `ui.layout`: a `Picture` ignores opacity.** `DrawOp.Picture` has no colour to
-  fade by; give it one (a tint, as `Glyphs` has) and `paint` can pass the opacity on.
+- **[DONE 11/16] `ui.layout`: an image fades with its opacity** — `DrawOp.Picture` had gained
+  an opacity with pictures (10/26), but `paint` still drew an `image` element at 1.0
+  (COMPLETED.md 11/16).
 - **[OPEN] `./asan.sh` has no HarfBuzz or FreeType** (`asan.Dockerfile`), so the `ui`
   layout, cascade and offset tests skip there; CI installs both.
 - **[DONE 10/21] Phase 3, interaction** — `Node<e>`, `ui.interact` (identity, hit-testing,

@@ -3263,12 +3263,13 @@ let paint_into<e, r> where r: Renderer = (
           color
         ) { ops.push(op) }
       },
+      // An image fades with its element, as a program's picture below does.
       Bitmap(texture, texels, natural) => {
         ops.push(Picture(
           texture,
           texels,
           Rect { x: at.x, y: at.y, w: natural.w, h: natural.h },
-          1.0
+          s.opacity
         ))
       },
       Pixels(source, natural) => {

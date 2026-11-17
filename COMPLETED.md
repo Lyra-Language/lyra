@@ -9,6 +9,19 @@ Newest first.
 
 ## Dated log
 
+### 11/16/26 — An image fades with its opacity
+
+The item said a `Picture` ignored opacity because `DrawOp.Picture` had no colour to fade by.
+It had gained an opacity when pictures the program names came in (10/26), and both renderers
+take it as the quad's alpha. A program's picture (`Pixels`) was drawn at its element's opacity,
+but **an `image` element (`Bitmap`, a texture's texels) was still drawn at 1.0**, so a faded
+image stayed solid inside a faded parent. `paint` now gives it the element's opacity as it gives
+a picture. A painter's own `PaintPicture` keeps the opacity the painter gives it; a painter's
+ops are the program's, not faded by its element's style.
+
+`TestRun_UiImageFadesWithOpacity`: an image painted at opacity 1 and 0.5 gives a `Picture` op
+at 1 and at 0.5.
+
 ### 11/16/26 — `text-align`
 
 A paragraph's lines always started at their box's left. **`Style.text_align`** is CSS's

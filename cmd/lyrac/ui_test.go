@@ -5903,6 +5903,50 @@ let main = () -> u8 => {
 	}
 }
 
+// An image element fades with its opacity, as a program's picture does: painted at opacity
+// 0.5 its Picture op carries 0.5, where it was always drawn whole.
+func TestRun_UiImageFadesWithOpacity(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.backend.{ Renderer, TextureId }
+import ui.draw.{ Size, Rect, Point, Picture }
+import ui.text.{ fonts_new, glyph_atlas }
+import ui.style.{ Style }
+import ui.layout.{ Node, image, layout, loose, paint }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, window, background, ops) => {}
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  var atlas = glyph_atlas()
+  var renderer = Blank {}
+  for opacity in [1.0, 0.5] {
+    let node = image::<void>(TextureId(7), Rect { w: 8.0, h: 8.0 }, Size { w: 8.0, h: 8.0 })
+      .with_style(Style { opacity: Some(f32(opacity)) })
+    let laid = layout(node, loose(Size { w: 100.0, h: 100.0 }), fonts)
+    for op in paint(laid, Point {}, 1.0, fonts, atlas, renderer) {
+      if let Picture(_, _, _, faded) = op { println("opacity ${opacity}: picture at ${faded}") }
+    }
+  }
+  0
+}
+`)
+	want := "opacity 1: picture at 1\nopacity 0.5: picture at 0.5\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // CSS's text-overflow: ellipsis (`Style.text_overflow`, `ellipsized`): a paragraph wider than
 // its box is one line, cut by rune to what fits with "…" after it, spaces before the "…"
 // dropped, and "…" alone where nothing more fits; one that fits is itself. Checked as what a
