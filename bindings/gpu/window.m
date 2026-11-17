@@ -342,3 +342,23 @@ bool lyra_gpu_set_backdrop_blur(SDL_Window *window, int32_t radius) {
     if (!connection || !blur) return false;
     return blur(connection(), (int32_t)ns.windowNumber, radius < 0 ? 0 : radius) == 0;
 }
+
+// The scroll the system last sent, before SDL turned it into a wheel event: whether its deltas
+// were a trackpad's precise points (NSEvent's hasPreciseScrollingDeltas) or a wheel's lines.
+// SDL hands both over as floats with nothing to tell them apart, a trackpad's scaled by 0.1 —
+// so its fast flicks come in whole numbers, exactly as a wheel's lines do. A local monitor sees
+// each scroll as AppKit dispatches it, during SDL's own pump, so the flag holds for the wheel
+// events that pump makes.
+static bool last_precise = false;
+static id scroll_monitor = nil;
+
+void lyra_gpu_watch_scrolls(void) {
+    if (scroll_monitor) return;
+    scroll_monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskScrollWheel
+                                                          handler:^NSEvent *(NSEvent *event) {
+        last_precise = event.hasPreciseScrollingDeltas;
+        return event;
+    }];
+}
+
+bool lyra_gpu_scroll_precise(void) { return last_precise; }

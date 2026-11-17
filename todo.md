@@ -829,9 +829,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   (COMPLETED.md, 10/21).
 - **[DONE 10/21] Overflow and scrolling** — `overflow_x`/`overflow_y`, overlay scrollbars,
   wheel/drag/keys, a window that scrolls; demo `examples/ui/overflow_view.lui` (COMPLETED.md, 10/21).
-- **[OPEN] Scrolling is immediate.** No smooth scrolling, momentum or rubber-banding; a
-  trackpad's precise deltas are scaled like a wheel's lines. `ui.sdl3` would need SDL's
-  precise wheel values and a per-scroller animation in `Ui`.
+- **[PARTIAL] Scrolling is immediate.** A trackpad now scrolls by its points and keeps the
+  system's momentum on macOS (COMPLETED.md 11/16). Left: a wheel's line glides rather than
+  jumps (a per-scroller animation in `Ui`), and rubber-banding past the ends.
 - **[OPEN] Scrollbars only overlay.** No classic gutter (`scrollbar-gutter`), no
   `scrollbar-width`, no auto-hide after idle; `ScrollTrack`/`ScrollThumb` style colour and radius only.
 - **[OPEN] The window's overflow is inline style**, so it beats any sheet's rule for the root;

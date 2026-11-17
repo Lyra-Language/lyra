@@ -5947,6 +5947,38 @@ let main = () -> u8 => {
 	}
 }
 
+// A wheel event as `ui.sdl3` hears it (`wheel_input`): a trackpad's precise value is the
+// system's points times 0.1 (SDL's scale), so 0.4 is 4 points, and at 2 units a point that
+// scrolls 8 units — a fifth of a SCROLL_LINE of 40 — where it scrolled 0.4 lines, 16 units,
+// four times the fingers. A wheel's 1 is a line; natural scrolling turns both round, and Shift
+// turns a wheel's across.
+func TestRun_UiWheelInput(t *testing.T) {
+	t.Parallel()
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	got := runUiProgram(t, `import ui.sdl3.{ wheel_input }
+import ui.backend.{ InputEvent, Scrolled }
+
+let say = pure (input: InputEvent) -> string => match input {
+  Scrolled(across, down) => "${across} across, ${down} down",
+  _ => "other",
+}
+
+let main = () -> u8 => {
+  println("trackpad: ${say(wheel_input(0.0, -0.4, false, true, false, 2.0))}")
+  println("trackpad, natural: ${say(wheel_input(0.0, -0.4, true, true, false, 2.0))}")
+  println("wheel: ${say(wheel_input(0.0, -1.0, false, false, false, 2.0))}")
+  println("wheel, Shift: ${say(wheel_input(0.0, -1.0, false, false, true, 2.0))}")
+  0
+}
+`)
+	want := "trackpad: 0 across, 0.2 down\ntrackpad, natural: -0 across, -0.2 down\nwheel: 0 across, 1 down\nwheel, Shift: 1 across, 0 down\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // CSS's text-overflow: ellipsis (`Style.text_overflow`, `ellipsized`): a paragraph wider than
 // its box is one line, cut by rune to what fits with "…" after it, spaces before the "…"
 // dropped, and "…" alone where nothing more fits; one that fits is itself. Checked as what a

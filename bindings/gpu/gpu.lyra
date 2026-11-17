@@ -37,6 +37,16 @@ pub let create = (window: Window) -> Maybe<Gpu> => {
 pub let pin_contents = (window: Window) -> void =>
   unsafe { lyra_gpu_pin_contents(window) }
 
+/// Watch the system's scrolls, from now on, for whether each was a trackpad's precise points or
+/// a wheel's lines ([scroll_precise]) — which SDL's wheel event does not say. Once is enough;
+/// nothing off macOS.
+pub let watch_scrolls = () -> void => unsafe { lyra_gpu_watch_scrolls() }
+
+/// Whether the scroll the system last sent had a trackpad's precise deltas — SDL's wheel values
+/// then the system's points times 0.1 — rather than a wheel's whole lines. False off macOS, or
+/// before [watch_scrolls].
+pub let scroll_precise = () -> bool => unsafe { lyra_gpu_scroll_precise() }
+
 /// Whether `window` has Metal layers and every one is pinned ([pin_contents]): for a test.
 pub let pinned_state = (window: Window) -> bool =>
   unsafe { lyra_gpu_pinned_state(window) }
@@ -176,6 +186,8 @@ pub let read = (g: Gpu, cap: i64) -> Maybe<(i64, i64, []u32)> => {
 
 unsafe extern lyra_gpu_create: (window: Window) -> Gpu
 unsafe extern lyra_gpu_pin_contents: (window: Window) -> void
+unsafe extern lyra_gpu_watch_scrolls: () -> void
+unsafe extern lyra_gpu_scroll_precise: () -> bool
 unsafe extern lyra_gpu_pinned_state: (window: Window) -> bool
 unsafe extern lyra_gpu_set_see_through: (window: Window, on: bool) -> bool
 unsafe extern lyra_gpu_set_backdrop_blur: (window: Window, radius: i32) -> bool

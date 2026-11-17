@@ -1,0 +1,42 @@
+module main
+// Scrolling with a trackpad and with a mouse wheel: a column of numbered rows in the window's
+// own scroller. A trackpad moves the content as far as the fingers go and a flick carries on
+// after they lift, as the system's scroll views do; a wheel moves it a line (40 units) a click.
+//
+//     lyrac run examples/ui/scrolling.lyra
+import ui.gpu
+import ui.app.{ App, Command, Subscription, run }
+import ui.draw.{ Color }
+import ui.text.{ fonts_new }
+import ui.style.{ Style, insets_xy }
+import ui.layout.{ Node, column, text }
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() {
+    println("no font: none of ui.text's SYSTEM_FONTS is here")
+    return 1
+  }
+  let app = App {
+    view: pure (_: i64) -> Node<void> => column::<void>([i in 1..<=300 | text::<void>(
+      "Row ${i}"
+    ).with_style(Style { padding: Some(insets_xy(16.0, 4.0)) })]),
+    update: pure (s: i64, _: void) -> (i64, []Command<void>) => (s, []),
+    subscriptions: (_: i64) -> []Subscription<void> => [],
+    background: Color { r: 0xF4, g: 0xF4, b: 0xF6 },
+  }
+  let window = match gpu.open("Scrolling", 360.0, 480.0) {
+    Ok(w) => w,
+    Err(why) => {
+      println(why)
+      fonts.close()
+      return 2
+    },
+  }
+  var platform = window.platform
+  var renderer = window.renderer
+  let _ = run(app, 0, platform, renderer, fonts)
+  gpu.close(platform, renderer)
+  fonts.close()
+  0
+}

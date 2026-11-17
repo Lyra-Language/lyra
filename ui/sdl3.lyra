@@ -40,6 +40,7 @@ import bindings.sdl3.{
   ThemeDark,
   last_error,
   platform,
+  set_hint,
   INIT_VIDEO,
   Window,
   create_window,
@@ -274,7 +275,14 @@ import ui.backend.{
   AxDecrement,
 }
 import bindings.accesskit
-import bindings.gpu.{ pin_contents, set_see_through, set_backdrop_blur }
+import bindings.gpu.{
+  pin_contents,
+  set_see_through,
+  set_backdrop_blur,
+  watch_scrolls,
+  scroll_precise
+}
+import ui.interact.{ SCROLL_LINE }
 import bindings.accesskit.{ AccessRequestRaw }
 import std.collections.{ HashMap }
 import ui.draw.{
@@ -339,9 +347,14 @@ pub let first_window = (
   height: f32,
   see_through: bool = false
 ) -> Result<Window, string> => {
+  // A trackpad's flick goes on after the fingers lift, as the system's own scroll views do —
+  // SDL leaves the momentum out on macOS unless asked, before it starts.
+  let _ = set_hint("SDL_MAC_SCROLL_MOMENTUM", "1")
   if !init(INIT_VIDEO) {
     return Err("SDL could not start: ${last_error()}")
   }
+  // Each scroll told apart, a trackpad's points from a wheel's lines ([wheel_input]).
+  watch_scrolls()
   let transparent = if see_through && !apple() { WINDOW_TRANSPARENT } else { 0 }
   let Some(window) = sized_window(title, width, height, transparent) else {
     let why = last_error()
@@ -897,6 +910,33 @@ pub let pixels_per_unit = (window: Window) -> f32 =>
 const MIN_INTERFACE_SCALE: f32 = 0.5
 const MAX_INTERFACE_SCALE: f32 = 3.0
 
+/// SDL's wheel values `x` and `y` as the interface's scroll, in lines of [SCROLL_LINE] units.
+/// The content moves as the system's scroll views move theirs: with natural scrolling on
+/// (`flipped`), the way the fingers go. A trackpad's (`precise`) are the system's points times
+/// 0.1 — SDL's scale — so they are taken back to points, to units (`per_point`), and to lines,
+/// and the content moves as far as the fingers did; a wheel's are lines already, and Shift
+/// turns a wheel's turn across, as every platform's does.
+pub let wheel_input = pure (
+  x: f32,
+  y: f32,
+  flipped: bool,
+  precise: bool,
+  shift: bool,
+  per_point: f32
+) -> InputEvent => {
+  let way: f32 = if flipped { -1.0 } else { 1.0 }
+  if precise {
+    let lines = PRECISE_POINTS * per_point / SCROLL_LINE
+    return Scrolled(x * way * lines, -y * way * lines)
+  }
+  if x.abs() < 0.0001 && shift {
+    Scrolled(-y * way, 0.0)
+  } else { Scrolled(x * way, -y * way) }
+}
+
+/// The points a trackpad's precise wheel value of 1 is: SDL scales the system's by 0.1.
+const PRECISE_POINTS: f32 = 10.0
+
 /// An SDL event as the interface sees it, positions in logical units, a key's modifiers the
 /// ones `held` as it was made — or `None` for one it has no use for.
 let translate = (event: Event, held: u16, per_point: f32) -> Maybe<InputEvent> =>
@@ -921,13 +961,14 @@ let translate = (event: Event, held: u16, per_point: f32) -> Maybe<InputEvent> =
       )),
     // The content moves as the system's scroll views move theirs: with natural scrolling on,
     // the way the fingers go. Shift turns a wheel's turn across, as every platform's do.
-    SdlMouseWheel(x, y, flipped) => {
-      let way: f32 = if flipped { -1.0 } else { 1.0 }
-      Some(if x.abs() < 0.0001 && modifiers() & MOD_SHIFT != 0 { Scrolled(
-        -y * way,
-        0.0
-      ) } else { Scrolled(x * way, -y * way) })
-    },
+    SdlMouseWheel(x, y, flipped) => Some(wheel_input(
+      x,
+      y,
+      flipped,
+      scroll_precise(),
+      modifiers() & MOD_SHIFT != 0,
+      per_point
+    )),
     SdlKeyDown(code) => Some(KeyPressed(key(code), modifiers_of(held))),
     SdlKeyUp(code) => Some(KeyReleased(key(code), modifiers_of(held))),
     SdlTextInput(text) => Some(TextTyped(text)),

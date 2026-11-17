@@ -92,7 +92,12 @@ layer — implements the two traits; the display list is the whole contract.
   layout, so a window grown past the end pulls back; `clip` and `hidden` take no input but a
   program's own offset, `hidden` scrolls by focus. **The wheel goes to the innermost scroller
   under the pointer that can still move on that axis, then bubbles** — out to the window — and
-  Shift+wheel is across (`ui.sdl3`). A thumb drags, a track click pages, and the arrows, Page
+  Shift+wheel is across (`ui.sdl3`). **A trackpad scrolls as far as the fingers go**: SDL's
+  wheel values are the system's points times 0.1 for a trackpad and whole lines for a wheel,
+  with nothing to tell them apart, so `bindings.gpu`'s `watch_scrolls` notes each macOS scroll's
+  `hasPreciseScrollingDeltas` and `wheel_input` takes a trackpad's back to points and units, a
+  wheel's as lines of `SCROLL_LINE`; and `SDL_MAC_SCROLL_MOMENTUM` is on, so a flick carries on
+  after the fingers lift. Elsewhere every value is lines, as before. A thumb drags, a track click pages, and the arrows, Page
   Up/Down, Home and End scroll the scroller under the pointer or around the focus (not inside a
   slider or a field); Tab scrolls what it focuses into view in each scroller around it.
   **Scrollbars overlay the content**, 8 thick and 2 in from the edge, a thumb at least 20 long,
@@ -561,6 +566,8 @@ layer — implements the two traits; the display list is the whole contract.
 
 ## Examples and tests
 
+- `examples/ui/scrolling.lyra` — a column of rows in the window's scroller, to scroll with a
+  trackpad and a wheel.
 - `examples/ui/shapes.lyra` — every op, in a window; `--frames 1 --png FILE` draws one frame
   to a PNG instead (headless with `SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software`).
 - `examples/ui/settings.lyra` — phase 2's gate, a static settings screen: text, rows and

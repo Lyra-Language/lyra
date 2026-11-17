@@ -9,6 +9,34 @@ Newest first.
 
 ## Dated log
 
+### 11/16/26 — A trackpad scrolls as far as the fingers go
+
+A `ui` window scrolled about four times as far as a trackpad's fingers moved, and stopped dead
+when they lifted. SDL's Cocoa backend (`Cocoa_HandleMouseWheel`, read in SDL 3.4's source)
+reports a trackpad's precise deltas as the system's points times 0.1, and a wheel's as whole
+lines rounded away from zero. `Ui` multiplied every value by `SCROLL_LINE`, 40 units, so a
+trackpad's 4 points became 16 units. And `SDL_MAC_SCROLL_MOMENTUM` is off by default, so the
+system's momentum never arrived.
+
+**SDL's event does not say which kind a value was**, and a trackpad's fast flicks come in whole
+multiples of 10 points, which look exactly like a wheel's lines, so guessing from the number
+would jump four times over just when scrolling fast. **`bindings.gpu`'s `window.m` now watches the
+system's scrolls**: an `NSEvent` local monitor (`watch_scrolls`, installed as `ui.sdl3` opens its
+first window) notes whether each scroll had `hasPreciseScrollingDeltas`, as AppKit dispatches it
+during SDL's own pump, and `scroll_precise` answers it. `wheel_input`, now a pure function of
+its own, takes a trackpad's value back to points (times 10), to logical units, and to lines of
+`SCROLL_LINE`. A wheel's stays lines, with Shift turning a wheel across as before. The momentum
+hint is set before SDL starts. Off macOS the stub answers no, and every value is lines as it
+was.
+
+`TestRun_UiWheelInput` checks the arithmetic: a trackpad's 0.4 at 2 units a point is 0.2 lines
+(8 units, 4 points), where it was 0.4 lines; a wheel's 1 is a line; natural scrolling turns both
+round. How it feels was checked by hand, with a trackpad and a mouse wheel, in
+`examples/ui/scrolling.lyra`, a column of 300 rows, and it felt right.
+
+A wheel's line still jumps rather than glides, and nothing rubber-bands past the ends; the todo
+item stays open for those.
+
 ### 11/16/26 — `./asan.sh` runs the `ui` tests
 
 The Linux container `asan.sh` runs the suite in had no HarfBuzz or FreeType, so every `ui`
