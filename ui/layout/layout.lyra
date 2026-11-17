@@ -96,6 +96,10 @@ import ui.text.{
 }
 import ui.style.{
   Style,
+  ScrollbarWidth,
+  ScrollbarThin,
+  ScrollbarNone,
+  GutterStable,
   TextEllipsis,
   TextAlign,
   TextLeft,
@@ -1116,6 +1120,10 @@ pub struct Interaction {
   /// says none, by the picker's (`ui/layout/swatch.lyra`).
   drafts: HashMap<string, string>,
   hues: HashMap<string, f32>,
+  /// How much of each auto-hiding scroller's bars shows, by its identity (`Style.scrollbar_autohide`):
+  /// 1 while it scrolls and a little after, fading to 0; one not in it shows none. `ui.interact`
+  /// sets it before each layout.
+  bars: HashMap<string, f32>,
   /// The tab being docked, and where it would land ([dock]): `dock` its dock's identity, `""`
   /// while none is.
   dock_drop: DockDrop = DockDrop {},
@@ -1158,6 +1166,7 @@ pub let interaction_new = pure () -> Interaction =>
     shown: HashMap.new(),
     drafts: HashMap.new(),
     hues: HashMap.new(),
+    bars: HashMap.new(),
   }
 
 // ── The laid-out tree ────────────────────────────────────────────────────────
@@ -1568,6 +1577,11 @@ let state_under = pure (ui: ref Interaction, id: string) -> string => {
       if inside(key) { out = "${out}|hue ${key}:${hue}" }
     }
   }
+  if ui.bars.len() > 0 {
+    for (key, shown) in ui.bars.entries() {
+      if inside(key) { out = "${out}|bars ${key}:${shown}" }
+    }
+  }
   for (key, w) in ui.widgets.entries() {
     if inside(key) {
       out = "${out}|${key}:${w.scroll ?? -1.0}:${w.scroll_x ?? -1.0}:${w.following}:${w.caret}:${w.anchor}:${w.field_scroll}:${w.pull}:${w.pull_x}"
@@ -1745,16 +1759,22 @@ let lay_fresh<e> = (
   let own = styled.own
   let style = styled.style
   let within = styled.within
-  let space = styled.space
-  // The sizes the element asks for, within what its parent allows.
-  let c = sized_by(given, style)
-  let port_c = c.deflate(space)
-  let ctx = Ctx { cascade: within, ui: ui, id: id, gap: style.gap }
   // An axis whose overflow is not visible lays its content out open — down, as tall as it
   // wants; across, at the port's width unless its narrowest is wider — and shows it through
   // the port. A Scroll element is overflow auto on its axis.
   let (ox, oy) = overflows(node.kind, style)
   let scrolls = ox != OverflowVisible || oy != OverflowVisible
+  // A stable gutter keeps the vertical bar's room down the right, beside the content.
+  let gutter = if style.scrollbar_gutter == GutterStable && oy != OverflowVisible &&
+    oy != OverflowClip {
+    let t = bar_thickness(style.scrollbar_width)
+    if t > 0.0 { t + 2.0 * BAR_MARGIN } else { 0.0 }
+  } else { 0.0 }
+  let space = Insets { styled.space | right: styled.space.right + gutter }
+  // The sizes the element asks for, within what its parent allows.
+  let c = sized_by(given, style)
+  let port_c = c.deflate(space)
+  let ctx = Ctx { cascade: within, ui: ui, id: id, gap: style.gap }
   var inner = port_c
   var narrowest: f32 = 0.0
   if scrolls {
@@ -1934,6 +1954,10 @@ let lay_fresh<e> = (
       ),
       narrowest: narrowest,
       marks: marks_under(ui, id),
+      thickness: bar_thickness(style.scrollbar_width),
+      // An auto-hiding scroller's bars as `ui.interact` says they show; others always.
+      bars_shown: if style.scrollbar_autohide { ui.bars.get(id) ?? 0.0 } else { 1.0 },
+      autohide: style.scrollbar_autohide,
     })
   }
   let size = c.constrain(Size {
@@ -2174,6 +2198,19 @@ pub struct Scroller {
   /// measured under — kept so a resize, which cannot change it, need not measure it again.
   narrowest: f32 = 0.0,
   marks: string = "",
+  /// How thick its bars are (`Style.scrollbar_width`, [bar_thickness]; 0 for none), and how much
+  /// of them shows — 1, or for an auto-hiding scroller as it fades (`Interaction.bars`).
+  thickness: f32 = BAR_THICKNESS,
+  bars_shown: f32 = 1.0,
+  /// Whether its bars show only while it scrolls (`Style.scrollbar_autohide`).
+  autohide: bool = false,
+}
+
+/// How thick a scroller's bars are for `width`: [BAR_THICKNESS], half of it, or none.
+pub let bar_thickness = pure (width: ScrollbarWidth) -> f32 => match width {
+  ScrollbarThin => BAR_THICKNESS / 2.0,
+  ScrollbarNone => 0.0,
+  _ => BAR_THICKNESS,
 }
 
 /// One scrollbar of an element: its axis, its track and its thumb, from the element's
@@ -2204,7 +2241,9 @@ impl Scroller {
     let show_x = self.x == OverflowScroll || (self.x == OverflowAuto && spare.w > 0.5)
     let show_y = self.y == OverflowScroll || (self.y == OverflowAuto && spare.h > 0.5)
     var out: []Bar = []
-    let t = BAR_THICKNESS
+    // None drawn, and none to press: no bars, or an auto-hiding scroller's hidden.
+    if self.thickness <= 0.0 || self.bars_shown <= 0.0 { return out }
+    let t = self.thickness
     let m = BAR_MARGIN
     if show_y {
       let track = Rect {
@@ -3330,18 +3369,20 @@ let paint_into<e, r> where r: Renderer = (
   if let Some(scroller) = laid.scroller {
     for bar in scroller.bars(laid.size) {
       let thumb = if bar.axis == Vertical { scroller.thumb_y } else { scroller.thumb_x }
+      // Faded as an auto-hiding scroller's bars fade.
+      let shown = s.opacity * scroller.bars_shown
       if let Some(fill) = scroller.track.background {
         ops.push(Fill(
           moved_rect(bar.track, origin),
           radius(scroller.track.radius),
-          faded(fill, s.opacity)
+          faded(fill, shown)
         ))
       }
       if let Some(fill) = thumb.background {
         ops.push(Fill(
           moved_rect(bar.thumb, origin),
           radius(thumb.radius),
-          faded(fill, s.opacity)
+          faded(fill, shown)
         ))
       }
     }

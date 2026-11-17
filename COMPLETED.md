@@ -9,6 +9,32 @@ Newest first.
 
 ## Dated log
 
+### 11/16/26 — Scrollbars: width, a stable gutter, and auto-hiding
+
+A scroller's bars only overlaid its content, always 8 thick, shown whenever the content was
+larger. Three style properties now shape them.
+
+- **`scrollbar_width`**, CSS's: `ScrollbarAuto` (8), `ScrollbarThin` (4) or `ScrollbarNone`.
+  With none there are no bars to draw or press, and the content still scrolls by the wheel and
+  the keys. `Scroller.thickness` carries it (`bar_thickness`).
+- **`scrollbar_gutter: GutterStable`**, CSS's: the vertical bar's room (its thickness and both
+  margins) is added to the element's right inset before its port is measured. The content is
+  laid out that much narrower and the bar sits beside it, so the bar never covers it and the
+  content does not move as the bar comes and goes. Laying `overflows` out before the inset was
+  needed for that.
+- **`scrollbar_autohide: true`**, with no CSS property; lui calls it `scrollbar-autohide`. A
+  scroller's bars show only while it scrolls, or while its bar is held or under the pointer,
+  then fade. `Ui.bar_seen` keeps when each auto-hiding scroller last scrolled: `scroll_by` and a
+  stretch past an end mark it, and a held or hovered thumb keeps it fresh. Before each layout
+  `show_bars` turns that into how much of its bars shows: all of them for 800 ms, then fading over
+  250 ms, then forgotten. This goes into `Interaction.bars`, which is in the layout cache's key,
+  and from there into `Scroller.bars_shown`. Paint multiplies the bars' fills by it, `bars` gives
+  none to press while it is 0, and `animating` holds while any are shown or fading.
+
+`TestRun_UiScrollbarWidthGutterAndAutohide`: a bar 8, 4 and none thick with the port 200 wide,
+the port 188 wide with a stable gutter, and an auto-hiding window's bars hidden, shown when it
+scrolls, fading 900 ms later and hidden after that.
+
 ### 11/16/26 — A trackpad rubber-bands past an end
 
 Scrolled past an end, a `ui` scroller stopped flat. A Mac's own scroll views stretch past it

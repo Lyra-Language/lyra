@@ -832,8 +832,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[PARTIAL] Scrolling is immediate.** A trackpad scrolls by its points, keeps the system's
   momentum on macOS and rubber-bands past an end (COMPLETED.md 11/16). Left: a wheel's line
   glides rather than jumps (a per-scroller animation in `Ui`).
-- **[OPEN] Scrollbars only overlay.** No classic gutter (`scrollbar-gutter`), no
-  `scrollbar-width`, no auto-hide after idle; `ScrollTrack`/`ScrollThumb` style colour and radius only.
+- **[DONE 11/16] Scrollbars: width, a stable gutter and auto-hiding** — `scrollbar_width`,
+  `scrollbar_gutter`, `scrollbar_autohide` (lui's too); the track and thumb still style colour and
+  radius only (COMPLETED.md 11/16).
 - **[OPEN] The window's overflow is inline style**, so it beats any sheet's rule for the root;
   a sheet cannot set the window's overflow. CSS's root-propagation rule would fix it.
 - **[OPEN] The cascade parses selectors per element.** `applied` splits and trims every rule's

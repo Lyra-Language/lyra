@@ -110,7 +110,13 @@ layer — implements the two traits; the display list is the whole contract.
   slider or a field); Tab scrolls what it focuses into view in each scroller around it.
   **Scrollbars overlay the content**, 8 thick and 2 in from the edge, a thumb at least 20 long,
   styled as the elements `ScrollTrack` and `ScrollThumb` (`:hover`, `:active`), their
-  defaults `scrollbar_rules` — a layer beneath the theme, applied only to a scroller's bars; `scroll` shows them always, `auto` when the content is larger. A
+  defaults `scrollbar_rules` — a layer beneath the theme, applied only to a scroller's bars; `scroll` shows them always, `auto` when the content is larger.
+  **`scrollbar_width`** (CSS's; `ScrollbarThin` half as thick, `ScrollbarNone` no bars, the
+  content still scrolling) and **`scrollbar_gutter: GutterStable`** (CSS's: the vertical bar's
+  room kept down the right, beside the content, rather than over it) are a scroller's style;
+  **`scrollbar_autohide: true`** (lui's `scrollbar-autohide`; no CSS property) shows its bars only
+  while it scrolls, or its bar is held or under the pointer, for 800 ms, fading over 250 ms
+  (`Ui.show_bars` into `Interaction.bars`, then `Scroller.bars_shown`). A
   hit-test only finds what is inside every clip around it. **A scroller lends its parent no
   min-content width beyond its padding**, as CSS's, and has no automatic least size in flex.
   **The window scrolls**: the host lays the root out tight to the window and gives it

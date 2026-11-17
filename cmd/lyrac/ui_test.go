@@ -6068,6 +6068,96 @@ let main = () -> u8 => {
 	}
 }
 
+// A scroller's bars: CSS's scrollbar-width (the bar 8 thick, 4 when thin, and none at all, the
+// content still scrolling), scrollbar-gutter (stable keeps the bar's 12 down the right, beside
+// the content, where auto lays it over), and auto-hiding — none before the scroller scrolls,
+// shown while it does, fading after a pause, gone after that.
+func TestRun_UiScrollbarWidthGutterAndAutohide(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, Command, Subscription, Host, host_of }
+import ui.script.{ timed_platform, ScriptPlatform, Played, Waited }
+import ui.backend.{ Renderer, TextureId, Scrolled, PointerMoved }
+import ui.draw.{ Size, Point, Color }
+import ui.text.{ fonts_new, Fonts }
+import ui.style.{ Style, OverflowAuto, ScrollbarWidth, ScrollbarAuto, ScrollbarThin, ScrollbarNone, ScrollbarGutter, GutterAuto, GutterStable }
+import ui.layout.{ Node, Laid, column, sized, layout, loose }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, window, background, ops) => {}
+}
+
+let tall = pure (style: Style) -> Node<void> =>
+  column::<void>([i in 0..<20 | sized::<void>(None, Some(30.0))]).with_style(Style {
+    style |
+    width: Some(200.0),
+    height: Some(100.0),
+    overflow_y: Some(OverflowAuto)
+  })
+
+let bars_of = (node: Node<void>, fonts: mut Fonts) -> string => {
+  let laid = layout(node, loose(Size { w: 400.0, h: 400.0 }), fonts)
+  let Some(sc) = laid.scroller else { return "no scroller" }
+  let bars = sc.bars(laid.size)
+  let thick = if bars.len() > 0 { "${bars[0].thumb.w}" } else { "none" }
+  "bar ${thick}, port ${sc.port.w}"
+}
+
+let app = pure () -> App<i64, void> => App {
+  view: pure (_: i64) -> Node<void> =>
+    column::<void>([i in 0..<40 | sized::<void>(Some(100.0), Some(30.0))]).with_style(Style { scrollbar_autohide: Some(true) }),
+  update: pure (s: i64, _: void) -> (i64, []Command<void>) => (s, []),
+  subscriptions: (_: i64) -> []Subscription<void> => [],
+  background: Color { r: 0, g: 0, b: 0 },
+}
+
+let shown = pure (host: Host<i64, void>) -> string => match host.main_laid().scroller {
+  Some(sc) => if sc.bars_shown >= 1.0 { "shown" } else if sc.bars_shown <= 0.0 { "hidden" } else { "fading" },
+  None => "no scroller",
+}
+
+let play = (host: mut Host<i64, void>, platform: mut ScriptPlatform, renderer: mut Blank, fonts: mut Fonts) -> void => {
+  while platform.next < platform.steps.len() { let _ = host.step(platform, renderer, fonts) }
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  println("auto: ${bars_of(tall(Style {}), fonts)}")
+  println("thin: ${bars_of(tall(Style { scrollbar_width: Some(ScrollbarThin) }), fonts)}")
+  println("none: ${bars_of(tall(Style { scrollbar_width: Some(ScrollbarNone) }), fonts)}")
+  println("stable gutter: ${bars_of(tall(Style { scrollbar_gutter: Some(GutterStable) }), fonts)}")
+  var platform = timed_platform([Waited(1), Played(PointerMoved(Point { x: 50.0, y: 50.0 }))], Size { w: 200.0, h: 300.0 })
+  var renderer = Blank {}
+  var host = host_of(app(), 0, platform)
+  play(host, platform, renderer, fonts)
+  print("autohide: ${shown(host)}")
+  platform.steps = [...platform.steps, Played(Scrolled(0.0, 1.0)), Waited(16)]
+  play(host, platform, renderer, fonts)
+  print(", scrolled ${shown(host)}")
+  platform.steps = [...platform.steps, Waited(900), Waited(16)]
+  play(host, platform, renderer, fonts)
+  print(", after a pause ${shown(host)}")
+  platform.steps = [...platform.steps, Waited(500), Waited(16)]
+  play(host, platform, renderer, fonts)
+  println(", later ${shown(host)}")
+  0
+}
+`)
+	want := "auto: bar 8, port 200\nthin: bar 4, port 200\nnone: bar none, port 200\nstable gutter: bar 8, port 188\n" +
+		"autohide: hidden, scrolled shown, after a pause fading, later hidden\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // CSS's text-overflow: ellipsis (`Style.text_overflow`, `ellipsized`): a paragraph wider than
 // its box is one line, cut by rune to what fits with "…" after it, spaces before the "…"
 // dropped, and "…" alone where nothing more fits; one that fits is itself. Checked as what a

@@ -163,6 +163,12 @@ pub struct Style {
   text_overflow: Maybe<TextOverflow> = None,
   /// Where a paragraph's lines sit across its box — CSS's `text-align`, inherited.
   text_align: Maybe<TextAlign> = None,
+  /// A scroller's bars: how thick (CSS's `scrollbar-width`), whether room is kept for the
+  /// bar down its side (`scrollbar-gutter`), and whether they show only while it scrolls,
+  /// fading after a pause (`scrollbar_autohide`, lui's `scrollbar-autohide`; no CSS property).
+  scrollbar_width: Maybe<ScrollbarWidth> = None,
+  scrollbar_gutter: Maybe<ScrollbarGutter> = None,
+  scrollbar_autohide: Maybe<bool> = None,
   /// The pointer's shape over it — CSS's `cursor`, inherited: an I-beam over a painter's
   /// command line inside a grid that is an arrow. Unset is the framework's choice (an I-beam
   /// over a text field, a hand over a button, else the arrow).
@@ -209,6 +215,15 @@ pub data Overflow = OverflowVisible | OverflowHidden | OverflowClip | OverflowSc
 /// What a paragraph too wide for its box does with what does not fit (CSS's `text-overflow`):
 /// wraps it, cut where its box clips it, or stays one line ending in "…" — a tab's label.
 pub data TextOverflow = TextClip | TextEllipsis
+
+/// How thick a scroller's bars are (CSS's `scrollbar-width`): the usual, half as thick, or none
+/// — the content still scrolls by the wheel and the keys.
+pub data ScrollbarWidth = ScrollbarAuto | ScrollbarThin | ScrollbarNone
+
+/// Whether a scroller keeps room for its bar down its side (CSS's `scrollbar-gutter`): `GutterAuto`
+/// lays the bar over the content; `GutterStable` keeps its width beside it, so the bar never
+/// covers the content and the content does not move as the bar comes and goes.
+pub data ScrollbarGutter = GutterAuto | GutterStable
 
 /// Where each line of a paragraph sits across its box (CSS's `text-align`, inherited): at its
 /// left, its middle or its right. Text runs left to right only, so CSS's `start` is the left.
@@ -343,6 +358,9 @@ impl Style {
     text_overflow: self.text_overflow.or(base.text_overflow),
     cursor: self.cursor.or(base.cursor),
     text_align: self.text_align.or(base.text_align),
+    scrollbar_width: self.scrollbar_width.or(base.scrollbar_width),
+    scrollbar_gutter: self.scrollbar_gutter.or(base.scrollbar_gutter),
+    scrollbar_autohide: self.scrollbar_autohide.or(base.scrollbar_autohide),
     scroll_follow: self.scroll_follow.or(base.scroll_follow),
     transition: self.transition.or(base.transition),
   }
@@ -1043,6 +1061,9 @@ pub struct Computed {
   /// `None` for the framework's choice ([Style.cursor]).
   cursor: Maybe<Cursor> = None,
   text_align: TextAlign = TextLeft,
+  scrollbar_width: ScrollbarWidth = ScrollbarAuto,
+  scrollbar_gutter: ScrollbarGutter = GutterAuto,
+  scrollbar_autohide: bool = false,
   scroll_follow: bool = false,
   transition: []Transition = [],
 }
@@ -1179,6 +1200,9 @@ impl Cascade {
       text_overflow: s.text_overflow ?? TextClip,
       cursor: s.cursor.or(self.inherited.cursor),
       text_align: s.text_align ?? self.inherited.text_align,
+      scrollbar_width: s.scrollbar_width ?? ScrollbarAuto,
+      scrollbar_gutter: s.scrollbar_gutter ?? GutterAuto,
+      scrollbar_autohide: s.scrollbar_autohide ?? false,
       scroll_follow: s.scroll_follow ?? false,
       transition: s.transition ?? [],
     }

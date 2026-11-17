@@ -200,6 +200,10 @@ pub struct Ui {
   /// ([Ui.relax]).
   touching: bool = false,
   relaxed_at: i64 = 0,
+  /// When each auto-hiding scroller last scrolled, or had its bar held or under the pointer,
+  /// by its identity: its bars show from then for [BARS_SHOW_MS] and fade over [BARS_FADE_MS]
+  /// ([Ui.show_bars]).
+  bar_seen: HashMap<string, i64>,
   resized: bool = false,
   /// The element taking input raw that a press on it gave the pointer to, until it is let go;
   /// `""` for none.
@@ -271,8 +275,17 @@ pub struct Found<e> {
 }
 
 /// No focus, nothing hovered or held, no element's state.
-pub let ui_new = pure () -> Ui =>
-  Ui { state: interaction_new(), motions: HashMap.new(), panels: HashMap.new() }
+pub let ui_new = pure () -> Ui => Ui {
+  state: interaction_new(),
+  motions: HashMap.new(),
+  panels: HashMap.new(),
+  bar_seen: HashMap.new(),
+}
+
+/// How long an auto-hiding scroller's bars show after it last scrolled, and how long they then
+/// take to fade.
+const BARS_SHOW_MS: i64 = 800
+const BARS_FADE_MS: i64 = 250
 
 /// How much of a scroll with the fingers off — the system's momentum after a flick — pulls past
 /// an end: a flick into an edge bounces off it rather than piling up there.
@@ -320,8 +333,10 @@ impl Ui {
     fonts: mut Fonts,
     cache: mut LayoutCache<e>
   ) -> Laid<e> => {
-    // A pull past an end eased back towards it, before the frame lays it out.
+    // A pull past an end eased back towards it, and auto-hiding bars shown or faded, before the
+    // frame lays them out.
     self.relax()
+    self.show_bars()
     self.state.shown = self.sizes_shown()
     self.tip_rested()
     var laid = layout_cached(view, c, fonts, self.state, cache)
@@ -467,7 +482,7 @@ impl Ui {
   /// Whether a transition is moving anything at `now` — while one is, the host draws every
   /// frame.
   pub let animating = pure (self: ref) -> bool => {
-    if self.pulled() { return true }
+    if self.pulled() || self.bar_seen.len() > 0 { return true }
     for (
       _,
       motion
@@ -1741,6 +1756,7 @@ impl Ui {
           let Some(sc) = f.laid.scroller else { continue }
           let o = if axis == Horizontal { sc.x } else { sc.y }
           if !user_scrolls(o) { continue }
+          if sc.autohide { self.bar_seen.insert(f.laid.id, self.now) }
           self.set_pull(
             f.laid.id,
             axis,
@@ -1811,6 +1827,28 @@ impl Ui {
     }
   }
 
+  /// How much of each auto-hiding scroller's bars shows this frame (`Interaction.bars`): all of
+  /// them until [BARS_SHOW_MS] after it last scrolled — or its bar was held or under the pointer —
+  /// then less, gone [BARS_FADE_MS] later, when it is forgotten.
+  let show_bars = (self: mut) -> void => {
+    for held in [self.state.hover, self.state.pressed] {
+      if held.contains("#thumb-") && self.bar_seen.contains_key(element_of(held)) {
+        self.bar_seen.insert(element_of(held), self.now)
+      }
+    }
+    var bars = HashMap.new::<string, f32>()
+    for id in self.bar_seen.keys() {
+      let age = self.now - (self.bar_seen.get(id) ?? self.now)
+      if age >= BARS_SHOW_MS + BARS_FADE_MS {
+        let _ = self.bar_seen.remove(id)
+        continue
+      }
+      let fading = f32((age - BARS_SHOW_MS).max(0)) / f32(BARS_FADE_MS)
+      bars.insert(id, 1.0 - fading)
+    }
+    self.state.bars = bars
+  }
+
   /// Whether anything is pulled past an end — the host draws every frame until it is back.
   let pulled = pure (self: ref) -> bool => {
     for (_, w) in self.state.widgets.entries() {
@@ -1832,6 +1870,7 @@ impl Ui {
     let now = if axis == Horizontal { sc.offset.x } else { sc.offset.y }
     let next = (now + by).clamp(0.0, if axis == Horizontal { spare.w } else { spare.h })
     if (next - now).abs() < 0.001 { return false }
+    if sc.autohide { self.bar_seen.insert(id, self.now) }
     let state = self.widget(id)
     self.state.widgets.insert(id, if axis == Horizontal {
       WidgetState { state | scroll_x: Some(next) }
