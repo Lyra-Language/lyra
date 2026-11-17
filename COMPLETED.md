@@ -9,6 +9,22 @@ Newest first.
 
 ## Dated log
 
+### 11/16/26 — `./asan.sh` runs the `ui` tests
+
+The Linux container `asan.sh` runs the suite in had no HarfBuzz or FreeType, so every `ui`
+layout, cascade and offset test skipped there (`skipWithoutText` asks pkg-config), while CI ran
+them on Ubuntu. `asan.Dockerfile` now installs `libharfbuzz-dev` and `libfreetype-dev`, as CI
+does, and also `fonts-dejavu-core`. That last one is easy to miss: with the libraries but no
+font, `add_system_font` finds nothing and those tests stop at "no font" instead of skipping, so
+the libraries alone would have turned a quiet skip into a failure. DejaVu Sans is the first of
+`ui.text`'s `SYSTEM_FONTS` on Linux. `asan.sh` reuses an image it already has, so it gains a
+preflight, beside the tree-sitter one, that fails an image built without them, with
+`./asan.sh --rebuild` as the way out.
+
+Rebuilt and run: `TestRun_UiLayout`, `TestRun_UiCascade`, `TestFreetypeOffsets`,
+`TestRun_UiTextAlign` and `TestRun_UiTextEllipsis` ran and passed in the container where they
+had skipped. The image is Debian bookworm, with older HarfBuzz and FreeType than CI's Ubuntu.
+
 ### 11/16/26 — An image fades with its opacity
 
 The item said a `Picture` ignored opacity because `DrawOp.Picture` had no colour to fade by.

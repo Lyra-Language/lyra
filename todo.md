@@ -808,8 +808,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/16] `ui.layout`: an image fades with its opacity** — `DrawOp.Picture` had gained
   an opacity with pictures (10/26), but `paint` still drew an `image` element at 1.0
   (COMPLETED.md 11/16).
-- **[OPEN] `./asan.sh` has no HarfBuzz or FreeType** (`asan.Dockerfile`), so the `ui`
-  layout, cascade and offset tests skip there; CI installs both.
+- **[DONE 11/16] `./asan.sh` has HarfBuzz, FreeType and a font** (`asan.Dockerfile`), so the
+  `ui` tests run there as on CI; a preflight fails an image built without them (COMPLETED.md).
 - **[DONE 10/21] Phase 3, interaction** — `Node<e>`, `ui.interact` (identity, hit-testing,
   focus, the keyboard, a drawn text field), `ui.app`'s loop, `ui.script`; gate
   `examples/ui/form.lyra` (COMPLETED.md, 10/21).
