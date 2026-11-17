@@ -329,7 +329,7 @@ pub let open = (
   let Some(renderer) = renderer_for(window) else {
     let why = last_error()
     destroy_window(window)
-    quit()
+    quit_sdl()
     return Err("SDL could not make a renderer: ${why}")
   }
   var system = platform_for(window)
@@ -354,12 +354,14 @@ pub let first_window = (
   if !init(INIT_VIDEO) {
     return Err("SDL could not start: ${last_error()}")
   }
+  // A SIGTERM or an interrupt wakes an idle window, whose wait SDL's own handler cannot end.
+  let _ = wake.on_quit_signals()
   // Each scroll told apart, a trackpad's points from a wheel's lines ([wheel_input]).
   watch_scrolls()
   let transparent = if see_through && !apple() { WINDOW_TRANSPARENT } else { 0 }
   let Some(window) = sized_window(title, width, height, transparent) else {
     let why = last_error()
-    quit()
+    quit_sdl()
     return Err("SDL could not open a window: ${why}")
   }
   Ok(window)
@@ -433,6 +435,13 @@ pub let close_platform = (platform: SdlPlatform) -> void => {
   if platform.listening { accesskit.stop_all() }
   for other in platform.others { destroy_window(other.window) }
   destroy_window(platform.window)
+  quit_sdl()
+}
+
+/// SDL quit, the quit signals' handlers given back to it first (`bindings.wake`), so its quit
+/// takes them away.
+pub let quit_sdl = () -> void => {
+  wake.off_quit_signals()
   quit()
 }
 

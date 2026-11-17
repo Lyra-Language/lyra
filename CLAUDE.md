@@ -801,8 +801,8 @@ of Markdown.
   shared library there (an install that ships one, as Vega's release does SDL3 on macOS),
   `-Wl,-rpath` to it, so the program runs against it. **And
   `build/lib/liblyra-pty.a`**, `bindings.pty`'s (`pty.c`, plain POSIX), **and
-  `build/lib/liblyra-wake.a`**, `bindings.wake`'s (`wake.c`, POSIX threads; every `ui.sdl3`
-  program links it, and `cmd/lyrac`'s harness compiles it when `build/lib` lacks it), **and
+  `build/lib/liblyra-wake.a`**, `bindings.wake`'s (`wake.c`, POSIX threads, and the quit signals' handler
+  waking an idle wait; every `ui.sdl3` program links it, and `cmd/lyrac`'s harness compiles it when `build/lib` lacks it), **and
   `build/lib/liblyra-hittest.a`** and **`build/lib/liblyra-dialog.a`**, `bindings.hittest`'s
   and `bindings.dialog`'s (`hittest.c`, `dialog.c`, likewise linked by every `ui.sdl3` program
   and compiled by the harness). The harness gives `liblyra-menubar.a` its

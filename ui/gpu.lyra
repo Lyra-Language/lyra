@@ -72,6 +72,7 @@ import ui.sdl3.{
   platform_for,
   release_renderer,
   close_platform,
+  quit_sdl,
   pixels_per_unit
 }
 import bindings.gpu
@@ -82,8 +83,7 @@ import bindings.sdl3.{
   window_pixel_density,
   window_from_id,
   last_error,
-  destroy_window,
-  quit
+  destroy_window
 }
 
 /// A window open for an interface: its platform, and whichever renderer this machine has.
@@ -118,7 +118,7 @@ pub let open = (
   let Some(canvas) = renderer_for(window) else {
     let why = last_error()
     destroy_window(window)
-    quit()
+    quit_sdl()
     return Err("SDL could not make a renderer: ${why}")
   }
   if see_through { let _ = system.set_see_through(MAIN_WINDOW, true) }

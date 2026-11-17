@@ -711,7 +711,14 @@ File descriptors that wake an SDL program's event wait, for `ui.app`'s `Readable
 have data, close or fail, and push an SDL event of a type it registered, which ends
 `SDL_WaitEventTimeout` and is otherwise ignored. **It wakes once and is then disarmed** until
 `watch` is called again — each pass of the loop, after reading what was ready — or a descriptor
-left readable would wake the loop without end. SDL's two functions are declared in the C, not
+left readable would wake the loop without end. **A quit signal wakes it too**:
+`on_quit_signals()`, after SDL starts (`ui.sdl3` calls it), puts a handler in front of SDL's for
+SIGINT and SIGTERM. SDL's own only marks a quit for the next pump, and a window waiting natively
+(Cocoa's) pumps nothing until input comes, so `pkill` left an idle window open. The handler runs
+SDL's — as SDL installed it, SA_SIGINFO too, which macOS keeps across `exec` from a parent's
+handler — then writes a byte to a pipe, and a thread reading it pushes the wake; the next pump
+sends SDL's quit. A signal at its default or ignored is left alone. `off_quit_signals()` before
+SDL quits (`ui.sdl3.quit_sdl`) puts SDL's back, so its quit takes them away. SDL's two functions are declared in the C, not
 taken from SDL's headers, so `build.sh` builds `liblyra-wake.a` with nothing but a C compiler,
 and the test harness compiles it itself where `build/lib` has none (CI tests before it builds).
 

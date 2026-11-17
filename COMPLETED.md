@@ -9,6 +9,34 @@ Newest first.
 
 ## Dated log
 
+### 11/17/26 — A quit signal wakes an idle window
+
+`pkill` left an idle `ui` window open. SDL's SIGINT and SIGTERM handler only sets a flag
+(`send_quit_pending`), and the quit is sent the next time events are pumped. A loop asleep in
+`SDL_WaitEventTimeout` with no timeout, under a driver that waits natively (Cocoa's), pumps
+nothing until input comes. SDL's dummy driver hides this: with no wait of its own it polls, so
+the signal is seen within a millisecond. That is why a test of it opens a real window, hidden.
+
+**`bindings.wake.on_quit_signals()`** puts a handler in front of SDL's (`wake.c`). It runs SDL's,
+then writes a byte to a pipe. A thread reading the pipe pushes the wake event, the wait returns,
+and the next pump sends SDL's own quit, so the program hears `QuitRequested` as before.
+`ui.sdl3` calls it once SDL has started (`first_window`, which `ui.gpu` opens through too). It
+calls `off_quit_signals()` before SDL quits (`quit_sdl`), because SDL takes its handlers away
+only if they are still in place, and a program carrying on after it would otherwise have
+ignored SIGTERM. A signal left at its default, or ignored (a background job's SIGINT), is left
+alone. The pipe's write end never blocks, and neither end passes to a program the loop starts
+(Termina's shell).
+
+**A handler from a Go parent's process has SA_SIGINFO set.** macOS keeps a handler's flags
+across `exec` while resetting the handler, and SDL sets only the handler, so under `go test`
+SDL's handler was installed as an SA_SIGINFO one. The first version, which skipped those,
+found nothing to sit in front of. The handler found is now called the way it was installed.
+`_POSIX_C_SOURCE` is defined, since `build.sh`'s `-std=c11` hides `struct sigaction` on glibc
+(checked with clang 15 and gcc in the Debian container).
+
+Test: `TestRun_UiQuitSignalWakesTheWait`, which sends SIGTERM once a hidden window waits and
+skips where SDL cannot open one.
+
 ### 11/17/26 — Scrollbars and a field's parts transition
 
 A scroller's `ScrollTrack` and `ScrollThumb`, and a field's `TextInput::placeholder`,

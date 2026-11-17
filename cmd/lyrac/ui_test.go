@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"image"
 	"image/png"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -9551,6 +9554,99 @@ armed again with data unread, it wakes at once: true
 `
 	if code != 0 || stdout != want {
 		t.Errorf("exited %d\ngot\n%s\nwant\n%s\nstderr: %s", code, stdout, want, stderr)
+	}
+}
+
+// A SIGTERM ends a program asleep in SDL's wait: bindings.wake's handler, in front of SDL's,
+// wakes the wait, and the next pump sends SDL's quit. SDL's handler alone marks the quit for a
+// pump that never comes while a window waits natively (Cocoa's) — `pkill` left idle windows
+// open until 11/17. The window is hidden; SDL's dummy driver polls rather than waits, so the
+// real one is used, and the test skips where it cannot start (no display).
+func TestRun_UiQuitSignalWakesTheWait(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("no SIGTERM")
+	}
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.lyra")
+	if err := os.WriteFile(src, []byte(`import bindings.sdl3.{
+  init,
+  quit,
+  INIT_VIDEO,
+  WINDOW_HIDDEN,
+  create_window,
+  destroy_window,
+  wait_event,
+  Quit as SdlQuit
+}
+import bindings.wake
+
+let main = () -> u8 => {
+  if !init(INIT_VIDEO) {
+    println("SDL could not start")
+    return 2
+  }
+  let Some(window) = create_window("waits", 64, 64, WINDOW_HIDDEN) else {
+    println("SDL could not start")
+    return 2
+  }
+  // Whatever SDL queued as it started, out of the way.
+  while let Some(_) = wait_event(50) {}
+  println("waiting, woken by a signal: ${wake.on_quit_signals()}")
+  while true {
+    if let Some(SdlQuit) = wait_event(-1) {
+      println("quit")
+      destroy_window(window)
+      wake.off_quit_signals()
+      quit()
+      return 0
+    }
+  }
+  0
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "waits")
+	if _, stderr, code := captureRunUnoptimized(t, "build", "-o", bin, src); code != 0 {
+		t.Fatalf("building exited %d\nstderr: %s", code, stderr)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := commandContext(t, ctx, bin)
+	pipe, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	out := bufio.NewReader(pipe)
+	first, _ := out.ReadString('\n')
+	if strings.HasPrefix(first, "SDL could not start") {
+		_ = cmd.Wait()
+		t.Skip("SDL could not open a window here")
+	}
+	if first != "waiting, woken by a signal: true\n" {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		t.Fatalf("got %q before the signal", first)
+	}
+	time.Sleep(300 * time.Millisecond) // into the wait
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	rest, _ := io.ReadAll(out)
+	err = cmd.Wait()
+	if ctx.Err() != nil {
+		t.Fatal("the program slept on through SIGTERM")
+	}
+	if err != nil || string(rest) != "quit\n" {
+		t.Errorf("after SIGTERM: %v, said %q; want \"quit\\n\"", err, rest)
 	}
 }
 

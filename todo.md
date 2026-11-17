@@ -858,9 +858,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/17] Scrollbars and a field's placeholder, caret and selection do not transition**:
   each is moved on under its element's identity, a field's colours made again from its parts;
   a thumb's hover now reaches the layout cache's key. COMPLETED.md 11/17.
-- **[OPEN] An idle `ui` window ignores SIGTERM** until the next event: SDL turns the signal into
-  a quit only when it pumps, and the loop is asleep in `SDL_WaitEventTimeout` with no timeout.
-  `pkill` left demo windows open; a bounded wait (or SDL's quit-on-signal waking it) would fix it.
+- **[DONE 11/17] An idle `ui` window ignores SIGTERM**: `bindings.wake` puts a handler in front
+  of SDL's for SIGINT and SIGTERM that also wakes the wait, so SDL's quit arrives. COMPLETED.md 11/17.
 - **[OPEN] `ui.gpu` on Linux and Windows.** The shaders are MSL compiled by SDL at run time;
   Vulkan needs SPIR-V and D3D12 DXIL, which want a shader toolchain (SDL_shadercross, or glslc)
   pinned and checked at build time. Until then both fall back to SDL's 2D renderer.

@@ -10,6 +10,10 @@ module bindings.wake
 //! end. The event it pushes is one SDL registered for it, which a program ignores — it only
 //! ends the wait.
 //!
+//! **A quit signal wakes it too**: [on_quit_signals] puts a handler in front of SDL's for SIGINT
+//! and SIGTERM, which only marks a quit for the next time events are pumped — a loop asleep in a
+//! native wait (Cocoa's) pumps nothing until input comes, and `pkill` left an idle window open.
+//!
 //! Its C half needs no SDL headers (the program links SDL3 itself) and builds into
 //! `build/lib/liblyra-wake.a` with `build.sh`.
 
@@ -23,6 +27,22 @@ pub let watch = (fds: []i32) -> u32 => {
   var list = fds
   unsafe { lyra_wake_watch(list.data_mut(), i32(list.len())) }
 }
+
+/// Have SIGINT and SIGTERM wake the loop's SDL wait as well as do what SDL's handlers do — mark
+/// a quit, which the next pump sends: call it after SDL starts, and [off_quit_signals] before it
+/// quits. A signal with no handler (whose default ends the program anyway) is left as it is.
+/// Whether the wake is in place for either.
+pub let on_quit_signals = () -> bool => unsafe { lyra_wake_on_quit_signals() }
+
+/// The handlers [on_quit_signals] found put back — SDL's, which its quit takes away only if
+/// they are still in place.
+pub let off_quit_signals = () -> void => unsafe { lyra_wake_off_quit_signals() }
+
+@symbol("lyra_wake_on_quit_signals")
+unsafe extern lyra_wake_on_quit_signals: () -> bool
+
+@symbol("lyra_wake_off_quit_signals")
+unsafe extern lyra_wake_off_quit_signals: () -> void
 
 @symbol("lyra_wake_watch")
 unsafe extern lyra_wake_watch: (fds: ^mut i32, count: i32) -> u32

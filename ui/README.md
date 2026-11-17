@@ -765,7 +765,7 @@ layer — implements the two traits; the display list is the whole contract.
   edge, a declined wheel, the window's focus, `FocusKeyed`, and the input method's window;
   `TestRun_UiReadableAndScrollFollow` a pipe read as it fills and a scroller following, left and
   rejoining its end; `TestRun_UiWakeWatch` bindings.wake's thread waking SDL's wait once a
-  watch; `TestRun_UiFollowExample` the example headless, its forty lines arriving through the
+  watch; `TestRun_UiQuitSignalWakesTheWait` a SIGTERM ending a hidden window's wait; `TestRun_UiFollowExample` the example headless, its forty lines arriving through the
   wake; `TestLui_UiTargetScrollFollow` the markup's `scroll-follow`.
   `TestRun_UiFlex` and `TestRun_UiGrid` hold flex and grid to hand-worked CSS results, child
   rect by child rect; `TestLui_UiTargetFlexAndGrid` the markup's layout properties.
