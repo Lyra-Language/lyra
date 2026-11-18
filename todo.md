@@ -867,10 +867,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   it multiplies into each colour), other `filter` functions, conic gradients, a gradient's
   `to corner` by the box's diagonal (taken as 45°), more than eight stops on the GPU
   (resampled).
-- **[OPEN] Typechecker: a trait method's signature names types in the caller's scope.**
-  Calling `renderer.draw(color, ops)` where `Renderer.draw` takes `ui.draw.Color` failed in a
-  module that had not imported `Color` ("cannot assign ui.draw.Color to Color"); importing it
-  works around it.
+- **[DONE 11/17] Typechecker: a trait method's signature names types in the caller's scope.**
+  Each trait's signatures are now stamped from the trait's own module (`stampTraitSignatures`),
+  as a type's fields are. COMPLETED.md 11/17.
 - **[OPEN] `ui.gpu` prepares a frame in ~2 ms for 8,760 instances** (400 labelled boxes): 80
   floats an instance, pushed one at a time. A packed instance or a typed buffer would cut it;
   only worth it when a screen's frame misses its refresh.

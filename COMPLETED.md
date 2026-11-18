@@ -9,6 +9,31 @@ Newest first.
 
 ## Dated log
 
+### 11/17/26 — A trait's signature names the trait's types
+
+A trait method's signature (`draw: (mut Self, WindowId, Color, []DrawOp) -> void`) is
+collected as written, its names unresolved, and every reader resolved them from its own
+module. Three readers did:
+- an impl's unannotated parameters, typed from the signature, in the impl's module;
+- a call through a bound, in the caller's module;
+- a call on a concrete receiver, in the caller's module.
+
+While a name was declared once in the program, the resolver's last rung, any program-wide
+export, found it from anywhere, and the bug hid. With two modules exporting a `Color`
+(`ui.draw`'s and `bindings.sdl3`'s), a module reaching neither got "cannot assign ui.draw.Color
+to Color", and an impl in such a module got "unknown type". `ui.gpu` had imported `Color` to
+work around it since 10/21.
+
+**The fix is the one a type's fields already had**: before anything is checked, `prepare`
+stamps each name in each trait's method signatures with the key the trait's own module
+resolves it to (`stampTraitSignatures`, through `stampNames`). Later resolution goes from
+that declaration (`declaringSite`), wherever it is read. A type variable keys to itself and
+resolves as before.
+
+Test: `TestTrait_SignatureNamesTheTraitsTypes` (`pkg/driver`), seven modules, none of the
+three readers importing `draw.Color` and `other` exporting a `Color` of its own. It fails
+without the stamping with all three errors.
+
 ### 11/17/26 — A quit signal wakes an idle window
 
 `pkill` left an idle `ui` window open. SDL's SIGINT and SIGTERM handler only sets a flag

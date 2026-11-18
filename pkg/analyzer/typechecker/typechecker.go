@@ -109,6 +109,9 @@ type TypeChecker struct {
 	// resolved identity (stampDeclaredNames). Once each: the walk rewrites the
 	// declaration in place, and a second pass would be work with nothing to do.
 	stampedDecls map[*ast.TypeDeclStmt]bool
+	// stampedTraits are the traits whose method signatures have been stamped
+	// (stampTraitSignatures).
+	stampedTraits map[*ast.TraitDeclStmt]bool
 	// aliasedTypeUses: AliasedTypeUses.
 	aliasedTypeUses map[string]map[string]bool
 	// constructorTypeUses: ConstructorTypeUses.
@@ -165,6 +168,7 @@ func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTabl
 		resolvingTypes:      make(map[string]bool),
 		circularNewtypes:    make(map[string]bool),
 		stampedDecls:        make(map[*ast.TypeDeclStmt]bool),
+		stampedTraits:       make(map[*ast.TraitDeclStmt]bool),
 		aliasedTypeUses:     map[string]map[string]bool{},
 		constructorTypeUses: map[string]map[string]bool{},
 	}
@@ -292,6 +296,9 @@ func (tc *TypeChecker) prepare(program *ast.Program) {
 		// and resolved it from the use site (declaringSite, 09/13).
 		if decl, ok := stmt.(*ast.TypeDeclStmt); ok {
 			tc.stampDeclaredNames(decl)
+		}
+		if trait, ok := stmt.(*ast.TraitDeclStmt); ok {
+			tc.stampTraitSignatures(trait)
 		}
 	}
 	// Before anything dispatches: two impls of one trait for one type make dispatch
@@ -3148,6 +3155,27 @@ func (tc *TypeChecker) stampDeclaredNames(decl *ast.TypeDeclStmt) {
 	}
 	tc.stampedDecls[decl] = true
 	decl.Type = tc.stampNames(decl.Type, decl.GetLocation())
+}
+
+// stampTraitSignatures stamps the names in each of a trait's method signatures as the trait's
+// module resolves them (stampNames). A signature is read wherever the method is implemented
+// or called — an impl's unannotated parameters take their types from it, and so does a call
+// through a bound — and resolved from there, so `draw: (mut Self, Color, …)` named whichever
+// `Color` the reader's module reached: none ("unknown type") in an impl whose module imported
+// none, and with a second module exporting a `Color`, neither one ("cannot assign
+// ui.draw.Color to Color"), the fallback to a program-wide export finding two (11/17).
+func (tc *TypeChecker) stampTraitSignatures(trait *ast.TraitDeclStmt) {
+	if tc.symTable == nil || tc.stampedTraits[trait] {
+		return
+	}
+	tc.stampedTraits[trait] = true
+	for i := range trait.Methods {
+		if sig := trait.Methods[i].Signature; sig != nil {
+			if stamped, ok := tc.stampNames(sig, trait.GetLocation()).(*types.LambdaType); ok {
+				trait.Methods[i].Signature = stamped
+			}
+		}
+	}
 }
 
 // stampNames walks a type and gives every UnresolvedType leaf the key `loc`'s module

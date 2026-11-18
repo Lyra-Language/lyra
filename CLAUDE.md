@@ -84,6 +84,11 @@ Each of these produces something that looks like it works. Other docs cite them 
    - Layout resolves a struct/union's field types from **its declaration's** location:
      `declarationSite` in the typechecker (`hasCLayout`), `resolvingFrom`/`declLocOf` in the
      backend (`resolveForLayout`), not the site being lowered.
+   - **A name written inside a declaration is stamped with the key its own module resolves
+     it to** before anything reads it (`UnresolvedType.Key`, `stampNames`): a type's fields and
+     payloads (`stampDeclaredNames`) and a trait's method signatures (`stampTraitSignatures`),
+     which every impl and call reads from its own module. Unstamped, a trait's `Color` was
+     unknown in an impl's module and ambiguous where two modules export one (11/17).
    - Backend `namespaceCallee` must not test membership with `DeclaringModule` and read
      `l.funcs[name]`.
    - A comment asserting "a top-level name is program-wide unique" is a bug waiting.
