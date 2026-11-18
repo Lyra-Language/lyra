@@ -114,7 +114,10 @@ func TestPatch_PCRelative(t *testing.T) {
 // The cartridge: whole 128 KB banks, the system name TMSS looks for, the title, and a
 // checksum that matches.
 func TestGenesisCartridge_Header(t *testing.T) {
-	rom := GenesisCartridge(linkFixtures(t), "fixture game")
+	rom := GenesisCartridge(linkFixtures(t), "fixture game", 0)
+	if string(rom[0x1B0:0x1B2]) != "  " {
+		t.Errorf("no save RAM asked for, yet the header declares %q", rom[0x1B0:0x1B4])
+	}
 	if len(rom)%0x20000 != 0 {
 		t.Errorf("ROM is %d bytes, want whole 128 KB banks", len(rom))
 	}
@@ -126,6 +129,21 @@ func TestGenesisCartridge_Header(t *testing.T) {
 	}
 	if word32(rom, 0x1A4) != uint32(len(rom)-1) {
 		t.Errorf("ROM end %#x, want %#x", word32(rom, 0x1A4), len(rom)-1)
+	}
+}
+
+// Save RAM is declared as Sheliak and BlastEm read it: "RA", kept on the odd bytes (F8 20),
+// from 200001 to the last odd address its bytes reach.
+func TestGenesisCartridge_DeclaresSaveRAM(t *testing.T) {
+	rom := GenesisCartridge(linkFixtures(t), "fixture game", 8192)
+	if string(rom[0x1B0:0x1B2]) != "RA" || rom[0x1B2] != 0xF8 || rom[0x1B3] != 0x20 {
+		t.Errorf("save RAM's mark: % x", rom[0x1B0:0x1B4])
+	}
+	if word32(rom, 0x1B4) != 0x200001 || word32(rom, 0x1B8) != 0x203FFF {
+		t.Errorf("save RAM from %#x to %#x, want 0x200001 to 0x203fff", word32(rom, 0x1B4), word32(rom, 0x1B8))
+	}
+	if got := binary.BigEndian.Uint16(rom[0x18E:]); got != Checksum(rom) {
+		t.Errorf("checksum %#x, want %#x", got, Checksum(rom))
 	}
 }
 

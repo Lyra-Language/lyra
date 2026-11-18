@@ -9,6 +9,39 @@ Newest first.
 
 ## Dated log
 
+### 11/17/26 — Six-button pads, battery saves and text boxes on the Genesis
+
+What every large Genesis game has and Vega's had not: `std.genesis.pad` read only a pad's
+eight buttons, nothing kept a save, and a game wrote words only as digits from a tile set.
+
+**Six buttons.** A 6-button pad counts TH's rising edges: after two, TH low reads its
+signature (the direction lines low); after three, TH high reads X, Y, Z and Mode. `read`
+now drives four rises every call and takes the extra four where the signature answers, so
+one call reads either pad — a 3-button pad never answers it (its TH-low read has up and down
+in the low bits, low only while both are held). The pad starts its count again only after a
+millisecond's quiet, so a second read in a frame finds the eight alone; a loop waiting on
+Start still works. Sheliak models both pads already; it gained `--hold2` for pad 2.
+
+**Saves.** A cartridge's save RAM is declared by its header — "RA", F8 20 (kept, odd bytes),
+200001 to the last address — or no emulator keeps it, so the size is the build's: `save_ram`
+in `lyra.toml`, refused off the Genesis rather than ignored, written by `rom.GenesisCartridge`.
+`std.genesis.save` writes the mapper's register A130F1 round each access, so a cartridge past
+2 MB (save RAM over the ROM) works as one under it. A save is marked ("LS"), with its length
+and a sum, because fresh save RAM is zeros or whatever it powered up holding, and a store cut
+by the power fails the sum rather than loading half a save. `std.game.save` writes the same
+bytes to a file in SDL's folder for the game (`screen.save_file()`), and none for a game
+playing itself unless `--save PATH` names one — a test never touches a player's save.
+
+**Text boxes.** `std.genesis.text`'s `TextBox` cannot hold its words: a string field in a
+struct made the link ask for `free`, which the Genesis has not got, so `update`, `finish` and
+`advance` take the words each call and the game keeps an index into a `const` table of them.
+A string parameter and a `const [N]string` are free. The box types into the window plane
+(`vdp.window_rows_below` for the bottom), wraps at the word that would pass its edge by
+looking ahead from the letter typed, and stops at its last row. `std.game.text`'s box places
+its letters by the same rule, a pixel a cell in `TestRun_GameSavesAndTalks` equal to the
+Genesis test's cells — and draws its letters before its back, since a sprite added earlier is
+in front (first written the other way round, the box hid its own letters).
+
 ### 11/17/26 — A trait's signature names the trait's types
 
 A trait method's signature (`draw: (mut Self, WindowId, Color, []DrawOp) -> void`) is

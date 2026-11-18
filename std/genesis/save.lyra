@@ -1,0 +1,114 @@
+module std.genesis.save
+//! A game's save: bytes kept by the cartridge's battery-backed save RAM while the console is
+//! off — a score, a level reached, settings.
+//!
+//! ```toml
+//! # lyra.toml: the cartridge carries 8 KB of save RAM
+//! target = "genesis"
+//! save_ram = "8192"
+//! ```
+//!
+//! ```
+//! import std.genesis.save
+//!
+//! var kept: [4]u8 = #[0, 0, 0, 0]
+//! if !save.load(kept) { kept = #[0, 0, 0, 1] }   // nothing saved yet: a new game
+//! …
+//! save.store(kept)
+//! ```
+//!
+//! **The cartridge declares it** — `save_ram` in `lyra.toml`, the bytes it holds, at most
+//! [MOST]: `lyrac` writes it into the header, which is how an emulator or a flash cartridge
+//! knows to keep it. Without it a store goes nowhere and a load finds nothing.
+//!
+//! **Save RAM is a byte on every odd address** from `200001`, as most cartridges wire it (the
+//! header's odd bus), past the ROM's 2 MB; a cartridge larger than that maps it over the ROM
+//! when register `A130F1` says so, which [store] and [load] do around each access, and leave
+//! the ROM mapped after.
+//!
+//! **What is kept says it is a save**: [store] writes [HEADER] bytes before the game's — two
+//! that mark it, its length and a sum of its bytes — so [load] tells a save from save RAM
+//! never written (zeros, or whatever it powered up holding), and from one a game of another
+//! length wrote. A store cut short by the power going off fails the sum: [load] answers
+//! `false` and the game starts afresh, as it would with nothing saved.
+
+/// The most bytes a cartridge's save RAM holds here: 32 KB, on odd addresses to `20FFFF`.
+pub const MOST: i64 = 32768
+
+/// The bytes [store] writes before the game's own.
+pub const HEADER: u16 = 6
+
+/// `bytes` kept as the save, in place of any before.
+pub let store<const N: i64> = (bytes: ref [N]u8) -> void => {
+  var sum: u16 = 0
+  for b in bytes { sum = sum.wrapping_add(u16(b)) }
+  let length = u16(N)
+  unsafe {
+    mapper().write_volatile(1)
+    put(0, MARK_1)
+    put(1, MARK_2)
+    put(2, u8(length >> 8))
+    put(3, u8(length & 0xFF))
+    put(4, u8(sum >> 8))
+    put(5, u8(sum & 0xFF))
+    var at: u16 = HEADER
+    for b in bytes {
+      put(at, b)
+      at = at.wrapping_add(1)
+    }
+    mapper().write_volatile(0)
+  }
+}
+
+/// The save read into `bytes`, answering whether there was one of `N` bytes, whole. With
+/// none, `bytes` is left as it was.
+pub let load<const N: i64> = (bytes: mut [N]u8) -> bool => {
+  unsafe {
+    mapper().write_volatile(1)
+    let found = saved(u16(N))
+    if found {
+      for k in 0..<N { bytes[k] = get(HEADER.wrapping_add(u16(k))) }
+    }
+    mapper().write_volatile(0)
+    found
+  }
+}
+
+/// The save forgotten: [load] finds none after it, until the next [store].
+pub let erase = () -> void => {
+  unsafe {
+    mapper().write_volatile(1)
+    put(0, 0)
+    put(1, 0)
+    mapper().write_volatile(0)
+  }
+}
+
+/// The two bytes marking a save: "LS".
+const MARK_1: u8 = 0x4C
+const MARK_2: u8 = 0x53
+
+/// Whether save RAM holds a whole save of `length` bytes: marked, that long, its sum right.
+let saved = (length: u16) -> bool => {
+  if get(0) != MARK_1 || get(1) != MARK_2 { return false }
+  if ((u16(get(2)) << 8) | u16(get(3))) != length { return false }
+  let want = (u16(get(4)) << 8) | u16(get(5))
+  var sum: u16 = 0
+  var at: u16 = HEADER
+  for _ in 0..<i64(length) {
+    sum = sum.wrapping_add(u16(get(at)))
+    at = at.wrapping_add(1)
+  }
+  sum == want
+}
+
+/// Byte `at` of save RAM, and written.
+let get = (at: u16) -> u8 => unsafe { cell(at).read_volatile() }
+
+let put = (at: u16, value: u8) -> void => unsafe { cell(at).write_volatile(value) }
+
+let cell = pure (at: u16) -> ^mut u8 => unsafe { pointer_at(0x200001 + u32(at) * 2) }
+
+/// The Sega mapper's save RAM register: 1 maps save RAM (writable) over a large ROM, 0 the
+/// ROM back. A cartridge of 2 MB or less has no mapper, and its save RAM is always there.
+let mapper = pure () -> ^mut u8 => unsafe { pointer_at(0xA130F1) }

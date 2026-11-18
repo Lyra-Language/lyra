@@ -1287,6 +1287,10 @@ sets V on every add. What stands between that and a ROM:
 - **[DONE 09/30] A target in `lyrac`**: `lyra.toml`'s `target = "genesis"` is read by
   `lyrac` and the LSP (09/29); `lyrac build` makes a cartridge (09/30: `pkg/rom` links,
   `runtime/genesis` starts it, `pointer_at` and volatile access reach the hardware).
+- **[OPEN] A struct holding a string needs the heap there**: a `string` field makes the link
+  ask for `free` (the field's release), though a literal is static and never freed. So
+  `std.genesis.text`'s `TextBox` takes its words at every call (11/17); a field of literals
+  only would let it keep them.
 - **[OPEN] Sizes are still `i64`** (next item) — the reason a game's `[]T` could not work
   even with an allocator. Fixed arrays and scalars are what a Genesis program has today.
 - **[PARTIAL] A Genesis layer in Lyra**: `std.genesis.vdp`, `.pad` and `.sprites` (09/30)

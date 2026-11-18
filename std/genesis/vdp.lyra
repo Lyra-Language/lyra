@@ -55,6 +55,12 @@ pub const HSCROLL: u16 = 0xFC00
 /// (`write_cell(vdp.WINDOW, x, y, word)`), a row [PLANE_WIDTH] cells wide in 40-cell mode.
 pub let window_rows = (rows: u8) -> void => set_register(18, rows & 0x1F)
 
+/// Show the window plane over the bottom `rows` cell rows of the screen instead — where a
+/// text box (`std.genesis.text`) sits; 0 for none. Its cells are still counted from the
+/// screen's top, so the bottom row is row 27.
+pub let window_rows_below = (rows: u8) -> void =>
+  set_register(18, if rows == 0 { 0 } else { 0x80 | ((28 - rows.min(28)) & 0x1F) })
+
 /// A plane, as [init] sizes them, in cells.
 pub const PLANE_WIDTH: u16 = 64
 pub const PLANE_HEIGHT: u16 = 32

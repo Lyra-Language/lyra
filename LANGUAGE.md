@@ -936,6 +936,11 @@ target = "genesis"
   it runs. `lyrac` puts a copy where the program is — beside the executable, in `lyrac run`'s
   temporary folder, inside an iOS app before it is signed — so a program finds it under its
   own folder (`std.game.screen.load_sprites_file`) however it was built.
+- **`save_ram = "8192"`**, on the Genesis alone, is the bytes of battery-backed save RAM the
+  cartridge carries (1 to 32768): `lyrac build` declares it in the header ("RA" at 1B0, on the
+  odd bytes from 200001), which is how an emulator or a flash cartridge knows to keep it, and
+  `std.genesis.save` keeps a game's save there. On any other target it is refused. A modern
+  game's `std.game.save` keeps the same bytes in a file.
 - **The file is small and strict**: top-level `key = "string"` lines, `#` comments. An unknown
   target or setting, or any other line, is **`lyra-E086`** at the top of the entry file —
   refused, not ignored, since an ignored setting is a program checked for the wrong machine.
@@ -973,8 +978,20 @@ target = "genesis"
     display off), `display_on`/`off`, `wait_vblank`, `rgb`, `set_color`, `load_palette`,
     `set_backdrop`, `load_tiles`, `write_vram`, `enable_vblank_interrupt`/`disable_…`,
     `enable_hblank_interrupt(lines)`/`disable_…`, and `set_register` for the rest.
-  - `std.genesis.pad` — `init`, `read(port)` (the 3-button protocol; a 6-button pad answers
-    it), `held(buttons, pad.LEFT)` and the button bits.
+  - `std.genesis.pad` — `init`, `read(port)` for pad 1 or 2, `held(buttons, pad.LEFT)` and the
+    button bits: the eight every pad has, and **a 6-button pad's X, Y, Z and Mode** — `read`
+    drives TH through the pad's four rises and takes them where it answers the signature, so
+    one call reads either pad. Read each pad once a frame: a second read within a millisecond
+    finds the eight alone.
+  - `std.genesis.save` — `store(bytes)`, `load(into) -> bool`, `erase()`: a game's bytes kept in
+    the cartridge's battery-backed save RAM, which `save_ram` in `lyra.toml` declares (below);
+    marked, with their length and sum, so `load` tells a save from RAM never written.
+  - `std.genesis.text` — a `Font` (a run of glyph tiles in video memory from a character),
+    `write(plane, x, y, font, words)`, and a `TextBox` typing dialogue into the window a letter
+    every `frames` frames, wrapping at words (`open`, `update(words)`, `advance(words)`,
+    `close`). **It is given its words at every call**: a string field needs the heap's `free`,
+    so a Genesis struct cannot hold one. `vdp.window_rows_below(n)` puts the window at the
+    bottom.
   - `std.genesis.sprites` — a list of `Sprite { x, y, width, height, tile, palette, … }` in RAM:
     `clear`, `add`, and `show` in the vertical blank, which writes the VDP's table with the
     links filled in.

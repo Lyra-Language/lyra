@@ -148,6 +148,10 @@ pub const MAX_STEPS: i64 = 5
 /// `--ppm`, `--hold`).
 pub let open = (title: string, width: i64, height: i64) -> bool => {
   if !read_arguments() { return false }
+  // The game's save, in SDL's folder for it — unless it plays itself, when only --save keeps one.
+  if save_path == "" && limit <= 0 {
+    if let Some(folder) = pref_path("Lyra", title) { save_path = folder ++ "save.bin" }
+  }
   // A phone's window is its whole screen, in its real pixels, on its side.
   let platform = sdl3.platform()
   phone = platform == "iOS" || platform == "Android"
@@ -196,6 +200,11 @@ pub let open = (title: string, width: i64, height: i64) -> bool => {
   owed_ns = 0
   true
 }
+
+/// The file the game's save is kept in (`std.game.save`): `save.bin` in SDL's folder for
+/// the game, named by the title [open] was given — or `--save PATH`'s; empty, and no save
+/// kept, for a game playing itself (`--frames`) without one.
+pub let save_file = () -> string => save_path
 
 /// The screen's size in the art's pixels — what a game's world and camera count in: what
 /// [open] was given, over the art scale ([set_art_scale]), the last pixel's part counted —
@@ -553,6 +562,7 @@ var paused = false
 var frame: i64 = 0
 var limit: i64 = 0
 var ppm_path: string = ""
+var save_path: string = ""
 /// The clock: when it was last read, and the time not yet spent on updates.
 var last_ns: i64 = 0
 var owed_ns: i64 = 0
@@ -576,6 +586,8 @@ let read_arguments = () -> bool => {
       limit = n.max(1)
     } else if args[i] == "--ppm" {
       ppm_path = value
+    } else if args[i] == "--save" {
+      save_path = value
     } else if args[i] == "--touch" {
       match pad.buttons_named(value) {
         Ok(buttons) => pad.touch(buttons),

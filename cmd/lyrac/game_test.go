@@ -1174,3 +1174,88 @@ func checkWisps(t *testing.T, frame ppm) {
 		t.Errorf("the field at (150, 100) is %d bright: the night is not dark", bright(150, 100))
 	}
 }
+
+// TestRun_GameSavesAndTalks is the Genesis's save and text box tests on std.game: a font of
+// one-pixel glyphs (the space blue, every other white) types "HELLO THERE FRIEND!" into the
+// same box, which must place its letters as std.genesis.text's does, a pixel a cell; and a
+// save made by one run (`--save PATH`) is found by the next, a pixel at (9, 5) red the first
+// time and green the second.
+func TestRun_GameSavesAndTalks(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.lyra")
+	if err := os.WriteFile(src, []byte(`import std.game.screen
+import std.game.sprites
+import std.game.sprites.{ Sprite }
+import std.game.save
+import std.game.text.{ Font, TextBox }
+
+const WORDS: string = "HELLO THERE FRIEND!"
+
+let main = () -> u8 => {
+  if !screen.open("talk", 10, 6) { return 2 }
+  // Glyphs ' ' to 'Z', a pixel each — the space blue, the rest white — then green and red.
+  var art: [61]u32 = #[0xFFFFFFFF; 61]
+  art[0] = 0xFF0000FF
+  art[59] = 0xFF00FF00
+  art[60] = 0xFFFF0000
+  screen.load_sprites(61, art)
+  let font = Font { glyph_width: 1, glyph_height: 1, columns: 61, count: 59 }
+  var kept: [4]u8 = #[0, 0, 0, 0]
+  var found = save.load(kept) && kept[0] == 7 && kept[3] == 42
+  if !found {
+    kept = #[7, 1, 2, 42]
+    save.store(kept)
+  }
+  var talk = TextBox { x: 0, y: 0, width: 8, height: 5, font: font }
+  talk.open()
+  while screen.running() {
+    for _ in 0..<screen.updates_due() { talk.update(WORDS) }
+    sprites.clear()
+    talk.draw()
+    sprites.add(Sprite { x: 9, y: 5, width: 1, height: 1, sheet_x: if found { 59 } else { 60 }, sheet_y: 0 })
+    screen.show()
+  }
+  screen.close()
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	kept := filepath.Join(dir, "kept.bin")
+	cells := func(frame ppm) string {
+		var b strings.Builder
+		for y := 0; y < 5; y++ {
+			for x := 0; x < 8; x++ {
+				switch frame.at(x, y) {
+				case [3]byte{255, 255, 255}:
+					b.WriteByte('#')
+				case [3]byte{0, 0, 255}:
+					b.WriteByte('.')
+				default:
+					b.WriteByte('?')
+				}
+			}
+			b.WriteByte('\n')
+		}
+		return b.String()
+	}
+	whole := "........\n.#####..\n.#####..\n.######.\n........\n"
+	first := playGame(t, src, "--frames", "100", "--save", kept)
+	if got := cells(first); got != whole {
+		t.Errorf("the box typed out:\n%s\nwant (as the Genesis's):\n%s", got, whole)
+	}
+	if got := first.at(9, 5); got != [3]byte{255, 0, 0} {
+		t.Errorf("the first run found a save: %v", got)
+	}
+	file, err := os.ReadFile(kept)
+	if err != nil || !bytes.Equal(file, []byte{'L', 'S', 0, 4, 0, 52, 7, 1, 2, 42}) {
+		t.Errorf("the save file is % x (%v), want the Genesis's bytes", file, err)
+	}
+	second := playGame(t, src, "--frames", "10", "--save", kept)
+	if got := second.at(9, 5); got != [3]byte{0, 255, 0} {
+		t.Errorf("the second run found no save: %v", got)
+	}
+	if typed := strings.Count(cells(second), "#"); typed == 0 || typed >= 16 {
+		t.Errorf("ten updates in, %d letters are typed:\n%s", typed, cells(second))
+	}
+}

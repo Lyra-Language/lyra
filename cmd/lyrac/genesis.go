@@ -172,7 +172,7 @@ func buildGenesis(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 		out = replaceExt(o.path, ".bin")
 	}
 	title := strings.TrimSuffix(filepath.Base(o.path), filepath.Ext(o.path))
-	if err := os.WriteFile(out, rom.GenesisCartridge(img, title), 0o644); err != nil {
+	if err := os.WriteFile(out, rom.GenesisCartridge(img, title, res.Target.SaveRAM), 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
 		return "", 1
 	}

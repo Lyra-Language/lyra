@@ -9,12 +9,22 @@ module std.genesis.pad
 //! if pad.held(buttons, pad.LEFT) { x -= 1 }
 //! ```
 //!
-//! **The 3-button read**: a pad shows six lines at a time, chosen by the TH line the game
-//! drives — with TH high, up, down, left, right, B and C; with TH low, A and Start (and up
-//! and down again). A line reads 0 while its button is held. A 6-button pad answers the
-//! same way when TH changes once a read, which is what this does.
+//! **A pad shows six lines at a time**, chosen by the TH line the game drives — with TH
+//! high, up, down, left, right, B and C; with TH low, A and Start (and up and down again). A
+//! line reads 0 while its button is held. **A 6-button pad counts TH's rises**: after two,
+//! TH low reads its signature (the four direction lines low), and after three, TH high reads
+//! X, Y, Z and Mode. [read] drives TH through four rises every call and takes X, Y, Z and
+//! Mode where the signature answers, so one call reads either pad; a 3-button pad never gives
+//! the signature, and answers the eight buttons alone.
+//!
+//! **Read each pad once a frame**: the pad starts its count again only once TH has been left
+//! alone for about a millisecond, so a second read straight after the first starts part way
+//! through and finds no signature — its eight buttons are right, its X, Y, Z and Mode none.
+//! A loop waiting on a button (`while !pad.held(pad.read(1), pad.START) {}`) still works,
+//! on those eight.
 
-/// The buttons, as bits of what [read] answers.
+/// The buttons, as bits of what [read] answers — the eight every pad has, then a 6-button
+/// pad's four (`std.game.pad`'s bits too, so a game reads its controls the same on both).
 pub const UP: u16 = 0x0001
 pub const DOWN: u16 = 0x0002
 pub const LEFT: u16 = 0x0004
@@ -23,6 +33,10 @@ pub const B: u16 = 0x0010
 pub const C: u16 = 0x0020
 pub const A: u16 = 0x0040
 pub const START: u16 = 0x0080
+pub const X: u16 = 0x0100
+pub const Y: u16 = 0x0200
+pub const Z: u16 = 0x0400
+pub const MODE: u16 = 0x0800
 
 /// Both ports set up for reading: TH an output the game drives. Call once, first.
 pub let init = () -> void => unsafe {
@@ -32,7 +46,8 @@ pub let init = () -> void => unsafe {
   data_lines(2).write_volatile(0x40)
 }
 
-/// The buttons held on pad `port` (1 or 2), as a set of the bits above.
+/// The buttons held on pad `port` (1 or 2), as a set of the bits above: X, Y, Z and Mode
+/// only from a 6-button pad, read no sooner than a millisecond after the last read.
 pub let read = (port: u8) -> u16 => {
   let p = data_lines(port)
   unsafe {
@@ -40,8 +55,19 @@ pub let read = (port: u8) -> u16 => {
     let high = p.read_volatile() // --CBRLDU
     p.write_volatile(0x00)
     let low = p.read_volatile() // --SA00DU
-    p.write_volatile(0x40)
-    u16((~high) & 0x3F) | (u16((~low) & 0x30) << 2)
+    p.write_volatile(0x40) // rise 1
+    p.write_volatile(0x00)
+    p.write_volatile(0x40) // rise 2
+    p.write_volatile(0x00)
+    let signature = p.read_volatile() // --SA0000 from a 6-button pad
+    p.write_volatile(0x40) // rise 3
+    let extra = p.read_volatile() // --CBMXYZ
+    p.write_volatile(0x00)
+    p.write_volatile(0x40) // rise 4: the count back where it started
+    let buttons = u16((~high) & 0x3F) | (u16((~low) & 0x30) << 2)
+    if (signature & 0x0F) != 0 { return buttons }
+    let e = u16(~extra)
+    buttons | ((e & 0x04) << 6) | ((e & 0x02) << 8) | ((e & 0x01) << 10) | ((e & 0x08) << 8)
   }
 }
 

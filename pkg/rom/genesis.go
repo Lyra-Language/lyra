@@ -23,7 +23,10 @@ var GenesisLayout = Layout{
 // GenesisCartridge is the ROM file for a linked image: the header written at 100 with
 // `title` as the game's name, padded to a whole number of 128 KB banks, and the header's
 // checksum. "SEGA MEGA DRIVE" is the system field TMSS consoles look for, not a name.
-func GenesisCartridge(img *Image, title string) []byte {
+// `saveRAM` bytes of battery-backed save RAM (0 for none) are declared at 1B0 as most
+// cartridges carry it: "RA", F8 20 (kept, on the odd bytes), from 200001 — past the ROM
+// when it is 2 MB or less, else switched in by the Sega mapper (`std.genesis.save`).
+func GenesisCartridge(img *Image, title string, saveRAM int) []byte {
 	size := (len(img.ROM) + 0x1FFFF) / 0x20000 * 0x20000
 	rom := make([]byte, size)
 	copy(rom, img.ROM)
@@ -38,10 +41,18 @@ func GenesisCartridge(img *Image, title string) []byte {
 	binary.BigEndian.PutUint32(rom[0x1A8:], 0xFF0000)
 	binary.BigEndian.PutUint32(rom[0x1AC:], 0xFFFFFF)
 	putText(rom, 0x1B0, 64, "")
+	if saveRAM > 0 {
+		copy(rom[0x1B0:], []byte{'R', 'A', 0xF8, 0x20})
+		binary.BigEndian.PutUint32(rom[0x1B4:], SaveRAMStart)
+		binary.BigEndian.PutUint32(rom[0x1B8:], uint32(SaveRAMStart+2*(saveRAM-1)))
+	}
 	putText(rom, 0x1F0, 16, "JUE")
 	binary.BigEndian.PutUint16(rom[0x18E:], Checksum(rom))
 	return rom
 }
+
+// SaveRAMStart is save RAM's first byte: odd addresses from here.
+const SaveRAMStart = 0x200001
 
 // Checksum is the header's: the sum of the words from 200 to the end.
 func Checksum(rom []byte) uint16 {

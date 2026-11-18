@@ -22,6 +22,21 @@ module std.game.text
 //! from a font drawn at the screen's resolution: the HUD of a 1080p game whose world is pixel
 //! art at 5. Unscaled or not, letters are sprites: drawn in front of what is added after them,
 //! and `front` (the default) in front of the planes' front cells too.
+//!
+//! **A text box** ([TextBox]) types a line of dialogue out a letter at a time, as
+//! `std.genesis.text`'s does — the same fields and calls, so a game's talk ports between the
+//! two: a box `width` × `height` glyphs from (`x`, `y`), the font's space glyph filling it, its
+//! words inside a glyph's margin, wrapped at the word that would pass its right edge and cut at
+//! its last line. Like the Genesis's it is given its words at every call. Unlike it, it is
+//! drawn every frame ([TextBox.draw]), as everything here is.
+//!
+//! ```
+//! var talk = TextBox { x: 8.0, y: 160.0, width: 30, height: 5, font: FONT }
+//! talk.open()
+//! talk.update(HELLO)                                    // each update
+//! if pad.pressed(buttons, before, pad.A) { talk.advance(HELLO) }
+//! talk.draw()                                           // each frame, with the sprites
+//! ```
 
 import std.game.screen
 import std.game.sprites
@@ -147,5 +162,152 @@ impl Font {
     if at >= 0 && at < self.count { return at }
     let capital = code - 32 - self.first
     if code >= 97 && code <= 122 && capital >= 0 && capital < self.count { capital } else { -1 }
+  }
+}
+
+/// A box of dialogue: `width` × `height` glyphs of `font` from (`x`, `y`) — in the screen's
+/// own pixels when `unscaled` — filled with its space glyph, its words typed inside a glyph's
+/// margin, a letter every `frames` updates. The rest is its own: where it has got to.
+pub struct TextBox {
+  x: f32,
+  y: f32,
+  width: i64,
+  height: i64,
+  font: Font,
+  frames: i64 = 2,
+  unscaled: bool = false,
+  typed: i64 = 0,
+  tick: i64 = 0,
+  column: i64 = 0,
+  row: i64 = 0,
+  shown: bool = false,
+  done: bool = false,
+  /// Each letter typed: its column and row inside the margin, and its character.
+  letters: [](i64, i64, i64) = [],
+}
+
+impl TextBox {
+  /// The box shown, empty, to type a line from its start.
+  pub let open = (self: mut) -> void => {
+    self.typed = 0
+    self.tick = 0
+    self.column = 0
+    self.row = 0
+    self.letters = []
+    self.shown = true
+    self.done = false
+  }
+
+  /// An update of typing `words`: the next letter once every `frames` updates, until all are
+  /// in. Call it every update the box is open, with the same words.
+  pub let update = (self: mut, words: string) -> void => {
+    if !self.shown || self.done { return }
+    self.tick += 1
+    if self.tick < self.frames.max(1) { return }
+    self.tick = 0
+    self.type_letter(words)
+  }
+
+  /// The rest of `words` typed at once.
+  pub let finish = (self: mut, words: string) -> void => {
+    while self.shown && !self.done { self.type_letter(words) }
+  }
+
+  /// What a press to go on does: the rest typed while it is typing, else the box shut.
+  pub let advance = (self: mut, words: string) -> void => {
+    if !self.shown { return }
+    if self.done { self.close() } else { self.finish(words) }
+  }
+
+  /// The box shut: drawn no more.
+  pub let close = (self: mut) -> void => {
+    self.shown = false
+    self.done = false
+    self.letters = []
+  }
+
+  /// Whether the box is showing, and whether it is still typing.
+  pub let is_open = pure (self) -> bool => self.shown
+
+  pub let typing = pure (self) -> bool => self.shown && !self.done
+
+  /// The box and the letters typed so far added to the sprite list — each frame it is open.
+  pub let draw = (self) -> void => {
+    if !self.shown { return }
+    let step_x = self.font.glyph_width + self.font.spacing
+    let step_y = self.font.glyph_height + self.font.line_spacing
+    // The letters first: a sprite added earlier is drawn in front.
+    for (column, row, code) in self.letters {
+      let glyph = self.font.glyph_of(code)
+      if glyph >= 0 {
+        self.glyph_at(
+          glyph,
+          self.x + f32(column + 1) * step_x,
+          self.y + f32(row + 1) * step_y
+        )
+      }
+    }
+    let space = self.font.glyph_of(32)
+    if space >= 0 {
+      for row in 0..<self.height {
+        for column in 0..<self.width {
+          self.glyph_at(space, self.x + f32(column) * step_x, self.y + f32(row) * step_y)
+        }
+      }
+    }
+  }
+
+  /// Glyph `glyph` of the font added at (`x`, `y`).
+  let glyph_at = (self, glyph: i64, x: f32, y: f32) -> void => {
+    let f = self.font
+    sprites.add(Sprite {
+      x: x,
+      y: y,
+      width: f.glyph_width,
+      height: f.glyph_height,
+      sheet_x: f.sheet_x + f32(glyph % f.columns) * (f.glyph_width + f.gap),
+      sheet_y: f.sheet_y + f32(glyph / f.columns) * (f.glyph_height + f.gap),
+      front: true,
+      unscaled: self.unscaled,
+    })
+  }
+
+  /// The next letter of `words` into the box, as `std.genesis.text`'s box places it: wrapped
+  /// at a word that would pass the right edge, a newline starting a line, and the box done at
+  /// its end or its last line.
+  let type_letter = (self: mut, words: string) -> void => {
+    let inner_width = self.width.max(3) - 2
+    let inner_height = self.height.max(3) - 2
+    var k = 0
+    var letter = -1
+    var word_after = 0
+    for c in words {
+      if letter >= 0 {
+        let code = i64(c)
+        if code == 32 || code == 10 { break }
+        word_after += 1
+      } else if k == self.typed {
+        letter = i64(c)
+      }
+      k += 1
+    }
+    self.typed += 1
+    if letter < 0 {
+      self.done = true
+      return
+    }
+    let wraps = letter == 10 || self.column >= inner_width ||
+      (letter == 32 && self.column + 1 + word_after > inner_width)
+    if wraps {
+      self.column = 0
+      self.row += 1
+      if self.row >= inner_height {
+        self.done = true
+        return
+      }
+      if letter == 10 || letter == 32 { return }
+    }
+    self.letters.push((self.column, self.row, letter))
+    self.column += 1
   }
 }

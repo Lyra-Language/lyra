@@ -1,0 +1,72 @@
+module std.game.save
+//! A modern game's save: bytes kept between runs — `std.genesis.save`'s calls, kept in a file
+//! where the Genesis keeps them in battery-backed RAM, so a game saves the same way on both.
+//!
+//! ```
+//! import std.game.save
+//!
+//! var kept: [4]u8 = #[0, 0, 0, 0]
+//! if !save.load(kept) { kept = #[0, 0, 0, 1] }   // nothing saved yet: a new game
+//! …
+//! save.store(kept)
+//! ```
+//!
+//! **The file is `screen.save_file()`**: `save.bin` in SDL's folder for the game, named by the
+//! title `screen.open` was given (`~/Library/Application Support/Lyra/<title>/` on a Mac) — or
+//! the file `--save PATH` names. A game playing itself (`--frames`) keeps none unless given
+//! `--save`, so a test never reads or changes a player's save. Call [store] and [load] after
+//! `screen.open`.
+//!
+//! **What is kept is what the Genesis keeps**: [HEADER] bytes — two marking it, its length, a
+//! sum of its bytes — then the game's, so [load] tells a save from a file of another game's
+//! length or one cut short, and answers `false` for either, as for none.
+
+import std.io.{ read_bytes, write_bytes }
+import std.game.screen
+
+/// The bytes [store] writes before the game's own.
+pub const HEADER: i64 = 6
+
+/// `bytes` kept as the save, in place of any before — a file that cannot be written said on
+/// standard output, as the game goes on.
+pub let store<const N: i64> = (bytes: ref [N]u8) -> void => {
+  let path = screen.save_file()
+  if path == "" { return }
+  var sum: i64 = 0
+  for b in bytes { sum = (sum + i64(b)) % 65536 }
+  var out: []u8 = [
+    MARK_1,
+    MARK_2,
+    u8(N / 256 % 256),
+    u8(N % 256),
+    u8(sum / 256),
+    u8(sum % 256)
+  ]
+  for b in bytes { out.push(b) }
+  if !write_bytes(path, out) { println("the save could not be written to ${path}") }
+}
+
+/// The save read into `bytes`, answering whether there was one of `N` bytes, whole. With
+/// none, `bytes` is left as it was.
+pub let load<const N: i64> = (bytes: mut [N]u8) -> bool => {
+  let path = screen.save_file()
+  if path == "" { return false }
+  let Some(file) = read_bytes(path) else { return false }
+  if file.len() != HEADER + N || file[0] != MARK_1 || file[1] != MARK_2 { return false }
+  if i64(file[2]) * 256 + i64(file[3]) != N % 65536 { return false }
+  var sum: i64 = 0
+  for k in 0..<N { sum = (sum + i64(file[HEADER + k])) % 65536 }
+  if i64(file[4]) * 256 + i64(file[5]) != sum { return false }
+  for k in 0..<N { bytes[k] = file[HEADER + k] }
+  true
+}
+
+/// The save forgotten: [load] finds none after it, until the next [store].
+pub let erase = () -> void => {
+  let path = screen.save_file()
+  if path != "" { let _ = write_bytes(path, []) }
+}
+
+/// The two bytes marking a save: "LS", as the Genesis's.
+const MARK_1: u8 = 0x4C
+const MARK_2: u8 = 0x53

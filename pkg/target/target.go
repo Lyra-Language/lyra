@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -43,7 +44,14 @@ type Target struct {
 	// Resources is the folder of files a built program reads at run time (`resources` in
 	// `lyra.toml`, absolute), which lyrac puts beside the program; empty for none.
 	Resources string
+	// SaveRAM is the bytes of battery-backed save RAM a Genesis cartridge carries
+	// (`save_ram` in `lyra.toml`), which its header declares; 0 for none.
+	SaveRAM int
 }
+
+// MostSaveRAM is the most `save_ram` may ask for: 32 KB, a byte on each odd address from
+// 200001 to 20FFFF.
+const MostSaveRAM = 32768
 
 // HostTarget is the default: no `lyra.toml`, or one naming no target.
 var HostTarget = Target{Name: "host", Display: "the host", Host: true, Heap: true}
@@ -141,6 +149,7 @@ func ForFile(path string) (Target, *Problem) {
 func parse(path string, data []byte) (Target, *Problem) {
 	result := HostTarget
 	resources := ""
+	saveRAM, saveLine := 0, 0
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for line := 1; scanner.Scan(); line++ {
 		text := strings.TrimSpace(stripComment(scanner.Text()))
@@ -169,11 +178,21 @@ func parse(path string, data []byte) (Target, *Problem) {
 				return HostTarget, &Problem{path, line, fmt.Sprintf("resources: expected a folder inside the project, found %q", str)}
 			}
 			resources = filepath.Join(filepath.Dir(path), str)
+		case "save_ram":
+			n, err := strconv.Atoi(str)
+			if err != nil || n < 1 || n > MostSaveRAM {
+				return HostTarget, &Problem{path, line, fmt.Sprintf("save_ram: expected the bytes of save RAM, 1 to %d, found %q", MostSaveRAM, str)}
+			}
+			saveRAM, saveLine = n, line
 		default:
-			return HostTarget, &Problem{path, line, fmt.Sprintf("unknown setting %q; the settings are `target` and `resources`", key)}
+			return HostTarget, &Problem{path, line, fmt.Sprintf("unknown setting %q; the settings are `target`, `resources` and `save_ram`", key)}
 		}
 	}
+	if saveRAM > 0 && result.Name != "genesis" {
+		return HostTarget, &Problem{path, saveLine, fmt.Sprintf("save_ram: only a Genesis cartridge carries save RAM, and the target is %s", result.Name)}
+	}
 	result.Resources = resources
+	result.SaveRAM = saveRAM
 	return result, nil
 }
 

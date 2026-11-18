@@ -88,3 +88,23 @@ func TestParse_Resources(t *testing.T) {
 		}
 	}
 }
+
+// `save_ram` is a Genesis cartridge's bytes of save RAM, 1 to 32 KB; on any other target, or
+// out of range, it is refused rather than ignored.
+func TestParse_SaveRAM(t *testing.T) {
+	got, problem := parse("lyra.toml", []byte("target = \"genesis\"\nsave_ram = \"8192\"\n"))
+	if problem != nil || got.SaveRAM != 8192 {
+		t.Fatalf("save_ram = \"8192\": %+v, %v", got, problem)
+	}
+	for _, bad := range []string{
+		"target = \"genesis\"\nsave_ram = \"0\"\n",
+		"target = \"genesis\"\nsave_ram = \"40000\"\n",
+		"target = \"genesis\"\nsave_ram = \"8 KB\"\n",
+		"save_ram = \"8192\"\n",
+		"save_ram = \"8192\"\ntarget = \"sms\"\n",
+	} {
+		if _, problem := parse("lyra.toml", []byte(bad)); problem == nil {
+			t.Errorf("%q was accepted", bad)
+		}
+	}
+}
