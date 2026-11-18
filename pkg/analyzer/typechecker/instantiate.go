@@ -363,7 +363,17 @@ func (tc *TypeChecker) solveArgumentTypeVars(paramCount int, declaredParam func(
 		// parameter it is being passed to. Substituted through what is bound so far, so an
 		// earlier argument's solve reaches a later one.
 		restoreExpected := tc.pushExpectedType(substituteGenerics(declared, subst), call.GetLocation())
+		// The callee's variables still open are named by that context too; nothing inside
+		// the argument may take one for an enclosing function's of the same name.
+		open := map[string]bool{}
+		for v := range vars {
+			if _, bound := subst[v]; !bound {
+				open[v] = true
+			}
+		}
+		tc.unsolvedContextVars = append(tc.unsolvedContextVars, open)
 		argType := tc.inferExprType(call.Arguments[i])
+		tc.unsolvedContextVars = tc.unsolvedContextVars[:len(tc.unsolvedContextVars)-1]
 		restoreExpected()
 		if argType == nil {
 			return nil, false
@@ -561,7 +571,7 @@ func (tc *TypeChecker) solveDataTypeVars(decl *ast.TypeDeclStmt, declaredFields 
 	// `Result` — which is what a receiver-less call or a generic callee in the payload
 	// needs to solve. Only a payload written in the declaration's parameters uses it; the
 	// solve below still runs on what the argument then infers, so the two agree.
-	fromContext := tc.constructionContext(decl, vars)
+	fromContext := tc.constructionContext(decl, vars, args)
 	for i, arg := range args {
 		if i >= len(declaredFields) {
 			break
@@ -576,7 +586,7 @@ func (tc *TypeChecker) solveDataTypeVars(decl *ast.TypeDeclStmt, declaredFields 
 		var restoreExpected func()
 		if !mentionsGenericParam(declaredFields[i], vars) {
 			restoreExpected = tc.pushExpectedType(declaredFields[i], arg.GetLocation())
-		} else if want := substituteGenerics(declaredFields[i], fromContext); len(fromContext) > 0 && mentionsNoTypeVar(want) {
+		} else if want := substituteGenerics(declaredFields[i], fromContext); len(fromContext) > 0 && isConcreteEnoughToElaborate(want, tc.rigidTypeVarsAt(arg.GetLocation())) {
 			restoreExpected = tc.pushExpectedType(want, arg.GetLocation())
 		}
 		// A lambda payload takes what its field states, as a struct field's does
@@ -598,7 +608,7 @@ func (tc *TypeChecker) solveDataTypeVars(decl *ast.TypeDeclStmt, declaredFields 
 // constructionContext is the binding of a generic declaration's parameters the current
 // expected type supplies, when that type is an instantiation of the declaration itself
 // (`Result<string, string>` for `Result<t, e>`), with anything open left out.
-func (tc *TypeChecker) constructionContext(decl *ast.TypeDeclStmt, vars map[string]bool) map[string]types.Type {
+func (tc *TypeChecker) constructionContext(decl *ast.TypeDeclStmt, vars map[string]bool, args []ast.Expression) map[string]types.Type {
 	want, ok := tc.currentExpectedType().(types.ParameterizedType)
 	if !ok || decl == nil || len(want.TypeArguments) != len(decl.GenericParams) {
 		return nil
@@ -607,8 +617,14 @@ func (tc *TypeChecker) constructionContext(decl *ast.TypeDeclStmt, vars map[stri
 		return nil
 	}
 	out := ast.BindGenericParams(decl.GenericParams, want.TypeArguments)
+	// An enclosing function's own variable is a type here (rigidTypeVarsAt), as in a
+	// struct literal's context: `Some(Cache { m: HashMap.new() })` under `-> Maybe<Cache<e>>`.
+	var rigid map[string]bool
+	if len(args) > 0 {
+		rigid = tc.rigidTypeVarsAt(args[0].GetLocation())
+	}
 	for k, v := range out {
-		if v == nil || !vars[k] || !mentionsNoTypeVar(v) || isUntypedLiteralType(v) {
+		if v == nil || !vars[k] || !isConcreteEnoughToElaborate(v, rigid) || isUntypedLiteralType(v) {
 			delete(out, k)
 		}
 	}
@@ -908,6 +924,40 @@ func addSignatureTypeVars(fn *ast.LambdaExpr, vars map[string]bool) {
 		types.CollectTypeVars(p.Type, vars)
 	}
 	types.CollectTypeVars(fn.ReturnType.Type, vars)
+}
+
+// rigidTypeVarsAt is the type variables a context at loc may mention and still be a
+// context: those of the generic functions whose bodies contain loc — the top-level one's and
+// every local generic's — which are real types in each specialization, as plantableVars'
+// are. `Cache { m: HashMap.new() }` returned from `mk<e>() -> Cache<e>` is solved by its
+// return's `e` as it would be by a `Cache<i64>` there.
+//
+// **Less every variable a call argument's context at loc leaves unsolved**
+// (unsolvedContextVars): a parameter's type pushed for its argument still names the
+// callee's open variables, and one sharing a name with an enclosing function's must not be
+// taken for it — the argument would compile with a type nothing chose.
+func (tc *TypeChecker) rigidTypeVarsAt(loc ast.Location) map[string]bool {
+	vars := map[string]bool{}
+	for _, owner := range tc.topLevelLambdas {
+		if !locationContains(owner.GetLocation(), loc) {
+			continue
+		}
+		addSignatureTypeVars(owner, vars)
+		ast.WalkExprChildren(owner, nil, func(e ast.Expression) bool {
+			if mid, ok := e.(*ast.LambdaExpr); ok && len(mid.GenericParams) > 0 &&
+				locationContains(mid.GetLocation(), loc) {
+				addSignatureTypeVars(mid, vars)
+			}
+			return true
+		})
+		break
+	}
+	for _, open := range tc.unsolvedContextVars {
+		for name := range open {
+			delete(vars, name)
+		}
+	}
+	return vars
 }
 
 // enclosingTopLevel is the top-level function whose body contains lambda, or nil.

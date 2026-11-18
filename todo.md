@@ -918,10 +918,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   `parse_f64` (COMPLETED.md, 10/22).
 - **[DONE 10/30] A private generic struct as another module's type argument lays out**; `ui`'s
   `Cached<e>` and `Opened<e>` are private again (COMPLETED.md, 10/30).
-- **[OPEN] A generic struct literal's field gets no context from a return type naming the
-  function's own variable**: `let mk<e> = () -> Cache<e> => Cache { m: hashmap_new() }` is
-  "cannot infer type variables k, v", reported twice; `Cache<i64>` there, or a `let` annotation,
-  works. `ui.layout` writes `hashmap_new::<string, Cached<e>>()` for it.
+- **[DONE 11/18] A generic struct literal's field takes its context from the function's own
+  variable**, as a constructor's payload does: `rigidTypeVarsAt`. `ui.layout`'s
+  `layout_cache` writes `HashMap.new()`. COMPLETED.md 11/18.
 - **[DONE 10/27] A stated type reaches the value that needs it** in six positions: a field
   assignment, a generic struct literal's fields, a `None` default at two instantiations, a
   lambda constructor payload, an array element beside a typed sibling, and a method's

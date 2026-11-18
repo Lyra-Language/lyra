@@ -64,10 +64,13 @@ type TypeChecker struct {
 	// the time a *nested* return is reached the only thing that still knows which
 	// function this is, is the frame that set the return type.
 	enclosingFuncName string
-	traitImpls        []*ast.TraitImplStmt // every impl block in the program, collected up front by Check; see resolveTraitMethod
-	topLevelLambdas   []*ast.LambdaExpr    // every top-level function body, collected up front by Check; see enclosingTypeVars
-	genericBounds     map[string][]string  // type-parameter name -> trait bounds in scope (from an impl's `where` clause) while checking its method bodies; see dispatchViaGenericBound
-	publishing        map[string]bool      // impl-body candidate publications in progress, so a body reaching itself terminates; see publishImplBodyCandidates
+	// unsolvedContextVars are, for each call argument being inferred, the callee's type
+	// variables its context (the parameter's type) still leaves open; see rigidTypeVarsAt.
+	unsolvedContextVars []map[string]bool
+	traitImpls          []*ast.TraitImplStmt // every impl block in the program, collected up front by Check; see resolveTraitMethod
+	topLevelLambdas     []*ast.LambdaExpr    // every top-level function body, collected up front by Check; see enclosingTypeVars
+	genericBounds       map[string][]string  // type-parameter name -> trait bounds in scope (from an impl's `where` clause) while checking its method bodies; see dispatchViaGenericBound
+	publishing          map[string]bool      // impl-body candidate publications in progress, so a body reaching itself terminates; see publishImplBodyCandidates
 	// declOfFunc/topLevelValues/inferring/checked back on-demand checking: the
 	// declaration a top-level function's lambda belongs to, the top-level bindings that
 	// are not functions, the ones currently being inferred (the cycle guard) and the ones
@@ -5842,7 +5845,7 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		// t = i64). A parameter with no inferable field stays unbound, and its
 		// fields are checked leniently below.
 		tc.inferStructGenericArgs(expr, structType, genericParamNames, typeSubst)
-		tc.seedStructArgsFromExpected(decl, typeSubst)
+		tc.seedStructArgsFromExpected(decl, typeSubst, expr.GetLocation())
 	default:
 		tc.addError(expr.GetLocation(), SeverityError, "%s: expected %d generic arguments, got %d", expr.Name, len(decl.GenericParams), len(expr.GenericArgs))
 		return nil
@@ -6162,7 +6165,7 @@ func (tc *TypeChecker) inferStructGenericArgs(expr *ast.StructInstanceExpr, stru
 // context's own check to name the field (stampAggregate: "Tagged.value: cannot assign
 // string to i64"). Seeding the rest would complete it as `Tagged<string, bool>`, and the
 // caller would report only that the whole type differs.
-func (tc *TypeChecker) seedStructArgsFromExpected(decl *ast.TypeDeclStmt, typeSubst map[string]types.Type) {
+func (tc *TypeChecker) seedStructArgsFromExpected(decl *ast.TypeDeclStmt, typeSubst map[string]types.Type, loc ast.Location) {
 	if decl == nil || len(typeSubst) == len(decl.GenericParams) {
 		return
 	}
@@ -6175,8 +6178,11 @@ func (tc *TypeChecker) seedStructArgsFromExpected(decl *ast.TypeDeclStmt, typeSu
 			return
 		}
 	}
+	// A context naming the enclosing function's own variable is a context too
+	// (rigidTypeVarsAt): `mk<e>() -> Cache<e>` returning `Cache { m: HashMap.new() }`.
+	rigid := tc.rigidTypeVarsAt(loc)
 	for i, p := range decl.GenericParams {
-		if _, solved := typeSubst[p.Name]; !solved && mentionsNoTypeVar(want.TypeArguments[i]) {
+		if _, solved := typeSubst[p.Name]; !solved && isConcreteEnoughToElaborate(want.TypeArguments[i], rigid) {
 			typeSubst[p.Name] = want.TypeArguments[i]
 		}
 	}

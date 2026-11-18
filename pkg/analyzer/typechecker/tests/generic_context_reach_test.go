@@ -2,9 +2,9 @@ package typechecker_test
 
 import "testing"
 
-// Six positions where a type the program had already stated did not reach a value that
-// needed it, found by `ui` (10/27). Each was a turbofish or a binding written only to
-// carry the type in.
+// Positions where a type the program had already stated did not reach a value that needed
+// it, found by `ui` (10/27, and the enclosing function's own variable 11/18). Each was a
+// turbofish or a binding written only to carry the type in.
 func TestGenericContext_ReachesTheValue(t *testing.T) {
 	for name, src := range map[string]string{
 		// The place's type is the value's context while it is inferred.
@@ -77,6 +77,28 @@ let joined<t> = (self: [][]t) -> []t => {
     out
 }
 let f = () -> []Node<Ev> => [[text("a")], [text("b")]].joined()`,
+		// The function's own variable is a type in its body, so its return type is a
+		// context naming it (11/18).
+		"a struct literal under the function's own variable": `
+struct Store<k, v> { n: i64 }
+let store_new<k, v> = () -> Store<k, v> => Store { n: 0 }
+struct Only<e> { cache: Store<string, e> }
+let mk<e> = () -> Only<e> => Only { cache: store_new() }`,
+		"a constructor's payload under the function's own variable": `
+data Opt<e> = Has(e) | Nope
+struct Store<k, v> { n: i64 }
+let store_new<k, v> = () -> Store<k, v> => Store { n: 0 }
+struct Only<e> { cache: Store<string, e> }
+let mk<e> = () -> Opt<Only<e>> => Has(Only { cache: store_new() })`,
+		"a local generic's own variable": `
+struct Store<k, v> { n: i64 }
+let store_new<k, v> = () -> Store<k, v> => Store { n: 0 }
+struct Only<e> { cache: Store<string, e> }
+let f = () -> i64 => {
+    let mk<e> = () -> Only<e> => Only { cache: store_new() }
+    let o: Only<i64> = mk()
+    o.cache.n
+}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			assertNoErrors(t, parseCollectAndCheck(t, src, false))
@@ -98,4 +120,19 @@ let f = () -> void => {
 }`, false)
 	assertErrorsAre(t, res,
 		"store_new: cannot infer type variables k, v from these arguments; name them explicitly with ::<k, v>")
+}
+
+// A call argument's context names the callee's open variables, and one sharing its name with
+// the enclosing function's is not that variable: `take<t>`'s `t` is solved by nothing here, so
+// the literal stays unsolved rather than taking `mk<t>`'s (11/18).
+func TestGenericContext_ACalleesOpenVariableIsNotTheEnclosingOne(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+struct Store<k, v> { n: i64 }
+let store_new<k, v> = () -> Store<k, v> => Store { n: 0 }
+struct Only<t> { cache: Store<string, t> }
+let take<t> = (o: Only<t>) -> i64 => o.cache.n
+let mk<t> = (x: t) -> i64 => take(Only { cache: store_new() })`, false)
+	assertErrorsAre(t, res,
+		"store_new: cannot infer type variables k, v from these arguments; name them explicitly with ::<k, v>",
+		"take: cannot infer type variable t from these arguments")
 }

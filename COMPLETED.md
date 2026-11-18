@@ -9,6 +9,35 @@ Newest first.
 
 ## Dated log
 
+### 11/18/26 — A context may name the enclosing function's own variable
+
+`let mk<e> = () -> Cache<e> => Cache { m: HashMap.new() }` was "cannot infer type
+variables k, v", reported twice, though `Cache<i64>` there worked. A struct literal's
+unsolved parameters are seeded from its context (`seedStructArgsFromExpected`, 10/27). That
+was refused for any context naming a type variable (`mentionsNoTypeVar`), on the reasoning
+that such a context is the question being asked, not an answer. Inside `mk<e>`, though, `e`
+is a type: fixed in every specialization, as `plantableVars` already says for a lambda
+elaborated in a generic body. A data constructor's payload had the same refusal
+(`constructionContext`, and the push of its field's type), so `Some(Cache { … })` under
+`-> Maybe<Cache<e>>` failed the same way.
+
+- **`rigidTypeVarsAt(loc)`** is the variables of the generics whose bodies contain `loc`:
+  the top-level function's and each local generic's between them. Both positions accept a
+  context mentioning only those. A generic call's own context (`contextBindings`) did not
+  need it: a return position solves through `seedFromExpectedReturn`, which has no such
+  filter.
+- **Less what a call argument leaves open.** An argument's context is its parameter's type
+  with the callee's unsolved variables still in it. One of those may share a name with the
+  enclosing function's, as in `take<t>` called inside `mk<t>`. Taken for the enclosing one,
+  the argument would compile with a type nothing chose. So the argument walk keeps those
+  open names on `unsolvedContextVars`, and `rigidTypeVarsAt` subtracts them. That case is
+  still refused (`TestGenericContext_ACalleesOpenVariableIsNotTheEnclosingOne`).
+- `ui.layout`'s `layout_cache`, the workaround the item named, writes `HashMap.new()` now.
+
+Tests: three cases of `TestGenericContext_ReachesTheValue` (a struct literal and a payload
+under the function's variable, a local generic's), all failing before the change, and the
+clash refused.
+
 ### 11/18/26 — The hero sped up, found by the profiler by function
 
 The Profiler's new list (each function's share of a ROM's work) pointed at three costs in

@@ -1560,10 +1560,7 @@ struct Cached<e> {
 
 /// A cache with nothing in it.
 pub let layout_cache<e> = pure () -> LayoutCache<e> =>
-  LayoutCache {
-    last: HashMap.new::<string, Cached<e>>(),
-    now: HashMap.new::<string, Cached<e>>()
-  }
+  LayoutCache { last: HashMap.new(), now: HashMap.new() }
 
 /// One node within `c`, styled at `cascade`, identified as `id`: last frame's layout of it when
 /// nothing it was laid out from has changed — sound because a view is a pure function of its
