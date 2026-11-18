@@ -9,6 +9,20 @@ Newest first.
 
 ## Dated log
 
+### 11/18/26 — `order` moves the drawing, not the focus
+
+A flex container or grid placed its children in `order`'s order, and the walks over them —
+Tab's `focus_order`, a radio group's stop, the accessibility tree's `gather` — took that as
+the tree's order. CSS keeps focus and reading in the document's order, whatever `order` says.
+So `Placed` carries `source`: the child's place in the tree, set by flex and grid, -1
+elsewhere. Those three walks go through `in_tree_order`, which sorts by it only where some
+child has one. Drawing and hit-testing keep the laid-out order, as CSS paints in the
+order-modified one.
+
+Tests: `TestRun_UiOrderKeepsTheTreesFocusOrder` (a flex row and a grid, the third button
+ordered first: drawn first, tabbed and heard third; with the walks over the laid-out order,
+both go c a b).
+
 ### 11/18/26 — A row's or column's percentages along the line
 
 A row or column (Flutter's lines) measures a fixed child with all the room it wants along the

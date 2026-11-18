@@ -314,7 +314,11 @@ let lay_flex<e> = (
       } else {
         line_at + across
       }
-      placed.push(Placed { at: oriented_point(axis, at_main, cross_at), laid: one })
+      placed.push(Placed {
+        at: oriented_point(axis, at_main, cross_at),
+        laid: one,
+        source: item.index,
+      })
       pen += length + step.1 + sides.main_after.length() +
         if sides.main_after.is_auto() { per_auto } else { 0.0 }
     }

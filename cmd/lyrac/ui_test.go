@@ -2313,6 +2313,52 @@ measured: a@0,0 0x20 b@0,0 300x20
 	}
 }
 
+// order moves where a flex item or grid item is drawn, not where Tab or assistive technology
+// finds it: CSS keeps both to the tree's order. The third button, ordered first, is drawn
+// first and left of the others, and still tabbed to and heard third.
+func TestRun_UiOrderKeepsTheTreesFocusOrder(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.draw.{ Size }
+import ui.text.{ fonts_new }
+import ui.style.{ Style, px }
+import ui.layout.{ Node, flex, grid, button, layout, loose }
+import ui.interact.{ focus_order }
+import ui.access.{ access_tree }
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  let buttons = [
+    button::<i64>("a", 1).keyed("a"),
+    button::<i64>("b", 2).keyed("b"),
+    button::<i64>("c", 3).keyed("c").with_style(Style { order: Some(-1) }),
+  ]
+  for (name, view) in [("flex", flex(buttons)), ("grid", grid(buttons).with_style(Style { grid_columns: Some([px(80.0), px(80.0), px(80.0)]) }))] {
+    let laid = layout(view, loose(Size { w: 300.0, h: 200.0 }), fonts)
+    var drawn: []string = []
+    for p in laid.children { drawn.push("${last(p.laid.id)}@${p.at.x}") }
+    var tabbed: []string = []
+    focus_order(laid, tabbed)
+    var heard: []string = []
+    for n in access_tree(laid, "").nodes { if n.label.len() == 1 { heard.push(n.label) } }
+    println("${name}: drawn ${drawn.join(" ")}; tabbed ${[id in tabbed | last(id)].join(" ")}; heard ${heard.join(" ")}")
+  }
+  0
+}
+
+let last = pure (id: string) -> string => {
+  let parts = id.split(":")
+  parts[parts.len() - 1]
+}
+`)
+	if !strings.Contains(got, "flex: drawn c@0 ") || !strings.Contains(got, "grid: drawn c@0 a@80 b@160") {
+		t.Errorf("order did not move the drawing:\n%s", got)
+	}
+	if strings.Count(got, "; tabbed a b c; heard a b c\n") != 2 {
+		t.Errorf("Tab or assistive technology did not keep the tree's order in both:\n%s", got)
+	}
+}
+
 // Baseline alignment, read from the laid text itself rather than a font's numbers. In a flex
 // row, items of three sizes share a first baseline; with last baseline, a two-line paragraph's
 // last line meets a one-line one's, the deepest reaching the line's end. In a grid row items

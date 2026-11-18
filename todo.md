@@ -900,8 +900,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] Layout: intrinsic widths are measured afresh each time** — a flex item's or grid
   item's min- and max-content, outside the cache. A container unchanged is reused whole, but
   one that changes re-measures every item; memoize by identity if a large grid shows it.
-- **[OPEN] `order` reorders Tab's focus too**: the laid-out children are in `order`'s order,
-  and `focus_order` walks them. CSS keeps the document's order for focus.
+- **[DONE 11/18] `order` no longer reorders Tab's focus**: `Placed.source` keeps the tree's
+  place, which Tab and the accessibility tree walk by. COMPLETED.md 11/18.
 - **[OPEN] A GPU renderer is not needed yet.** Measured 10/21 (Apple Silicon Mac, SDL's
   Metal renderer, 1200×900): 400 labelled boxes (800 ops) take 7.2 ms to lay out fresh and
   0.31 ms cached, 1.9 ms to paint, 1.6 ms to tessellate and submit (0.6 ms of it

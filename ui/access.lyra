@@ -55,6 +55,7 @@ import ui.draw.{ Point, Rect }
 import ui.layout.{
   Laid,
   is_tip,
+  in_tree_order,
   NoRole,
   GroupRole,
   TextRole,
@@ -134,7 +135,8 @@ let gather<e> = (laid: Laid<e>, origin: Point, nodes: mut []AccessNode) -> []u64
   var children: []u64 = []
   // A control's insides are its own, but what floats from it — an open select's list — is
   // heard as its child.
-  for child in laid.children {
+  // In the tree's order, not `order`'s, as a screen reader reads a page.
+  for child in in_tree_order(laid.children) {
     if focusable(laid.kind) && !child.laid.floats { continue }
     // A tooltip showing is its element's description, not a node.
     if is_tip(child.laid) { continue }

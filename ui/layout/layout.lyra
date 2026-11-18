@@ -1245,6 +1245,27 @@ pub struct Laid<e> {
 pub struct Placed<e> {
   at: Point,
   laid: Laid<e>,
+  /// Its place among its parent's children in the tree, where a flex container or grid laid
+  /// them out in another order (`order`); -1 where the order is the tree's. Tab and assistive
+  /// technology go in the tree's order ([in_tree_order]), as CSS keeps them.
+  source: i64 = -1,
+}
+
+/// `children` in the tree's order — as laid out, unless `order` moved them ([Placed.source]).
+pub let in_tree_order<e> = pure (children: []Placed<e>) -> []Placed<e> => {
+  if !children.any((p) => p.source >= 0) { return children }
+  var out = [...children]
+  // Insertion sort: stable, and a container's children are few.
+  for i in 1..<out.len() {
+    var j = i
+    while j > 0 && out[j - 1].source > out[j].source {
+      let held = out[j]
+      out[j] = out[j - 1]
+      out[j - 1] = held
+      j -= 1
+    }
+  }
+  out
 }
 
 /// Where a floating element goes against the element it floats from — its parent, whose box

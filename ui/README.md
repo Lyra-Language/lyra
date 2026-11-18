@@ -58,7 +58,8 @@ layer — implements the two traits; the display list is the whole contract.
   greatest, then `align_content`, `align_items`/`align_self` (`AlignBaseline` by first lines
   of text, `AlignLastBaseline` by last ones toward the line's end; both `start` down a column,
   as CSS's are) and `justify_content`, reversed for the `-reverse` directions; `order` sorts items,
-  ties in the tree's order. Grid follows CSS Grid §8 and §12: placement by lines (a negative
+  ties in the tree's order — for drawing alone: Tab and assistive technology keep the tree's
+  order (`Placed.source`, `in_tree_order`), as CSS's do. Grid follows CSS Grid §8 and §12: placement by lines (a negative
   one from the explicit grid's end, an end line saying the span) or a named area
   (`grid_areas`, `grid_area`; a template whose rows differ or with a name that is not a
   rectangle is none), then items locked to a row, then the rest by `grid_flow` (dense

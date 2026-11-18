@@ -92,6 +92,7 @@ import ui.backend.{
 import ui.draw.{ Point, Rect, Size, Color }
 import ui.text.{ Fonts, offset_at_x, caret_x }
 import ui.layout.{
+  in_tree_order,
   DOCK_KEY,
   PANEL_KEY,
   Axis,
@@ -2867,7 +2868,8 @@ let element_of = pure (id: string) -> string => id.split("#thumb-")[0]
 let moved_by = pure (r: Rect, by: Point) -> Rect =>
   Rect { r | x: r.x + by.x, y: r.y + by.y }
 
-/// The identities of the controls in `laid`, in the order Tab visits them: the tree's.
+/// The identities of the controls in `laid`, in the order Tab visits them: the tree's, not
+/// `order`'s ([in_tree_order]).
 pub let focus_order<e> = (laid: Laid<e>, order: mut []string) -> void =>
   focus_walk(laid, order, None)
 
@@ -2888,7 +2890,7 @@ let focus_walk<e> = (laid: Laid<e>, order: mut []string, stop: Maybe<string>) ->
     }
     if visited { order.push(laid.id) }
   }
-  for child in laid.children {
+  for child in in_tree_order(laid.children) {
     if !is_tip(child.laid) { focus_walk(child.laid, order, inside) }
   }
 }
@@ -2909,7 +2911,7 @@ let group_stop<e> = pure (group: Laid<e>) -> string => {
 
 /// The radio buttons in `laid`, in order, to `out` — not those of a group inside it.
 let radios_in<e> = (laid: Laid<e>, out: mut []Laid<e>) -> void => {
-  for child in laid.children {
+  for child in in_tree_order(laid.children) {
     match child.laid.kind {
       Radio(_, _) => out.push(child.laid),
       OneOf => {},

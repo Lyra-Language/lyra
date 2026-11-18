@@ -198,7 +198,7 @@ let lay_grid<e> = (
       ),
       y: y,
     }
-    placed.push(Placed { at: at, laid: one })
+    placed.push(Placed { at: at, laid: one, source: area.index })
   }
   let content_w = tracks_total(cols, col_gap)
   let content_h = tracks_total(rows, row_gap)
