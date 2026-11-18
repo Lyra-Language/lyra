@@ -2250,6 +2250,95 @@ flex width (300x20): a@0,0 120x20 b@120,0 180x20
 	}
 }
 
+// Baseline alignment, read from the laid text itself rather than a font's numbers. In a flex
+// row, items of three sizes share a first baseline; with last baseline, a two-line paragraph's
+// last line meets a one-line one's, the deepest reaching the line's end. In a grid row items
+// share a first baseline and the row grows by the shim aligning them adds, so the next row
+// starts below the item it pushed down (CSS Grid §11.6); last baseline meets likewise. Down a
+// column, baseline is start, as CSS's is where text runs across.
+func TestRun_UiBaselines(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.draw.{ Size }
+import ui.text.{ fonts_new, Fonts }
+import ui.style.{ Style, AlignBaseline, AlignLastBaseline, FlexColumn, Insets, px }
+import ui.layout.{ Node, Laid, Placed, Prose, flex, grid, text, sized, layout, loose }
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  let first = Style { align_items: Some(AlignBaseline) }
+  let row = laid_out(flex([words("a", "Hg", 12.0), words("b", "Hg", 24.0), words("c", "Hg", 36.0)]).with_style(first), fonts)
+  println("flex first: ${meet(row, (p) => first_line(p))}")
+  let last = Style { align_items: Some(AlignLastBaseline) }
+  let two = words("a", "Hg Hg", 24.0).with_style(Style { width: Some(40.0) })
+  let ends = laid_out(flex([two, words("b", "Hg", 12.0)]).with_style(last), fonts)
+  println("flex last: ${meet(ends, (p) => last_line(p))}, two lines: ${line_count(ends.children[0]) == 2}, deepest at the end: ${deepest_at(ends)}")
+  // b's padding below makes it reach past a's bottom once its baseline is lowered to a's.
+  let padded = words("b", "Hg", 12.0).with_style(Style { padding: Some(Insets { bottom: 30.0 }) })
+  let cells = laid_out(grid([words("a", "Hg", 30.0), padded, sized::<void>(None, None).keyed("c").with_style(Style { height: Some(10.0) })]).with_style(Style {
+    grid_columns: Some([px(100.0), px(100.0)]),
+    align_items: Some(AlignBaseline),
+  }), fonts)
+  let b = cells.children[1]
+  let below = cells.children[2].at.y
+  println("grid first: ${meet_all([cells.children[0], b], (p) => first_line(p))}, row holds them: ${(b.at.y + b.laid.size.h - below).abs() < 0.01 && b.at.y > 0.0}")
+  let grid_ends = laid_out(grid([two, words("b", "Hg", 12.0)]).with_style(Style {
+    grid_columns: Some([px(100.0), px(100.0)]),
+    align_items: Some(AlignLastBaseline),
+  }), fonts)
+  println("grid last: ${meet(grid_ends, (p) => last_line(p))}")
+  let column = laid_out(flex([words("a", "Hg", 12.0)]).with_style(Style { flex_direction: Some(FlexColumn), align_items: Some(AlignBaseline) }), fonts)
+  println("column: x ${column.children[0].at.x}")
+  0
+}
+
+let words = pure (key: string, content: string, size: f32) -> Node<void> =>
+  text::<void>(content).keyed(key).with_style(Style { font_size: Some(size) })
+
+let laid_out = (view: ref Node<void>, fonts: mut Fonts) -> Laid<void> =>
+  layout(view, loose(Size { w: 300.0, h: 400.0 }), fonts)
+
+/// Whether the line asked for is at the same height in every child.
+let meet = pure (laid: ref Laid<void>, line: (Placed<void>) -> f32) -> bool => meet_all(laid.children, line)
+
+let meet_all = pure (placed: []Placed<void>, line: (Placed<void>) -> f32) -> bool => {
+  for p in placed { if (line(p) - line(placed[0])).abs() > 0.01 || line(p) < 0.0 { return false } }
+  true
+}
+
+let first_line = pure (p: ref Placed<void>) -> f32 => match p.laid.content {
+  Prose(block) => p.at.y + p.laid.content_at.y + block.lines[0].baseline,
+  _ => -1.0,
+}
+
+let last_line = pure (p: ref Placed<void>) -> f32 => match p.laid.content {
+  Prose(block) => p.at.y + p.laid.content_at.y + block.lines[block.lines.len() - 1].baseline,
+  _ => -1.0,
+}
+
+let line_count = pure (p: ref Placed<void>) -> i64 => match p.laid.content {
+  Prose(block) => block.lines.len(),
+  _ => 0,
+}
+
+/// Whether the child reaching furthest below the shared last baseline ends at the line's end.
+let deepest_at = pure (laid: ref Laid<void>) -> bool => {
+  var bottom: f32 = 0.0
+  for p in laid.children { bottom = bottom.max(p.at.y + p.laid.size.h) }
+  (bottom - laid.size.h).abs() < 0.01
+}
+`)
+	want := `flex first: true
+flex last: true, two lines: true, deepest at the end: true
+grid first: true, row holds them: true
+grid last: true
+column: x 0
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // Media rules and selector lists in the cascade. A sheet's grid has 1, 2 or 4 columns by
 // min-width breakpoints. A class rule under a landscape condition beats a later tag rule by
 // its specificity, applied or not by the orientation. A not and a comma (any of) combine.

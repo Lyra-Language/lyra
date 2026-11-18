@@ -297,9 +297,18 @@ pub data Justify =
   | JustifyStretch
 
 /// Where an item sits across its line or within its grid cell (`align-items`,
-/// `justify-items` and their `-self`s). `AlignBaseline` lines a flex row's items up by their
-/// first lines of text, and is `AlignStart` for an item with none.
-pub data ItemAlign = AlignStart | AlignEnd | AlignCenter | AlignStretch | AlignBaseline
+/// `justify-items` and their `-self`s). `AlignBaseline` lines a flex row's items, or a grid
+/// row's, up by their first lines of text (CSS's `baseline`), and `AlignLastBaseline` by their
+/// last (`last baseline`), toward the line's end or the last row they span — an item with no
+/// text taking its bottom edge for both. Down a column, and along a grid's rows
+/// (`justify_self`), both are `AlignStart`, as CSS's are where the text runs across.
+pub data ItemAlign =
+  AlignStart
+  | AlignEnd
+  | AlignCenter
+  | AlignStretch
+  | AlignBaseline
+  | AlignLastBaseline
 
 /// A flex item's size before it grows or shrinks (`flex-basis`): its content's (or its
 /// `width`/`height`), a length, or a fraction of its container's main size.

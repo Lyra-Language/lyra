@@ -588,8 +588,9 @@ The example's interface is `examples/imgui/components_view.lui`.
   `width`, `height` and their `min-`/`max-`, `row-gap`, `column-gap`, `flex` (`none`, `auto`,
   or grow, shrink and basis — `flex: 1` is `1 1 0`), `flex-direction`, `flex-wrap`,
   `flex-grow`, `flex-shrink`, `flex-basis` (`auto`, a length, `N%`), `order`,
-  `justify-content`, `align-content`, `align-items`, `align-self`, `justify-items`,
-  `justify-self`, `grid-template-columns`/`-rows` (lengths, `Nfr`, `auto`, `min-content`,
+  `justify-content`, `align-content`, `align-items`, `align-self` (`baseline`, `first
+  baseline` and `last baseline` among their words), `justify-items`, `justify-self`,
+  `grid-template-columns`/`-rows` (lengths, `Nfr`, `auto`, `min-content`,
   `max-content`, `minmax(a, b)`, `repeat(n, …)`), `grid-auto-columns`/`-rows`,
   `grid-auto-flow` (`row`, `column`, `dense`), `grid-template-areas` (quoted rows of names,
   `.` for none, each name a rectangle), `grid-area` (a name) and `grid-column`/`grid-row`

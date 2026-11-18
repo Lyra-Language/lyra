@@ -31,6 +31,7 @@ import ui.style.{
   AlignCenter,
   AlignStretch,
   AlignBaseline,
+  AlignLastBaseline,
   BasisAuto,
   BasisLength,
   BasisFraction,
@@ -140,6 +141,8 @@ let lay_flex<e> = (
     var thick: f32 = 0.0
     var above: f32 = 0.0
     var below: f32 = 0.0
+    var last_above: f32 = 0.0
+    var last_below: f32 = 0.0
     var length = gaps
     for item in sizes {
       let child = children[item.index]
@@ -173,17 +176,23 @@ let lay_flex<e> = (
         above = above.max(line_at)
         below = below.max(across - line_at)
       }
+      if how == AlignLastBaseline && horizontal && !sides.places_across() {
+        let line_at = before + (last_baseline(one) ?? along(axis, one.size.h, one.size.w))
+        last_above = last_above.max(line_at)
+        last_below = last_below.max(across - line_at)
+      }
       thick = thick.max(across)
       length += item.target
       laid.push(one)
     }
-    thick = thick.max(above + below)
+    thick = thick.max(above + below).max(last_above + last_below)
     longest = longest.max(length)
     laid_lines.push(FlexLine {
       items: sizes,
       laid: laid,
       cross: thick,
       baseline: above,
+      last_below: last_below,
       length: length
     })
   }
@@ -271,6 +280,10 @@ let lay_flex<e> = (
           AlignBaseline => if horizontal {
             l.baseline - (baseline(one) ?? thick)
           } else { sides.cross_before.length() },
+          // The last baselines meet as far from the line's end as the deepest is.
+          AlignLastBaseline => if horizontal {
+            line_cross - l.last_below - (last_baseline(one) ?? thick)
+          } else { sides.cross_before.length() },
           _ => sides.cross_before.length(),
         }
       }
@@ -352,6 +365,8 @@ struct FlexLine<e> {
   laid: []Laid<e>,
   cross: f32,
   baseline: f32,
+  /// How far below their common last baseline its `last baseline` items reach.
+  last_below: f32 = 0.0,
   length: f32,
 }
 
@@ -517,6 +532,22 @@ let item_least<e> = (
 let is_scroll<e> = pure (node: Node<e>) -> bool => match node.kind {
   Scrolls(_, _) => true,
   _ => node.style.overflow_x.is_some() || node.style.overflow_y.is_some(),
+}
+
+/// The last baseline in `laid`, down from its top: its own text's last line, else its last
+/// child's that has one.
+let last_baseline<e> = pure (laid: Laid<e>) -> Maybe<f32> => {
+  if let Prose(block) = laid.content {
+    let n = block.lines.len()
+    if n > 0 { return Some(laid.content_at.y + block.lines[n - 1].baseline) }
+  }
+  var k = laid.children.len() - 1
+  while k >= 0 {
+    let child = laid.children[k]
+    if let Some(b) = last_baseline(child.laid) { return Some(child.at.y + b) }
+    k -= 1
+  }
+  None
 }
 
 /// The first baseline in `laid`, down from its top: its own text's first line, else its first

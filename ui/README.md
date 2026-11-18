@@ -55,8 +55,9 @@ layer — implements the two traits; the display list is the whole contract.
   CSS Flexbox §9: an item's base size (its `basis`, else its `width`, else its max-content
   width), its automatic least size (its min-content width, none for a scroll), lines for
   `flex_wrap`, the freeze loop growing or shrinking each line with every item's least and
-  greatest, then `align_content`, `align_items`/`align_self` (baseline by first lines of
-  text) and `justify_content`, reversed for the `-reverse` directions; `order` sorts items,
+  greatest, then `align_content`, `align_items`/`align_self` (`AlignBaseline` by first lines
+  of text, `AlignLastBaseline` by last ones toward the line's end; both `start` down a column,
+  as CSS's are) and `justify_content`, reversed for the `-reverse` directions; `order` sorts items,
   ties in the tree's order. Grid follows CSS Grid §8 and §12: placement by lines (a negative
   one from the explicit grid's end, an end line saying the span) or a named area
   (`grid_areas`, `grid_area`; a template whose rows differ or with a name that is not a
@@ -64,7 +65,9 @@ layer — implements the two traits; the display list is the whole contract.
   optional); column tracks sized from the items' min- and max-content widths, rows from their
   heights at those widths; fixed, intrinsic, maximized, `fr` and `auto` tracks, the last
   stretched unless `justify_content`/`align_content` pack the tracks otherwise (§11.1, the
-  space between them reaching an item that spans it); items aligned in their areas. **A flex
+  space between them reaching an item that spans it); items aligned in their areas — by
+  baseline with the others of their row (§11.6: the first row an item spans for its first
+  baseline, the last for its last), the row grown by the shim that adds. **A flex
   or grid item's `margin`** (`Margins`, each side `MarginPx` or `MarginAuto`) is outside its
   edge: its lengths count in its outer size (breaking lines, flexing, a line's thickness, a
   track's size, its container's intrinsic width) and come out of its line or area; an auto

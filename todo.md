@@ -891,8 +891,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] No percentages but `flex-basis`**: `width: 50%` needs `width` and `height` (and
   their `min_`/`max_`) to be a length type, since two fields would not cascade as one property.
   That changes ~150 `Style` literals across lyra, Vega and Termina.
-- **[OPEN] Baseline alignment is first-baseline in a flex row alone**: no `last baseline`,
-  none down a column, and a grid's `align-self: baseline` is `start`.
+- **[DONE 11/18] Baseline alignment in grids, and `last baseline`**: a grid row's baseline
+  groups with their shims, and `AlignLastBaseline` in flex rows and grids. COMPLETED.md 11/18.
 - **[OPEN] lui's two-value `padding` is across then down**, the opposite of CSS's (and of
   lui's own `margin`): `padding: 6 14` pads 6 across. Swapping it changes existing views.
 - **[OPEN] Layout: intrinsic widths are measured afresh each time** — a flex item's or grid
@@ -1298,10 +1298,9 @@ sets V on every add. What stands between that and a ROM:
 - **[DONE 09/30] A target in `lyrac`**: `lyra.toml`'s `target = "genesis"` is read by
   `lyrac` and the LSP (09/29); `lyrac build` makes a cartridge (09/30: `pkg/rom` links,
   `runtime/genesis` starts it, `pointer_at` and volatile access reach the hardware).
-- **[OPEN] A struct holding a string needs the heap there**: a `string` field makes the link
-  ask for `free` (the field's release), though a literal is static and never freed. So
-  `std.genesis.text`'s `TextBox` takes its words at every call (11/17); a field of literals
-  only would let it keep them.
+- **[DONE 11/18] A struct holding a string links on the Genesis**: `runtime/genesis` defines a
+  `free` that faults and never runs — without `malloc` every box is static — so
+  `std.genesis.talk`'s `Line` holds its strings (COMPLETED.md 11/18).
 - **[OPEN] Sizes are still `i64`** (next item) — the reason a game's `[]T` could not work
   even with an allocator. Fixed arrays and scalars are what a Genesis program has today.
 - **[PARTIAL] A Genesis layer in Lyra**: `std.genesis.vdp`, `.pad` and `.sprites` (09/30)

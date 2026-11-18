@@ -9,6 +9,56 @@ Newest first.
 
 ## Dated log
 
+### 11/18/26 — Baseline alignment in grids, and last baseline
+
+A flex row aligned items by their first baselines. A grid's `align-self: baseline` was
+`start`, and nothing took `last baseline`.
+
+- **Down a column it stays `start`.** CSS makes baseline `start` wherever the cross axis is
+  the one text runs along. The todo item listed this as missing, but it was right already.
+- **A grid row's baseline group** (§11.6) is its items aligned by their first baseline that
+  start in it, or by their last that end in it. Each is laid out at its column width once,
+  for row sizing. The group's deepest baseline (or deepest reach below its last) gives each
+  item a shim, added to its contribution to the row, so the row holds the items it moved.
+  Without the shim, a small text with padding below, lowered to a large one's baseline,
+  overflowed into the next row; the test pins that case. An item with an `auto` margin down
+  is not in the group, as CSS's auto margins win.
+- **`AlignLastBaseline`** reads the last line of an item's text, or its last child's. A flex
+  line's last-baseline items meet as far from the line's end as the deepest reaches. An
+  item with no text takes its bottom edge, as for the first baseline. lui takes `last
+  baseline` and `first baseline`.
+- `ItemAlign`'s doc had said an item without text is `AlignStart`. The code takes its bottom
+  edge (CSS's synthesized baseline), so the doc now says so.
+
+Tests: `TestRun_UiBaselines` reads baselines from the laid text, not a font's numbers. With
+the grid's groups or the flex row's last baseline turned off, its lines go false.
+`TestLui_UiTargetFlexAndGrid` covers `last baseline`.
+
+### 11/18/26 — Conversations on the Genesis and the modern target, and strings in Genesis structs
+
+`std.genesis.talk` and `std.game.talk` play a conversation in a `TextBox`: `const` tables of
+`Line`s — who says it, the words, a portrait, what follows — and `Choice`s, which Vega's new
+dialogue editor writes into a game's `assets`. A `Talk` writes the speaker on the box's first
+row inside its margin, the words a row under it (`TextBox.top`, as `indent` leaves room at the
+left), leaves `indent` cells for a portrait (the game draws the sprite at `portrait_at`; on the
+Genesis the box's cells there go behind the sprites), types the words, lists a line's choices
+under them with `>` at the chosen, and on a press goes to the line the line or the chosen
+choice names. `genesis_talk_test.go` scripts one by frame and reads each cell of the box.
+
+**What it took**: a `Line` holds strings, which until now a Genesis struct could not — a
+string field's release reaches `free`, which the link refused (11/17's open item). Every
+release is behind a reference count, and a literal's box has the count -1, which
+`lyra_rc_release` passes over; with `malloc` refused, nothing else exists, so `free` can never
+run. `runtime/genesis` now defines one that faults, so a mistake would be a red screen rather
+than silent. On the modern target the box's glyphs are `front` sprites, which draw over every
+sprite that is not, whatever the order; `sprites.bring_to_front(first)` raises a portrait
+drawn by a function that does not say `front`. **On the Genesis a lit sprite** (a star, in
+front) is drawn over the window's front cells, and showed over the words; no order or priority
+puts it behind, so `Talk.mask_behind` uses the VDP's sprite masking — a sprite at x 1 off the
+screen, then one at x 0, a pair a 32 lines of the box, hiding every later sprite there — and
+Vega's `draw_portrait` calls it. The test puts a lit sprite under the box: hidden while the talk
+goes on, seen after (and seen throughout with the call taken out).
+
 ### 11/18/26 — Margins on flex and grid items
 
 The todo item asked for margins and percentages. Margins are built. Percentages are not: one

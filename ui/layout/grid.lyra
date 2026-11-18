@@ -22,6 +22,9 @@ import ui.style.{
   TrackMinContent,
   TrackMaxContent,
   ItemAlign,
+  AlignStart,
+  AlignBaseline,
+  AlignLastBaseline,
   GridSpan,
   Justify,
   JustifyStretch,
@@ -73,6 +76,7 @@ let lay_grid<e> = (
   let col_at = offsets(cols, col_gap, col_pack.0)
   // Rows from the items' heights at their areas' widths.
   var row_spans: []Spanning = []
+  var fits: []RowFit = []
   for area in plan.areas {
     let child = children[area.index]
     let own = plan.styles[area.index]
@@ -88,7 +92,7 @@ let lay_grid<e> = (
       !own.margin.right.is_auto()
     var scratch = layout_cache::<e>()
     let limits = Constraints { min_w: if stretch { w } else { 0.0 }, max_w: w }
-    let h = lay(
+    let laid = lay(
       child,
       limits,
       ctx.cascade,
@@ -96,7 +100,39 @@ let lay_grid<e> = (
       ctx.ui,
       child_id(ctx.id, child, area.index),
       scratch
-    ).size.h + own.margin.vertical()
+    )
+    let h = laid.size.h
+    fits.push(RowFit { h: h, first: baseline(laid) ?? h, last: last_baseline(laid) ?? h })
+  }
+  // Baseline groups (§11.6): in each row, how far its `baseline` items reach above their
+  // shared first baseline, and how far its `last baseline` items (the last row they span)
+  // reach below their shared last one — each item's contribution to its rows raised by the
+  // shim that aligning it adds.
+  let row_count = plan.rows.len()
+  var above: []f32 = [r in 0..<row_count | 0.0]
+  var below: []f32 = [r in 0..<row_count | 0.0]
+  for k, area in plan.areas {
+    let own = plan.styles[area.index]
+    let fit = fits[k]
+    match baseline_of(own, style) {
+      AlignBaseline => { above[area.row] = above[area.row].max(own.margin.top.length() + fit.first) },
+      AlignLastBaseline => {
+        let r = area.row + area.row_span - 1
+        below[r] = below[r].max(fit.h - fit.last + own.margin.bottom.length())
+      },
+      _ => {},
+    }
+  }
+  for k, area in plan.areas {
+    let own = plan.styles[area.index]
+    let fit = fits[k]
+    let shim = match baseline_of(own, style) {
+      AlignBaseline => above[area.row] - (own.margin.top.length() + fit.first),
+      AlignLastBaseline =>
+        below[area.row + area.row_span - 1] - (fit.h - fit.last + own.margin.bottom.length()),
+      _ => 0.0,
+    }
+    let h = fit.h + own.margin.vertical() + shim
     row_spans.push(Spanning { start: area.row, span: area.row_span, least: h, most: h })
   }
   let row_room: Maybe<f32> = if height_definite { Some(c.max_h) } else { None }
@@ -143,6 +179,15 @@ let lay_grid<e> = (
       child_id(ctx.id, child, area.index),
       cache
     )
+    let y = match baseline_of(own, style) {
+      AlignBaseline => row_at[area.row] + above[area.row] - (baseline(one) ?? one.size.h),
+      AlignLastBaseline => {
+        let r = area.row + area.row_span - 1
+        row_at[r] + rows[r] - below[r] - (last_baseline(one) ?? one.size.h)
+      },
+      _ =>
+        row_at[area.row] + m.top.length() + in_area(m.top, m.bottom, down, h, one.size.h),
+    }
     let at = Point {
       x: col_at[area.col] + m.left.length() + in_area(
         m.left,
@@ -151,13 +196,7 @@ let lay_grid<e> = (
         w,
         one.size.w
       ),
-      y: row_at[area.row] + m.top.length() + in_area(
-        m.top,
-        m.bottom,
-        down,
-        h,
-        one.size.h
-      ),
+      y: y,
     }
     placed.push(Placed { at: at, laid: one })
   }
@@ -678,6 +717,26 @@ let spanned = pure (sizes: []f32, start: i64, count: i64, gap: f32) -> f32 => {
 /// All of `sizes` with the gaps between.
 let tracks_total = pure (sizes: []f32, gap: f32) -> f32 =>
   spanned(sizes, 0, sizes.len(), gap)
+
+/// An item's place in its row's baseline group: `AlignBaseline` or `AlignLastBaseline` where
+/// its alignment down says so, else `AlignStart` — also for one with an `auto` margin there,
+/// which places it instead (CSS's baseline alignment needs none).
+let baseline_of = pure (own: ref Computed, grid: ref Computed) -> ItemAlign => {
+  if own.margin.top.is_auto() || own.margin.bottom.is_auto() { return AlignStart }
+  match own.align_self ?? grid.align_items {
+    AlignBaseline => AlignBaseline,
+    AlignLastBaseline => AlignLastBaseline,
+    _ => AlignStart,
+  }
+}
+
+/// An item's height in a row being sized, and its first and last baselines down from its top
+/// (its bottom edge where it has none).
+struct RowFit {
+  h: f32,
+  first: f32,
+  last: f32,
+}
 
 /// Where an item `size` long sits in its area's `room` (its margins' lengths taken out) between
 /// margins `before` and `after`: an `auto` one takes the space left — both share it — whatever

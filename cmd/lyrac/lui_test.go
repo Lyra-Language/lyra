@@ -713,8 +713,8 @@ let main = () -> u8 => {
 // name, and every CSS layout property reads in a style or a sheet — flex's shorthand (`1`,
 // `none`, `2 0 auto`), a basis as a percentage, order, the alignments, track lists with fr,
 // minmax and repeat, a dense column flow, grid lines with spans and from the end, named
-// areas (in a sheet and as an attribute), the content's packing, and margins of one to four
-// lengths or auto in CSS's order — a later declaration
+// areas (in a sheet and as an attribute), the content's packing, margins of one to four
+// lengths or auto in CSS's order, last baseline — a later declaration
 // replacing an earlier one, as in CSS; and the module checks clean.
 func TestLui_UiTargetFlexAndGrid(t *testing.T) {
 	t.Parallel()
@@ -731,7 +731,7 @@ func TestLui_UiTargetFlexAndGrid(t *testing.T) {
   .last { grid-column: -2; grid-area: main }
   .page { grid-template-areas: "a b" 'a  c'; justify-content: stretch }
   .push { margin: 0 auto }
-  .round { margin: 4 8 auto }
+  .round { margin: 4 8 auto; align-self: last baseline }
 </style>
 <component name="view" event={Ev}>
   <Column>
@@ -775,7 +775,7 @@ func TestLui_UiTargetFlexAndGrid(t *testing.T) {
 		"grid_areas: Some([\"a b\", \"a c\"]), justify_content: Some(JustifyStretch)",
 		"grid_areas: Some([\"head head\", \"side main\"]), justify_content: Some(JustifyCenter), align_content: Some(JustifyEvenly)",
 		"margin: Some(Margins { top: MarginPx(0.0), right: MarginAuto, bottom: MarginPx(0.0), left: MarginAuto })",
-		"margin: Some(Margins { top: MarginPx(4.0), right: MarginPx(8.0), bottom: MarginAuto, left: MarginPx(8.0) })",
+		"margin: Some(Margins { top: MarginPx(4.0), right: MarginPx(8.0), bottom: MarginAuto, left: MarginPx(8.0) }), align_self: Some(AlignLastBaseline)",
 	} {
 		if !strings.Contains(string(generated), want) {
 			t.Errorf("the generated module lacks %q:\n%s", want, generated)

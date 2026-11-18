@@ -1366,6 +1366,7 @@ const LAYOUT_NAMES = [
   "AlignCenter",
   "AlignStretch",
   "AlignBaseline",
+  "AlignLastBaseline",
   "BasisAuto",
   "BasisLength",
   "BasisFraction",
@@ -2640,6 +2641,8 @@ const ALIGN_WORDS = [
   ("center", "AlignCenter"),
   ("stretch", "AlignStretch"),
   ("baseline", "AlignBaseline"),
+  ("first baseline", "AlignBaseline"),
+  ("last baseline", "AlignLastBaseline"),
 ]
 
 /// `value` as the constructor `words` pairs it with, or an error listing the words.
