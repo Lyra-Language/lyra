@@ -87,6 +87,13 @@ pub let add = (s: Sprite) -> void => { list.push(s) }
 /// How many sprites the list holds: where the next one [add]ed goes, for [came_from].
 pub let listed = () -> i64 => list.len()
 
+/// The sprites added since `first` ([listed] before them) put in front of the planes' front
+/// cells, as if added `front` — a portrait over a text box, drawn by a function that does not
+/// say so.
+pub let bring_to_front = (first: i64) -> void => {
+  for k in first.max(0)..<list.len() { list[k].front = true }
+}
+
 /// The sprites added from `first` on were `dx`, `dy` from where they are the update before —
 /// drawn sliding from there. Nothing, across a [snap].
 pub let came_from = (first: i64, dx: f32, dy: f32) -> void => {

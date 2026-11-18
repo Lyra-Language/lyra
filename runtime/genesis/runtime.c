@@ -169,6 +169,19 @@ void exit(int code) {
 }
 
 /*
+ * A release with nothing to free. A Lyra value on the heap is a reference-counted box, and
+ * its release calls `free` when the count reaches zero; a string literal's box is static,
+ * its count -1, which a release passes over. The Genesis has no heap — lyrac refuses a
+ * program needing `malloc` — so every box here is static and this is never reached; it is
+ * defined so a struct holding a string (a release's `free` behind it) links. Reached, it is
+ * a fault.
+ */
+void free(void *box) {
+    (void)box;
+    __lyra_fault();
+}
+
+/*
  * Memory a long at a time where both ends are even — the 68000 moves a long to and from any
  * even address — and the odd bytes left a byte at a time. A byte at a time throughout, a
  * 768-byte buffer cleared each frame cost a third of a frame (10/15), and the backend moves

@@ -1,0 +1,209 @@
+module std.game.talk
+//! A conversation played in a [TextBox], as `std.genesis.talk` plays one — the same tables
+//! and calls, so a game's talk ports between the two: lines said one after another, each with
+//! who says it and a portrait, and choices the player picks between, which Vega's dialogue
+//! editor makes as a table of [Line]s and one of [Choice]s in the game's `assets`.
+//!
+//! ```
+//! var talk = Talk { box: TextBox { x: 8.0, y: 150.0, width: 40, height: 7, font: assets.TALK_FONT } }
+//! talk.start(assets.GUIDE_LINES, assets.GUIDE_CHOICES)
+//! talk.update(assets.GUIDE_LINES, assets.GUIDE_CHOICES)   // each update
+//! if pressed A { talk.press(assets.GUIDE_LINES, assets.GUIDE_CHOICES) }
+//! // each frame, after sprites.clear(): the portrait, then the box — in front of the rest
+//! assets.draw_portrait(talk)
+//! talk.draw(assets.GUIDE_LINES, assets.GUIDE_CHOICES)
+//! ```
+//!
+//! **A line** is who says it (on the box's first line, inside its margin), its words (typed, wrapped at words), a
+//! portrait (a sprite of the game's, -1 for none), and what comes after it: line `then`, or
+//! the end ([END]) — or, where it has choices, the one picked: the choices from
+//! `first_choice`, `choices` of them, listed under the words once they are typed, a `>` at the
+//! one chosen. A press ([press]) types the rest of a line still typing, and on a typed one goes
+//! on; [choose] moves among the choices; [last_picked] says which was picked last.
+//!
+//! **Drawn each frame** ([draw]), as everything on the modern screen is: the speaker and the
+//! choices, then the box. A portrait is the game's to draw, at [portrait_at], before the box,
+//! so it is in front of it (a sprite added earlier is drawn in front).
+
+import std.game.text.{ TextBox }
+
+/// A line of a conversation.
+pub struct Line {
+  who: string = "",
+  words: string,
+  /// The sprite shown beside the words, by the game's numbering; -1 for none.
+  portrait: i64 = -1,
+  /// The line said after this one, or [END]; passed over where it has choices.
+  then: i64 = END,
+  /// Its choices: `choices` of the choices table, from `first_choice`.
+  first_choice: i64 = 0,
+  choices: i64 = 0,
+}
+
+/// A choice the player may pick: its words, and the line it goes on to, or [END].
+pub struct Choice {
+  words: string,
+  then: i64 = END,
+}
+
+/// What follows the last line: the talk is over.
+pub const END: i64 = -1
+
+/// The glyphs a portrait takes, across and down.
+pub const PORTRAIT_GLYPHS: i64 = 4
+
+/// A conversation in a box: the line being said (-1 when none is), the choice chosen among
+/// its choices, the one last picked (by its place in the choices table, -1 for none), and
+/// whether the choices are listed.
+pub struct Talk {
+  box: TextBox,
+  /// The speaker's name's tint (white: as drawn); the words take the box's.
+  name_tint: u32 = 0xFFFFFF,
+  line: i64 = -1,
+  chosen: i64 = 0,
+  picked: i64 = -1,
+  listed: bool = false,
+  choice_row: i64 = 0,
+}
+
+impl Talk {
+  /// The talk begun at line `from` (the first, unless said).
+  pub let start<const N: i64, const M: i64> = (
+    self: mut,
+    lines: ref [N]Line,
+    choices: ref [M]Choice,
+    from: i64 = 0
+  ) -> void => {
+    self.picked = -1
+    self.say(lines, from)
+  }
+
+  /// An update of the talk: the line typed a letter on, and its choices listed once it is
+  /// all in. Call it every update, talking or not.
+  pub let update<const N: i64, const M: i64> = (
+    self: mut,
+    lines: ref [N]Line,
+    choices: ref [M]Choice
+  ) -> void => {
+    if self.line < 0 { return }
+    let line = lines[self.line]
+    self.box.update(line.words)
+    if !self.box.typing() && !self.listed { self.list() }
+  }
+
+  /// What a press to go on does: the rest of the line typed while it is typing; then on — to
+  /// the chosen choice's line where it has choices, else to the line after it — or the talk
+  /// ended.
+  pub let press<const N: i64, const M: i64> = (
+    self: mut,
+    lines: ref [N]Line,
+    choices: ref [M]Choice
+  ) -> void => {
+    if self.line < 0 { return }
+    let line = lines[self.line]
+    if self.box.typing() {
+      self.box.finish(line.words)
+      self.list()
+      return
+    }
+    if line.choices > 0 {
+      let at = line.first_choice + self.chosen
+      self.picked = at
+      self.say(lines, choices[at].then)
+    } else {
+      self.say(lines, line.then)
+    }
+  }
+
+  /// The choice `step` places on (-1 up, 1 down), round from the last to the first.
+  pub let choose<const N: i64, const M: i64> = (
+    self: mut,
+    lines: ref [N]Line,
+    choices: ref [M]Choice,
+    step: i64
+  ) -> void => {
+    if self.line < 0 { return }
+    let n = lines[self.line].choices
+    if n == 0 || !self.listed { return }
+    self.chosen = ((self.chosen + step) % n + n) % n
+  }
+
+  /// Whether a line is being said.
+  pub let talking = pure (self) -> bool => self.line >= 0
+
+  /// The choice last picked, by its place in the choices table; -1 for none since [start].
+  pub let last_picked = pure (self) -> i64 => self.picked
+
+  /// The line being said's portrait — a sprite of the game's — or -1 for none.
+  pub let portrait<const N: i64> = pure (self, lines: ref [N]Line) -> i64 =>
+    if self.line < 0 { -1 } else { lines[self.line].portrait }
+
+  /// Where a portrait goes: inside the box's margin at its left, in the box's pixels (the
+  /// screen's own when it is `unscaled`).
+  pub let portrait_at = pure (self) -> (f32, f32) => {
+    let f = self.box.font
+    (self.box.x + f.glyph_width + f.spacing, self.box.y + f.glyph_height + f.line_spacing)
+  }
+
+  /// The speaker, the choices and the box added to the sprite list — each frame, after the
+  /// portrait.
+  pub let draw<const N: i64, const M: i64> = (
+    self,
+    lines: ref [N]Line,
+    choices: ref [M]Choice
+  ) -> void => {
+    if self.line < 0 { return }
+    let line = lines[self.line]
+    self.write_at(line.who, 1 + self.box.indent, 1, self.name_tint)
+    if self.listed {
+      for k in 0..<line.choices {
+        let row = self.choice_row + k
+        if row >= self.box.lines() { break }
+        let at = self.box.line_row(row)
+        if k == self.chosen {
+          self.box.letter_at(62, 1 + self.box.indent, at, self.box.tint)
+        }
+        self.write_at(
+          choices[line.first_choice + k].words,
+          3 + self.box.indent,
+          at,
+          self.box.tint
+        )
+      }
+    }
+    self.box.draw()
+  }
+
+  /// Line `at` begun in the box, room left for its portrait; or, at [END], the box shut and
+  /// the talk over.
+  let say<const N: i64> = (self: mut, lines: ref [N]Line, at: i64) -> void => {
+    if at < 0 || at >= N {
+      self.box.close()
+      self.line = -1
+      return
+    }
+    self.line = at
+    self.chosen = 0
+    self.listed = false
+    self.box.indent = if lines[at].portrait >= 0 { PORTRAIT_GLYPHS + 1 } else { 0 }
+    self.box.top = if lines[at].who.len() > 0 { 1 + self.box.spacing } else { 0 }
+    self.box.open()
+  }
+
+  /// The choices listed under the words: from the row after the last typed.
+  let list = (self: mut) -> void => {
+    self.listed = true
+    self.choice_row = if self.box.column == 0 { self.box.row } else { self.box.row + 1 }
+  }
+
+  /// `words` added from glyph place (`column`, `row`) of the box, no further than its right
+  /// margin.
+  let write_at = (self, words: string, column: i64, row: i64, tint: u32) -> void => {
+    var at = column
+    for c in words {
+      if at >= self.box.width - 1 { break }
+      self.box.letter_at(i64(c), at, row, tint)
+      at += 1
+    }
+  }
+}

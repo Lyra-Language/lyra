@@ -167,7 +167,14 @@ impl Font {
 
 /// A box of dialogue: `width` × `height` glyphs of `font` from (`x`, `y`) — in the screen's
 /// own pixels when `unscaled` — filled with its space glyph, its words typed inside a glyph's
-/// margin, a letter every `frames` updates. The rest is its own: where it has got to.
+/// margin — and `indent` glyphs more on the left, room for a portrait, and `top` lines more
+/// above, room for a speaker's name — a letter every `frames` updates, `spacing` blank lines
+/// between its lines, its letters `tint`ed (white: as drawn).
+///
+/// **A frame**, when `frame` is set, is a picture in the sprite art three glyphs square from
+/// (`frame_x`, `frame_y`): its corners drawn once, its edges and middle repeated to the box's
+/// size in place of the space glyph — a 9-patch in glyph cells, as `std.genesis.text`'s box
+/// draws one in tiles. The letters are drawn over it. The rest is its own: where it has got to.
 pub struct TextBox {
   x: f32,
   y: f32,
@@ -176,6 +183,13 @@ pub struct TextBox {
   font: Font,
   frames: i64 = 2,
   unscaled: bool = false,
+  indent: i64 = 0,
+  top: i64 = 0,
+  spacing: i64 = 0,
+  tint: u32 = 0xFFFFFF,
+  frame: bool = false,
+  frame_x: f32 = 0.0,
+  frame_y: f32 = 0.0,
   typed: i64 = 0,
   tick: i64 = 0,
   column: i64 = 0,
@@ -231,6 +245,19 @@ impl TextBox {
 
   pub let typing = pure (self) -> bool => self.shown && !self.done
 
+  /// The glyphs across its words have, inside its margin and indent, and the lines down.
+  pub let inner_width = pure (self) -> i64 => (self.width.max(3) - 2 - self.indent).max(1)
+
+  pub let inner_height = pure (self) -> i64 => (self.height.max(3) - 2 - self.top).max(1)
+
+  /// The lines of words it holds, `spacing` lines between them, and the glyph row from its top
+  /// that line `line` is on.
+  pub let lines = pure (self) -> i64 =>
+    (self.inner_height() + self.spacing) / (1 + self.spacing)
+
+  pub let line_row = pure (self, line: i64) -> i64 =>
+    1 + self.top + line * (1 + self.spacing)
+
   /// The box and the letters typed so far added to the sprite list — each frame it is open.
   pub let draw = (self) -> void => {
     if !self.shown { return }
@@ -242,23 +269,56 @@ impl TextBox {
       if glyph >= 0 {
         self.glyph_at(
           glyph,
-          self.x + f32(column + 1) * step_x,
-          self.y + f32(row + 1) * step_y
+          self.x + f32(column + 1 + self.indent) * step_x,
+          self.y + f32(self.line_row(row)) * step_y,
+          self.tint
         )
       }
+    }
+    if self.frame {
+      let gw = self.font.glyph_width
+      let gh = self.font.glyph_height
+      for row in 0..<self.height {
+        let down = if row == 0 { 0 } else if row + 1 >= self.height { 2 } else { 1 }
+        for column in 0..<self.width {
+          let across = if column == 0 { 0 } else if column + 1 >= self.width { 2 } else { 1 }
+          sprites.add(Sprite {
+            x: self.x + f32(column) * step_x,
+            y: self.y + f32(row) * step_y,
+            width: gw,
+            height: gh,
+            sheet_x: self.frame_x + f32(across) * gw,
+            sheet_y: self.frame_y + f32(down) * gh,
+            front: true,
+            unscaled: self.unscaled,
+          })
+        }
+      }
+      return
     }
     let space = self.font.glyph_of(32)
     if space >= 0 {
       for row in 0..<self.height {
         for column in 0..<self.width {
-          self.glyph_at(space, self.x + f32(column) * step_x, self.y + f32(row) * step_y)
+          self.glyph_at(space, self.x + f32(column) * step_x, self.y + f32(row) * step_y, 0xFFFFFF)
         }
       }
     }
   }
 
-  /// Glyph `glyph` of the font added at (`x`, `y`).
-  let glyph_at = (self, glyph: i64, x: f32, y: f32) -> void => {
+  /// Character `code` added at glyph place (`column`, `row`) of the box, counted from its
+  /// top-left corner, margin and all — what `std.game.talk` writes a speaker's name and the
+  /// choices with. Nothing for a character the font cannot show.
+  pub let letter_at = (self, code: i64, column: i64, row: i64, tint: u32 = 0xFFFFFF) -> void => {
+    let glyph = self.font.glyph_of(code)
+    if glyph < 0 { return }
+    let step_x = self.font.glyph_width + self.font.spacing
+    let step_y = self.font.glyph_height + self.font.line_spacing
+    self.glyph_at(glyph, self.x + f32(column) * step_x, self.y + f32(row) * step_y, tint)
+  }
+
+  /// Glyph `glyph` of the font added at (`x`, `y`), `tint`ed.
+  let glyph_at = (self, glyph: i64, x: f32, y: f32, tint: u32) -> void => {
     let f = self.font
     sprites.add(Sprite {
       x: x,
@@ -268,6 +328,7 @@ impl TextBox {
       sheet_x: f.sheet_x + f32(glyph % f.columns) * (f.glyph_width + f.gap),
       sheet_y: f.sheet_y + f32(glyph / f.columns) * (f.glyph_height + f.gap),
       front: true,
+      tint: tint,
       unscaled: self.unscaled,
     })
   }
@@ -276,8 +337,8 @@ impl TextBox {
   /// at a word that would pass the right edge, a newline starting a line, and the box done at
   /// its end or its last line.
   let type_letter = (self: mut, words: string) -> void => {
-    let inner_width = self.width.max(3) - 2
-    let inner_height = self.height.max(3) - 2
+    let inner_width = self.inner_width()
+    let lines = self.lines()
     var k = 0
     var letter = -1
     var word_after = 0
@@ -301,7 +362,7 @@ impl TextBox {
     if wraps {
       self.column = 0
       self.row += 1
-      if self.row >= inner_height {
+      if self.row >= lines {
         self.done = true
         return
       }

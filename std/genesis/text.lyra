@@ -27,9 +27,9 @@ module std.genesis.text
 //! A glyph's colour 0 is transparent, as any tile's: a box reads over the game where its space
 //! glyph is painted solid, a background colour of its own.
 //!
-//! **The box is given its words at every call**, never keeping them: a Genesis game has no
-//! heap, and a string kept in a struct would need one. A game keeps which line is being said —
-//! a `const` table of them and an index — and passes the same one until it closes the box.
+//! **The box is given its words at every call**, never keeping them: they are the game's
+//! `const` tables', which a game picks from by index and passes until it closes the box —
+//! `std.genesis.talk` does so for a conversation of lines, speakers and choices.
 //! The box wraps at the word that would pass its right edge, starts a line at a newline, and
 //! stops at its last row: a long speech is several boxes, one after another.
 //!
@@ -109,8 +109,16 @@ pub let clear = (plane: u16, x: u16, y: u16, width: u16, height: u16) -> void =>
 }
 
 /// A box of dialogue: cells `width` × `height` of `plane` from (`x`, `y`), filled with the
-/// font's space, its words typed inside a cell's margin, a letter every `frames` frames. The
-/// rest is its own: where it has got to.
+/// font's space, its words typed inside a cell's margin — and `indent` cells more on the left,
+/// room for a portrait, and `top` rows more above, room for a speaker's name — a letter every
+/// `frames` frames, `spacing` blank rows between its lines.
+///
+/// **A frame** is nine tiles, a 3×3 block from tile `frame` (0: none, the box filled with the
+/// font's space), `frame_stride` tiles from one of its rows to the next in video memory (its tile
+/// set's width): the corners drawn once, the edges and the middle repeated to the box's size — a
+/// 9-patch in cells. A letter takes its cell whole, so the middle tile should be the colour the
+/// font's glyphs are drawn on. The frame is drawn in the font's palette. The rest is its own: where it has got
+/// to.
 pub struct TextBox {
   plane: u16 = vdp.WINDOW,
   x: u16,
@@ -119,6 +127,11 @@ pub struct TextBox {
   height: u16,
   font: Font,
   frames: u16 = 2,
+  indent: u16 = 0,
+  top: u16 = 0,
+  spacing: u16 = 0,
+  frame: u16 = 0,
+  frame_stride: u16 = 3,
   typed: u16 = 0,
   tick: u16 = 0,
   column: u16 = 0,
@@ -133,10 +146,15 @@ const NO_LETTER: u32 = 0xFFFFFFFF
 impl TextBox {
   /// The box drawn, empty, to type a line from its start.
   pub let open = (self: mut) -> void => {
+    // The words worked out once: a call a cell cost most of a frame on the 68000.
     let space = self.font.word_of(32)
+    let base = 0x8000 | ((self.font.palette & 3) << 13) | self.frame
     for row in 0..<self.height {
+      let down: u16 = if row == 0 { 0 } else if row + 1 >= self.height { 2 } else { 1 }
       for column in 0..<self.width {
-        vdp.write_cell(self.plane, self.x + column, self.y + row, space)
+        let across: u16 = if column == 0 { 0 } else if column + 1 >= self.width { 2 } else { 1 }
+        let word = if self.frame == 0 { space } else { base + down * self.frame_stride + across }
+        vdp.write_cell(self.plane, self.x + column, self.y + row, word)
       }
     }
     self.typed = 0
@@ -180,11 +198,36 @@ impl TextBox {
 
   pub let typing = pure (self) -> bool => self.shown && !self.done
 
+  /// The cells across its words have, inside its margin and indent, and the rows down.
+  pub let inner_width = pure (self) -> u16 =>
+    (self.width.max(3) - 2).max(self.indent + 1) - self.indent
+
+  pub let inner_height = pure (self) -> u16 =>
+    (self.height.max(3) - 2).max(self.top + 1) - self.top
+
+  /// The lines of words it holds, `spacing` rows between them, and the row line `line` is on.
+  pub let lines = pure (self) -> u16 =>
+    (self.inner_height() + self.spacing) / (1 + self.spacing)
+
+  pub let line_row = pure (self, line: u16) -> u16 =>
+    self.y + 1 + self.top + line * (1 + self.spacing)
+
+  /// What its cell (`column`, `row`) from its top-left shows before a letter is typed there:
+  /// the frame's piece for it — a corner, an edge or the middle — or the font's space; in front
+  /// of the sprites when `front`.
+  pub let cell_word = pure (self, column: u16, row: u16, front: bool = true) -> u16 => {
+    if self.frame == 0 { return self.font.word_of(32, front) }
+    let across: u16 = if column == 0 { 0 } else if column + 1 >= self.width { 2 } else { 1 }
+    let down: u16 = if row == 0 { 0 } else if row + 1 >= self.height { 2 } else { 1 }
+    let bit: u16 = if front { 0x8000 } else { 0 }
+    bit | ((self.font.palette & 3) << 13) | (self.frame + down * self.frame_stride + across)
+  }
+
   /// The next letter of `words` into the box: wrapped at a word that would pass the right
   /// edge, a newline starting a row, and the box done at its end or its last row.
   let type_letter = (self: mut, words: string) -> void => {
-    let inner_width = self.width.max(3) - 2
-    let inner_height = self.height.max(3) - 2
+    let inner_width = self.inner_width()
+    let lines = self.lines()
     // The letter typed next, and the length of the word after it.
     var k: u16 = 0
     var letter = NO_LETTER
@@ -209,7 +252,7 @@ impl TextBox {
     if wraps {
       self.column = 0
       self.row += 1
-      if self.row >= inner_height {
+      if self.row >= lines {
         self.done = true
         return
       }
@@ -217,8 +260,8 @@ impl TextBox {
     }
     vdp.write_cell(
       self.plane,
-      self.x + 1 + self.column,
-      self.y + 1 + self.row,
+      self.x + 1 + self.indent + self.column,
+      self.line_row(self.row),
       self.font.word_of(letter)
     )
     self.column += 1

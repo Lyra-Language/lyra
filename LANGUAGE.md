@@ -970,8 +970,11 @@ target = "genesis"
   screen red and halts.** `lyrac run` builds the ROM and plays it in Sheliak (`$SHELIAK`, else
   `sheliak` on the `PATH`), the arguments after `--` going to the emulator. Anything still
   needing the heap or the host at link time is refused by name (a module-level `[]T`
-  initializer is the case E085 does not see yet). `examples/genesis/backdrop.lyra` is the
-  smallest one.
+  initializer is the case E085 does not see yet). **`free` alone is not**: a struct holding a
+  string, and anything else whose release reaches one, links — `runtime/genesis` defines a
+  `free` that faults, and never runs, since without `malloc` every box is static (a literal's,
+  its count -1, which a release passes over). `examples/genesis/backdrop.lyra` is the smallest
+  one.
 - **`std.genesis`** is the console's library, written over `pointer_at` and the volatile
   methods (so it needs nothing the compiler does not already have):
   - `std.genesis.vdp` — `init` (mode 5, 40 cells, SGDK's table layout, every memory cleared,
@@ -989,9 +992,22 @@ target = "genesis"
   - `std.genesis.text` — a `Font` (a run of glyph tiles in video memory from a character),
     `write(plane, x, y, font, words)`, and a `TextBox` typing dialogue into the window a letter
     every `frames` frames, wrapping at words (`open`, `update(words)`, `advance(words)`,
-    `close`). **It is given its words at every call**: a string field needs the heap's `free`,
-    so a Genesis struct cannot hold one. `vdp.window_rows_below(n)` puts the window at the
-    bottom.
+    `close`), `indent` cells in for a portrait and `top` rows down for a name, `spacing` blank
+    rows between lines, and a **frame**: nine tiles, a 3×3 block from tile `frame`
+    (`frame_stride` tiles a row), its corners drawn once and its edges and middle repeated — a
+    9-patch in cells (a letter takes its cell whole, so the middle is the glyphs' background).
+    It is given its words at every call, from the game's `const` tables. `vdp.window_rows_below(n)` puts the window at the bottom.
+  - `std.genesis.talk` — a conversation in a `TextBox`: a `const` table of `Line`s (`who`,
+    `words`, `portrait`, `then`, and `choices` from `first_choice` in a table of `Choice`s, each
+    with its own `then`; `END` ends it) played by a `Talk` — `start`, `update`, `press` (the rest
+    typed, then on, or the chosen choice picked), `choose(±1)`, `talking`, `last_picked`, and
+    `portrait`/`portrait_at` for the game to draw the line's sprite beside the words, and
+    `mask_behind`, which hides the sprites added after it on the box's lines by the VDP's
+    sprite masking — a lit (`front`) sprite is otherwise drawn over the window; `name_palette`
+    writes the speaker in another palette's colours. Vega's
+    dialogue editor makes the tables, and a dialogue's box style as a `Talk` (`<NAME>_TALK`);
+    `std.game.talk` is the same for a modern game, its box's frame a sprite three glyphs square
+    (`frame`, `frame_x`, `frame_y`) and its colours tints (`tint`, `name_tint`).
   - `std.genesis.sprites` — a list of `Sprite { x, y, width, height, tile, palette, … }` in RAM:
     `clear`, `add`, and `show` in the vertical blank, which writes the VDP's table with the
     links filled in.

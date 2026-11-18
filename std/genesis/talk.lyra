@@ -1,0 +1,260 @@
+module std.genesis.talk
+//! A conversation played in a [TextBox]: lines said one after another, each with who says
+//! it and a portrait, and choices the player picks between — what Vega's dialogue editor
+//! makes, as a table of [Line]s and one of [Choice]s in the game's `assets`.
+//!
+//! ```
+//! import std.genesis.talk
+//! import std.genesis.talk.{ Talk }
+//! import std.genesis.text.{ TextBox }
+//!
+//! var talk = Talk { box: TextBox { x: 1, y: 21, width: 38, height: 7, font: assets.LETTERS_FONT } }
+//! talk.start(assets.GUIDE_LINES, assets.GUIDE_CHOICES)
+//! loop {
+//!   talk.update(assets.GUIDE_LINES, assets.GUIDE_CHOICES)     // a letter every few frames
+//!   if pressed A { talk.press(assets.GUIDE_LINES, assets.GUIDE_CHOICES) }   // on, or pick
+//!   if pressed UP { talk.choose(assets.GUIDE_LINES, assets.GUIDE_CHOICES, -1) }
+//!   if pressed DOWN { talk.choose(assets.GUIDE_LINES, assets.GUIDE_CHOICES, 1) }
+//!   assets.draw_portrait(talk)                                 // its sprite beside the words
+//!   …
+//! }
+//! ```
+//!
+//! **A line** is who says it (written on the box's first row, inside its margin, the words a
+//! row under it), its words (typed, wrapped at
+//! words), a portrait (a sprite of the game's, -1 for none), and what comes after it: line
+//! `then`, or the end ([END]) — or, where it has choices, the one picked: the choices from
+//! `first_choice`, `choices` of them, listed under the words once they are typed, a `>` at
+//! the one chosen. Each choice goes on to its own line, or ends the talk.
+//!
+//! **A press** ([press]) types the rest of a line still typing; on a typed line it goes on —
+//! to the choice chosen's line where there are choices. [choose] moves among the choices.
+//! [picked] says which choice was last picked, by its place in the table, so the game can act
+//! on an answer.
+//!
+//! **The tables are passed at every call**, as the box is given its words: `const` tables
+//! of the game's, never copied. **A portrait is the game's to draw** — a sprite of its own, at
+//! [portrait_at], over the cells the box leaves for it, which it fills with its space glyph
+//! behind the sprites; Vega's `assets.draw_portrait(talk)` draws the line's. **Sprites behind
+//! the box** are hidden by [mask_behind], which `draw_portrait` calls: a lit sprite (in front)
+//! is otherwise drawn over the window, words and all.
+
+import std.genesis.vdp
+import std.genesis.sprites
+import std.genesis.sprites.{ Sprite }
+import std.genesis.text.{ TextBox, Font }
+
+/// A line of a conversation.
+pub struct Line {
+  who: string = "",
+  words: string,
+  /// The sprite shown beside the words, by the game's numbering; -1 for none.
+  portrait: i16 = -1,
+  /// The line said after this one, or [END]; passed over where it has choices.
+  then: i16 = END,
+  /// Its choices: `choices` of the choices table, from `first_choice`.
+  first_choice: u16 = 0,
+  choices: u16 = 0,
+}
+
+/// A choice the player may pick: its words, and the line it goes on to, or [END].
+pub struct Choice {
+  words: string,
+  then: i16 = END,
+}
+
+/// What follows the last line: the talk is over.
+pub const END: i16 = -1
+
+/// The cells a portrait takes, across and down: a 32×32 sprite.
+pub const PORTRAIT_CELLS: u16 = 4
+
+/// A conversation in a box: the palette the speaker's name is written in (-1: the words'), the
+/// line being said (-1 when none is), the choice chosen among its choices, the one last picked
+/// (by its place in the choices table, -1 for none), and where the choices were listed. Vega
+/// makes one for a dialogue with a box style (`assets.GUIDE_TALK`): its box, frame and colours.
+pub struct Talk {
+  box: TextBox,
+  name_palette: i16 = -1,
+  line: i16 = -1,
+  chosen: u16 = 0,
+  picked: i16 = -1,
+  listed: bool = false,
+  choice_row: u16 = 0,
+}
+
+impl Talk {
+  /// The talk begun at line `from` (the first, unless said).
+  pub let start<const N: i64, const M: i64> = (
+    self: mut,
+    lines: ref [N]Line,
+    choices: ref [M]Choice,
+    from: i16 = 0
+  ) -> void => {
+    self.picked = -1
+    self.say(lines, from)
+  }
+
+  /// A frame of the talk: the line typed a letter on, and its choices listed once it is all
+  /// in. Call it every frame, talking or not.
+  pub let update<const N: i64, const M: i64> = (
+    self: mut,
+    lines: ref [N]Line,
+    choices: ref [M]Choice
+  ) -> void => {
+    if self.line < 0 { return }
+    let line = lines[i64(self.line)]
+    self.box.update(line.words)
+    if !self.box.typing() && !self.listed { self.list(line, choices) }
+  }
+
+  /// What a press to go on does: the rest of the line typed while it is typing; then on — to
+  /// the chosen choice's line where it has choices, else to the line after it — or the talk
+  /// ended.
+  pub let press<const N: i64, const M: i64> = (
+    self: mut,
+    lines: ref [N]Line,
+    choices: ref [M]Choice
+  ) -> void => {
+    if self.line < 0 { return }
+    let line = lines[i64(self.line)]
+    if self.box.typing() {
+      self.box.finish(line.words)
+      self.list(line, choices)
+      return
+    }
+    if line.choices > 0 {
+      let at = line.first_choice + self.chosen
+      self.picked = i16(at)
+      self.say(lines, choices[i64(at)].then)
+    } else {
+      self.say(lines, line.then)
+    }
+  }
+
+  /// The choice `step` places on (-1 up, 1 down), round from the last to the first.
+  pub let choose<const N: i64, const M: i64> = (
+    self: mut,
+    lines: ref [N]Line,
+    choices: ref [M]Choice,
+    step: i16
+  ) -> void => {
+    if self.line < 0 { return }
+    let line = lines[i64(self.line)]
+    if line.choices == 0 || !self.listed { return }
+    let n = i16(line.choices)
+    self.chosen = u16(((i16(self.chosen) + step) % n + n) % n)
+    self.mark(line)
+  }
+
+  /// Whether a line is being said.
+  pub let talking = pure (self) -> bool => self.line >= 0
+
+  /// The choice last picked, by its place in the choices table; -1 for none since [start].
+  pub let last_picked = pure (self) -> i16 => self.picked
+
+  /// The line being said's portrait — a sprite of the game's — or -1 for none.
+  pub let portrait<const N: i64> = pure (self, lines: ref [N]Line) -> i16 =>
+    if self.line < 0 { -1 } else { lines[i64(self.line)].portrait }
+
+  /// The sprites added after this hidden on the box's lines while a line is said — by the
+  /// VDP's sprite masking: a sprite at x 0 that comes after another on its lines hides every
+  /// sprite after it there. The box is the window's, in front of the planes; but a sprite in
+  /// front (`front`, a lit one) is drawn over even the window's front cells, and so would be over
+  /// the words. Call it once a frame, after the portrait and any sprite to be seen over the box,
+  /// before the rest: `assets.draw_portrait` does. Two sprites a 32 lines of the box, off the
+  /// screen; the box's lines lose sprites outside it too, at its sides.
+  pub let mask_behind = (self) -> void => {
+    if self.line < 0 { return }
+    var y = i16(self.box.y) * 8
+    let bottom = y + i16(self.box.height) * 8
+    while y < bottom {
+      let rows = u16(((bottom - y + 7) / 8).min(4))
+      // The first off the screen's left at x 1: found on the line, so the next masks.
+      sprites.add(Sprite { x: -127, y: y, width: 1, height: rows, tile: 0 })
+      sprites.add(Sprite { x: -128, y: y, width: 1, height: rows, tile: 0 })
+      y += 32
+    }
+  }
+
+  /// Where a portrait goes, in pixels: inside the box's margin at its left.
+  pub let portrait_at = pure (self) -> (i16, i16) =>
+    (i16(self.box.x + 1) * 8, i16(self.box.y + 1) * 8)
+
+  /// Line `at` begun in the box, its speaker on the first row and room left for its portrait;
+  /// or, at [END], the box shut and the talk over.
+  let say<const N: i64> = (self: mut, lines: ref [N]Line, at: i16) -> void => {
+    if at < 0 || i64(at) >= N {
+      if self.box.is_open() { self.box.close() }
+      self.line = -1
+      return
+    }
+    let line = lines[i64(at)]
+    self.line = at
+    self.chosen = 0
+    self.listed = false
+    self.box.indent = if line.portrait >= 0 { PORTRAIT_CELLS + 1 } else { 0 }
+    self.box.top = if line.who.len() > 0 { 1 + self.box.spacing } else { 0 }
+    self.box.open()
+    let font = self.box.font
+    if line.portrait >= 0 {
+      // Behind the sprites, so the portrait shows over the box's own colour.
+      for row in 0..<PORTRAIT_CELLS.min(self.box.height.max(3) - 2) {
+        for column in 0..<PORTRAIT_CELLS {
+          vdp.write_cell(
+            self.box.plane,
+            self.box.x + 1 + column,
+            self.box.y + 1 + row,
+            self.box.cell_word(1 + column, 1 + row, false)
+          )
+        }
+      }
+    }
+    let name_font = if self.name_palette >= 0 { Font { font | palette: u16(self.name_palette) } } else { font }
+    self.write_at(line.who, self.box.x + 1 + self.box.indent, self.box.y + 1, name_font)
+  }
+
+  /// The line's choices under its words, a row each, as far as the box goes.
+  let list<const M: i64> = (self: mut, line: Line, choices: ref [M]Choice) -> void => {
+    self.listed = true
+    if line.choices == 0 { return }
+    self.choice_row = if self.box.column == 0 { self.box.row } else { self.box.row + 1 }
+    for k in 0..<line.choices {
+      let row = self.choice_row + k
+      if row >= self.box.lines() { break }
+      let words = choices[i64(line.first_choice + k)].words
+      self.write_at(
+        words,
+        self.box.x + 3 + self.box.indent,
+        self.box.line_row(row),
+        self.box.font
+      )
+    }
+    self.mark(line)
+  }
+
+  /// The `>` at the chosen choice, and none at the rest.
+  let mark = (self: mut, line: Line) -> void => {
+    for k in 0..<line.choices {
+      let row = self.choice_row + k
+      if row >= self.box.lines() { break }
+      let column = 1 + self.box.indent
+      let y = self.box.line_row(row)
+      var word = self.box.cell_word(column, y - self.box.y)
+      if k == self.chosen { word = self.box.font.word_of(62) }
+      vdp.write_cell(self.box.plane, self.box.x + column, y, word)
+    }
+  }
+
+  /// `words` written in `font` from cell (`x`, `y`) of the box's plane, no further than its
+  /// right margin.
+  let write_at = (self, words: string, x: u16, y: u16, font: Font) -> void => {
+    let last = self.box.x + self.box.width.max(2) - 1
+    var column = x
+    for c in words {
+      if column >= last { break }
+      vdp.write_cell(self.box.plane, column, y, font.word_of(u32(c)))
+      column += 1
+    }
+  }
+}
