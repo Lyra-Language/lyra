@@ -57,10 +57,14 @@ layer — implements the two traits; the display list is the whole contract.
   `flex_wrap`, the freeze loop growing or shrinking each line with every item's least and
   greatest, then `align_content`, `align_items`/`align_self` (baseline by first lines of
   text) and `justify_content`, reversed for the `-reverse` directions; `order` sorts items,
-  ties in the tree's order. Grid follows CSS Grid §8 and §12: placement by lines, then items
-  locked to a row, then the rest by `grid_flow` (dense optional); column tracks sized from
-  the items' min- and max-content widths, rows from their heights at those widths; fixed,
-  intrinsic, maximized, `fr` and stretched `auto` tracks; items aligned in their areas. **A
+  ties in the tree's order. Grid follows CSS Grid §8 and §12: placement by lines (a negative
+  one from the explicit grid's end, an end line saying the span) or a named area
+  (`grid_areas`, `grid_area`; a template whose rows differ or with a name that is not a
+  rectangle is none), then items locked to a row, then the rest by `grid_flow` (dense
+  optional); column tracks sized from the items' min- and max-content widths, rows from their
+  heights at those widths; fixed, intrinsic, maximized, `fr` and `auto` tracks, the last
+  stretched unless `justify_content`/`align_content` pack the tracks otherwise (§11.1, the
+  space between them reaching an item that spans it); items aligned in their areas. **A
   container's width is definite when bounded and its height only when fixed**, as a CSS block's
   is — so `fr` rows and a growing column need a `height`. **Every element honours `width`,
   `height` and their `min_`/`max_`** (border-box; within its parent's constraints, which

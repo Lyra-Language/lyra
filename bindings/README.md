@@ -589,8 +589,10 @@ The example's interface is `examples/imgui/components_view.lui`.
   `justify-content`, `align-content`, `align-items`, `align-self`, `justify-items`,
   `justify-self`, `grid-template-columns`/`-rows` (lengths, `Nfr`, `auto`, `min-content`,
   `max-content`, `minmax(a, b)`, `repeat(n, …)`), `grid-auto-columns`/`-rows`,
-  `grid-auto-flow` (`row`, `column`, `dense`) and `grid-column`/`grid-row` (`N`, `span N`,
-  `N / M`, `N / span M`). An unknown value is an error listing the ones there are; a later
+  `grid-auto-flow` (`row`, `column`, `dense`), `grid-template-areas` (quoted rows of names,
+  `.` for none, each name a rectangle), `grid-area` (a name) and `grid-column`/`grid-row`
+  (`N`, `span N`, `N / M`, `N / span M`, `span N / M`, a negative line from the end: `1 / -1`).
+  A `<Grid>` takes `areas`, `justify-content` and `align-content` as attributes too. An unknown value is an error listing the ones there are; a later
   declaration replaces an earlier one, as in CSS. **`@media (…) { rules }`** makes every rule
   inside conditional (`Rule.media`): `width`, `height` (logical units, `px` allowed),
   `aspect-ratio` (`16/9`, or a number) and `resolution` (`dppx`, `x`, `dpi`, `dpcm`), each

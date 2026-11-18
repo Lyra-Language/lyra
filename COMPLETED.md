@@ -9,6 +9,41 @@ Newest first.
 
 ## Dated log
 
+### 11/18/26 — Grid: named areas, lines from the end, and packed tracks
+
+Three things CSS's grid has and `ui`'s had not: `grid-template-areas` with `grid-area: name`,
+lines counted from the end (`grid-column: 1 / -1`), and `justify-content`/`align-content`
+packing the tracks, which always stretched.
+
+- **Areas** are `Style.grid_areas`, a string a row, and an item's `grid_area`, which wins over
+  its lines. The areas make the explicit grid as large as they reach; the template's tracks
+  size it, and the auto sizes size the rest.
+  - **A bad template is no template**, as CSS refuses the declaration: rows of different
+    lengths, or a name whose cells are not one rectangle. `ui` cannot refuse a value written
+    in Lyra, so it ignores it, and lui refuses it at its line. Refusing only the bad name
+    looked kinder, but a template meaning one thing in `ui` and another in a browser was worse.
+- **An end line.** `GridSpan` held a start and a span, which cannot say `1 / -1`: its span
+  depends on the grid. So `GridSpan.end` (0 for none), with `start` or `end` negative counting
+  back from the explicit grid's last line, clamped to the first as there are no tracks
+  before it. `span 2 / -1` puts the span before the end; `3 / 1` is `1 / 3`. lui still writes
+  a positive pair as a start and a span, so no generated view changes.
+- **Packing.** `track_sizes` stretches `auto` tracks only when the packing is `stretch`. Then
+  `packed` gives the room before the first track and the gap with what is shared between,
+  and that gap is used for placing and spanning, so an item across two tracks takes the space
+  between them, as CSS's does. Room too small centres or ends the tracks over it (CSS's unsafe
+  default); `space-between` then starts them, and `space-around`/`-evenly` centre them.
+  - **A grid's unset `justify-content` is `stretch`, a flex row's `start`.** `Computed` has
+    one field for flex, so the grid reads `track_justify`, `s.justify_content ?? JustifyStretch`.
+    `align_content` already defaulted to stretch for both. lui now takes
+    `justify-content: stretch`: for a flex row CSS treats it as `flex-start`, which flex
+    already does with it.
+
+Tests: `TestRun_UiGridAreasLinesAndPacking`, worked by hand, including a bad template whose
+other name is a rectangle (refusing only the bad name would place it). `TestLui_UiTargetFlexAndGrid`
+covers the new properties and attributes, and four cases in
+`TestLui_UiTargetReportsMistakesAtTheirLine` cover the refusals. The case refusing
+`justify-content: stretch` is gone.
+
 ### 11/17/26 — Reduced motion on GNOME, and its change heard
 
 `Platform.reduce_motion` was macOS's alone and read only at a layout, so turning Reduce Motion

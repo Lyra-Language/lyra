@@ -525,8 +525,7 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"flex value", ui + "<component name=\"a\">\n  <Flex wrap=\"wraps\"/>\n</component>", "x.lui:3: flex-wrap is nowrap, wrap, wrap-reverse, not wraps"},
 		{"track", ui + "<component name=\"a\">\n  <Grid columns=\"1fr bogus\"/>\n</component>", "x.lui:3: a track is a length, Nfr, auto, min-content, max-content, minmax(…) or repeat(…), not bogus"},
 		{"grid attribute", ui + "<component name=\"a\">\n  <Grid colums=\"1fr\"/>\n</component>", "x.lui:3: <Grid> has no attribute colums"},
-		{"grid line", ui + "<component name=\"a\">\n  <Text style=\"grid-column: 3 / 2\">x</Text>\n</component>", "x.lui:3: grid lines are N, span N, N / M or N / span M, not 3 / 2"},
-		{"justify stretch", ui + "<component name=\"a\">\n  <Text style=\"justify-content: stretch\">x</Text>\n</component>", "x.lui:3: justify-content is start, flex-start, end, flex-end, center, space-between, space-around, space-evenly, not stretch"},
+		{"grid line", ui + "<component name=\"a\">\n  <Text style=\"grid-column: 3 / 2\">x</Text>\n</component>", "x.lui:3: grid lines are N, span N, N / M, N / span M or span N / M (a negative N or M from the end), not 3 / 2"},
 		{"braced word", ui + "<component name=\"a\">\n  <Flex direction={d}/>\n</component>", "x.lui:3: direction of <Flex> is written as text, not {…}"},
 		{"media feature", ui + "<style global>\n  @media (min-wdth: 600) {\n    .a { gap: 1 }\n  }\n</style>", "x.lui:3: no media feature min-wdth in ui"},
 		{"media orientation", ui + "<style global>\n  @media (orientation: sideways) {\n    .a { gap: 1 }\n  }\n</style>", "x.lui:3: orientation is portrait or landscape, not sideways"},
@@ -538,6 +537,10 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"media resolution", ui + "<style global>\n  @media (min-resolution: 2) {\n    .a { gap: 1 }\n  }\n</style>", "x.lui:3: min-resolution is a resolution (2dppx, 2x, 192dpi or 75dpcm), not 2"},
 		{"media motion", ui + "<style global>\n  @media (prefers-reduced-motion: less) {\n    .a { gap: 1 }\n  }\n</style>", "x.lui:3: prefers-reduced-motion is reduce or no-preference, not less"},
 		{"media bare feature", ui + "<style global>\n  @media (width) {\n    .a { gap: 1 }\n  }\n</style>", "x.lui:3: (width) needs a value: (width: …), or a range: (width >= 600)"},
+		{"grid areas rectangle", ui + "<style global>\n  .g { grid-template-areas: \"a b\" \"b a\" }\n</style>", "x.lui:3: grid-template-areas' a is not a rectangle"},
+		{"grid areas rows", ui + "<style global>\n  .g { grid-template-areas: \"a b\" \"c\" }\n</style>", "x.lui:3: grid-template-areas' rows are each 2 cells, not 1: c"},
+		{"grid area name", ui + "<style global>\n  .g { grid-area: a b }\n</style>", "x.lui:3: grid-area is an area's name (letters, digits, - and _), not a b"},
+		{"grid line zero", ui + "<style global>\n  .g { grid-column: 0 / -1 }\n</style>", "x.lui:3: grid lines are N, span N, N / M, N / span M or span N / M (a negative N or M from the end), not 0 / -1"},
 		{"media nested", ui + "<style global>\n  @media (min-width: 1) {\n    @media (max-width: 2) {\n      .a { gap: 1 }\n    }\n  }\n</style>", "x.lui:4: an @media inside an @media"},
 		{"at-rule", ui + "<style global>\n  @supports (x: y) {\n  }\n</style>", "x.lui:3: @supports is not an at-rule of a <style>; @media is"},
 		{"selector in a list", ui + "<style global>\n  .a,\n  Column Text { gap: 1 }\n</style>", "x.lui:4: Column Text is not a selector ui reads"},
@@ -707,7 +710,8 @@ let main = () -> u8 => {
 // The ui target's flex and grid: <Flex> and <Grid> attributes are the style properties they
 // name, and every CSS layout property reads in a style or a sheet — flex's shorthand (`1`,
 // `none`, `2 0 auto`), a basis as a percentage, order, the alignments, track lists with fr,
-// minmax and repeat, a dense column flow, grid lines with spans — a later declaration
+// minmax and repeat, a dense column flow, grid lines with spans and from the end, named
+// areas (in a sheet and as an attribute) and the content's packing — a later declaration
 // replacing an earlier one, as in CSS; and the module checks clean.
 func TestLui_UiTargetFlexAndGrid(t *testing.T) {
 	t.Parallel()
@@ -720,6 +724,9 @@ func TestLui_UiTargetFlexAndGrid(t *testing.T) {
   .item { flex: 1; min-width: 120; order: 2; align-self: center }
   .fixed { flex: none; flex-basis: 25% }
   .cell { grid-column: 2 / span 3; grid-row: 1 / 3; justify-self: end }
+  .wide { grid-column: 1 / -1; grid-row: span 2 / -1 }
+  .last { grid-column: -2; grid-area: main }
+  .page { grid-template-areas: "a b" 'a  c'; justify-content: stretch }
 </style>
 <component name="view" event={Ev}>
   <Column>
@@ -729,6 +736,10 @@ func TestLui_UiTargetFlexAndGrid(t *testing.T) {
     </Flex>
     <Grid columns="100 1fr minmax(min-content, 2fr) repeat(2, auto max-content)" rows="auto" flow="column dense" justify-items="center" auto-rows="minmax(80, auto)">
       <Text class="cell">c</Text>
+    </Grid>
+    <Grid areas="'head head' 'side main'" justify-content="center" align-content="space-evenly">
+      <Text class="wide">d</Text>
+      <Text class="last">e</Text>
     </Grid>
   </Column>
 </component>
@@ -752,6 +763,10 @@ func TestLui_UiTargetFlexAndGrid(t *testing.T) {
 		"grow: Some(0.0), shrink: Some(0.0), basis: Some(BasisFraction(25.0 / 100.0)) }",
 		"grow: Some(2.0), shrink: Some(0.0), basis: Some(BasisAuto), max_height: Some(40.0)",
 		"grid_column: Some(GridSpan { start: 2, span: 3 }), grid_row: Some(GridSpan { start: 1, span: 2 }), justify_self: Some(AlignEnd)",
+		"grid_column: Some(GridSpan { start: 1, end: -1 }), grid_row: Some(GridSpan { span: 2, end: -1 })",
+		"grid_column: Some(GridSpan { start: -2 }), grid_area: Some(\"main\")",
+		"grid_areas: Some([\"a b\", \"a c\"]), justify_content: Some(JustifyStretch)",
+		"grid_areas: Some([\"head head\", \"side main\"]), justify_content: Some(JustifyCenter), align_content: Some(JustifyEvenly)",
 	} {
 		if !strings.Contains(string(generated), want) {
 			t.Errorf("the generated module lacks %q:\n%s", want, generated)

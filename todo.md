@@ -883,9 +883,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[OPEN] Reduced motion: GNOME's change wakes no idle window**, seen when something else
   does (its signal needs a GLib main loop); KDE's and Windows' `SPI_GETCLIENTAREAANIMATION`
   are unread.
-- **[OPEN] Grid: no named areas, no negative lines, no `justify-content`/`align-content`.**
-  `grid-template-areas`, `grid-area: name`, lines counted from the end (`-1`) and packing
-  the tracks themselves are not built; tracks always stretch (CSS's `normal`).
+- **[DONE 11/18] Grid: named areas, lines from the end, `justify-content`/`align-content`.**
+  `grid_areas`/`grid_area`, `GridSpan.end` and negative lines, and the tracks packed, in `ui`
+  and lui. COMPLETED.md 11/18.
 - **[OPEN] Flex and grid: no margins and no percentages but `flex-basis`.** CSS's auto
   margins (pushing an item to the end) and `width: 50%` would each need a length type in
   `Style`; `align-self: baseline` reads only a row's first line.

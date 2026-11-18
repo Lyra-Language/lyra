@@ -479,9 +479,11 @@ pub let flex<e> = pure (children: []Node<e>) -> Node<e> => {
 
 /// A grid, after CSS's: its items in the cells of `grid_columns` and `grid_rows` (tracks of
 /// [px](ui.style), [fr](ui.style), `auto`, min- and max-content, `minmax` and
-/// `repeat_tracks`), placed where their `grid_column` and `grid_row` say or flowed into the
-/// next free cell by `grid_flow`, and aligned in their cells by `justify_items`,
-/// `align_items` and an item's own `justify_self` and `align_self`.
+/// `repeat_tracks`), placed where their `grid_column` and `grid_row` say, in the area of
+/// `grid_areas` their `grid_area` names, or flowed into the next free cell by `grid_flow`,
+/// aligned in their cells by `justify_items`, `align_items` and an item's own
+/// `justify_self` and `align_self`, the tracks packed by `justify_content` and
+/// `align_content`.
 pub let grid<e> = pure (children: []Node<e>) -> Node<e> => {
   let kind: Kind<e> = Gridbox
   Node { kind: kind, tag: "Grid", children: children }

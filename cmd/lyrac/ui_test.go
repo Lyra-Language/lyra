@@ -2015,6 +2015,120 @@ fr rows (300x100): a@0,0 300x25 b@0,25 300x75
 	}
 }
 
+// Named areas, lines from the end and packed tracks, worked by hand from CSS Grid §7.3, §8.3
+// and §11. Areas place items whatever their order, an item with none goes past them, and a
+// template with a name that is not a rectangle is none at all.
+// `1 / -1` spans the explicit grid, `-2` is its last column, `span 2 / -1` ends at its last
+// line, and `3 / 1` is `1 / 3`. justify-content and align-content then move px tracks in the
+// room they leave — an item spanning two tracks takes the space between them too — and
+// `start` keeps auto tracks from stretching, as the unset default does.
+func TestRun_UiGridAreasLinesAndPacking(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.draw.{ Size }
+import ui.text.{ fonts_new, Fonts }
+import ui.style.{
+  Style,
+  GridSpan,
+  JustifyStart,
+  JustifyEnd,
+  JustifyCenter,
+  JustifyBetween,
+  JustifyAround,
+  JustifyEvenly,
+  px,
+  fr,
+  auto_track,
+  repeat_tracks,
+}
+import ui.layout.{ Node, grid, sized, layout, loose }
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  let areas = Style {
+    grid_areas: Some(["head head", "side main", "foot foot"]),
+    grid_columns: Some([px(80.0), fr(1.0)]),
+  }
+  show("areas", grid([
+    cell("main").with_style(Style { grid_area: Some("main") }),
+    cell("head").with_style(Style { grid_area: Some("head") }),
+    cell("side").with_style(Style { grid_area: Some("side") }),
+    cell("foot").with_style(Style { grid_area: Some("foot") }),
+    cell("x"),
+  ]).with_style(areas), 300.0, fonts)
+  // b alone is a rectangle, but a is not, so neither is an area.
+  let ell = Style { grid_areas: Some(["a a b", "a . b"]), grid_columns: Some(repeat_tracks(3, [px(50.0)])) }
+  show("not a rectangle", grid([
+    cell("a").with_style(Style { grid_area: Some("a") }),
+    cell("b").with_style(Style { grid_area: Some("b") }),
+  ]).with_style(ell), 300.0, fonts)
+  let thirds = Some(repeat_tracks(3, [px(50.0)]))
+  show("from the end", grid([
+    cell("a").with_style(Style { grid_column: Some(GridSpan { start: 1, end: -1 }) }),
+    cell("b").with_style(Style { grid_column: Some(GridSpan { start: -2 }) }),
+    cell("c").with_style(Style { grid_column: Some(GridSpan { span: 2, end: -1 }) }),
+    cell("d").with_style(Style { grid_column: Some(GridSpan { start: 3, end: 1 }) }),
+  ]).with_style(Style { grid_columns: thirds }), 300.0, fonts)
+  let pair = Some([px(50.0), px(50.0)])
+  show("center", grid([cell("a"), cell("b")]).with_style(Style {
+    grid_columns: pair,
+    column_gap: Some(10.0),
+    justify_content: Some(JustifyCenter),
+  }), 300.0, fonts)
+  show("end", grid([cell("a"), cell("b")]).with_style(Style { grid_columns: pair, justify_content: Some(JustifyEnd) }), 300.0, fonts)
+  show("between", grid([cell("a").with_style(Style { grid_column: Some(GridSpan { span: 2 }) }), cell("b")]).with_style(Style {
+    grid_columns: thirds,
+    justify_content: Some(JustifyBetween),
+  }), 300.0, fonts)
+  show("around", grid([cell("a"), cell("b"), cell("c")]).with_style(Style { grid_columns: thirds, justify_content: Some(JustifyAround) }), 300.0, fonts)
+  show("evenly", grid([cell("a"), cell("b"), cell("c")]).with_style(Style { grid_columns: thirds, justify_content: Some(JustifyEvenly) }), 300.0, fonts)
+  let autos = Some([auto_track(), auto_track()])
+  show("auto stretched", grid([block("a", 30.0, 20.0), block("b", 30.0, 20.0)]).with_style(Style { grid_columns: autos }), 300.0, fonts)
+  show("auto at the start", grid([block("a", 30.0, 20.0), block("b", 30.0, 20.0)]).with_style(Style {
+    grid_columns: autos,
+    justify_content: Some(JustifyStart),
+  }), 300.0, fonts)
+  show("rows at the end", grid([cell("a"), cell("b")]).with_style(Style {
+    grid_rows: Some([px(20.0), px(20.0)]),
+    height: Some(100.0),
+    align_content: Some(JustifyEnd),
+  }), 300.0, fonts)
+  0
+}
+
+/// A cell 20 tall, as wide as its area.
+let cell = pure (key: string) -> Node<void> =>
+  sized::<void>(None, None).keyed(key).with_style(Style { height: Some(20.0) })
+
+let block = pure (key: string, w: f32, h: f32) -> Node<void> =>
+  sized::<void>(None, None).keyed(key).with_style(Style { width: Some(w), height: Some(h) })
+
+let show = (name: string, view: Node<void>, width: f32, fonts: mut Fonts) -> void => {
+  let laid = layout(view, loose(Size { w: width, h: 400.0 }), fonts)
+  var line = "${name} (${laid.size.w}x${laid.size.h}):"
+  for p in laid.children {
+    let parts = p.laid.id.split(":")
+    line = "${line} ${parts[parts.len() - 1]}@${p.at.x},${p.at.y} ${p.laid.size.w}x${p.laid.size.h}"
+  }
+  println(line)
+}
+`)
+	want := `areas (300x80): main@80,20 220x20 head@0,0 300x20 side@0,20 80x20 foot@0,40 300x20 x@0,60 80x20
+not a rectangle (300x20): a@0,0 50x20 b@50,0 50x20
+from the end (300x80): a@0,0 150x20 b@100,20 50x20 c@50,40 100x20 d@0,60 100x20
+center (300x20): a@95,0 50x20 b@155,0 50x20
+end (300x20): a@200,0 50x20 b@250,0 50x20
+between (300x20): a@0,0 175x20 b@250,0 50x20
+around (300x20): a@25,0 50x20 b@125,0 50x20 c@225,0 50x20
+evenly (300x20): a@37.5,0 50x20 b@125,0 50x20 c@212.5,0 50x20
+auto stretched (300x20): a@0,0 30x20 b@150,0 30x20
+auto at the start (300x20): a@0,0 30x20 b@30,0 30x20
+rows at the end (300x100): a@0,60 300x20 b@0,80 300x20
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // Media rules and selector lists in the cascade. A sheet's grid has 1, 2 or 4 columns by
 // min-width breakpoints. A class rule under a landscape condition beats a later tag rule by
 // its specificity, applied or not by the orientation. A not and a comma (any of) combine.

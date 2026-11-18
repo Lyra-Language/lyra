@@ -2446,6 +2446,9 @@ const FLEX_ATTRIBUTES = [
 const GRID_ATTRIBUTES = [
   "columns",
   "rows",
+  "areas",
+  "justify-content",
+  "align-content",
   "gap",
   "row-gap",
   "column-gap",
@@ -2464,6 +2467,7 @@ let layout_attribute = pure (_builder: string, name: string) -> string => match 
   "align" => "align_items",
   "columns" => "grid_template_columns",
   "rows" => "grid_template_rows",
+  "areas" => "grid_template_areas",
   "flow" => "grid_auto_flow",
   "auto-columns" => "grid_auto_columns",
   "auto-rows" => "grid_auto_rows",
@@ -2519,7 +2523,8 @@ let layout_declaration = pure (
         [("nowrap", "NoWrap"), ("wrap", "Wrap"), ("wrap-reverse", "WrapReverse")]
       )
     ),
-    "justify_content" => one(name, word_of(name, value, JUSTIFY_WORDS)),
+    "justify_content" =>
+      one(name, word_of(name, value, [...JUSTIFY_WORDS, ("stretch", "JustifyStretch")])),
     "align_content" =>
       one(name, word_of(name, value, [...JUSTIFY_WORDS, ("stretch", "JustifyStretch")])),
     "align_items" => one(name, word_of(name, value, ALIGN_WORDS)),
@@ -2543,6 +2548,8 @@ let layout_declaration = pure (
       ("column dense", "FlowColumnDense"),
     ])),
     "grid_column" => one(name, grid_line(value)),
+    "grid_template_areas" => one("grid_areas", area_rows(value)),
+    "grid_area" => one(name, area_name(value)),
     "overflow" => {
       // CSS's shorthand: one value for both axes, or across then down.
       let words = value.trim().split_when((c) => c == ' ')
@@ -2747,31 +2754,121 @@ let track_size = pure (value: string) -> Result<string, string> => {
   }
 }
 
-/// `grid-column` and `grid-row`: `2`, `span 2`, `1 / 3` (lines), or `2 / span 3`.
+/// `grid-column` and `grid-row`: `2`, `span 2`, `1 / 3` (lines), `2 / span 3`, or `span 2 / 5`
+/// — a negative line counted back from the explicit grid's end (`1 / -1`, every column).
 let grid_line = pure (value: string) -> Result<string, string> => {
   let halves = [h in value.split("/") | h.trim()]
   let span_of = (text: string) -> Maybe<string> =>
     text.strip_prefix("span ").map((n) => n.trim())
-  let bad = "grid lines are N, span N, N / M or N / span M, not ${value}"
+  let bad = "grid lines are N, span N, N / M, N / span M or span N / M (a negative N or M from the end), not ${value}"
+  // A line is a whole number other than 0.
+  let line = (text: string) -> Maybe<i64> => text.parse_i64().filter((n) => n != 0)
   match halves.len() {
     1 => match span_of(halves[0]) {
       Some(n) => Ok("GridSpan { span: ${integer(n)?} }"),
-      None => Ok("GridSpan { start: ${integer(halves[0])?} }"),
+      None => {
+        let Some(start) = line(halves[0]) else { return Err(bad) }
+        Ok("GridSpan { start: ${start} }")
+      },
     },
     2 => {
-      let start = halves[0].parse_i64() ?? 0
-      if start < 1 { return Err(bad) }
-      match span_of(halves[1]) {
-        Some(n) => Ok("GridSpan { start: ${start}, span: ${integer(n)?} }"),
-        None => {
-          let end = halves[1].parse_i64() ?? 0
-          if end <= start { return Err(bad) }
-          Ok("GridSpan { start: ${start}, span: ${end - start} }")
-        },
+      if let Some(n) = span_of(halves[0]) {
+        let Some(end) = line(halves[1]) else { return Err(bad) }
+        return Ok("GridSpan { span: ${integer(n)?}, end: ${end} }")
       }
+      let Some(start) = line(halves[0]) else { return Err(bad) }
+      if let Some(n) = span_of(halves[1]) { return Ok("GridSpan { start: ${start}, span: ${integer(n)?} }") }
+      let Some(end) = line(halves[1]) else { return Err(bad) }
+      if start > 0 && end > 0 {
+        if end <= start { return Err(bad) }
+        return Ok("GridSpan { start: ${start}, span: ${end - start} }")
+      }
+      Ok("GridSpan { start: ${start}, end: ${end} }")
     },
     _ => Err(bad),
   }
+}
+
+/// `grid-template-areas`: a row of cells a quoted string (`"head head" "side main"`), each
+/// cell's area a name, `.` for none — every row as many cells as the first, and every name's
+/// cells one rectangle, or CSS refuses the template.
+let area_rows = pure (value: string) -> Result<string, string> => {
+  var rows: [][]string = []
+  var quote_mark: Maybe<rune> = None
+  var piece = ""
+  for c in value.trim() {
+    match quote_mark {
+      Some(q) => if c == q {
+        rows.push([w in piece.split(" ") | w.trim().len() > 0 | w.trim()])
+        piece = ""
+        quote_mark = None
+      } else {
+        piece = "${piece}${if c == '\t' { ' ' } else { c }}"
+      },
+      None => if c == '"' || c == '\'' {
+        quote_mark = Some(c)
+      } else if c != ' ' && c != '\t' && c != '\n' {
+        return Err("grid-template-areas is quoted rows of names, \"a a\" \"b c\", not ${value}")
+      },
+    }
+  }
+  if quote_mark.is_some() { return Err("grid-template-areas has an unclosed quote: ${value}") }
+  if rows.len() == 0 || rows[0].len() == 0 {
+    return Err("grid-template-areas names no cells: ${value}")
+  }
+  var cells: [](string, i64, i64) = []
+  for r, row in rows {
+    if row.len() != rows[0].len() {
+      return Err("grid-template-areas' rows are each ${rows[0].len()} cells, not ${row.len()}: ${row.join(" ")}")
+    }
+    for c, name in row {
+      if name.replace(".", "").len() == 0 { continue }
+      if !is_area_name(name) { return Err("${name} is not an area's name (letters, digits, - and _)") }
+      cells.push((name, r, c))
+    }
+  }
+  for (name, _, _) in cells {
+    var top: i64 = rows.len()
+    var bottom: i64 = -1
+    var left: i64 = rows[0].len()
+    var right: i64 = -1
+    var count: i64 = 0
+    for (other, r, c) in cells {
+      if other != name { continue }
+      count += 1
+      top = top.min(r)
+      bottom = bottom.max(r)
+      left = left.min(c)
+      right = right.max(c)
+    }
+    if count != (bottom - top + 1) * (right - left + 1) {
+      return Err("grid-template-areas' ${name} is not a rectangle")
+    }
+  }
+  Ok("[${[row in rows | quote(row.join(" "))].join(", ")}]")
+}
+
+/// `grid-area`: the name of an area of the grid's `grid-template-areas`.
+let area_name = pure (value: string) -> Result<string, string> => {
+  let name = value.trim()
+  if !is_area_name(name) { return Err("grid-area is an area's name (letters, digits, - and _), not ${value}") }
+  Ok(quote(name))
+}
+
+/// Whether `name` is an identifier as CSS's are: letters (any beyond ASCII too), digits, `-`
+/// and `_`.
+let is_area_name = pure (name: string) -> bool => {
+  if name.len() == 0 { return false }
+  for c in name {
+    if !(c.is_ascii_alpha() ||
+        c.is_ascii_digit() ||
+        c == '-' ||
+        c == '_' ||
+        u32(c) > 127) {
+      return false
+    }
+  }
+  true
 }
 
 /// `text`'s arguments if it is a call to `name` (`repeat(3, 1fr)` → `3, 1fr`).
@@ -2916,7 +3013,7 @@ let ui_declarations = pure (
       "font_size" => ui_number(given),
       "line_height" => ui_number(given),
       "padding" => ui_padding(given),
-      _ => Err("no style property ${name} in ui (color, background, border-color, border-width, radius (one to four numbers, as border-radius), gap, opacity, font-size, line-height, padding; transition and transition-property, -duration, -timing-function, -delay; overflow (one or two of visible, hidden, clip, scroll, auto), overflow-x, overflow-y; text-overflow (clip or ellipsis); text-align (left, center, right, start, end); scrollbar-width (auto, thin, none), scrollbar-gutter (auto, stable), scrollbar-autohide (true, false); cursor (default, text, pointer, crosshair, move, not-allowed, wait, ew-resize, ns-resize); box-shadow, a gradient background or background-image, filter: blur(), backdrop-filter: blur(); width, height and their min- and max-; row-gap, column-gap; flex, flex-direction, flex-wrap, flex-grow, flex-shrink, flex-basis, order, justify-content, align-content, align-items, align-self; grid-template-columns, grid-template-rows, grid-auto-columns, grid-auto-rows, grid-auto-flow, grid-column, grid-row, justify-items, justify-self)"),
+      _ => Err("no style property ${name} in ui (color, background, border-color, border-width, radius (one to four numbers, as border-radius), gap, opacity, font-size, line-height, padding; transition and transition-property, -duration, -timing-function, -delay; overflow (one or two of visible, hidden, clip, scroll, auto), overflow-x, overflow-y; text-overflow (clip or ellipsis); text-align (left, center, right, start, end); scrollbar-width (auto, thin, none), scrollbar-gutter (auto, stable), scrollbar-autohide (true, false); cursor (default, text, pointer, crosshair, move, not-allowed, wait, ew-resize, ns-resize); box-shadow, a gradient background or background-image, filter: blur(), backdrop-filter: blur(); width, height and their min- and max-; row-gap, column-gap; flex, flex-direction, flex-wrap, flex-grow, flex-shrink, flex-basis, order, justify-content, align-content, align-items, align-self; grid-template-columns, grid-template-rows, grid-auto-columns, grid-auto-rows, grid-auto-flow, grid-template-areas, grid-column, grid-row, grid-area, justify-items, justify-self)"),
     }
     match lyra {
       Ok(v) => { fields = with_field(fields, "${field}: Some(${v})") },

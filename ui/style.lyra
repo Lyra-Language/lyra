@@ -124,11 +124,16 @@ pub struct Style {
   align_content: Maybe<Justify> = None,
   align_items: Maybe<ItemAlign> = None,
   /// A grid's: how items sit in their cells along a row (`justify-items`; `align_items` is
-  /// across), its column and row tracks, the size of a track the template does not give, and
-  /// how items without a place are placed.
+  /// across), its column and row tracks, its named areas, the size of a track the template
+  /// does not give, and how items without a place are placed. A grid's `justify_content` and
+  /// `align_content` pack its tracks, stretched where unset (CSS's `normal`).
   justify_items: Maybe<ItemAlign> = None,
   grid_columns: Maybe<[]Track> = None,
   grid_rows: Maybe<[]Track> = None,
+  /// CSS's `grid-template-areas`: a row of cells a string, each cell's area named by a word,
+  /// `.` for none (`["head head", "side main"]`). An area is the rectangle its name covers; a
+  /// name that covers none is no area.
+  grid_areas: Maybe<[]string> = None,
   grid_auto_columns: Maybe<Track> = None,
   grid_auto_rows: Maybe<Track> = None,
   grid_flow: Maybe<GridFlow> = None,
@@ -142,9 +147,11 @@ pub struct Style {
   /// An item's own `align-items` (and, in a grid, `justify-items`).
   align_self: Maybe<ItemAlign> = None,
   justify_self: Maybe<ItemAlign> = None,
-  /// An item's place in a grid: its first column or row line and how many tracks it spans.
+  /// An item's place in a grid: its first column or row line and how many tracks it spans —
+  /// or the area of the grid's `grid_areas` it names (`grid-area`), which wins.
   grid_column: Maybe<GridSpan> = None,
   grid_row: Maybe<GridSpan> = None,
+  grid_area: Maybe<string> = None,
   /// Shadows the element casts, the first on top — CSS's `box-shadow`.
   box_shadow: Maybe<[]BoxShadow> = None,
   /// A gradient over the background colour — CSS's `background-image: linear-gradient(…)`.
@@ -296,10 +303,14 @@ pub let repeat_tracks = pure (count: i64, tracks: []Track) -> []Track => {
 }
 
 /// An item's place along a grid's columns or rows: the line it starts at (1 the first, as
-/// in CSS; 0 for auto-placement) and how many tracks it spans.
+/// in CSS; 0 for auto-placement) and how many tracks it spans — or the line it ends at,
+/// which, given, says the span (`1 / -1`, CSS's `grid-column: 1 / -1`; with no start, the
+/// span ends there). A negative line counts back from the explicit grid's end, `-1` its
+/// last line; one before the first is the first.
 pub struct GridSpan {
   start: i64 = 0,
   span: i64 = 1,
+  end: i64 = 0,
 }
 
 /// How a grid places items without a place (`grid-auto-flow`): along the rows or down the
@@ -338,6 +349,7 @@ impl Style {
     justify_items: self.justify_items.or(base.justify_items),
     grid_columns: self.grid_columns.or(base.grid_columns),
     grid_rows: self.grid_rows.or(base.grid_rows),
+    grid_areas: self.grid_areas.or(base.grid_areas),
     grid_auto_columns: self.grid_auto_columns.or(base.grid_auto_columns),
     grid_auto_rows: self.grid_auto_rows.or(base.grid_auto_rows),
     grid_flow: self.grid_flow.or(base.grid_flow),
@@ -349,6 +361,7 @@ impl Style {
     justify_self: self.justify_self.or(base.justify_self),
     grid_column: self.grid_column.or(base.grid_column),
     grid_row: self.grid_row.or(base.grid_row),
+    grid_area: self.grid_area.or(base.grid_area),
     box_shadow: self.box_shadow.or(base.box_shadow),
     background_gradient: self.background_gradient.or(base.background_gradient),
     filter_blur: self.filter_blur.or(base.filter_blur),
@@ -1102,10 +1115,13 @@ pub struct Computed {
   justify_content: Justify = JustifyStart,
   /// CSS's `normal` for a flex container's lines: stretched.
   align_content: Justify = JustifyStretch,
+  /// A grid's `justify-content`: its columns stretched where unset (CSS's `normal` there).
+  track_justify: Justify = JustifyStretch,
   align_items: ItemAlign = AlignStretch,
   justify_items: ItemAlign = AlignStretch,
   grid_columns: []Track = [],
   grid_rows: []Track = [],
+  grid_areas: []string = [],
   grid_auto_columns: Track = Track { min: TrackAuto, max: TrackAuto },
   grid_auto_rows: Track = Track { min: TrackAuto, max: TrackAuto },
   grid_flow: GridFlow = FlowRow,
@@ -1118,6 +1134,7 @@ pub struct Computed {
   justify_self: Maybe<ItemAlign> = None,
   grid_column: GridSpan = GridSpan {},
   grid_row: GridSpan = GridSpan {},
+  grid_area: string = "",
   box_shadow: []BoxShadow = [],
   background_gradient: Maybe<Gradient> = None,
   filter_blur: f32 = 0.0,
@@ -1251,10 +1268,12 @@ impl Cascade {
       flex_wrap: s.flex_wrap ?? NoWrap,
       justify_content: s.justify_content ?? JustifyStart,
       align_content: s.align_content ?? JustifyStretch,
+      track_justify: s.justify_content ?? JustifyStretch,
       align_items: s.align_items ?? AlignStretch,
       justify_items: s.justify_items ?? AlignStretch,
       grid_columns: s.grid_columns ?? [],
       grid_rows: s.grid_rows ?? [],
+      grid_areas: s.grid_areas ?? [],
       grid_auto_columns: s.grid_auto_columns ?? auto_track(),
       grid_auto_rows: s.grid_auto_rows ?? auto_track(),
       grid_flow: s.grid_flow ?? FlowRow,
@@ -1266,6 +1285,7 @@ impl Cascade {
       justify_self: s.justify_self,
       grid_column: s.grid_column ?? GridSpan {},
       grid_row: s.grid_row ?? GridSpan {},
+      grid_area: s.grid_area ?? "",
       box_shadow: s.box_shadow ?? [],
       background_gradient: s.background_gradient,
       filter_blur: (s.filter_blur ?? 0.0).max(0.0),

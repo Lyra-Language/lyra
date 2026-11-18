@@ -4,7 +4,9 @@ module ui.layout
 //! `grid_flow`, sparse or dense), the column tracks sized from the items' min- and max-content
 //! widths and the row tracks from their heights at those widths (§12: fixed sizes, intrinsic
 //! ones, free space up to each track's limit, `fr` shares, then `auto` tracks stretched), and
-//! each item laid out in its area and aligned there.
+//! each item laid out in its area and aligned there. An item's place is a named area
+//! (`grid_areas`, `grid_area`) or its lines, a negative one counted from the explicit grid's
+//! end; the tracks are packed by `justify_content` and `align_content` where they leave room.
 //!
 //! **Definite sizes are as a flex container's**: a grid fills the width it is given, so `fr`
 //! columns share it; its height is definite only when fixed, so `fr` rows share a `height`
@@ -20,6 +22,14 @@ import ui.style.{
   TrackMinContent,
   TrackMaxContent,
   ItemAlign,
+  GridSpan,
+  Justify,
+  JustifyEnd,
+  JustifyCenter,
+  JustifyBetween,
+  JustifyAround,
+  JustifyEvenly,
+  JustifyStretch,
   AlignEnd,
   AlignCenter,
   AlignStretch,
@@ -54,14 +64,22 @@ let lay_grid<e> = (
     })
   }
   let col_room: Maybe<f32> = if width_definite { Some(c.max_w) } else { None }
-  let cols = track_sizes(plan.columns, spans, col_room, style.column_gap)
-  let col_at = offsets(cols, style.column_gap)
+  let cols = track_sizes(
+    plan.columns,
+    spans,
+    col_room,
+    style.column_gap,
+    style.track_justify == JustifyStretch
+  )
+  let col_pack = packed(cols, style.column_gap, col_room, style.track_justify)
+  let col_gap = col_pack.1
+  let col_at = offsets(cols, col_gap, col_pack.0)
   // Rows from the items' heights at their areas' widths.
   var row_spans: []Spanning = []
   for area in plan.areas {
     let child = children[area.index]
     let own = plan.styles[area.index]
-    let w = spanned(cols, area.col, area.col_span, style.column_gap)
+    let w = spanned(cols, area.col, area.col_span, col_gap)
     let stretch = (own.justify_self ?? style.justify_items) == AlignStretch && own.width.is_none()
     var scratch = layout_cache::<e>()
     let limits = Constraints { min_w: if stretch { w } else { 0.0 }, max_w: w }
@@ -77,15 +95,23 @@ let lay_grid<e> = (
     row_spans.push(Spanning { start: area.row, span: area.row_span, least: h, most: h })
   }
   let row_room: Maybe<f32> = if height_definite { Some(c.max_h) } else { None }
-  let rows = track_sizes(plan.rows, row_spans, row_room, style.row_gap)
-  let row_at = offsets(rows, style.row_gap)
+  let rows = track_sizes(
+    plan.rows,
+    row_spans,
+    row_room,
+    style.row_gap,
+    style.align_content == JustifyStretch
+  )
+  let row_pack = packed(rows, style.row_gap, row_room, style.align_content)
+  let row_gap = row_pack.1
+  let row_at = offsets(rows, row_gap, row_pack.0)
   // Each item in its area.
   var placed: []Placed<e> = []
   for area in plan.areas {
     let child = children[area.index]
     let own = plan.styles[area.index]
-    let w = spanned(cols, area.col, area.col_span, style.column_gap)
-    let h = spanned(rows, area.row, area.row_span, style.row_gap)
+    let w = spanned(cols, area.col, area.col_span, col_gap)
+    let h = spanned(rows, area.row, area.row_span, row_gap)
     let across = own.justify_self ?? style.justify_items
     let down = own.align_self ?? style.align_items
     let fill_w = across == AlignStretch && own.width.is_none()
@@ -111,8 +137,8 @@ let lay_grid<e> = (
     }
     placed.push(Placed { at: at, laid: one })
   }
-  let content_w = tracks_total(cols, style.column_gap)
-  let content_h = tracks_total(rows, style.row_gap)
+  let content_w = tracks_total(cols, col_gap)
+  let content_h = tracks_total(rows, row_gap)
   let size = c.constrain(Size {
     w: if width_definite { c.max_w } else { content_w },
     h: content_h,
@@ -146,7 +172,10 @@ let grid_intrinsic_width<e> = (
     )
     spans.push(Spanning { start: area.col, span: area.col_span, least: w, most: w })
   }
-  tracks_total(track_sizes(plan.columns, spans, None, style.column_gap), style.column_gap)
+  tracks_total(
+    track_sizes(plan.columns, spans, None, style.column_gap, true),
+    style.column_gap
+  )
 }
 
 /// Where a grid's items go, and its tracks: each item's area, the column and row tracks (the
@@ -198,14 +227,22 @@ let grid_plan<e> = (
   order = stable_by_order(order, styles)
   let by_columns = style.grid_flow == FlowColumn || style.grid_flow == FlowColumnDense
   let dense = style.grid_flow == FlowRowDense || style.grid_flow == FlowColumnDense
-  let explicit_minor = if by_columns { style.grid_rows.len() } else { style.grid_columns.len() }
+  // The explicit grid: the template's tracks, or as many as the areas reach.
+  let named = grid_areas(style.grid_areas)
+  let explicit_cols = style.grid_columns.len().max(named.columns)
+  let explicit_rows = style.grid_rows.len().max(named.rows)
+  let explicit_minor = if by_columns { explicit_rows } else { explicit_cols }
   // Each item's (start, span) along the minor and major axes, -1 for auto.
   var minor_of: [](i64, i64) = []
   var major_of: [](i64, i64) = []
   var minor_count = explicit_minor.max(1)
   for s in styles {
-    let col = (s.grid_column.start - 1, s.grid_column.span.max(1))
-    let row_line = (s.grid_row.start - 1, s.grid_row.span.max(1))
+    var col = line_place(s.grid_column, explicit_cols)
+    var row_line = line_place(s.grid_row, explicit_rows)
+    if let Some(area) = named.areas.get(s.grid_area) {
+      col = (area.col, area.col_span)
+      row_line = (area.row, area.row_span)
+    }
     let minor = if by_columns { row_line } else { col }
     let major = if by_columns { col } else { row_line }
     minor_of.push(minor)
@@ -274,7 +311,7 @@ let grid_plan<e> = (
   }
   // Back to columns and rows, and the tracks the items reach.
   var areas: []Area = []
-  var major_count: i64 = if by_columns { style.grid_columns.len() } else { style.grid_rows.len() }
+  var major_count: i64 = if by_columns { explicit_cols } else { explicit_rows }
   for i in order {
     let (major, minor) = placed[i] ?? (0, 0)
     major_count = major_count.max(major + major_of[i].1)
@@ -304,6 +341,72 @@ let grid_plan<e> = (
     rows: tracks_to(style.grid_rows, row_count, style.grid_auto_rows),
     styles: styles,
   }
+}
+
+/// A grid's named areas (`grid_areas`), each the rectangle of cells its name covers (from 0),
+/// and the columns and rows they make. A template whose rows differ in length, or with a name
+/// whose cells are not one rectangle, is none at all, as CSS refuses it — `tools/lui` says so
+/// where it is written.
+struct NamedAreas {
+  areas: HashMap<string, Area>,
+  columns: i64 = 0,
+  rows: i64 = 0,
+}
+
+let grid_areas = pure (rows: []string) -> NamedAreas => {
+  let none = NamedAreas { areas: HashMap.new() }
+  var cells: HashMap<string, [](i64, i64)> = HashMap.new()
+  var columns: i64 = 0
+  for r, written in rows {
+    let words = [w in written.split(" ") | w.trim().len() > 0 | w.trim()]
+    if r > 0 && words.len() != columns { return none }
+    columns = words.len()
+    for c, name in words {
+      if name.replace(".", "").len() == 0 { continue }
+      var at = cells.get(name) ?? []
+      at.push((r, c))
+      cells.insert(name, at)
+    }
+  }
+  var areas: HashMap<string, Area> = HashMap.new()
+  for name in cells.keys() {
+    let at = cells.get(name) ?? []
+    var top = at[0].0
+    var bottom = at[0].0
+    var left = at[0].1
+    var right = at[0].1
+    for (r, c) in at {
+      top = top.min(r)
+      bottom = bottom.max(r)
+      left = left.min(c)
+      right = right.max(c)
+    }
+    // A rectangle has a cell for each place in it, and no more.
+    if at.len() != (bottom - top + 1) * (right - left + 1) { return none }
+    areas.insert(name, Area {
+      index: 0,
+      col: left,
+      col_span: right - left + 1,
+      row: top,
+      row_span: bottom - top + 1,
+    })
+  }
+  NamedAreas { areas: areas, columns: columns, rows: rows.len() }
+}
+
+/// An item's (first track from 0, or -1 for auto; span) along an axis of `explicit` tracks:
+/// its lines resolved, a negative one counted back from the explicit grid's last line.
+let line_place = pure (place: GridSpan, explicit: i64) -> (i64, i64) => {
+  let line = pure (n: i64) -> i64 => if n < 0 { (explicit + 2 + n).max(1) } else { n }
+  let count = place.span.max(1)
+  if place.end != 0 {
+    let end = line(place.end)
+    if place.start == 0 { return ((end - count).max(1) - 1, count) }
+    let start = line(place.start)
+    let first = start.min(end)
+    return (first - 1, (start.max(end) - first).max(1))
+  }
+  if place.start == 0 { (-1, count) } else { (line(place.start) - 1, count) }
 }
 
 /// The cells `major`…`major + major_span` by `minor`…`minor + minor_span`, marked taken.
@@ -349,12 +452,14 @@ let tracks_to = pure (template: []Track, count: i64, implicit: Track) -> []Track
 /// and its limit to their max-content (`auto`, `max-content`) or min-content; items spanning
 /// several share what the tracks lack among the intrinsic ones. Then free space grows each
 /// track to its limit, `fr` tracks share what is left (one too big for its share keeps its
-/// size and leaves the rest to the others), and `auto` tracks share what still is.
+/// size and leaves the rest to the others), and `auto` tracks share what still is when
+/// `stretch` (the content's packing is CSS's `normal` or `stretch`).
 let track_sizes = pure (
   tracks: []Track,
   items: []Spanning,
   room: Maybe<f32>,
-  gap: f32
+  gap: f32,
+  stretch: bool
 ) -> []f32 => {
   let n = tracks.len()
   if n == 0 { return [] }
@@ -493,7 +598,7 @@ let track_sizes = pure (
     var free = width - gaps
     for b in base { free -= b }
     let stretchy = [k in 0..<n | tracks[k].max == TrackAuto | k]
-    if free > 0.001 && stretchy.len() > 0 && flexible.len() == 0 {
+    if stretch && free > 0.001 && stretchy.len() > 0 && flexible.len() == 0 {
       let each = free / f32(stretchy.len())
       for k in stretchy { base[k] += each }
     }
@@ -519,10 +624,43 @@ let is_intrinsic = pure (size: TrackSize) -> bool => match size {
   _ => false,
 }
 
-/// Where each track starts, `gap` apart.
-let offsets = pure (sizes: []f32, gap: f32) -> []f32 => {
+/// Where the first track starts and how far apart the tracks are, packed in `room` by `how`
+/// (`justify-content` or `align-content`): the room they leave before them, or between them
+/// as well as `gap`. With no room, or none left, they start at 0 — but centred, or at the
+/// end, over room too small, as CSS's unsafe alignment is.
+let packed = pure (
+  sizes: []f32,
+  gap: f32,
+  room: Maybe<f32>,
+  how: Justify
+) -> (f32, f32) => {
+  let Some(space) = room else { return (0.0, gap) }
+  let n = sizes.len()
+  if n == 0 { return (0.0, gap) }
+  let free = space - tracks_total(sizes, gap)
+  match how {
+    JustifyEnd => (free, gap),
+    JustifyCenter => (free / 2.0, gap),
+    JustifyBetween =>
+      if free > 0.0 && n > 1 { (0.0, gap + free / f32(n - 1)) } else { (0.0, gap) },
+    JustifyAround => if free > 0.0 {
+      (free / f32(n) / 2.0, gap + free / f32(n))
+    } else {
+      (free / 2.0, gap)
+    },
+    JustifyEvenly => if free > 0.0 {
+      (free / f32(n + 1), gap + free / f32(n + 1))
+    } else {
+      (free / 2.0, gap)
+    },
+    _ => (0.0, gap),
+  }
+}
+
+/// Where each track starts, `gap` apart, the first at `lead`.
+let offsets = pure (sizes: []f32, gap: f32, lead: f32) -> []f32 => {
   var out: []f32 = []
-  var pen: f32 = 0.0
+  var pen: f32 = lead
   for s in sizes {
     out.push(pen)
     pen += s + gap
