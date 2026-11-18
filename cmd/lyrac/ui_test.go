@@ -2120,6 +2120,104 @@ resized to 300x500: 1 columns, heights 10 10 10 10, laid out 7, given back 0
 	}
 }
 
+// A media rule's tests: a range past a value, one on both sides and that range reversed
+// alone, an exact height, the aspect ratio past and at 16/9 (exact at 1600x900, and no ratio
+// at all with no height), the resolution, reduced motion, a reversed orientation beside a
+// scheme, and a whole query reversed — each asked at four viewports. Then a host's viewport
+// carries the platform's pixels a logical unit and its reduced motion.
+func TestRun_UiMediaTests(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ host_of, sandbox }
+import ui.script.{ ScriptPlatform, timed_platform, Played }
+import ui.backend.{ Renderer, Resized, DarkMode, LightMode }
+import ui.draw.{ Size, Color, TextureId }
+import ui.text.{ fonts_new }
+import ui.style.{
+  Media, MediaTest, MediaRange, MediaWidth, MediaHeight, MediaAspectRatio, MediaResolution,
+  MediaOrientation, MediaScheme, MediaReducedMotion, Viewport, Portrait,
+}
+import ui.layout.{ Node, sized }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, window, background, ops) => {}
+}
+
+let main = () -> u8 => {
+  matching()
+  hosted()
+  0
+}
+
+let width_range = pure (not: bool) -> Media => Media { tests: [MediaTest {
+  feature: MediaWidth(MediaRange { least: Some(400.0), most: Some(800.0), past_least: true, past_most: true }),
+  not: not,
+}] }
+
+let queries = pure () -> [](string, Media) => [
+  ("w>600", Media { tests: [MediaTest { feature: MediaWidth(MediaRange { least: Some(600.0), past_least: true }) }] }),
+  ("w>=600", Media { min_width: Some(600.0) }),
+  ("400<w<800", width_range(false)),
+  ("not(400<w<800)", width_range(true)),
+  ("h=500", Media { tests: [MediaTest { feature: MediaHeight(MediaRange { least: Some(500.0), most: Some(500.0) }) }] }),
+  ("ratio>16/9", Media { tests: [MediaTest { feature: MediaAspectRatio(MediaRange { least: Some(16.0 / 9.0), past_least: true }) }] }),
+  ("ratio=16/9", Media { tests: [MediaTest { feature: MediaAspectRatio(MediaRange { least: Some(16.0 / 9.0), most: Some(16.0 / 9.0) }) }] }),
+  ("2dppx", Media { tests: [MediaTest { feature: MediaResolution(MediaRange { least: Some(2.0) }) }] }),
+  ("reduced", Media { tests: [MediaTest { feature: MediaReducedMotion(true) }] }),
+  ("not-portrait-dark", Media { tests: [MediaTest { feature: MediaOrientation(Portrait), not: true }, MediaTest { feature: MediaScheme(DarkMode) }] }),
+  ("not(w>600-dark)", Media { tests: [MediaTest { feature: MediaWidth(MediaRange { least: Some(600.0), past_least: true }) }], scheme: Some(DarkMode), not: true }),
+]
+
+/// Which queries each viewport meets.
+let matching = () -> void => {
+  let viewports = [
+    Viewport { size: Size { w: 600.0, h: 500.0 } },
+    Viewport { size: Size { w: 1600.0, h: 900.0 }, appearance: DarkMode, density: 2.0, reduced_motion: true },
+    Viewport { size: Size { w: 900.0, h: 400.0 }, appearance: DarkMode },
+    Viewport { size: Size { w: 400.0, h: 0.0 } },
+  ]
+  for v in viewports {
+    var met: []string = []
+    for (name, m) in queries() { if m.matches(v) { met.push(name) } }
+    println("${v.size.w}x${v.size.h}: ${met.join(" ")}")
+  }
+}
+
+/// A host's viewport, from a platform at two pixels a unit asking for less motion.
+let hosted = () -> void => {
+  let steps = [Played(Resized(Size { w: 300.0, h: 200.0 }))]
+  var platform = timed_platform(steps, Size { w: 300.0, h: 200.0 })
+  platform.units = 2.0
+  platform.reduced_motion = true
+  var renderer = Blank {}
+  var fonts = fonts_new()
+  let view = pure (_: i64) -> Node<void> => sized::<void>(None, None)
+  var host = host_of(sandbox(view, (n: i64, _: void) => n, Color { r: 0, g: 0, b: 0 }), 0, platform)
+  while host.step(platform, renderer, fonts) {
+    let v = host.windows[0].ui.state.viewport
+    println("hosted: density ${v.density}, reduced motion ${v.reduced_motion}")
+  }
+}
+`)
+	want := `600x500: w>=600 400<w<800 h=500 not(w>600-dark)
+1600x900: w>600 w>=600 not(400<w<800) ratio=16/9 2dppx reduced not-portrait-dark
+900x400: w>600 w>=600 not(400<w<800) ratio>16/9 not-portrait-dark
+400x0: not(400<w<800) not(w>600-dark)
+hosted: density 2, reduced motion true
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // App's min_size and max_size reach the platform (Platform.set_size_limits) on the first
 // pass, and ScriptPlatform holds its resize steps to them as a window would be held, each
 // side on its own: below the least width and above the greatest, then within both.

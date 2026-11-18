@@ -615,14 +615,17 @@ let native_entries<e> = (
   out
 }
 
-/// The window numbered `id` as a sheet's media rules ask of it: its size and the system's look
-/// — and whether it is Apple's, which a menu's shortcuts are spelled by.
+/// The window numbered `id` as a sheet's media rules ask of it: its size, its pixels a
+/// logical unit, the system's look and whether it asks for less motion — and whether it is
+/// Apple's, which a menu's shortcuts are spelled by.
 let viewport_of<p> where p: Platform = (platform: p, id: WindowId) -> Viewport =>
   Viewport {
     size: platform.window_size(id),
     appearance: platform.appearance(),
     apple: platform.apple(),
     maximized: platform.window_state(id).maximized,
+    density: platform.scale(id),
+    reduced_motion: platform.reduce_motion(),
   }
 
 /// The sooner of a wait (`-1` for none) and `delay` milliseconds, never below none at all.

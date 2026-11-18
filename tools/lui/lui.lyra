@@ -1336,6 +1336,15 @@ const LAYOUT_NAMES = [
   "GutterAuto",
   "GutterStable",
   "Media",
+  "MediaTest",
+  "MediaRange",
+  "MediaWidth",
+  "MediaHeight",
+  "MediaAspectRatio",
+  "MediaResolution",
+  "MediaOrientation",
+  "MediaScheme",
+  "MediaReducedMotion",
   "Portrait",
   "Landscape",
   "FlexRow",
@@ -3911,10 +3920,12 @@ let name_only = pure (text: string) -> bool =>
   .to_runes()
   .all((c) => c.is_ascii_alpha() || c.is_ascii_digit() || c == '_' || c == '-')
 
-/// An `@media` query — `(min-width: 600) and (orientation: landscape), not (max-width: 400px)`
-/// — as Lyra's `[]Media`: a comma is any of, `and` every one of, a leading `not` the whole
-/// reversed; `screen` and `all` (`all and (…)`) are taken and mean nothing here. Lengths are
-/// logical units, `px` allowed.
+/// An `@media` query — `(min-width: 600) and (orientation: landscape), not (max-height: 400px)`,
+/// `(400 <= width < 800)`, `(not (prefers-reduced-motion))` — as Lyra's `[]Media`: a comma is
+/// any of, `and` every one of, a leading `not` the whole reversed, `(not (…))` one condition
+/// alone; `screen` and `all` (`all and (…)`) are taken and mean nothing here. Lengths are
+/// logical units, `px` allowed. A width or height at least or at most a value is one of
+/// `Media`'s own bounds; anything else is a `MediaTest`.
 let media_query = pure (text: string) -> Result<string, string> => {
   if text.len() == 0 { return Err("@media needs a condition: @media (min-width: 600)") }
   var each: []string = []
@@ -3929,59 +3940,257 @@ let media_query = pure (text: string) -> Result<string, string> => {
       if words == kind { words = "" }
       if let Some(rest) = words.strip_prefix("${kind} and ") { words = rest.trim() }
     }
-    var fields: []string = []
+    var conditions: []MediaCondition = []
     if words.len() > 0 {
-      for test in words.split(" and ") {
-        let t = test.trim()
-        let inner = t.strip_prefix("(").flat_map((x) => x.strip_suffix(")"))
-        let Some(feature) = inner else {
-          return Err("${t} is not a media feature in (…): (min-width: 600)")
-        }
-        fields.push(media_feature(feature)?)
-      }
+      for test in words.split(" and ") { conditions.push(media_condition(test.trim())?) }
     }
-    if negated { fields.push("not: true") }
-    each.push("Media { ${fields.join(", ")} }")
+    each.push(media_of(conditions, negated))
   }
   Ok("[${each.join(", ")}]")
 }
 
-/// One media feature, `min-width: 600`, as a `Media` field.
-let media_feature = pure (text: string) -> Result<string, string> => {
+/// One media condition as read: its feature — `width`, `height`, `aspect-ratio`, `resolution`
+/// (each a range, its bounds as Lyra), `orientation`, `prefers-color-scheme` or
+/// `prefers-reduced-motion` (each a `value`, as Lyra) — reversed alone by `not`.
+struct MediaCondition {
+  feature: string,
+  least: Maybe<string> = None,
+  most: Maybe<string> = None,
+  past_least: bool = false,
+  past_most: bool = false,
+  value: string = "",
+  not: bool = false,
+}
+
+/// A query's conditions as a `Media`: a width or height bound that is at least or at most,
+/// and an orientation or scheme, each the first of its kind and not reversed alone, as
+/// `Media`'s fields; the rest as its `tests`.
+let media_of = pure (conditions: []MediaCondition, negated: bool) -> string => {
+  var fields: []string = []
+  var set: []string = []
+  var tests: []string = []
+  for c in conditions {
+    let ranged = c.feature == "width" || c.feature == "height"
+    let bounds = [
+      ("min_${c.feature}", c.least),
+      ("max_${c.feature}", c.most),
+    ]
+    var free = true
+    for (field, bound) in bounds {
+      if bound.is_some() && set.contains(field) { free = false }
+    }
+    let own = !c.not && if ranged {
+      !c.past_least && !c.past_most && free
+    } else {
+      (c.feature == "orientation" || c.feature == "prefers-color-scheme") && !set.contains(c.feature)
+    }
+    if !own {
+      tests.push(media_test(c))
+      continue
+    }
+    if ranged {
+      for (field, bound) in bounds {
+        if let Some(v) = bound {
+          fields.push("${field}: Some(${v})")
+          set.push(field)
+        }
+      }
+    } else {
+      let field = if c.feature == "orientation" { "orientation" } else { "scheme" }
+      fields.push("${field}: Some(${c.value})")
+      set.push(c.feature)
+    }
+  }
+  if tests.len() > 0 { fields.push("tests: [${tests.join(", ")}]") }
+  if negated { fields.push("not: true") }
+  "Media { ${fields.join(", ")} }"
+}
+
+/// A condition as a `MediaTest`.
+let media_test = pure (c: MediaCondition) -> string => {
+  let feature = match c.feature {
+    "width" => "MediaWidth(${media_range(c)})",
+    "height" => "MediaHeight(${media_range(c)})",
+    "aspect-ratio" => "MediaAspectRatio(${media_range(c)})",
+    "resolution" => "MediaResolution(${media_range(c)})",
+    "orientation" => "MediaOrientation(${c.value})",
+    "prefers-color-scheme" => "MediaScheme(${c.value})",
+    _ => "MediaReducedMotion(${c.value})",
+  }
+  if c.not { "MediaTest { feature: ${feature}, not: true }" } else { "MediaTest { feature: ${feature} }" }
+}
+
+/// A condition's range as a `MediaRange`.
+let media_range = pure (c: MediaCondition) -> string => {
+  var fields: []string = []
+  if let Some(v) = c.least { fields.push("least: Some(${v})") }
+  if let Some(v) = c.most { fields.push("most: Some(${v})") }
+  if c.past_least { fields.push("past_least: true") }
+  if c.past_most { fields.push("past_most: true") }
+  "MediaRange { ${fields.join(", ")} }"
+}
+
+/// One condition in its parentheses: `(min-width: 600)`, `(width > 600)`, `(400 <= width <
+/// 800)`, `(prefers-reduced-motion)`, or one of those reversed, `(not (…))`.
+let media_condition = pure (t: string) -> Result<MediaCondition, string> => {
+  let inner = t.strip_prefix("(").flat_map((x) => x.strip_suffix(")"))
+  let Some(feature) = inner else {
+    return Err("${t} is not a media feature in (…): (min-width: 600)")
+  }
+  let text = feature.trim()
+  if let Some(rest) = text.strip_prefix("not ") {
+    let reversed = rest.trim()
+    if reversed.starts_with("(not ") {
+      return Err("(${text}) reverses a reversal; write the condition itself")
+    }
+    let c = media_condition(reversed)?
+    return Ok(MediaCondition { c | not: true })
+  }
+  if text.contains(":") { return media_feature(text) }
+  if text.contains("<") || text.contains(">") || text.contains("=") { return media_range_of(text) }
+  match text {
+    "prefers-reduced-motion" => Ok(MediaCondition { feature: text, value: "true" }),
+    _ => Err("(${text}) needs a value: (${text}: …), or a range: (width >= 600)"),
+  }
+}
+
+/// One media feature, `min-width: 600`, as the condition it sets.
+let media_feature = pure (text: string) -> Result<MediaCondition, string> => {
   let Some(colon) = text.index(":") else {
     return Err("(${text}) needs a value: (min-width: 600)")
   }
   let name = text.slice(0, colon).trim()
   let value = text.slice(colon + 1, text.len()).trim()
+  for feature in RANGED_FEATURES {
+    let v = if name == feature || name == "min-${feature}" || name == "max-${feature}" {
+      media_value(feature, name, value)?
+    } else { continue }
+    let at_least = if name == "max-${feature}" { None } else { Some(v) }
+    let at_most = if name == "min-${feature}" { None } else { Some(v) }
+    return Ok(MediaCondition { feature: feature, least: at_least, most: at_most })
+  }
   match name {
-    "min-width" => media_length("min_width", name, value),
-    "max-width" => media_length("max_width", name, value),
-    "min-height" => media_length("min_height", name, value),
-    "max-height" => media_length("max_height", name, value),
     "orientation" => match value {
-      "portrait" => Ok("orientation: Some(Portrait)"),
-      "landscape" => Ok("orientation: Some(Landscape)"),
+      "portrait" => Ok(MediaCondition { feature: name, value: "Portrait" }),
+      "landscape" => Ok(MediaCondition { feature: name, value: "Landscape" }),
       _ => Err("orientation is portrait or landscape, not ${value}"),
     },
     "prefers-color-scheme" => match value {
-      "light" => Ok("scheme: Some(LightMode)"),
-      "dark" => Ok("scheme: Some(DarkMode)"),
+      "light" => Ok(MediaCondition { feature: name, value: "LightMode" }),
+      "dark" => Ok(MediaCondition { feature: name, value: "DarkMode" }),
       _ => Err("prefers-color-scheme is light or dark, not ${value}"),
     },
-    _ => Err("no media feature ${name} in ui (min-width, max-width, min-height, max-height, orientation, prefers-color-scheme)"),
+    "prefers-reduced-motion" => match value {
+      "reduce" => Ok(MediaCondition { feature: name, value: "true" }),
+      "no-preference" => Ok(MediaCondition { feature: name, value: "false" }),
+      _ => Err("prefers-reduced-motion is reduce or no-preference, not ${value}"),
+    },
+    _ => Err("no media feature ${name} in ui (width, height, aspect-ratio and resolution, each with min- and max-; orientation, prefers-color-scheme, prefers-reduced-motion)"),
   }
 }
 
-/// A media length — logical units, `px` allowed — as the field `field`.
-let media_length = pure (
-  field: string,
+/// The features a range is asked of — `(width >= 600)`, `(min-width: 600)`.
+const RANGED_FEATURES = ["width", "height", "aspect-ratio", "resolution"]
+
+/// A range, `width >= 600`, `600 < width` or `400 <= width < 800`, as the condition it sets.
+let media_range_of = pure (text: string) -> Result<MediaCondition, string> => {
+  // The parts between the comparisons, and the comparisons.
+  var parts: []string = []
+  var ops: []string = []
+  var part = ""
+  var i = 0
+  let runes = text.to_runes()
+  while i < runes.len() {
+    let c = runes[i]
+    if c == '<' || c == '>' || c == '=' {
+      var op = "${c}"
+      if c != '=' && i + 1 < runes.len() && runes[i + 1] == '=' {
+        op = "${c}="
+        i += 1
+      }
+      parts.push(part.trim())
+      ops.push(op)
+      part = ""
+    } else {
+      part = "${part}${c}"
+    }
+    i += 1
+  }
+  parts.push(part.trim())
+  let bad: Result<MediaCondition, string> = Err("(${text}) is not a range: (width >= 600), (400 <= width < 800)")
+  if parts.any((p) => p.len() == 0) { return bad }
+  let feature_at = if ops.len() == 2 { 1 } else if ops.len() == 1 && RANGED_FEATURES.contains(parts[1]) { 1 } else { 0 }
+  if ops.len() > 2 || !RANGED_FEATURES.contains(parts[feature_at]) {
+    return Err("(${text}) ranges over one of width, height, aspect-ratio or resolution")
+  }
+  let feature = parts[feature_at]
+  var c = MediaCondition { feature: feature }
+  for k, op in ops {
+    // Each comparison read as `feature op value`: one written `value op feature` turned round.
+    let (turned, value) = if k < feature_at {
+      (match op {
+        "<" => ">",
+        "<=" => ">=",
+        ">" => "<",
+        ">=" => "<=",
+        _ => op,
+      }, parts[k])
+    } else { (op, parts[k + 1]) }
+    let v = media_value(feature, feature, value)?
+    c = match turned {
+      ">" => MediaCondition { c | least: Some(v), past_least: true },
+      ">=" => MediaCondition { c | least: Some(v) },
+      "<" => MediaCondition { c | most: Some(v), past_most: true },
+      "<=" => MediaCondition { c | most: Some(v) },
+      _ => MediaCondition { c | least: Some(v), most: Some(v) },
+    }
+  }
+  if ops.len() == 2 && (ops[0].starts_with("<") != ops[1].starts_with("<") || ops.contains("=")) {
+    return Err("(${text}) is not a range: two comparisons point one way, < or > both, (400 <= width < 800)")
+  }
+  Ok(c)
+}
+
+/// A ranged feature's value as Lyra: a length in logical units (`px` allowed), a ratio
+/// (`16/9`, or one number), or a resolution (`2dppx`, `2x`, `192dpi`, `75dpcm`).
+let media_value = pure (
+  feature: string,
   name: string,
   value: string
 ) -> Result<string, string> => {
-  let n = value.strip_suffix("px") ?? value
-  match number(n.trim()) {
-    Ok(v) => Ok("${field}: Some(${v})"),
-    Err(_) => Err("${name} is a length in logical units (600 or 600px), not ${value}"),
+  match feature {
+    "aspect-ratio" => {
+      let halves = value.split("/")
+      let bad: Result<string, string> = Err("${name} is a ratio (16/9, or 1.5), not ${value}")
+      if halves.len() > 2 { return bad }
+      let Ok(a) = number(halves[0].trim()) else { return bad }
+      if halves.len() == 1 { return Ok(a) }
+      let Ok(b) = number(halves[1].trim()) else { return bad }
+      if a.starts_with("-") || b.starts_with("-") || b.parse_f64() == Some(0.0) { return bad }
+      Ok("${a} / ${b}")
+    },
+    "resolution" => {
+      let bad: Result<string, string> = Err("${name} is a resolution (2dppx, 2x, 192dpi or 75dpcm), not ${value}")
+      for (unit, by) in [
+        ("dppx", ""),
+        ("dpcm", " * 2.54 / 96.0"),
+        ("dpi", " / 96.0"),
+        ("x", "")
+      ] {
+        let Some(n) = value.strip_suffix(unit) else { continue }
+        let Ok(v) = number(n.trim()) else { return bad }
+        return Ok("${v}${by}")
+      }
+      bad
+    },
+    _ => {
+      let n = value.strip_suffix("px") ?? value
+      match number(n.trim()) {
+        Ok(v) => Ok(v),
+        Err(_) =>
+          Err("${name} is a length in logical units (600 or 600px), not ${value}"),
+      }
+    },
   }
 }
 

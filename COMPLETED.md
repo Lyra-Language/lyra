@@ -42,6 +42,35 @@ its letters by the same rule, a pixel a cell in `TestRun_GameSavesAndTalks` equa
 Genesis test's cells — and draws its letters before its back, since a sprite added earlier is
 in front (first written the other way round, the box hid its own letters).
 
+### 11/17/26 — `@media` ranges, ratios, resolution and reduced motion
+
+`Media` had bounds at least and at most a width or height, an orientation and a scheme, and
+one `not` over the whole query. CSS's range syntax needs a bound *past* a value (`width > 600`),
+and `(not (…))` reverses one condition. So a `Media` now also holds `tests`, each a
+`MediaTest`: a `MediaFeature` reversed alone by its own `not`. A range is one test
+(`MediaRange`, least and most with `past_least`/`past_most`), so `(not (400 < width < 800))`
+reverses the range, not each side of it.
+
+- **lui keeps what it wrote before.** A width or height at least or at most a value, an
+  orientation and a scheme, not reversed alone and the first of their kind, are still
+  `Media`'s fields. Only what those cannot say becomes a test. No generated view changes.
+- **A ratio is written as a division** (`Some(16.0 / 9.0)`) and compared as `w / h`. Both
+  divisions are rounded correctly from exact integers, so 1600×900 meets `aspect-ratio:
+  16/9` exactly. A window with no height meets no ratio.
+- **Resolution is `Platform.scale`**: pixels a logical unit, which a logical unit makes
+  CSS's `dppx`. The interface's own scale is in it, as a browser's zoom is in its
+  `devicePixelRatio`. `dpi` is over 96 and `dpcm` over 96 / 2.54.
+- **Reduced motion is the platform's** (`Platform.reduce_motion`, no by default). SDL has
+  nothing for it, so `ui.sdl3` reads macOS's setting through `bindings.accesskit`. It is the
+  accessibility shim, and the one that is Objective-C already. It is read at each layout,
+  with no event of its own.
+- `MediaTest.matches`, not `holds`: a method overloads only other `self` functions, and
+  `ui.style`'s top-level `holds` takes none (LANGUAGE.md, receiver-keyed overloading).
+
+Tests: `TestRun_UiMediaTests` (eleven queries at four viewports, and a host's viewport carrying
+density and reduced motion); `TestLui_UiTargetMediaRanges` and six cases in
+`TestLui_UiTargetReportsMistakesAtTheirLine`.
+
 ### 11/17/26 — A trait's signature names the trait's types
 
 A trait method's signature (`draw: (mut Self, WindowId, Color, []DrawOp) -> void`) is

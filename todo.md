@@ -876,8 +876,11 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 10/21] Live resize is the framework's** — `Platform.on_live_resize`, `ui.app`'s
   `follow_resizes` over a `shared` running window, for `run` and for a program's own loop
   (COMPLETED.md, 10/21).
-- **[OPEN] `@media` lacks range syntax and more features**: `(width >= 600)`, `aspect-ratio`,
-  `resolution`, `prefers-reduced-motion`, and a `not` on one condition alone.
+- **[DONE 11/17] `@media` range syntax and more features**: ranges, `aspect-ratio`,
+  `resolution`, `prefers-reduced-motion` and `(not (…))`, as `Media.tests` (COMPLETED.md 11/17).
+- **[OPEN] `prefers-reduced-motion` is macOS's alone**: elsewhere `reduce_motion` answers no
+  (GNOME's `enable-animations`, Windows' `SPI_GETCLIENTAREAANIMATION` unread), and a change
+  wakes no idle window, being seen at the next layout.
 - **[OPEN] Grid: no named areas, no negative lines, no `justify-content`/`align-content`.**
   `grid-template-areas`, `grid-area: name`, lines counted from the end (`-1`) and packing
   the tracks themselves are not built; tracks always stretch (CSS's `normal`).

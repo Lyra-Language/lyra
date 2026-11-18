@@ -296,6 +296,12 @@ void lyra_access_commit(void) {
   if (events) accesskit_macos_queued_events_raise(events);
 }
 
+/// Whether the system asks programs to move less: System Settings' Reduce Motion, under
+/// Accessibility → Display. Read each time, so a change is seen at the next layout.
+bool lyra_access_reduce_motion(void) {
+  return [[NSWorkspace sharedWorkspace] accessibilityDisplayShouldReduceMotion];
+}
+
 /// The oldest queued action, if any: its kind (0 when the queue is empty), the window it came
 /// from (SDL's number), its element, its number, and its text copied into `text` (at most `cap`
 /// bytes, NUL-terminated).

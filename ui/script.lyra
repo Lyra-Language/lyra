@@ -132,6 +132,9 @@ pub struct ScriptPlatform {
   typing: Maybe<Rect> = None,
   shape: Cursor = Arrow,
   look: Appearance = LightMode,
+  /// Whether it says the system asks for less motion ([Platform.reduce_motion]), as a test
+  /// sets it.
+  reduced_motion: bool = false,
   /// Whether it plays one of Apple's systems, as far as shortcuts are spelled; and whether
   /// it has a menu bar of its own, as a Mac does, and the menus it was last given for it
   /// ([Platform.set_menus]).
@@ -322,6 +325,7 @@ impl Platform for ScriptPlatform {
   set_cursor = (self, cursor) => { self.shape = cursor }
   now_ms = pure (self) => self.clock
   appearance = pure (self) => self.look
+  reduce_motion = pure (self) => self.reduced_motion
   apple = pure (self) => self.apple_keys
   open_url = (self, url) => {
     self.opened.push(url)

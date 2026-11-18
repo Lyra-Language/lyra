@@ -156,7 +156,11 @@ layer — implements the two traits; the display list is the whole contract.
 - **Media rules** (`Rule.media`, CSS's `@media`): a rule may hold while the viewport —
   the window's logical size and the system's look (`Viewport`, which the host passes in
   `Interaction.viewport`) — meets any of its `Media` conditions (min/max width and height,
-  orientation, colour scheme, each reversible by `not`). **A media rule stays where it is
+  orientation, colour scheme, and `tests`, each `Media` reversible by `not`). A `MediaTest`
+  says what the bounds cannot, each reversible alone: a `MediaRange` past a value (CSS's `<`
+  and `>`) of the width, height, aspect ratio or resolution (`Viewport.density`, the
+  platform's `scale`, CSS's `dppx`), the orientation, the scheme, and reduced motion
+  (`Viewport.reduced_motion`, `Platform.reduce_motion`). **A media rule stays where it is
   written**, in its layer, with its specificity and its place in its sheet's order — CSS's
   rule, chosen so a breakpoint never reorders the cascade. Sheets are filtered as a subtree's
   cascade is built (`Sheet.at`). **The layout cache keys on what the media answered**, not on
@@ -553,8 +557,10 @@ layer — implements the two traits; the display list is the whole contract.
   at most 100 ms, so an idle window still reaches the swap. A change to the state's shape
   restarts it (lyrac says so). With `lui --watch` beside it, an edit to markup lands in the
   running window.
-- **The platform's clock and look**: `now_ms`, `appearance` (and `AppearanceChanged`), and
-  `open_url` are the platform's; `ui.sdl3` reads SDL's ticks and system theme.
+- **The platform's clock and look**: `now_ms`, `appearance` (and `AppearanceChanged`),
+  `reduce_motion` (no by default) and `open_url` are the platform's; `ui.sdl3` reads SDL's
+  ticks and system theme, and macOS's Reduce Motion through `bindings.accesskit` (read at each
+  layout, with no event of its own, so a change is seen at the next pass).
 - **Every element has a role and a label** (`Role`, AccessKit's), a control's label its
   visible text unless `.labelled`. `ui.access` reads the laid-out tree into an `AccessTree`
   the host hands `Platform.update_access` after each frame: wrappers and unlabelled rows and

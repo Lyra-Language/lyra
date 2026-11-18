@@ -113,6 +113,10 @@ pub let element = (
 /// The tree begun to assistive technology, if it is listening to that window.
 pub let commit = () -> void => unsafe { lyra_access_commit() }
 
+/// Whether the system asks programs to move less (macOS's Reduce Motion, which assistive
+/// technology users often set); `false` with the stub.
+pub let reduce_motion = () -> bool => unsafe { lyra_access_reduce_motion() }
+
 /// The oldest request assistive technology made, if any.
 pub let next_request = () -> Maybe<AccessRequestRaw> => {
   var window: u32 = 0
@@ -168,6 +172,7 @@ unsafe extern lyra_access_node: (
   child_count: i64
 ) -> void
 unsafe extern lyra_access_commit: () -> void
+unsafe extern lyra_access_reduce_motion: () -> bool
 unsafe extern lyra_access_next: (
   window: ^mut u32,
   target: ^mut u64,

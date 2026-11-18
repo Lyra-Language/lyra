@@ -100,6 +100,9 @@ pub trait Platform {
   now_ms: (Self) -> i64
   /// Whether the system is set to a light or a dark look.
   appearance: (Self) -> Appearance
+  /// Whether the system asks programs to move less (macOS's Reduce Motion), which a sheet's
+  /// `@media (prefers-reduced-motion: reduce)` asks. No, by default.
+  reduce_motion: (Self) -> bool = (self) => false
   /// Whether it is one of Apple's systems, whose shortcuts are spelled with their symbols
   /// (`⇧⌘T`, not `Ctrl+Shift+T`) and whose primary modifier is Command.
   apple: (Self) -> bool

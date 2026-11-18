@@ -378,8 +378,8 @@ pub struct Rule {
 
 /// A condition on the viewport, CSS's media query without its media type: every bound it
 /// gives must hold (`and`), at least and at most so wide and so tall in logical units, in
-/// that orientation and colour scheme — the whole of it reversed by `not`. A rule's `media` is
-/// a list of these, any of which may hold (CSS's comma).
+/// that orientation and colour scheme, and each of its `tests` — the whole of it reversed by
+/// `not`. A rule's `media` is a list of these, any of which may hold (CSS's comma).
 pub struct Media {
   min_width: Maybe<f32> = None,
   max_width: Maybe<f32> = None,
@@ -387,7 +387,38 @@ pub struct Media {
   max_height: Maybe<f32> = None,
   orientation: Maybe<Orientation> = None,
   scheme: Maybe<Appearance> = None,
+  /// What the bounds above cannot say: a range past a value (`width > 600`), the aspect ratio,
+  /// the resolution, reduced motion, and a condition reversed alone (`(not (orientation:
+  /// portrait))`).
+  tests: []MediaTest = [],
   not: bool = false,
+}
+
+/// One media feature tested, reversed by `not` alone — CSS's `(not (…))`.
+pub struct MediaTest {
+  feature: MediaFeature,
+  not: bool = false,
+}
+
+/// A media feature and what it must be: the width or height in logical units, the aspect
+/// ratio (width over height), the resolution (pixels a logical unit, CSS's `dppx`) each within
+/// a range; the orientation; the colour scheme; whether the system asks for reduced motion.
+pub data MediaFeature =
+  | MediaWidth(MediaRange)
+  | MediaHeight(MediaRange)
+  | MediaAspectRatio(MediaRange)
+  | MediaResolution(MediaRange)
+  | MediaOrientation(Orientation)
+  | MediaScheme(Appearance)
+  | MediaReducedMotion(bool)
+
+/// The values a feature may have: at least `least` and at most `most`, each when given — or,
+/// where `past_least` (`past_most`) says, past it: CSS's `<` and `>` beside `<=` and `>=`.
+pub struct MediaRange {
+  least: Maybe<f32> = None,
+  most: Maybe<f32> = None,
+  past_least: bool = false,
+  past_most: bool = false,
 }
 
 /// Taller than wide (`Portrait`, a square too, as CSS has it) or wider.
@@ -402,6 +433,10 @@ pub struct Viewport {
   /// window is maximized, which its maximize button shows as restore (`window_buttons`).
   apple: bool = false,
   maximized: bool = false,
+  /// Pixels a logical unit ([Platform.scale]): what `resolution` is asked of.
+  density: f32 = 1.0,
+  /// Whether the system asks for less motion ([Platform.reduce_motion]).
+  reduced_motion: bool = false,
 }
 
 impl Media {
@@ -418,9 +453,41 @@ impl Media {
       }) && (match self.scheme {
         Some(look) => look == viewport.appearance,
         None => true,
-      })
+      }) && self.tests.all((t) => t.matches(viewport))
     held != self.not
   }
+}
+
+impl MediaTest {
+  /// Whether `viewport` meets this test.
+  pub let matches = pure (self, viewport: Viewport) -> bool => {
+    let w = viewport.size.w
+    let h = viewport.size.h
+    let held = match self.feature {
+      MediaWidth(range) => range.has(w),
+      MediaHeight(range) => range.has(h),
+      // A window with no height has no ratio, and meets no range of one.
+      MediaAspectRatio(range) => h > 0.0 && range.has(w / h),
+      MediaResolution(range) => range.has(viewport.density),
+      MediaOrientation(Portrait) => h >= w,
+      MediaOrientation(Landscape) => w > h,
+      MediaScheme(look) => look == viewport.appearance,
+      MediaReducedMotion(reduced) => reduced == viewport.reduced_motion,
+    }
+    held != self.not
+  }
+}
+
+impl MediaRange {
+  /// Whether `value` is in the range.
+  pub let has = pure (self, value: f32) -> bool =>
+    (match self.least {
+      Some(l) => if self.past_least { value > l } else { value >= l },
+      None => true,
+    }) && (match self.most {
+      Some(m) => if self.past_most { value < m } else { value <= m },
+      None => true,
+    })
 }
 
 /// Whether `viewport` meets any of `media`; an empty list always.

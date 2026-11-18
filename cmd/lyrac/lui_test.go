@@ -532,6 +532,12 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"media orientation", ui + "<style global>\n  @media (orientation: sideways) {\n    .a { gap: 1 }\n  }\n</style>", "x.lui:3: orientation is portrait or landscape, not sideways"},
 		{"media length", ui + "<style global>\n  @media (min-width: wide) {\n    .a { gap: 1 }\n  }\n</style>", "x.lui:3: min-width is a length in logical units (600 or 600px), not wide"},
 		{"media parentheses", ui + "<style global>\n  @media min-width: 600 {\n    .a { gap: 1 }\n  }\n</style>", "x.lui:3: min-width: 600 is not a media feature in (…)"},
+		{"media range", ui + "<style global>\n  @media (400 < width > 800) {\n    .a { gap: 1 }\n  }\n</style>", "x.lui:3: (400 < width > 800) is not a range: two comparisons point one way"},
+		{"media range feature", ui + "<style global>\n  @media (depth > 3) {\n    .a { gap: 1 }\n  }\n</style>", "x.lui:3: (depth > 3) ranges over one of width, height, aspect-ratio or resolution"},
+		{"media ratio", ui + "<style global>\n  @media (aspect-ratio: 16/0) {\n    .a { gap: 1 }\n  }\n</style>", "x.lui:3: aspect-ratio is a ratio (16/9, or 1.5), not 16/0"},
+		{"media resolution", ui + "<style global>\n  @media (min-resolution: 2) {\n    .a { gap: 1 }\n  }\n</style>", "x.lui:3: min-resolution is a resolution (2dppx, 2x, 192dpi or 75dpcm), not 2"},
+		{"media motion", ui + "<style global>\n  @media (prefers-reduced-motion: less) {\n    .a { gap: 1 }\n  }\n</style>", "x.lui:3: prefers-reduced-motion is reduce or no-preference, not less"},
+		{"media bare feature", ui + "<style global>\n  @media (width) {\n    .a { gap: 1 }\n  }\n</style>", "x.lui:3: (width) needs a value: (width: …), or a range: (width >= 600)"},
 		{"media nested", ui + "<style global>\n  @media (min-width: 1) {\n    @media (max-width: 2) {\n      .a { gap: 1 }\n    }\n  }\n</style>", "x.lui:4: an @media inside an @media"},
 		{"at-rule", ui + "<style global>\n  @supports (x: y) {\n  }\n</style>", "x.lui:3: @supports is not an at-rule of a <style>; @media is"},
 		{"selector in a list", ui + "<style global>\n  .a,\n  Column Text { gap: 1 }\n</style>", "x.lui:4: Column Text is not a selector ui reads"},
@@ -840,6 +846,66 @@ func TestLui_UiTargetMediaAndSelectorLists(t *testing.T) {
 	}
 	if out, err := command(t, lui, imgui).CombinedOutput(); err == nil || !strings.Contains(string(out), "imgui.lui:4: @media is the ui target's") {
 		t.Errorf("an @media in the imgui target: %v %s", err, out)
+	}
+}
+
+// @media's range syntax and the features beyond Media's own bounds: a width at least a value
+// is still Media's min_width, past one a MediaTest; a range on both sides written either way
+// round; a ratio, resolutions in dppx, dpi and x; reduced motion asked with a value and bare,
+// and reversed alone; a reversed orientation; a second bound of a kind already set becomes a
+// test; and the module checks clean.
+func TestLui_UiTargetMediaRanges(t *testing.T) {
+	t.Parallel()
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script target="ui">
+  pub data Ev = Go
+</script>
+<style global name="app_sheet">
+  @media (width >= 600) and (height < 400), (400 < width <= 800px), (800 > height > 300) {
+    .a { gap: 1 }
+  }
+  @media (aspect-ratio > 16/9) and (min-resolution: 2dppx), (max-resolution: 192dpi), (resolution: 1x) {
+    .b { gap: 2 }
+  }
+  @media (prefers-reduced-motion: reduce), (not (prefers-reduced-motion)), (not (orientation: portrait)) and (min-width: 1) and (min-width: 2) {
+    .c { gap: 3 }
+  }
+</style>
+<component name="view" event={Ev}>
+  <Column class="a"><Text class="b">hi</Text></Column>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`media: [Media { min_width: Some(600.0), tests: [MediaTest { feature: MediaHeight(MediaRange { most: Some(400.0), past_most: true }) }] }, ` +
+			`Media { tests: [MediaTest { feature: MediaWidth(MediaRange { least: Some(400.0), most: Some(800.0), past_least: true }) }] }, ` +
+			`Media { tests: [MediaTest { feature: MediaHeight(MediaRange { least: Some(300.0), most: Some(800.0), past_least: true, past_most: true }) }] }] }, // view.lui:6`,
+		`media: [Media { tests: [MediaTest { feature: MediaAspectRatio(MediaRange { least: Some(16.0 / 9.0), past_least: true }) }, MediaTest { feature: MediaResolution(MediaRange { least: Some(2.0) }) }] }, ` +
+			`Media { tests: [MediaTest { feature: MediaResolution(MediaRange { most: Some(192.0 / 96.0) }) }] }, ` +
+			`Media { tests: [MediaTest { feature: MediaResolution(MediaRange { least: Some(1.0), most: Some(1.0) }) }] }] }, // view.lui:9`,
+		`media: [Media { tests: [MediaTest { feature: MediaReducedMotion(true) }] }, ` +
+			`Media { tests: [MediaTest { feature: MediaReducedMotion(true), not: true }] }, ` +
+			`Media { min_width: Some(1.0), tests: [MediaTest { feature: MediaOrientation(Portrait), not: true }, MediaTest { feature: MediaWidth(MediaRange { least: Some(2.0) }) }] }] }, // view.lui:12`,
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
 }
 

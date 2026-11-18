@@ -21,6 +21,7 @@ void lyra_access_node(uint64_t id, int32_t role, const char *label, const char *
   (void)actions; (void)children; (void)child_count;
 }
 void lyra_access_commit(void) {}
+bool lyra_access_reduce_motion(void) { return false; }
 int32_t lyra_access_next(uint32_t *window, uint64_t *target, double *number, char *text,
                          int64_t cap) {
   (void)window; (void)target; (void)number; (void)text; (void)cap;

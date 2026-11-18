@@ -592,10 +592,14 @@ The example's interface is `examples/imgui/components_view.lui`.
   `grid-auto-flow` (`row`, `column`, `dense`) and `grid-column`/`grid-row` (`N`, `span N`,
   `N / M`, `N / span M`). An unknown value is an error listing the ones there are; a later
   declaration replaces an earlier one, as in CSS. **`@media (…) { rules }`** makes every rule
-  inside conditional (`Rule.media`): `min-width`, `max-width`, `min-height`, `max-height`
-  (logical units, `px` allowed), `orientation` (`portrait`, `landscape`) and
-  `prefers-color-scheme` (`light`, `dark`), joined by `and`, listed with commas (any of), and
-  reversed by a leading `not`; `screen` and `all` are taken and ignored. An unknown feature or
+  inside conditional (`Rule.media`): `width`, `height` (logical units, `px` allowed),
+  `aspect-ratio` (`16/9`, or a number) and `resolution` (`dppx`, `x`, `dpi`, `dpcm`), each
+  with `min-` and `max-` or as a range (`(width > 600)`, `(400 <= width < 800)`, either way
+  round); `orientation` (`portrait`, `landscape`), `prefers-color-scheme` (`light`, `dark`) and
+  `prefers-reduced-motion` (`reduce`, `no-preference`, or bare for `reduce`). They are joined
+  by `and`, listed with commas (any of), reversed whole by a leading `not` or alone by
+  `(not (…))`; `screen` and `all` are taken and ignored. A width or height at least or at most
+  a value, an orientation and a scheme are `Media`'s own fields; the rest are `MediaTest`s. An unknown feature or
   value, a nested `@media` and any other at-rule are lui's errors at their line; the
   `bindings.imgui.ui` target has no `@media`. **A selector list** (`Button.primary,
   Checkbox::box, .card { … }`) is a rule for each, each selector checked — `Tag`, `.class`,
@@ -673,6 +677,9 @@ the actions it asks for back with the window each came from. `ui.sdl3` is its on
   `false` off macOS. Each window is started as it opens and `stop(window)`ped before it is
   destroyed (`stop_all()` as the program ends); `focus(window, on)` tells its adapter the
   window gained or lost the keyboard, which VoiceOver follows.
+- **`reduce_motion()`** is System Settings' Reduce Motion (`NSWorkspace`'s
+  `accessibilityDisplayShouldReduceMotion`), read each call; `false` with the stub, so a Mac
+  whose AccessKit could not be built is never asked.
 - **Built by `bindings/accesskit/build.sh`**, which `./build.sh` runs, into
   `build/lib/liblyra-accesskit.a`: AccessKit's **prebuilt release, pinned** (0.23.1) and its
   zip SHA-256-checked, downloaded into `build/deps/` (not vendored), its static library merged
