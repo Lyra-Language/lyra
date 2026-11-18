@@ -540,6 +540,8 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"grid areas rectangle", ui + "<style global>\n  .g { grid-template-areas: \"a b\" \"b a\" }\n</style>", "x.lui:3: grid-template-areas' a is not a rectangle"},
 		{"grid areas rows", ui + "<style global>\n  .g { grid-template-areas: \"a b\" \"c\" }\n</style>", "x.lui:3: grid-template-areas' rows are each 2 cells, not 1: c"},
 		{"grid area name", ui + "<style global>\n  .g { grid-area: a b }\n</style>", "x.lui:3: grid-area is an area's name (letters, digits, - and _), not a b"},
+		{"margin value", ui + "<style global>\n  .g { margin: 4 wide }\n</style>", "x.lui:3: a margin is a length or auto, not wide"},
+		{"margin count", ui + "<style global>\n  .g { margin: 1 2 3 4 5 }\n</style>", "x.lui:3: margin is one to four lengths or auto, not 1 2 3 4 5"},
 		{"grid line zero", ui + "<style global>\n  .g { grid-column: 0 / -1 }\n</style>", "x.lui:3: grid lines are N, span N, N / M, N / span M or span N / M (a negative N or M from the end), not 0 / -1"},
 		{"media nested", ui + "<style global>\n  @media (min-width: 1) {\n    @media (max-width: 2) {\n      .a { gap: 1 }\n    }\n  }\n</style>", "x.lui:4: an @media inside an @media"},
 		{"at-rule", ui + "<style global>\n  @supports (x: y) {\n  }\n</style>", "x.lui:3: @supports is not an at-rule of a <style>; @media is"},
@@ -711,7 +713,8 @@ let main = () -> u8 => {
 // name, and every CSS layout property reads in a style or a sheet — flex's shorthand (`1`,
 // `none`, `2 0 auto`), a basis as a percentage, order, the alignments, track lists with fr,
 // minmax and repeat, a dense column flow, grid lines with spans and from the end, named
-// areas (in a sheet and as an attribute) and the content's packing — a later declaration
+// areas (in a sheet and as an attribute), the content's packing, and margins of one to four
+// lengths or auto in CSS's order — a later declaration
 // replacing an earlier one, as in CSS; and the module checks clean.
 func TestLui_UiTargetFlexAndGrid(t *testing.T) {
 	t.Parallel()
@@ -727,6 +730,8 @@ func TestLui_UiTargetFlexAndGrid(t *testing.T) {
   .wide { grid-column: 1 / -1; grid-row: span 2 / -1 }
   .last { grid-column: -2; grid-area: main }
   .page { grid-template-areas: "a b" 'a  c'; justify-content: stretch }
+  .push { margin: 0 auto }
+  .round { margin: 4 8 auto }
 </style>
 <component name="view" event={Ev}>
   <Column>
@@ -740,6 +745,8 @@ func TestLui_UiTargetFlexAndGrid(t *testing.T) {
     <Grid areas="'head head' 'side main'" justify-content="center" align-content="space-evenly">
       <Text class="wide">d</Text>
       <Text class="last">e</Text>
+      <Text class="push">f</Text>
+      <Text class="round">g</Text>
     </Grid>
   </Column>
 </component>
@@ -767,6 +774,8 @@ func TestLui_UiTargetFlexAndGrid(t *testing.T) {
 		"grid_column: Some(GridSpan { start: -2 }), grid_area: Some(\"main\")",
 		"grid_areas: Some([\"a b\", \"a c\"]), justify_content: Some(JustifyStretch)",
 		"grid_areas: Some([\"head head\", \"side main\"]), justify_content: Some(JustifyCenter), align_content: Some(JustifyEvenly)",
+		"margin: Some(Margins { top: MarginPx(0.0), right: MarginAuto, bottom: MarginPx(0.0), left: MarginAuto })",
+		"margin: Some(Margins { top: MarginPx(4.0), right: MarginPx(8.0), bottom: MarginAuto, left: MarginPx(8.0) })",
 	} {
 		if !strings.Contains(string(generated), want) {
 			t.Errorf("the generated module lacks %q:\n%s", want, generated)

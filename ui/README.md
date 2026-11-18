@@ -64,7 +64,13 @@ layer — implements the two traits; the display list is the whole contract.
   optional); column tracks sized from the items' min- and max-content widths, rows from their
   heights at those widths; fixed, intrinsic, maximized, `fr` and `auto` tracks, the last
   stretched unless `justify_content`/`align_content` pack the tracks otherwise (§11.1, the
-  space between them reaching an item that spans it); items aligned in their areas. **A
+  space between them reaching an item that spans it); items aligned in their areas. **A flex
+  or grid item's `margin`** (`Margins`, each side `MarginPx` or `MarginAuto`) is outside its
+  edge: its lengths count in its outer size (breaking lines, flexing, a line's thickness, a
+  track's size, its container's intrinsic width) and come out of its line or area; an auto
+  side takes the free space there — along a flex line before `justify_content`, which then
+  has none, and across or in a grid area whatever the item's alignment, both sides centring
+  it. Other containers ignore it. **A
   container's width is definite when bounded and its height only when fixed**, as a CSS block's
   is — so `fr` rows and a growing column need a `height`. **Every element honours `width`,
   `height` and their `min_`/`max_`** (border-box; within its parent's constraints, which

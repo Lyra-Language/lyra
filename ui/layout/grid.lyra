@@ -24,12 +24,8 @@ import ui.style.{
   ItemAlign,
   GridSpan,
   Justify,
-  JustifyEnd,
-  JustifyCenter,
-  JustifyBetween,
-  JustifyAround,
-  JustifyEvenly,
   JustifyStretch,
+  Margin,
   AlignEnd,
   AlignCenter,
   AlignStretch,
@@ -56,11 +52,12 @@ let lay_grid<e> = (
   for area in plan.areas {
     let child = children[area.index]
     let id = child_id(ctx.id, child, area.index)
+    let around = plan.styles[area.index].margin.horizontal()
     spans.push(Spanning {
       start: area.col,
       span: area.col_span,
-      least: intrinsic_width(child, true, ctx.cascade, fonts, ctx.ui, id),
-      most: intrinsic_width(child, false, ctx.cascade, fonts, ctx.ui, id),
+      least: around + intrinsic_width(child, true, ctx.cascade, fonts, ctx.ui, id),
+      most: around + intrinsic_width(child, false, ctx.cascade, fonts, ctx.ui, id),
     })
   }
   let col_room: Maybe<f32> = if width_definite { Some(c.max_w) } else { None }
@@ -79,8 +76,16 @@ let lay_grid<e> = (
   for area in plan.areas {
     let child = children[area.index]
     let own = plan.styles[area.index]
-    let w = spanned(cols, area.col, area.col_span, col_gap)
-    let stretch = (own.justify_self ?? style.justify_items) == AlignStretch && own.width.is_none()
+    let w = (spanned(
+      cols,
+      area.col,
+      area.col_span,
+      col_gap
+    ) - own.margin.horizontal()).max(0.0)
+    let stretch = (own.justify_self ?? style.justify_items) == AlignStretch &&
+      own.width.is_none() &&
+      !own.margin.left.is_auto() &&
+      !own.margin.right.is_auto()
     var scratch = layout_cache::<e>()
     let limits = Constraints { min_w: if stretch { w } else { 0.0 }, max_w: w }
     let h = lay(
@@ -91,7 +96,7 @@ let lay_grid<e> = (
       ctx.ui,
       child_id(ctx.id, child, area.index),
       scratch
-    ).size.h
+    ).size.h + own.margin.vertical()
     row_spans.push(Spanning { start: area.row, span: area.row_span, least: h, most: h })
   }
   let row_room: Maybe<f32> = if height_definite { Some(c.max_h) } else { None }
@@ -110,12 +115,19 @@ let lay_grid<e> = (
   for area in plan.areas {
     let child = children[area.index]
     let own = plan.styles[area.index]
-    let w = spanned(cols, area.col, area.col_span, col_gap)
-    let h = spanned(rows, area.row, area.row_span, row_gap)
+    let m = own.margin
+    let w = (spanned(cols, area.col, area.col_span, col_gap) - m.horizontal()).max(0.0)
+    let h = (spanned(rows, area.row, area.row_span, row_gap) - m.vertical()).max(0.0)
     let across = own.justify_self ?? style.justify_items
     let down = own.align_self ?? style.align_items
-    let fill_w = across == AlignStretch && own.width.is_none()
-    let fill_h = down == AlignStretch && own.height.is_none()
+    let fill_w = across == AlignStretch &&
+      own.width.is_none() &&
+      !m.left.is_auto() &&
+      !m.right.is_auto()
+    let fill_h = down == AlignStretch &&
+      own.height.is_none() &&
+      !m.top.is_auto() &&
+      !m.bottom.is_auto()
     let limits = Constraints {
       min_w: if fill_w { w } else { 0.0 },
       max_w: w,
@@ -132,8 +144,20 @@ let lay_grid<e> = (
       cache
     )
     let at = Point {
-      x: col_at[area.col] + aligned_in(across, w, one.size.w),
-      y: row_at[area.row] + aligned_in(down, h, one.size.h),
+      x: col_at[area.col] + m.left.length() + in_area(
+        m.left,
+        m.right,
+        across,
+        w,
+        one.size.w
+      ),
+      y: row_at[area.row] + m.top.length() + in_area(
+        m.top,
+        m.bottom,
+        down,
+        h,
+        one.size.h
+      ),
     }
     placed.push(Placed { at: at, laid: one })
   }
@@ -162,14 +186,8 @@ let grid_intrinsic_width<e> = (
   var spans: []Spanning = []
   for area in plan.areas {
     let child = children[area.index]
-    let w = intrinsic_width(
-      child,
-      least,
-      within,
-      fonts,
-      ui,
-      child_id(id, child, area.index)
-    )
+    let w = plan.styles[area.index].margin.horizontal() +
+      intrinsic_width(child, least, within, fonts, ui, child_id(id, child, area.index))
     spans.push(Spanning { start: area.col, span: area.col_span, least: w, most: w })
   }
   tracks_total(
@@ -625,9 +643,8 @@ let is_intrinsic = pure (size: TrackSize) -> bool => match size {
 }
 
 /// Where the first track starts and how far apart the tracks are, packed in `room` by `how`
-/// (`justify-content` or `align-content`): the room they leave before them, or between them
-/// as well as `gap`. With no room, or none left, they start at 0 — but centred, or at the
-/// end, over room too small, as CSS's unsafe alignment is.
+/// (`justify-content` or `align-content`) as a flex line's items are ([shared]); with no room
+/// they start at 0, `gap` apart.
 let packed = pure (
   sizes: []f32,
   gap: f32,
@@ -635,26 +652,8 @@ let packed = pure (
   how: Justify
 ) -> (f32, f32) => {
   let Some(space) = room else { return (0.0, gap) }
-  let n = sizes.len()
-  if n == 0 { return (0.0, gap) }
-  let free = space - tracks_total(sizes, gap)
-  match how {
-    JustifyEnd => (free, gap),
-    JustifyCenter => (free / 2.0, gap),
-    JustifyBetween =>
-      if free > 0.0 && n > 1 { (0.0, gap + free / f32(n - 1)) } else { (0.0, gap) },
-    JustifyAround => if free > 0.0 {
-      (free / f32(n) / 2.0, gap + free / f32(n))
-    } else {
-      (free / 2.0, gap)
-    },
-    JustifyEvenly => if free > 0.0 {
-      (free / f32(n + 1), gap + free / f32(n + 1))
-    } else {
-      (free / 2.0, gap)
-    },
-    _ => (0.0, gap),
-  }
+  if sizes.len() == 0 { return (0.0, gap) }
+  shared(how, space - tracks_total(sizes, gap), sizes.len(), gap)
 }
 
 /// Where each track starts, `gap` apart, the first at `lead`.
@@ -679,6 +678,23 @@ let spanned = pure (sizes: []f32, start: i64, count: i64, gap: f32) -> f32 => {
 /// All of `sizes` with the gaps between.
 let tracks_total = pure (sizes: []f32, gap: f32) -> f32 =>
   spanned(sizes, 0, sizes.len(), gap)
+
+/// Where an item `size` long sits in its area's `room` (its margins' lengths taken out) between
+/// margins `before` and `after`: an `auto` one takes the space left — both share it — whatever
+/// `how` says, as CSS's auto margins do; else by `how`.
+let in_area = pure (
+  before: Margin,
+  after: Margin,
+  how: ItemAlign,
+  room: f32,
+  size: f32
+) -> f32 => {
+  let left_over = (room - size).max(0.0)
+  if before.is_auto() && after.is_auto() { return left_over / 2.0 }
+  if before.is_auto() { return left_over }
+  if after.is_auto() { return 0.0 }
+  aligned_in(how, room, size)
+}
 
 /// Where something `size` long sits in `room` by `how`.
 let aligned_in = pure (how: ItemAlign, room: f32, size: f32) -> f32 => match how {

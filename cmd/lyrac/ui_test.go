@@ -2129,6 +2129,127 @@ rows at the end (300x100): a@0,60 300x20 b@0,80 300x20
 	}
 }
 
+// Margins on flex and grid items, worked by hand from CSS Flexbox §8.1 and §9 and CSS Grid
+// §11.2. Along a flex line an auto margin takes the free space, before justify-content,
+// which then has none; both centre; lengths count as the item's outer size in breaking
+// lines, flexing and the line's thickness; row-reverse swaps the sides; across, auto
+// margins place the item whatever its alignment, and a stretched item fills its line
+// within its margins. In a grid an item's margins come out of its area, auto ones placing
+// it there, and count in a track's size — and a flex row's items' margins in its width.
+func TestRun_UiMargins(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.draw.{ Size }
+import ui.text.{ fonts_new, Fonts }
+import ui.style.{
+  Style,
+  Margins,
+  MarginPx,
+  MarginAuto,
+  margins,
+  margins_xy,
+  BasisLength,
+  JustifyCenter,
+  FlexRowReverse,
+  Wrap,
+  AlignEnd,
+  px,
+  fr,
+  auto_track,
+}
+import ui.layout.{ Node, flex, grid, sized, layout, loose }
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  let three = [block("a", 50.0, 20.0), block("b", 50.0, 20.0), block("c", 50.0, 20.0).with_style(Style { margin: Some(Margins { left: MarginAuto }) })]
+  show("auto pushes", flex(three), fonts)
+  show("autos centre", flex([block("a", 50.0, 20.0).with_style(Style { margin: Some(margins_xy(MarginAuto, MarginPx(0.0))) })]), fonts)
+  show("auto before justify", flex([block("a", 50.0, 20.0), block("b", 50.0, 20.0).with_style(Style { margin: Some(Margins { left: MarginAuto }) })]).with_style(Style {
+    justify_content: Some(JustifyCenter),
+  }), fonts)
+  show("lengths", flex([block("a", 50.0, 20.0).with_style(Style { margin: Some(margins(MarginPx(10.0))) }), block("b", 50.0, 20.0)]), fonts)
+  let tall = Style { height: Some(100.0) }
+  show("autos across", flex([block("a", 50.0, 20.0).with_style(Style {
+    margin: Some(Margins { top: MarginAuto, bottom: MarginAuto }),
+    align_self: Some(AlignEnd),
+  })]).with_style(tall), fonts)
+  show("auto above", flex([block("a", 50.0, 20.0).with_style(Style { margin: Some(Margins { top: MarginAuto }) })]).with_style(tall), fonts)
+  show("stretched within", flex([
+    sized::<void>(None, None).keyed("a").with_style(Style { width: Some(50.0), margin: Some(Margins { top: MarginPx(10.0), bottom: MarginPx(10.0) }) }),
+  ]).with_style(tall), fonts)
+  let grows = Style { grow: Some(1.0), basis: Some(BasisLength(0.0)), height: Some(20.0) }
+  show("grown", flex([
+    sized::<void>(None, None).keyed("a").with_style(Style { margin: Some(Margins { left: MarginPx(10.0) }) }.over(grows)),
+    sized::<void>(None, None).keyed("b").with_style(grows),
+  ]), fonts)
+  show("reversed", flex([block("a", 50.0, 20.0).with_style(Style { margin: Some(Margins { left: MarginPx(10.0) }) }), block("b", 50.0, 20.0)]).with_style(Style {
+    flex_direction: Some(FlexRowReverse),
+  }), fonts)
+  let spaced = Style { margin: Some(Margins { right: MarginPx(20.0) }) }
+  show("wrapped", flex([
+    block("a", 100.0, 20.0).with_style(spaced),
+    block("b", 100.0, 20.0).with_style(spaced),
+    block("c", 100.0, 20.0).with_style(spaced),
+  ]).with_style(Style { flex_wrap: Some(Wrap) }), fonts)
+  let one = Style { grid_columns: Some([px(100.0)]) }
+  show("grid lengths", grid([cell("a").with_style(Style { margin: Some(margins_xy(MarginPx(10.0), MarginPx(0.0))) })]).with_style(one), fonts)
+  show("grid autos", grid([block("a", 40.0, 20.0).with_style(Style { margin: Some(margins(MarginAuto)) })]).with_style(Style {
+    grid_columns: Some([px(100.0)]),
+    grid_rows: Some([px(50.0)]),
+  }), fonts)
+  show("grid auto left", grid([block("a", 40.0, 20.0).with_style(Style { margin: Some(Margins { left: MarginAuto }) })]).with_style(one), fonts)
+  show("grid row", grid([cell("a").with_style(Style { margin: Some(margins_xy(MarginPx(0.0), MarginPx(5.0))) })]).with_style(one), fonts)
+  let sized_by_content = Style { grid_columns: Some([auto_track(), fr(1.0)]) }
+  show("grid track", grid([
+    block("a", 50.0, 20.0).with_style(Style { margin: Some(margins_xy(MarginPx(10.0), MarginPx(0.0))) }),
+    cell("b"),
+  ]).with_style(sized_by_content), fonts)
+  let gapped = Style { margin: Some(Margins { right: MarginPx(10.0) }) }
+  show("flex width", grid([
+    flex([block("w1", 50.0, 20.0).with_style(gapped), block("w2", 50.0, 20.0).with_style(gapped)]).keyed("a"),
+    cell("b"),
+  ]).with_style(sized_by_content), fonts)
+  0
+}
+
+/// A cell 20 tall, as wide as its area.
+let cell = pure (key: string) -> Node<void> =>
+  sized::<void>(None, None).keyed(key).with_style(Style { height: Some(20.0) })
+
+let block = pure (key: string, w: f32, h: f32) -> Node<void> =>
+  sized::<void>(None, None).keyed(key).with_style(Style { width: Some(w), height: Some(h) })
+
+let show = (name: string, view: Node<void>, fonts: mut Fonts) -> void => {
+  let laid = layout(view, loose(Size { w: 300.0, h: 400.0 }), fonts)
+  var line = "${name} (${laid.size.w}x${laid.size.h}):"
+  for p in laid.children {
+    let parts = p.laid.id.split(":")
+    line = "${line} ${parts[parts.len() - 1]}@${p.at.x},${p.at.y} ${p.laid.size.w}x${p.laid.size.h}"
+  }
+  println(line)
+}
+`)
+	want := `auto pushes (300x20): a@0,0 50x20 b@50,0 50x20 c@250,0 50x20
+autos centre (300x20): a@125,0 50x20
+auto before justify (300x20): a@0,0 50x20 b@250,0 50x20
+lengths (300x40): a@10,10 50x20 b@70,0 50x20
+autos across (300x100): a@0,40 50x20
+auto above (300x100): a@0,80 50x20
+stretched within (300x100): a@0,10 50x80
+grown (300x20): a@10,0 145x20 b@155,0 145x20
+reversed (300x20): a@250,0 50x20 b@190,0 50x20
+wrapped (300x40): a@0,0 100x20 b@120,0 100x20 c@0,20 100x20
+grid lengths (300x20): a@10,0 80x20
+grid autos (300x50): a@30,15 40x20
+grid auto left (300x20): a@60,0 40x20
+grid row (300x30): a@0,5 100x20
+grid track (300x20): a@10,0 50x20 b@70,0 230x20
+flex width (300x20): a@0,0 120x20 b@120,0 180x20
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // Media rules and selector lists in the cascade. A sheet's grid has 1, 2 or 4 columns by
 // min-width breakpoints. A class rule under a landscape condition beats a later tag rule by
 // its specificity, applied or not by the orientation. A not and a comma (any of) combine.

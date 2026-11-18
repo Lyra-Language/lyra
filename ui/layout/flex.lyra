@@ -34,6 +34,8 @@ import ui.style.{
   BasisAuto,
   BasisLength,
   BasisFraction,
+  Margin,
+  Margins,
 }
 
 /// `children` laid out as a flex container computed as `style`, within `c` (inside its
@@ -83,10 +85,19 @@ let lay_flex<e> = (
     }
     let base = match fixed {
       Some(n) => n,
-      None => content_main(child, horizontal, false, cross_avail, ctx, id, fonts),
+      None => content_main(
+        child,
+        horizontal,
+        false,
+        (cross_avail - cross_margin(item.margin, horizontal)).max(0.0),
+        ctx,
+        id,
+        fonts
+      ),
     }
     let most = (if horizontal { item.max_width } else { item.max_height }) ?? UNBOUNDED
-    let least = item_least(child, item, horizontal, cross_avail, ctx, id, fonts)
+    let across = (cross_avail - cross_margin(item.margin, horizontal)).max(0.0)
+    let least = item_least(child, item, horizontal, across, ctx, id, fonts)
     items.push(Flexing {
       index: i,
       base: base,
@@ -95,6 +106,7 @@ let lay_flex<e> = (
       target: base.clamp(least, most.max(least)),
       grow: item.grow.max(0.0),
       shrink: item.shrink.max(0.0),
+      margin: main_margin(item.margin, horizontal),
     })
   }
   // Lines: as many items as fit the main size, at least one a line.
@@ -102,11 +114,12 @@ let lay_flex<e> = (
   var line: []Flexing = []
   var used: f32 = 0.0
   for item in items {
-    let extra = if line.len() == 0 { item.target } else { main_gap + item.target }
+    let outer = item.target + item.margin
+    let extra = if line.len() == 0 { outer } else { main_gap + outer }
     if multi_line && main_definite && line.len() > 0 && used + extra > main_avail {
       lines.push(line)
       line = []
-      used = item.target
+      used = outer
     } else {
       used += extra
     }
@@ -117,7 +130,8 @@ let lay_flex<e> = (
   var longest: f32 = 0.0
   var laid_lines: []FlexLine<e> = []
   for items_of in lines {
-    let gaps = main_gap * f32(items_of.len() - 1)
+    var gaps = main_gap * f32(items_of.len() - 1)
+    for item in items_of { gaps += item.margin }
     let sizes = if main_definite { resolved(
       items_of,
       main_avail - gaps
@@ -130,7 +144,14 @@ let lay_flex<e> = (
     for item in sizes {
       let child = children[item.index]
       let own = styles[item.index]
-      let limits = oriented(axis, item.target, item.target, 0.0, cross_avail)
+      let sides = flow_margins(
+        own.margin,
+        horizontal,
+        reverse,
+        style.flex_wrap == WrapReverse
+      )
+      let cross_room = (cross_avail - sides.cross_before.length() - sides.cross_after.length()).max(0.0)
+      let limits = oriented(axis, item.target, item.target, 0.0, cross_room)
       let one = lay(
         child,
         limits,
@@ -140,10 +161,15 @@ let lay_flex<e> = (
         child_id(ctx.id, child, item.index),
         cache
       )
-      let across = along(axis, one.size.h, one.size.w)
+      let before = sides.cross_before.length()
+      let across = along(
+        axis,
+        one.size.h,
+        one.size.w
+      ) + before + sides.cross_after.length()
       let how = own.align_self ?? style.align_items
-      if how == AlignBaseline && horizontal {
-        let line_at = baseline(one) ?? across
+      if how == AlignBaseline && horizontal && !sides.places_across() {
+        let line_at = before + (baseline(one) ?? along(axis, one.size.h, one.size.w))
         above = above.max(line_at)
         below = below.max(across - line_at)
       }
@@ -190,18 +216,35 @@ let lay_flex<e> = (
       cross_pen
     }
     let free = main_size - l.length
-    let step = shared(style.justify_content, free, l.items.len(), main_gap)
+    // Auto margins along the line take its free space first, and leave justify-content none.
+    var autos = 0
+    for item in l.items {
+      let sides = flow_margins(styles[item.index].margin, horizontal, reverse, false)
+      if sides.main_before.is_auto() { autos += 1 }
+      if sides.main_after.is_auto() { autos += 1 }
+    }
+    let per_auto = if autos > 0 && free > 0.0 { free / f32(autos) } else { 0.0 }
+    let step = if per_auto > 0.0 { (0.0, main_gap) } else {
+      shared(style.justify_content, free, l.items.len(), main_gap)
+    }
     var pen = step.0
     for j, item in l.items {
       let own = styles[item.index]
       let child = children[item.index]
       var one = l.laid[j]
+      let sides = flow_margins(
+        own.margin,
+        horizontal,
+        reverse,
+        style.flex_wrap == WrapReverse
+      )
       let how = own.align_self ?? style.align_items
       let cross_auto = (if horizontal { own.height } else { own.width }).is_none()
-      if how == AlignStretch && cross_auto {
+      let cross_room = line_cross - sides.cross_before.length() - sides.cross_after.length()
+      if how == AlignStretch && cross_auto && !sides.places_across() {
         let least = (if horizontal { own.min_height } else { own.min_width }) ?? 0.0
         let most = (if horizontal { own.max_height } else { own.max_width }) ?? UNBOUNDED
-        let thick = line_cross.clamp(least, most.max(least))
+        let thick = cross_room.max(0.0).clamp(least, most.max(least))
         if (along(axis, one.size.h, one.size.w) - thick).abs() > 0.001 {
           one = lay(
             child,
@@ -215,14 +258,24 @@ let lay_flex<e> = (
         }
       }
       let thick = along(axis, one.size.h, one.size.w)
-      let across = match how {
-        AlignEnd => line_cross - thick,
-        AlignCenter => (line_cross - thick) / 2.0,
-        AlignBaseline =>
-          if horizontal { l.baseline - (baseline(one) ?? thick) } else { 0.0 },
-        _ => 0.0,
+      // Auto margins across place the item in its line whatever align-self says.
+      let left_over = (cross_room - thick).max(0.0)
+      let across = if sides.places_across() {
+        sides.cross_before.length() + if sides.cross_before.is_auto() && sides.cross_after.is_auto() {
+          left_over / 2.0
+        } else if sides.cross_before.is_auto() { left_over } else { 0.0 }
+      } else {
+        match how {
+          AlignEnd => sides.cross_before.length() + cross_room - thick,
+          AlignCenter => sides.cross_before.length() + (cross_room - thick) / 2.0,
+          AlignBaseline => if horizontal {
+            l.baseline - (baseline(one) ?? thick)
+          } else { sides.cross_before.length() },
+          _ => sides.cross_before.length(),
+        }
       }
       let length = along(axis, one.size.w, one.size.h)
+      pen += sides.main_before.length() + if sides.main_before.is_auto() { per_auto } else { 0.0 }
       let at_main = if reverse { main_size - pen - length } else { pen }
       let cross_at = if style.flex_wrap == WrapReverse {
         line_at + line_cross - across - thick
@@ -230,7 +283,8 @@ let lay_flex<e> = (
         line_at + across
       }
       placed.push(Placed { at: oriented_point(axis, at_main, cross_at), laid: one })
-      pen += length + step.1
+      pen += length + step.1 + sides.main_after.length() +
+        if sides.main_after.is_auto() { per_auto } else { 0.0 }
     }
     cross_pen += line_cross + spread.1
   }
@@ -249,7 +303,47 @@ struct Flexing {
   grow: f32,
   shrink: f32,
   frozen: bool = false,
+  /// Its margins' length along the line, `auto` ones none.
+  margin: f32 = 0.0,
 }
+
+/// An item's margins in its line's terms: before and after it along the line, in the order
+/// the line runs (a reversed direction swaps them), and before and after it across, from the
+/// line's cross start (which `wrap-reverse` moves to the far side).
+struct FlowMargins {
+  main_before: Margin,
+  main_after: Margin,
+  cross_before: Margin,
+  cross_after: Margin,
+}
+
+impl FlowMargins {
+  /// Whether an `auto` margin across places the item rather than its alignment.
+  let places_across = pure (self) -> bool =>
+    self.cross_before.is_auto() || self.cross_after.is_auto()
+}
+
+let flow_margins = pure (
+  m: Margins,
+  horizontal: bool,
+  reverse: bool,
+  wrap_reverse: bool
+) -> FlowMargins => {
+  let (start, end) = if horizontal { (m.left, m.right) } else { (m.top, m.bottom) }
+  let (top, bottom) = if horizontal { (m.top, m.bottom) } else { (m.left, m.right) }
+  FlowMargins {
+    main_before: if reverse { end } else { start },
+    main_after: if reverse { start } else { end },
+    cross_before: if wrap_reverse { bottom } else { top },
+    cross_after: if wrap_reverse { top } else { bottom },
+  }
+}
+
+/// An item's margins' length along the main axis, and across it.
+let main_margin = pure (m: Margins, horizontal: bool) -> f32 =>
+  if horizontal { m.horizontal() } else { m.vertical() }
+let cross_margin = pure (m: Margins, horizontal: bool) -> f32 =>
+  if horizontal { m.vertical() } else { m.horizontal() }
 
 /// A line of items laid out: the items with their main sizes, their layouts, how thick the
 /// line is, its items' common baseline (from its top) and its length with its gaps.
@@ -503,16 +597,17 @@ let intrinsic_width<e> = (
         for i, child in node.children {
           let child_at = child_id(id, child, i)
           let item = styled_at(child, styled.within, ui, child_at).style
-          let w = item_least(child, item, true, UNBOUNDED, ctx, child_at, fonts)
+          let w = item_least(child, item, true, UNBOUNDED, ctx, child_at, fonts) +
+            item.margin.horizontal()
           sum += w
           widest = widest.max(w)
         }
         if style.flex_wrap != NoWrap { widest } else { sum + style.column_gap * gaps }
       } else if along_row && !(least && style.flex_wrap != NoWrap) {
-        children_width(node, least, true, styled.within, fonts, ui, id, shrunk) +
+        children_width(node, least, true, styled.within, fonts, ui, id, shrunk, true) +
           style.column_gap * gaps
       } else {
-        children_width(node, least, false, styled.within, fonts, ui, id, shrunk)
+        children_width(node, least, false, styled.within, fonts, ui, id, shrunk, true)
       }
     },
     Gridbox =>
@@ -559,7 +654,8 @@ let intrinsic_width<e> = (
 }
 
 /// `node`'s children's intrinsic widths, summed (side by side) or the widest (`side_by_side`
-/// false), `shrunk` as [intrinsic_width] takes it.
+/// false), `shrunk` as [intrinsic_width] takes it — each with its left and right margins when
+/// `margins` (a flex container's items).
 let children_width<e> = (
   node: Node<e>,
   least: bool,
@@ -568,11 +664,15 @@ let children_width<e> = (
   fonts: mut Fonts,
   ui: ref Interaction,
   id: string,
-  shrunk: bool = false
+  shrunk: bool = false,
+  margins: bool = false
 ) -> f32 => {
   var out: f32 = 0.0
   for i, child in node.children {
-    let w = intrinsic_width(
+    let around = if margins {
+      styled_at(child, within, ui, child_id(id, child, i)).style.margin.horizontal()
+    } else { 0.0 }
+    let w = around + intrinsic_width(
       child,
       least,
       within,

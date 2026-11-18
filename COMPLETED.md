@@ -9,6 +9,33 @@ Newest first.
 
 ## Dated log
 
+### 11/18/26 — Margins on flex and grid items
+
+The todo item asked for margins and percentages. Margins are built. Percentages are not: one
+property in two fields does not cascade, since a later `width: 100` would not clear an
+earlier `width: 50%`. So they need `width`/`height` to become a length type, a change to about
+150 `Style` literals across three repos. That is recorded in todo.md, not made here.
+
+- **`Style.margin` is one field, as `padding` is**: `Margins`, each side a `Margin`
+  (`MarginPx` or `MarginAuto`). The cascade sets all four sides together, as lui's
+  `padding` does. Longhands would need four fields.
+- **Flex works in the line's own terms** (`FlowMargins`): before and after along the line in
+  the order it runs, so `row-reverse` swaps left and right, and across from the line's cross
+  start, which `wrap-reverse` moves. Lengths count in breaking lines, in the room the freeze
+  loop shares, in a line's length and thickness, and in a baseline's offset. Auto margins
+  along the line take the free space, and justify-content then has none (§8.1). Across, they
+  place the item and turn off stretching.
+- **Grid** takes margins out of the area and adds them to the item's contribution to its
+  tracks. `in_area` places an item between auto margins before `justify_self`/`align_self`.
+- **Intrinsic widths** count margins for flex items (`children_width`'s `margins`) and grid
+  items, or a flex row would measure narrower than it lays out.
+- **Grid packing reuses flex's `shared`.** The grid's `packed`, written earlier today, was a copy of it.
+- lui's `margin` follows CSS's one-to-four order, so `margin: 0 auto` centres. lui's own
+  two-value `padding` is across-then-down; todo.md records the mismatch.
+
+Tests: `TestRun_UiMargins` (sixteen cases worked by hand, flex and grid). `TestLui_UiTargetFlexAndGrid`
+and two cases in `TestLui_UiTargetReportsMistakesAtTheirLine` cover lui's `margin`.
+
 ### 11/18/26 — Grid: named areas, lines from the end, and packed tracks
 
 Three things CSS's grid has and `ui`'s had not: `grid-template-areas` with `grid-area: name`,

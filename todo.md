@@ -886,9 +886,15 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/18] Grid: named areas, lines from the end, `justify-content`/`align-content`.**
   `grid_areas`/`grid_area`, `GridSpan.end` and negative lines, and the tracks packed, in `ui`
   and lui. COMPLETED.md 11/18.
-- **[OPEN] Flex and grid: no margins and no percentages but `flex-basis`.** CSS's auto
-  margins (pushing an item to the end) and `width: 50%` would each need a length type in
-  `Style`; `align-self: baseline` reads only a row's first line.
+- **[DONE 11/18] Flex and grid margins**: `Style.margin`, lengths and `auto` on every side,
+  in both layouts and lui's `margin`. COMPLETED.md 11/18.
+- **[OPEN] No percentages but `flex-basis`**: `width: 50%` needs `width` and `height` (and
+  their `min_`/`max_`) to be a length type, since two fields would not cascade as one property.
+  That changes ~150 `Style` literals across lyra, Vega and Termina.
+- **[OPEN] Baseline alignment is first-baseline in a flex row alone**: no `last baseline`,
+  none down a column, and a grid's `align-self: baseline` is `start`.
+- **[OPEN] lui's two-value `padding` is across then down**, the opposite of CSS's (and of
+  lui's own `margin`): `padding: 6 14` pads 6 across. Swapping it changes existing views.
 - **[OPEN] Layout: intrinsic widths are measured afresh each time** — a flex item's or grid
   item's min- and max-content, outside the cache. A container unchanged is reused whole, but
   one that changes re-measures every item; memoize by identity if a large grid shows it.

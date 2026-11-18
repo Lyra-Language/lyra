@@ -70,6 +70,43 @@ impl Insets {
   }
 }
 
+/// One side of a [Margins]: a length, or `auto` — the free space there, shared with the other
+/// `auto` sides along the same line or in the same area.
+pub data Margin = MarginPx(f32) | MarginAuto
+
+/// The space round a flex or grid item, outside its edge (CSS's `margin`).
+pub struct Margins {
+  top: Margin = MarginPx(0.0),
+  right: Margin = MarginPx(0.0),
+  bottom: Margin = MarginPx(0.0),
+  left: Margin = MarginPx(0.0),
+}
+
+/// The same margin on every side.
+pub let margins = pure (all: Margin) -> Margins =>
+  Margins { top: all, right: all, bottom: all, left: all }
+
+/// `x` on the left and right, `y` on the top and bottom — CSS's `margin: y x`, so
+/// `margins_xy(MarginAuto, MarginPx(0.0))` centres an item across its line.
+pub let margins_xy = pure (x: Margin, y: Margin) -> Margins =>
+  Margins { top: y, right: x, bottom: y, left: x }
+
+impl Margin {
+  /// Its length, an `auto` side's none (until the free space is shared).
+  pub let length = pure (self) -> f32 => match self {
+    MarginPx(n) => n,
+    MarginAuto => 0.0,
+  }
+
+  pub let is_auto = pure (self) -> bool => self == MarginAuto
+}
+
+impl Margins {
+  /// The left and right lengths together, and the top and bottom ([Margin.length]).
+  pub let horizontal = pure (self) -> f32 => self.left.length() + self.right.length()
+  pub let vertical = pure (self) -> f32 => self.top.length() + self.bottom.length()
+}
+
 /// What an element asks to look like; a field unset leaves it to the layers below (or, for
 /// an inherited one, to its parent).
 pub struct Style {
@@ -87,6 +124,10 @@ pub struct Style {
   corners: Maybe<Radii> = None,
   /// Space between the element's edge and what is inside it.
   padding: Maybe<Insets> = None,
+  /// Space round a flex or grid item, outside its edge (CSS's `margin`); an `auto` side
+  /// takes the free space there — pushing the item along its line, or placing it in its
+  /// area. Other containers ignore it.
+  margin: Maybe<Margins> = None,
   /// Space between a Row's or Column's children; a flex container's or grid's `row_gap` and
   /// `column_gap` where those are unset.
   gap: Maybe<f32> = None,
@@ -327,6 +368,7 @@ impl Style {
     radius: self.radius.or(base.radius),
     corners: self.corners.or(base.corners),
     padding: self.padding.or(base.padding),
+    margin: self.margin.or(base.margin),
     gap: self.gap.or(base.gap),
     font: self.font.or(base.font),
     font_size: self.font_size.or(base.font_size),
@@ -1096,6 +1138,7 @@ pub struct Computed {
   /// Each corner's radius, where the style set them ([Style.corners]); `radius` otherwise.
   corners: Maybe<Radii> = None,
   padding: Insets = Insets {},
+  margin: Margins = Margins {},
   gap: f32 = 0.0,
   font: FontSpec = FontSpec {},
   /// The opacity drawn with — the element's own times every one around it — and its own.
@@ -1247,6 +1290,7 @@ impl Cascade {
       radius: s.radius ?? 0.0,
       corners: s.corners,
       padding: s.padding ?? Insets {},
+      margin: s.margin ?? Margins {},
       gap: s.gap ?? 0.0,
       font: FontSpec {
         base_font |
