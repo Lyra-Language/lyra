@@ -2252,14 +2252,15 @@ flex width (300x20): a@0,0 120x20 b@120,0 180x20
 
 // Percentages: a size is a length (Px) or a percentage of the room it is laid out in — a
 // column's width, a grid area, a flex container's main size for an item's base and least,
-// a fixed-height flex column's — its least and greatest too, and as if unset where measured
-// for content (an item of an auto track), as CSS's cyclic percentages contribute.
+// a fixed-height flex column's, a row's or column's own length along it — its least and
+// greatest too, and as if unset where measured for content (an item of an auto track), as
+// CSS's cyclic percentages contribute.
 func TestRun_UiPercentages(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.draw.{ Size }
 import ui.text.{ fonts_new, Fonts }
 import ui.style.{ Style, Extent, Px, Percent, FlexColumn, px, fr, auto_track }
-import ui.layout.{ Node, Laid, column, flex, grid, sized, layout, loose }
+import ui.layout.{ Node, Laid, row, column, flex, grid, sized, layout, loose }
 
 let main = () -> u8 => {
   var fonts = fonts_new()
@@ -2274,6 +2275,9 @@ let main = () -> u8 => {
     flex_direction: Some(FlexColumn),
     height: Some(Px(200.0)),
   }), fonts)
+  show("row", row([block("a", Percent(25.0), Px(20.0)), block("b", Px(50.0), Px(20.0))]), fonts)
+  show("column", column([block("a", Px(10.0), Percent(25.0)), block("b", Px(10.0), Px(20.0))]).with_style(Style { height: Some(Px(200.0)) }), fonts)
+  show("column at least", column([block("a", Px(10.0), Px(5.0)).with_style(Style { min_height: Some(Percent(10.0)) })]).with_style(Style { height: Some(Px(200.0)) }), fonts)
   show("measured", grid([block("a", Percent(50.0), Px(20.0)), sized::<void>(None, None).keyed("b").with_style(Style { height: Some(Px(20.0)) })]).with_style(Style {
     grid_columns: Some([auto_track(), fr(1.0)]),
   }), fonts)
@@ -2299,6 +2303,9 @@ flex: a@0,0 75x20 b@75,0 50x20
 least: a@0,0 150x20
 greatest: a@0,0 30x20
 fixed height: a@0,0 10x50
+row: a@0,0 75x20 b@75,0 50x20
+column: a@0,0 10x50 b@0,50 10x20
+column at least: a@0,0 10x20
 measured: a@0,0 0x20 b@0,0 300x20
 `
 	if got != want {

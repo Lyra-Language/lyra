@@ -97,6 +97,7 @@ import ui.text.{
 import ui.style.{
   Style,
   resolved_in,
+  Percent,
   ScrollbarWidth,
   ScrollbarThin,
   ScrollbarNone,
@@ -2929,16 +2930,13 @@ let lay_line<e> = (
       factors += factor
       continue
     }
-    let limits = oriented(axis, 0.0, UNBOUNDED, cross_min, max_cross)
-    let one = lay(
-      child,
-      limits,
-      ctx.cascade,
-      fonts,
-      ctx.ui,
-      child_id(ctx.id, child, i),
-      cache
-    )
+    // A child sized by a percentage along the line is given the line's length to be a
+    // percentage of; the others all the room they want.
+    let id = child_id(ctx.id, child, i)
+    let own = styled_at(child, ctx.cascade, ctx.ui, id).style
+    let along_room = if bounded && sized_along(own, axis) { max_main } else { UNBOUNDED }
+    let limits = oriented(axis, 0.0, along_room, cross_min, max_cross)
+    let one = lay(child, limits, ctx.cascade, fonts, ctx.ui, id, cache)
     used += along(axis, one.size.w, one.size.h)
     laid[i] = Some(one)
   }
@@ -2991,6 +2989,20 @@ let lay_line<e> = (
     pen += along(axis, l.size.w, l.size.h) + starts.1
   }
   Body { size: oriented_size(axis, main_size, cross_size), children: placed }
+}
+
+/// Whether `style` asks for a percentage along `axis` — its width across, its height down, or
+/// the least or greatest of either.
+let sized_along = pure (style: ref Computed, axis: Axis) -> bool => {
+  let sizes = if axis == Horizontal {
+    [style.width, style.min_width, style.max_width]
+  } else {
+    [style.height, style.min_height, style.max_height]
+  }
+  sizes.any((s) => match s {
+    Some(Percent(_)) => true,
+    _ => false,
+  })
 }
 
 /// `children` over one another within `c`: the ones not [positioned] at the top-left corner,

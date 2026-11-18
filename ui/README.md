@@ -82,8 +82,8 @@ layer — implements the two traits; the display list is the whole contract.
   for an item's base, least and greatest, its cross size across — and as if unset where
   that room is unbounded or the element is measured for its content (`intrinsic_width`), as
   CSS's percentages of an indefinite size are. Row, Column and Expanded stay as they are —
-  Flutter's, measuring children unbounded, so a percentage along one is unset — beside
-  them. **Intrinsic widths** (`intrinsic_width`) are measured outside the layout cache,
+  Flutter's, measuring children unbounded — beside them, except that a child sized by a
+  percentage along the line is given the line's bounded length to be one of. **Intrinsic widths** (`intrinsic_width`) are measured outside the layout cache,
   so the cache keeps only real layouts; an unchanged flex container or grid is given back
   whole like any element.
 - **`cursor`** (CSS's, inherited; lui's `cursor: text`, `pointer`…): the pointer's shape over

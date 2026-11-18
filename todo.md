@@ -891,9 +891,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/18] Percentages**: `width`, `height` and their `min_`/`max_` are an `Extent`,
   `Px` or `Percent`, in `ui` and lui; lyra's, Vega's and Termina's literals converted.
   COMPLETED.md 11/18.
-- **[OPEN] A Row's or Column's child has no percentage along its line**: Flutter's lines
-  measure children unbounded there, so `height: 50%` in a Column is unset (a flex column's
-  resolves). A percentage basis in `Constraints` would carry the line's definite size.
+- **[DONE 11/18] A Row's or Column's child takes a percentage along its line**: a child sized
+  by one there is given the line's bounded length (`sized_along`). COMPLETED.md 11/18.
 - **[DONE 11/18] Baseline alignment in grids, and `last baseline`**: a grid row's baseline
   groups with their shims, and `AlignLastBaseline` in flex rows and grids. COMPLETED.md 11/18.
 - **[DONE 11/18] lui's two-value `padding` is CSS's**, down then across, with the three-value

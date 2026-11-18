@@ -9,6 +9,20 @@ Newest first.
 
 ## Dated log
 
+### 11/18/26 — A row's or column's percentages along the line
+
+A row or column (Flutter's lines) measures a fixed child with all the room it wants along the
+line, so `height: 50%` in a column was unset. A percentage basis in `Constraints` would carry
+the line's size to every layout. That is a field every constraint built anywhere must pass on.
+Only the line is concerned, so the line answers it: `lay_line` gives a child whose size along
+the line, or whose least or greatest there, is a percentage (`sized_along`) the line's bounded
+length as its greatest. `sized_by` then resolves it as it does across. The other children are
+measured unbounded as before. A child asking only for a percentage greatest or least is now
+also kept within the line's length, which it is anyway once laid in it.
+
+Tests: `TestRun_UiPercentages` gains a row's 25% width, a fixed-height column's 25% height and
+a 10% least height.
+
 ### 11/18/26 — Percentages: sizes are an Extent
 
 `width: 50%` needed `width` and `height` (and their `min_`/`max_`) to be one type of a length
