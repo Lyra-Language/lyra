@@ -48,6 +48,9 @@ type Layout struct {
 type Image struct {
 	ROM     []byte
 	Symbols map[string]uint32
+	// Functions is every function linked, local ones too — after LLVM's internalize nearly
+	// all are — by address: what a profiler charges an instruction's time to.
+	Functions []Function
 	// DataSize and BSSSize are the RAM the program takes, for a report.
 	DataSize, BSSSize uint32
 }
@@ -365,7 +368,37 @@ func place(objs []*object, layout Layout) (*Image, error) {
 			copy(rom[s.load:], s.data)
 		}
 	}
-	return &Image{ROM: rom, Symbols: globals, DataSize: dataEnd - layout.RAMStart, BSSSize: ram - bssStart}, nil
+	var functions []Function
+	for _, o := range objs {
+		for _, sym := range o.symbols {
+			if elf.ST_TYPE(sym.Info) != elf.STT_FUNC || sym.Section == elf.SHN_UNDEF || sym.Name == "" {
+				continue
+			}
+			addr, err := o.symbolAddress(sym)
+			if err != nil {
+				return nil, err
+			}
+			functions = append(functions, Function{Name: sym.Name, Address: addr, Size: uint32(sym.Size)})
+		}
+	}
+	sort.Slice(functions, func(i, j int) bool { return functions[i].Address < functions[j].Address })
+	return &Image{ROM: rom, Symbols: globals, Functions: functions, DataSize: dataEnd - layout.RAMStart, BSSSize: ram - bssStart}, nil
+}
+
+// Function is a function linked into an image: its name, where it starts and its bytes.
+type Function struct {
+	Name          string
+	Address, Size uint32
+}
+
+// SymbolMap is img's functions as the text a profiler reads (`lyrac build` writes it beside a
+// ROM, `<rom>.sym`): a line a function, `ADDRESS SIZE NAME`, the address in hex, by address.
+func SymbolMap(img *Image) string {
+	var b strings.Builder
+	for _, f := range img.Functions {
+		fmt.Fprintf(&b, "%06x %d %s\n", f.Address, f.Size, f.Name)
+	}
+	return b.String()
 }
 
 // symbolAddress is where sym is: its section's address plus its value, or its value for an

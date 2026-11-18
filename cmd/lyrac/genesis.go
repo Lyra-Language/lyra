@@ -176,6 +176,11 @@ func buildGenesis(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
 		return "", 1
 	}
+	// Its functions beside it, for a profiler (Sheliak's --stats charges each one's time).
+	if err := os.WriteFile(out+".sym", []byte(rom.SymbolMap(img)), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
+		return "", 1
+	}
 	if !o.ephemeral {
 		fmt.Printf("%s: wrote %s (Genesis ROM: %d bytes of code and constants, %d of RAM)\n",
 			o.path, out, len(img.ROM)-0x200, img.DataSize+img.BSSSize)

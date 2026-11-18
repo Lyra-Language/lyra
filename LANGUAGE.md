@@ -961,7 +961,11 @@ target = "genesis"
 - The check reads the effect inference `pure`/`det`/`noalloc` use: reaching outside Lyra is one
   more effect (`EffectHost`), charged by every `extern` whatever its declared bound — a `pure`
   extern is still host code — and by the host builtins. No bound names it.
-- **`lyrac build` for `genesis` makes a cartridge** (`game.bin`): the program's IR compiled for
+- **`lyrac build` for `genesis` makes a cartridge** (`game.bin`), and beside it **its symbol
+  map** (`game.bin.sym`: a line a function, `ADDRESS SIZE NAME`, the address in hex — every
+  function linked, the local ones LLVM's internalize made too, a Lyra function's name
+  `lyra.<module>.<name>`, a generic's instance `$` and its arguments after), which Sheliak's
+  `--stats` charges each instruction's time to: the program's IR compiled for
   the 68000 by an M68k LLVM (`tools/llvm-m68k.sh` builds one into `~/Dev/llvm-m68k`, or
   `$LYRA_M68K_LLVM`; a release carries a bundle beside lyrac, `lyrac m68k-bundle`), linked with
   `runtime/genesis` — the vectors, start-up (TMSS, `.data`

@@ -54,6 +54,27 @@ let main = () -> void => {
   }
 }
 `)
+	// The symbol map beside it: every function by address — main, the runtime's, and the local
+	// ones LLVM's internalize made (a panic's) — each inside the ROM.
+	sym, err := os.ReadFile(out + ".sym")
+	if err != nil {
+		t.Fatalf("lyrac wrote no symbol map: %v", err)
+	}
+	rom, _ := os.ReadFile(out)
+	var last uint64
+	found := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(sym)), "\n") {
+		fields := strings.Fields(line)
+		addr, err := strconv.ParseUint(fields[0], 16, 32)
+		if err != nil || len(fields) != 3 || addr < last || addr >= uint64(len(rom)) {
+			t.Fatalf("not a symbol map line, in order, inside the ROM: %q", line)
+		}
+		last = addr
+		found[fields[2]] = true
+	}
+	if !found["main"] || !found["_start"] || !found["lyra_panic_overflow"] {
+		t.Errorf("the symbol map lacks main, the runtime's _start or a local function:\n%s", sym)
+	}
 	for _, c := range []struct {
 		hold                 string
 		least, most          float64 // the frames' worked share, on average
@@ -65,7 +86,7 @@ let main = () -> void => {
 		{"a", 0.9, 1.0, 2, 0},
 		{"c", 0.005, 0.25, 22, 8},
 	} {
-		frames := statsOf(t, out, c.hold)
+		frames, functions := statsOf(t, out, c.hold)
 		var worked float64
 		dmas := 0
 		for _, f := range frames {
@@ -84,6 +105,13 @@ let main = () -> void => {
 		if worked < c.least || worked > c.most {
 			t.Errorf("--hold %q: the frames worked %.3f of their clocks on average, want %.3f to %.3f", c.hold, worked, c.least, c.most)
 		}
+		// By function (lyrac writes the ROM's symbol map beside it): with A held the work is
+		// main's own loop, most of it.
+		if len(functions) == 0 {
+			t.Errorf("--hold %q: no function's work in the stats", c.hold)
+		} else if c.hold == "a" && !strings.HasSuffix(functions[0], " main") {
+			t.Errorf("--hold %q: the busiest function is %q, want main", c.hold, functions[0])
+		}
 		// A frame a pass of the loop, each DMAing; an overrun DMAs in only the frames it waits in.
 		if wantAll := c.hold != "a"; (wantAll && dmas != len(frames)) || (!wantAll && (dmas == 0 || dmas > len(frames)/3)) {
 			t.Errorf("--hold %q: %d of %d frames DMA'd", c.hold, dmas, len(frames))
@@ -97,8 +125,8 @@ type frameCost struct {
 }
 
 // statsOf runs a ROM 120 frames holding `hold` on pad 1 and reads `--stats`' file: the
-// last 60 frames, past the start-up.
-func statsOf(t *testing.T, rom, hold string) []frameCost {
+// last 60 frames, past the start-up, and its functions' lines, the busiest first.
+func statsOf(t *testing.T, rom, hold string) (frames []frameCost, functions []string) {
 	t.Helper()
 	stats := filepath.Join(t.TempDir(), "stats.txt")
 	args := []string{"--stats", stats}
@@ -110,13 +138,21 @@ func statsOf(t *testing.T, rom, hold string) []frameCost {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) < 4 || lines[0] != "sheliak stats 1" || lines[len(lines)-1] != "end 120" {
+	all := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(all) < 4 || all[0] != "sheliak stats 2" || all[len(all)-1] != "end 120" {
 		t.Fatalf("not a whole stats file:\n%s", data)
+	}
+	// The frames' lines, the functions' set apart.
+	var lines []string
+	for _, line := range all {
+		if strings.HasPrefix(line, "function ") {
+			functions = append(functions, line)
+		} else {
+			lines = append(lines, line)
+		}
 	}
 	limits := strings.Fields(lines[1])
 	clocks, _ := strconv.Atoi(limits[1])
-	var frames []frameCost
 	for _, line := range lines[len(lines)-61 : len(lines)-1] {
 		var n [4]int
 		for k, field := range strings.Fields(line) {
@@ -124,5 +160,5 @@ func statsOf(t *testing.T, rom, hold string) []frameCost {
 		}
 		frames = append(frames, frameCost{clocks, n[0], n[1], n[2], n[3]})
 	}
-	return frames
+	return frames, functions
 }
