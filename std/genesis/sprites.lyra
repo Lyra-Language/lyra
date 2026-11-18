@@ -160,6 +160,8 @@ pub let show = () -> void => {
   vdp.send_colors()
   // The line scroll the game's loop wrote into RAM (`std.genesis.camera`'s bands).
   vdp.send_lines()
+  // The map columns and rows `std.genesis.camera` staged as the view moved.
+  vdp.send_staged()
   shows = shows.wrapping_add(1)
   for i: u16 in 0..<sends {
     vdp.dma_to_vram(send_source[i], send_tile[i] * 32, send_words[i])

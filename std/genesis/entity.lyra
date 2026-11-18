@@ -40,6 +40,7 @@ module std.genesis.entity
 //! drawn in its scene editor into points [PATH_STEP] pixels apart, so a frame along it is a
 //! shift and a multiply at the kind's top speed.
 
+import std.genesis.blocks
 import std.genesis.collision.{ Shape, Collider }
 
 /// An animation of a sprite: where its steps are in the game's step table, how many, how
@@ -299,11 +300,11 @@ impl Entity {
   ) -> void => {
     self.was_x = self.x()
     self.was_y = self.y()
-    let rows = i32(cells.len()) / i32(width)
+    let rows = i32(blocks.rows(cells, width))
     // Where it may go, in 256ths of a pixel: the map, its edges' walls — or, not kept in,
     // as far as its place stays a pixel an i16 holds.
     let low = if kept_in { 0 } else { -OPEN_REACH }
-    let right = if kept_in { (i32(width) * 8 - i32(self.kind.width)) << 8 } else { OPEN_REACH }
+    let right = if kept_in { (i32(blocks.columns(width)) * 8 - i32(self.kind.width)) << 8 } else { OPEN_REACH }
     let bottom = if kept_in { (rows * 8 - i32(self.kind.height)) << 8 } else { OPEN_REACH }
     // Turned: its colliders turn too, unless that would put one into a wall here.
     if self.hit_mirrored != self.mirrored && !self.kind.hits_tiles(

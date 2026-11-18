@@ -661,6 +661,7 @@ func TestGenesis_ACameraScrollsAMapBiggerThanAPlane(t *testing.T) {
 	t.Parallel()
 	genesisToolchainOrSkip(t)
 	out := genesisProgram(t, "scroll", `import std.genesis.vdp
+import std.genesis.sprites
 import std.genesis.camera
 import std.genesis.camera.{ Camera }
 
@@ -684,6 +685,8 @@ let main = () -> void => {
     view.last_y = view.y
     if view.x < 480 { view.x += 4 } else { view.y = (view.y + 2).min(96) }
     vdp.wait_vblank()
+    // The columns and rows staged last frame, sent as a game's sprites.show sends them.
+    sprites.show()
     camera.scroll_map(view, vdp.PLANE_B, map, 80)
   }
 }
@@ -759,6 +762,7 @@ func TestGenesis_ACameraScrollsBack(t *testing.T) {
 	t.Parallel()
 	genesisToolchainOrSkip(t)
 	out := genesisProgram(t, "back", `import std.genesis.vdp
+import std.genesis.sprites
 import std.genesis.camera
 import std.genesis.camera.{ Camera }
 
@@ -782,6 +786,8 @@ let main = () -> void => {
     view.last_y = view.y
     if view.x > 0 { view.x -= 4 } else { view.y = (view.y - 2).max(0) }
     vdp.wait_vblank()
+    // The columns and rows staged last frame, sent as a game's sprites.show sends them.
+    sprites.show()
     camera.scroll_map(view, vdp.PLANE_B, map, 80)
   }
 }

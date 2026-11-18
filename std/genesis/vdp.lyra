@@ -31,6 +31,8 @@ module std.genesis.vdp
 //! — so loading one copies nothing onto the stack: `vdp.load_tiles(1, HERO)`. A table of
 //! any length is accepted (`<const N: i64>`), each length compiled on its own.
 
+import std.genesis.blocks
+
 /// The screen in 40-cell mode, which [init] sets, in pixels.
 pub const SCREEN_WIDTH: i16 = 320
 pub const SCREEN_HEIGHT: i16 = 224
@@ -288,7 +290,7 @@ pub let write_vram<const N: i64> = (address: u16, words: ref [N]u16) -> void => 
 
 /// A tile map into a plane (`PLANE_A` or `PLANE_B`): every one of the plane's cells, from
 /// the map's cell (`left`, `top`) on. `cells` is the map row by row, `width` cells a row,
-/// as name-table words — `priority << 15 | palette << 13 | flip_y << 12 | flip_x << 11 |
+/// as name-table words — or blocks (`std.genesis.blocks`) — `priority << 15 | palette << 13 | flip_y << 12 | flip_x << 11 |
 /// tile` — and a plane cell past the map's edge gets 0, the blank tile. A whole plane is
 /// 2,048 words: write it before `display_on`, or between levels, rather than every frame.
 pub let write_plane<const N: i64> = (
@@ -299,17 +301,11 @@ pub let write_plane<const N: i64> = (
   top: u16 = 0
 ) -> void => {
   let held = hold_vblank()
-  let cell_count = u32(cells.len())
-  // Where the map's row `top + row` starts, kept by adding a row's width each time.
-  var start = u32(top) * u32(width)
   for row: u16 in 0..<PLANE_HEIGHT {
     set_address(VRAM_WRITE, plane + row * PLANE_WIDTH * 2)
     for column: u16 in 0..<PLANE_WIDTH {
-      let x = left + column
-      let at = start + u32(x)
-      if x < width && at < cell_count { write_word(cells[at]) } else { write_word(0) }
+      write_word(blocks.cell_at(cells, width, left + column, top + row))
     }
-    start += u32(width)
   }
   release_vblank(held)
 }
@@ -416,6 +412,60 @@ pub let send_lines = () -> void => {
   release_vblank(held)
 }
 
+/// Room for `words` words to go to byte `address` of VRAM in the next vertical blank, by DMA
+/// — the address moving on `step` bytes a word: 2 for a run of a plane's row, `PLANE_WIDTH *
+/// 2` down a column — answering where in the staged words they go ([put_staged]), or
+/// [NO_ROOM]. **What `std.genesis.camera` streams into a plane goes this way**: worked out
+/// in the frame, sent by [send_staged] (`sprites.show` calls it) in a few DMAs, rather than
+/// written a word and an address at a time inside the blank. A run is sent as it is when
+/// sent, so hold the vertical blank ([hold_vblank]) from staging it to its last word.
+pub let stage = (address: u16, step: u16, words: u16) -> u16 => {
+  if runs >= MAX_STAGED_RUNS || staged_count + words > MAX_STAGED_WORDS { return NO_ROOM }
+  let at = staged_count
+  run_address[runs] = address
+  run_step[runs] = step
+  run_from[runs] = at
+  run_words[runs] = words
+  runs += 1
+  staged_count += words
+  at
+}
+
+/// What [stage] answers when its runs or words are full: write directly instead.
+pub const NO_ROOM: u16 = 0xFFFF
+
+/// Staged word `at` ([stage]'s answer and on) set to `word`.
+pub let put_staged = (at: u16, word: u16) -> void => { staged[at] = word }
+
+/// The staged runs into `plane`'s 4 KB forgotten — what a plane redrawn whole makes stale.
+pub let drop_staged = (plane: u16) -> void => {
+  var kept: u16 = 0
+  for r: u16 in 0..<runs {
+    if run_address[r] >= plane && run_address[r] < plane + PLANE_WIDTH * PLANE_HEIGHT * 2 {
+      continue
+    }
+    run_address[kept] = run_address[r]
+    run_step[kept] = run_step[r]
+    run_from[kept] = run_from[r]
+    run_words[kept] = run_words[r]
+    kept += 1
+  }
+  runs = kept
+  if runs == 0 { staged_count = 0 }
+}
+
+/// The runs [stage] made, sent by DMA in the order staged, and the room emptied: in the
+/// vertical blank — `sprites.show` calls it.
+pub let send_staged = () -> void => {
+  if runs == 0 { return }
+  let base = u32(unsafe { (&staged).address() })
+  for r: u16 in 0..<runs {
+    dma_to_vram(base + u32(run_from[r]) * 2, run_address[r], run_words[r], run_step[r])
+  }
+  runs = 0
+  staged_count = 0
+}
+
 /// The horizontal scroll word showing the plane from its pixel `x` at the screen's left:
 /// the VDP moves a plane right by its scroll, so the view at x is a scroll of -x.
 pub let line_word = pure (x: i32) -> u16 => u16((1024 - (x & 1023)) & 1023)
@@ -423,11 +473,13 @@ pub let line_word = pure (x: i32) -> u16 => u16((1024 - (x & 1023)) & 1023)
 /// `words` words from byte `source` of the 68000's memory (even; the cartridge's ROM, or RAM)
 /// to byte `address` of VRAM, by the VDP's DMA: the 68000 waits while the VDP copies, at many
 /// times the speed of writing them — what streaming a sprite's frames needs ([sprites.streamed]).
+/// The address moves on `step` bytes a word: 2 for a run, a plane's row (`PLANE_WIDTH * 2`)
+/// for a column of it ([stage]).
 /// In the vertical blank, where the VDP copies fastest and nothing shown tears. A source
 /// crossing a 128 KB boundary, which the VDP's source address cannot, is sent in two parts
 /// ([dma_run]). With the Z80's driver running ([guard_dma]), its bus is held for the copy: the
 /// Z80 reads the cartridge too.
-pub let dma_to_vram = (source: u32, address: u16, words: u16) -> void => {
+pub let dma_to_vram = (source: u32, address: u16, words: u16, step: u16 = 2) -> void => {
   if words == 0 { return }
   let held = hold_vblank()
   if dma_guarded { unsafe {
@@ -435,6 +487,7 @@ pub let dma_to_vram = (source: u32, address: u16, words: u16) -> void => {
     while (z80_bus().read_volatile() & 0x0100) != 0 {}
   } }
   set_register(1, mode | 0x10)
+  if step != 2 { set_register(15, u8(step)) }
   var from = source
   var at = address
   var left = words
@@ -452,9 +505,10 @@ pub let dma_to_vram = (source: u32, address: u16, words: u16) -> void => {
       port.write_volatile(0x0080 | (at >> 14))
     }
     from += u32(run) * 2
-    at = at.wrapping_add(run.wrapping_mul(2))
+    at = at.wrapping_add(run.wrapping_mul(step))
     left -= run
   }
+  if step != 2 { set_register(15, 2) }
   set_register(1, mode)
   if dma_guarded { unsafe { z80_bus().write_volatile(0) } }
   release_vblank(held)
@@ -531,6 +585,19 @@ var lines: [448]u16 = #[0; 448]
 var lines_down: [2]u16 = #[0; 2]
 var line_at: u16 = 0
 var lines_changed: bool = false
+
+/// The words [stage] keeps for the next vertical blank, and its runs: each a VRAM address, the
+/// step between its words, where its words start here and how many. Room for a frame of two
+/// planes scrolling a column and a row each, many times over.
+const MAX_STAGED_WORDS: u16 = 1024
+const MAX_STAGED_RUNS: u16 = 32
+var staged: [1024]u16 = #[0; 1024]
+var staged_count: u16 = 0
+var run_address: [32]u16 = #[0; 32]
+var run_step: [32]u16 = #[0; 32]
+var run_from: [32]u16 = #[0; 32]
+var run_words: [32]u16 = #[0; 32]
+var runs: u16 = 0
 
 /// The 64 colours as last written ([color_of]).
 var shown: [64]u16 = #[0; 64]

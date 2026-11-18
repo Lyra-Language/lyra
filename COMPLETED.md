@@ -65,6 +65,38 @@ once something else laid the scroller out again. It now counts `<id>#…` too.
 Test: `TestRun_UiPartsTransition` (a placeholder and caret on `:focus`, a thumb on `:hover`,
 frame by frame through the layout cache).
 
+### 11/17/26 — Map columns and rows streamed by DMA, and maps as blocks
+
+`std.genesis.camera` wrote each column that came into view a word and an address at a time
+— two control writes and a data write a cell — in the vertical blank, where the 68000 also
+sends the sprite table, the line scroll and the streamed sprites. It now works them out where
+`scroll_map` is called and stages them in RAM (`vdp.stage`), and `sprites.show` sends the
+frame's runs by DMA: a row as one run, a column as one too, the VDP's auto-increment set to
+a plane row (128 bytes) so the address steps down the plane — two runs where either wraps.
+
+- **A frame late is fine because the plane is ahead.** The plane already held eight
+  columns either side of the view (for ripples); it now holds a row above and below too
+  (29 rows shown, 31 held, 32 in the plane), so a column or row arriving a blank after the
+  scroll registers moved is still off the screen. A move past those margins in one frame
+  (64 pixels across, 8 down — a fall is at most 8) is sent at once, in that blank.
+- **`show_map` drops what is staged for its plane**: a run from before a redraw would land
+  on it a frame later.
+- **Overflow traps found the margin's edge.** The row above the view at the top of a map is
+  row −1; `top + row` on a `u16` trapped on the first frame (the panic screen, red), so every
+  row sum there wraps (`wrapping_add`), and `cell_at` answers 0 past the map.
+
+**Maps as blocks** (`std.genesis.blocks`): a table of 2×2 or 4×4 squares of cells and a block
+number a square, read by `cell_at` — two table reads for one — and passed with a width
+carrying `BLOCKS` (0x8000). Everything that takes a map takes either form unchanged: the
+camera, `collision.hits_map`, `entity.move_in`. Vega writes the form where it is smaller,
+before packing, so the RAM area unpacked maps share holds blocks: the hero's field went
+from 7,680 bytes to 3,888.
+
+- `genesis_blocks_test.go` streams a block map both ways across the plane's wrap in Sheliak,
+  and on the host holds `cell_at`, `hits_map` and an entity's moves on a cut 21×13 map to
+  the same answers as its cells, as 2×2 and 4×4 blocks. A test program that never called
+  `sprites.show` now does, as a game does.
+
 ### 11/17/26 — An array parameter written `_`
 
 A `ui.app` host whose state was an array (`App<[]string, e>`) did not build: "destructuring

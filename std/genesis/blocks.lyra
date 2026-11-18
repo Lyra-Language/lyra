@@ -1,0 +1,66 @@
+module std.genesis.blocks
+//! A tile map's cells as the game reads them: its name-table words row by row, or **blocks**
+//! — a metatile map, every square of 2×2 (or 4×4) cells one of a table of blocks, the map
+//! itself a block number a square — read the same way.
+//!
+//! ```
+//! import std.genesis.blocks
+//!
+//! let word = blocks.cell_at(LEVEL, LEVEL_WIDTH, mx, my)   // either form
+//! let rows = blocks.rows(LEVEL, LEVEL_WIDTH)
+//! ```
+//!
+//! **Both forms are one table of words and a width**, so everything taking a map —
+//! `std.genesis.camera`'s scrolling, `std.genesis.collision`'s tiles, `std.genesis.entity`'s
+//! moves — takes either, unchanged. A width with [BLOCKS] set says the table is blocks, laid
+//! out as:
+//!
+//! | word | holds |
+//! |---|---|
+//! | 0 | the block's side as a shift: 1 for 2×2 cells, 2 for 4×4 |
+//! | 1 | the map's height in cells |
+//! | 2 | its width in blocks |
+//! | 3 | where the block numbers start |
+//! | 4 … | the blocks: each its cells' words row by row |
+//! | … | a block number for each square of the map, row by row |
+//!
+//! A level of repeated ground is a fraction of its cells — and, unpacked into RAM
+//! (`std.genesis.pack`), leaves room for a far larger one. Reading a cell costs two table
+//! reads in place of one. Vega writes the form where it is smaller.
+
+/// The width's bit saying a map's table is blocks, not cells. The width in cells is the rest
+/// ([columns]).
+pub const BLOCKS: u16 = 0x8000
+
+/// A map's width in cells, from the width its tables are passed with.
+pub let columns = pure (width: u16) -> u16 => width & 0x7FFF
+
+/// A map's height in cells: its cells' rows, or a block map's own count.
+pub let rows<const N: i64> = pure (cells: ref [N]u16, width: u16) -> u16 => {
+  if (width & BLOCKS) != 0 { return cells[1] }
+  let w = width & 0x7FFF
+  if w == 0 { 0 } else { u16(u32(cells.len()) / u32(w)) }
+}
+
+/// Map cell (`mx`, `my`)'s name-table word; 0, the blank tile, past the map's edge.
+pub let cell_at<const N: i64> = pure (
+  cells: ref [N]u16,
+  width: u16,
+  mx: u16,
+  my: u16
+) -> u16 => {
+  if (width & BLOCKS) == 0 {
+    if mx >= width { return 0 }
+    let at = u32(my) * u32(width) + u32(mx)
+    return if at < u32(cells.len()) { cells[at] } else { 0 }
+  }
+  if mx >= (width & 0x7FFF) || my >= cells[1] { return 0 }
+  let shift = cells[0]
+  let side_mask: u16 = (u16(1) << shift) - 1
+  let number = cells[
+    u32(cells[3]) + u32(my >> shift) * u32(cells[2]) + u32(mx >> shift)
+  ]
+  cells[
+    4 + (u32(number) << (2 * shift)) + (u32(my & side_mask) << shift) + u32(mx & side_mask)
+  ]
+}
