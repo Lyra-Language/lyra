@@ -1006,7 +1006,8 @@ target = "genesis"
     sprite masking — a lit (`front`) sprite is otherwise drawn over the window; `name_palette`
     writes the speaker in another palette's colours. Vega's
     dialogue editor makes the tables, and a dialogue's box style as a `Talk` (`<NAME>_TALK`);
-    `std.game.talk` is the same for a modern game, its box's frame a sprite three glyphs square
+    an entity's `near(other, by)` says whether two are within `by` pixels, the reach of a
+    talk (Vega's scenes ask it of their player); `std.game.talk` is the same for a modern game, its box's frame a sprite three glyphs square
     (`frame`, `frame_x`, `frame_y`) and its colours tints (`tint`, `name_tint`).
   - `std.genesis.sprites` — a list of `Sprite { x, y, width, height, tile, palette, … }` in RAM:
     `clear`, `add`, and `show` in the vertical blank, which writes the VDP's table with the

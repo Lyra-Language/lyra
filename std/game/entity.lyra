@@ -468,6 +468,18 @@ impl Entity {
     if self.shown_row != NO_FRAME_SHAPES { self.use_shapes(table, self.shown_row) }
   }
 
+  /// Whether it is beside `other`, both alive: their kinds' boxes (their sprites' size) no
+  /// more than `by` pixels apart — near enough to talk to, whatever their colliders.
+  pub let near = pure (self: ref, other: ref Entity, by: f32) -> bool => {
+    if !self.alive || !other.alive { return false }
+    let ax = self.x()
+    let ay = self.y()
+    let bx = other.x()
+    let by_ = other.y()
+    bx - by < ax + self.kind.width && ax < bx + other.kind.width + by &&
+      by_ - by < ay + self.kind.height && ay < by_ + other.kind.height + by
+  }
+
   /// Whether it meets `other`: one of its colliders looks for a layer one of `other`'s is on,
   /// and their shapes overlap — each mirrored as its entity faces, and grown as it is.
   pub let meets = pure (self: ref, other: ref Entity) -> bool =>
