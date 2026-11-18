@@ -2855,9 +2855,9 @@ let area_rows = pure (value: string) -> Result<string, string> => {
   Ok("[${[row in rows | quote(row.join(" "))].join(", ")}]")
 }
 
-/// `margin`: one to four sides as CSS has them — all round; down then across; top, across,
-/// bottom; top, right, bottom, left — each a length (or a `$token`) or `auto`. (lui's
-/// `padding` takes two values the other way round, across then down.)
+/// `margin`: one to four sides as CSS has them, as `padding` takes them — all round; down then
+/// across; top, across, bottom; top, right, bottom, left — each a length (or a `$token`) or
+/// `auto`.
 let margin_of = pure (value: string) -> Result<string, string> => {
   var sides: []string = []
   for part in value.split(" ") {
@@ -3500,18 +3500,20 @@ let ui_number = pure (value: string) -> Result<string, string> => {
   number(value)
 }
 
-/// Padding: one value all round, two (across, then down), or four (top, right, bottom, left,
-/// as CSS has them) — numbers or `$tokens`.
+/// Padding: one to four values as CSS has them — all round; down then across; top, across,
+/// bottom; top, right, bottom, left — numbers or `$tokens`.
 let ui_padding = pure (value: string) -> Result<string, string> => {
   let parts = value.split_when((c) => c == ' ')
   var vs: []string = []
   for p in parts { vs.push(ui_number(p)?) }
   match vs.len() {
     1 => Ok("insets(${vs[0]})"),
-    2 => Ok("insets_xy(${vs[0]}, ${vs[1]})"),
+    2 => Ok("insets_xy(${vs[1]}, ${vs[0]})"),
+    3 =>
+      Ok("Insets { top: ${vs[0]}, right: ${vs[1]}, bottom: ${vs[2]}, left: ${vs[1]} }"),
     4 =>
       Ok("Insets { top: ${vs[0]}, right: ${vs[1]}, bottom: ${vs[2]}, left: ${vs[3]} }"),
-    _ => Err("padding is one, two or four values, not ${value}"),
+    _ => Err("padding is one to four values, not ${value}"),
   }
 }
 

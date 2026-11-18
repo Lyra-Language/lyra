@@ -714,7 +714,7 @@ let main = () -> u8 => {
 // `none`, `2 0 auto`), a basis as a percentage, order, the alignments, track lists with fr,
 // minmax and repeat, a dense column flow, grid lines with spans and from the end, named
 // areas (in a sheet and as an attribute), the content's packing, margins of one to four
-// lengths or auto in CSS's order, last baseline — a later declaration
+// lengths or auto in CSS's order (padding's too: `6 14` is 6 down, 14 across), last baseline — a later declaration
 // replacing an earlier one, as in CSS; and the module checks clean.
 func TestLui_UiTargetFlexAndGrid(t *testing.T) {
 	t.Parallel()
@@ -732,6 +732,8 @@ func TestLui_UiTargetFlexAndGrid(t *testing.T) {
   .page { grid-template-areas: "a b" 'a  c'; justify-content: stretch }
   .push { margin: 0 auto }
   .round { margin: 4 8 auto; align-self: last baseline }
+  .pad2 { padding: 6 14 }
+  .pad3 { padding: 1 2 3 }
 </style>
 <component name="view" event={Ev}>
   <Column>
@@ -776,6 +778,8 @@ func TestLui_UiTargetFlexAndGrid(t *testing.T) {
 		"grid_areas: Some([\"head head\", \"side main\"]), justify_content: Some(JustifyCenter), align_content: Some(JustifyEvenly)",
 		"margin: Some(Margins { top: MarginPx(0.0), right: MarginAuto, bottom: MarginPx(0.0), left: MarginAuto })",
 		"margin: Some(Margins { top: MarginPx(4.0), right: MarginPx(8.0), bottom: MarginAuto, left: MarginPx(8.0) }), align_self: Some(AlignLastBaseline)",
+		"padding: Some(insets_xy(14.0, 6.0))",
+		"padding: Some(Insets { top: 1.0, right: 2.0, bottom: 3.0, left: 2.0 })",
 	} {
 		if !strings.Contains(string(generated), want) {
 			t.Errorf("the generated module lacks %q:\n%s", want, generated)

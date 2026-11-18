@@ -893,8 +893,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   That changes ~150 `Style` literals across lyra, Vega and Termina.
 - **[DONE 11/18] Baseline alignment in grids, and `last baseline`**: a grid row's baseline
   groups with their shims, and `AlignLastBaseline` in flex rows and grids. COMPLETED.md 11/18.
-- **[OPEN] lui's two-value `padding` is across then down**, the opposite of CSS's (and of
-  lui's own `margin`): `padding: 6 14` pads 6 across. Swapping it changes existing views.
+- **[DONE 11/18] lui's two-value `padding` is CSS's**, down then across, with the three-value
+  form too; the three views using it swapped, their modules unchanged. COMPLETED.md 11/18.
 - **[OPEN] Layout: intrinsic widths are measured afresh each time** — a flex item's or grid
   item's min- and max-content, outside the cache. A container unchanged is reused whole, but
   one that changes re-measures every item; memoize by identity if a large grid shows it.

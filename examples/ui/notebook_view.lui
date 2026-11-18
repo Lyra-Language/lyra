@@ -84,7 +84,7 @@
 </script>
 
 <style global theme={Theme} name="notebook_sheet">
-  .bar { background: #e4e2df; gap: 8; padding: 0 4 }
+  .bar { background: #e4e2df; gap: 8; padding: 4 0 }
   .page { padding: $space.xl; gap: $space.l }
   Text.title { font-size: 18 }
   .notes { grid-template-columns: 1fr auto; row-gap: 10; column-gap: 16; align-items: center }

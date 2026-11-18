@@ -582,8 +582,9 @@ The example's interface is `examples/imgui/components_view.lui`.
   inline `style`, which has no theme); properties `color`, `background`, `border-color`,
   `border-width`, `radius` (or `rounding`, or `border-radius`: one number every corner's, two
   to four each corner's in CSS's order, `Style.corners`), `gap`, `opacity`, `font-size`, `line-height`,
-  `padding` (one, two — across then down — or four); `margin` for a flex or grid item (one to
-  four lengths or `auto`, in CSS's order: `margin: 0 auto` is down, then across); and
+  `padding` and, for a flex or grid item, `margin` (one to four values in CSS's order — all
+  round; down then across; top, across, bottom; top, right, bottom, left — a margin's each a
+  length or `auto`, so `margin: 0 auto` centres); and
   layout's, as CSS writes them:
   `width`, `height` and their `min-`/`max-`, `row-gap`, `column-gap`, `flex` (`none`, `auto`,
   or grow, shrink and basis — `flex: 1` is `1 1 0`), `flex-direction`, `flex-wrap`,

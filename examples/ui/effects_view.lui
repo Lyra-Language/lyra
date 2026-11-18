@@ -33,7 +33,7 @@
   .page { background: #f4f1ee; padding: 0; gap: 0 }
   .header {
     background: linear-gradient(120deg, #ff8a00, #e52e71 55%, #6a11cb);
-    padding: 28 32;
+    padding: 32 28;
     gap: 6;
     color: #ffffff
   }

@@ -9,6 +9,21 @@ Newest first.
 
 ## Dated log
 
+### 11/18/26 — lui's padding in CSS's order
+
+lui's ui target took `padding: 14 4` as 14 across and 4 down, as its imgui target's frame
+padding (an `ImVec2`) does. CSS reads it the other way, and so did lui's new `margin`. Now
+both are CSS's: one to four values, two being down then across, three being top, across,
+bottom.
+
+- **Only three views wrote two values**, all in lyra's examples (`components_view`,
+  `effects_view`, `notebook_view`). Vega and Termina have none. Each was swapped, and
+  `lui --check` shows their generated modules unchanged, byte for byte.
+- **The imgui target keeps x then y.** Its `padding` is ImGui's `FramePadding`, a vector, not
+  a CSS box.
+
+Tests: `TestLui_UiTargetFlexAndGrid` covers the two- and three-value forms.
+
 ### 11/18/26 — Baseline alignment in grids, and last baseline
 
 A flex row aligned items by their first baselines. A grid's `align-self: baseline` was
