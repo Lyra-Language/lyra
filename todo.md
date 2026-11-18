@@ -1370,7 +1370,9 @@ sets V on every add. What stands between that and a ROM:
   which overran the frame; the player 11/16, the backend's 0007–0011 the same day). What is
   left is how much the M68k backend spills — `sound` keeps a 340-byte frame — so a note
   costs thousands of cycles, and a song starting notes on all thirteen channels at once
-  could still take most of a frame.
+  could still take most of a frame. Between rows the theme is 2.6% of a frame since 11/18
+  (voices at rest stay so); a row is 9–17%, mostly blank cells read a channel at a time — a
+  mask of each row's channels with something in it, in the tables, would skip them.
 - **[PARTIAL] The channel loop's spills on the 68000** (11/16): stack-relative
   instructions were 18% of the hero's vertical blank, now 15% (6.3 lines of 41.5). They
   were the loop's induction variables — strength reduction in `llc` kept `k` as a word, as

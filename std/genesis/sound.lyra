@@ -134,7 +134,7 @@ pub let start_track = (t: Sample, voice: bool) -> void => {
     sample: t,
     on: t.length > 0,
     start: track_starts,
-    step: track_step(t.rate)
+    per_frame: track_step(t.rate) * (Z80_RATE / 60)
   }
   if voice {
     voice_track = started
@@ -229,12 +229,13 @@ let follow_chosen<const S: i64, const E: i64> = (
 
 /// A track playing: its bytes and rate, whether it plays, the number of the time it was
 /// started (its [Dac]'s note), and where it has got to — a byte and 65536ths of the next —
-/// stepped as the driver would step it.
+/// stepped as the driver would step it, `per_frame` 65536ths of a byte a frame (worked out
+/// as it starts: a 32-bit multiply is a call on the 68000).
 struct TrackPlay {
   sample: Sample = Sample {},
   on: bool = false,
   start: u16 = 0,
-  step: u32 = 1,
+  per_frame: u32 = Z80_RATE / 60,
   at: u32 = 0,
   frac: u32 = 0,
 }
@@ -243,7 +244,7 @@ impl TrackPlay {
   /// A frame on: past its end, back to its loop or over.
   let advance = (self: mut) -> void => {
     if !self.on { return }
-    self.frac += self.step * (Z80_RATE / 60)
+    self.frac += self.per_frame
     self.at += self.frac >> 16
     self.frac &= 0xFFFF
     let length = self.sample.length
@@ -955,7 +956,7 @@ let follow_dac_from = (dac: Dac, base: u32, offset: u32, source: u8) -> void => 
   }
   if !dac_on { return }
   // The driver's frame: Z80_RATE / 60 bytes out, each a step through the sample.
-  dac_frac += dac_step * (Z80_RATE / 60)
+  dac_frac += dac_per_frame
   dac_at += dac_frac >> 16
   dac_frac &= 0xFFFF
   dac_count_left -= (Z80_RATE / 60).min(dac_count_left)
@@ -1041,6 +1042,7 @@ let set_rate = (dac: Dac) -> void => {
   dac_rate = dac.rate
   dac_level = dac.level
   dac_step = ((dac.rate.min(65535) << 16) / Z80_RATE).max(1)
+  dac_per_frame = dac_step * (Z80_RATE / 60)
   block8(STEP, u8(dac_step >> 16))
   block16(STEP + 1, u16(dac_step & 0xFFFF))
   block8(VOLUME_PAGE, u8((VOLUME_TABLES >> 8) + u16(dac.level.clamp(0, 15))))
@@ -1155,6 +1157,8 @@ var dac_level: i16 = 15
 var dac_length: u32 = 0
 var dac_loop: i32 = -1
 var dac_step: u32 = 1
+/// [dac_step] times the driver's outputs a frame, worked out with it: a frame's advance.
+var dac_per_frame: u32 = Z80_RATE / 60
 var dac_at: u32 = 0
 var dac_frac: u32 = 0
 var dac_source: u8 = 0

@@ -313,9 +313,12 @@ pub struct MusicPlayer {
   voices: [13]MusicChannel,
   /// What the DAC on FM 6 plays: the runtime's to play.
   dac: Dac = Dac {},
-  /// FM 3's operators keyed on, as last written; whether its special mode is on.
+  /// FM 3's operators keyed on, as last written; whether its special mode is on; and
+  /// whether a voice an operator plays on was worked on since, so the keys are looked at
+  /// again ([key_ch3]) — between rows they seldom are.
   ch3_keys: u8 = 0,
   ch3_special: bool = false,
+  ch3_due: bool = true,
   /// The mutes the channels last sounded with, and the pitch FM 6's sample's rate was last
   /// worked out for (-1: none): each worked out again only when it changes.
   heard_muted: u16 = 0,
@@ -353,6 +356,7 @@ impl MusicPlayer {
     self.jump = -1
     self.break_to = -1
     self.starts_of = -1
+    self.ch3_due = true
     // What the chips were given is kept, so nothing stale is taken as written.
     for k: i16 in 0..<CHANNELS { self.voices[k].restart() }
     for k: i16 in 0..<CHANNELS { self.voices[k].operator = operator_of(k, song.extended) }
@@ -360,10 +364,12 @@ impl MusicPlayer {
 
   /// The tables the song is read from changed — an editor's, made again as the song is
   /// edited while it plays: what the player keeps of them (the order's pattern starts, the
-  /// levels of the patch written to each channel) asked again.
+  /// levels of the patch written to each channel) asked again, and every channel worked out
+  /// again: one held at its envelope's last step hears the step as it is now.
   pub let tables_changed<d> where d: MusicData = (self: mut, tables: ref d) -> void => {
     self.starts_of = -1
     for k: i16 in 0..<CHANNELS {
+      self.voices[k].steady = false
       let written = i32(self.voices[k].written)
       if written >= 0 && written < tables.patches() { self.voices[k].kept_levels(tables.patch(written)) }
     }
@@ -397,6 +403,7 @@ impl MusicPlayer {
         ) { self.voices[k].silence(k, psg, fm, out) }
       }
       self.dac.playing = false
+      self.ch3_due = true
       self.key_ch3(fm, out)
       return (i64(out.psg), i64(out.fm))
     }
@@ -436,6 +443,7 @@ impl MusicPlayer {
       // PSG 3, whose period the noise may have just given back.
       let skipped = self.voices[k].resting() && !is_held(held, k) && k != FIRST_PSG + 2
       if !reading && skipped { continue }
+      if k == 2 || k >= FIRST_OPERATOR { self.ch3_due = true }
       if reading {
         let cell = tables.cell(self.voices[k].start + self.row)
         if cell.blank() && self.voices[k].unmoved() {
@@ -511,7 +519,8 @@ impl MusicPlayer {
       out.put_fm(fm, 0, 0x27, if self.song.extended { 0x40 } else { 0 })
       self.ch3_special = self.song.extended
     }
-    if !self.song.extended { return }
+    if !self.song.extended || !self.ch3_due { return }
+    self.ch3_due = false
     var off = self.ch3_keys
     var on: u8 = 0
     // FM 3 and the operator channels: the only voices an operator plays on.
@@ -633,7 +642,7 @@ impl MusicChannel {
 
   /// Whether no row effect is under way — an arpeggio, a slide, a volume slide or a vibrato,
   /// each a row's, which a cell without one stops: so a blank cell changes nothing.
-  let unmoved = pure (self) -> bool =>
+  let unmoved = pure (self: ref) -> bool =>
     self.arpeggio == 0 &&
     self.slide == 0 &&
     self.volume_slide == 0 &&
@@ -641,7 +650,8 @@ impl MusicChannel {
 
   /// Whether nothing is due on the channel this tick: it is [steady], and no note is delayed
   /// to a tick or cut at one.
-  let resting = pure (self) -> bool => self.steady && self.delay_at < 0 && self.cut_at < 0
+  let resting = pure (self: ref) -> bool =>
+    self.steady && self.delay_at < 0 && self.cut_at < 0
 
   /// An effect has the channel: the music sounds there again from its next note, its
   /// patch written again.
@@ -746,7 +756,7 @@ impl MusicChannel {
   /// The envelope of the channel's instrument: a PSG channel's sound's, an FM channel's
   /// instrument's; one of no steps for none.
   let envelope_of<d> where d: MusicData = pure (
-    self,
+    self: ref,
     tables: ref d,
     k: i16
   ) -> Envelope => {
@@ -943,16 +953,27 @@ impl MusicChannel {
     fm: mut [768]u8,
     out: mut Out
   ) -> void => {
-    if !self.sounding || self.steady { return }
+    if self.steady { return }
+    if !self.sounding {
+      // Nothing to sound, and nothing to work out until a note — unless a slide is moving
+      // what that note will start from (a volume slide its volume, which a cell without
+      // one keeps). Left unsteady, a silent channel was worked on every tick.
+      self.steady = self.slide == 0 && self.volume_slide == 0 && self.target == self.pitch
+      return
+    }
     var pitch = self.pitch + i32(self.fine)
     var level = self.volume >> 4
     let e = self.envelope_of(tables, k)
+    // An envelope held — past its end with no loop, or waiting at its release — sounds the
+    // same step every tick from here, so it leaves the channel steady.
+    var held = e.count == 0
     if e.count > 0 {
-      let at = self.envelope_step(e)
+      let at = self.envelope_step(e, i32(self.step))
       let s = tables.envelope_step(i32(e.first) + at)
       pitch += i32(s.pitch)
       level = (i16(s.volume) * self.volume + 120) / 240
       self.step = i16(at + 1)
+      held = self.envelope_step(e, at + 1) == at
     }
     if self.arpeggio != 0 {
       let phase = tick % 3
@@ -972,21 +993,21 @@ impl MusicChannel {
     } else {
       self.sound_psg(k, pitch, level, psg, out)
     }
-    self.steady = e.count == 0 &&
+    self.steady = held &&
       self.arpeggio == 0 &&
       self.vibrato_depth == 0 &&
       self.slide == 0 &&
       self.volume_slide == 0 && self.target == self.pitch && !self.keying
   }
 
-  /// The envelope's step for this frame: the next, or — past its release while the note is
-  /// held — back to its loop (or held at the release), and past its end its loop (the loop
-  /// on the side of the release the note is) or its last held.
-  let envelope_step = pure (self, e: Envelope) -> i32 => {
+  /// The envelope's step for a frame whose next is `step`: it, or — past its release while
+  /// the note is held — back to its loop (or held at the release), and past its end its loop
+  /// (the loop on the side of the release the note is) or its last held.
+  let envelope_step = pure (self: ref, e: Envelope, step: i32) -> i32 => {
     let n = i32(e.count)
     let lp = i32(e.loop)
     let rel = i32(e.release)
-    var at = i32(self.step)
+    var at = step
     if !self.released && e.release != NO_POINT && at > rel {
       at = if e.loop != NO_POINT && lp <= rel { lp } else { rel }
     }

@@ -9,6 +9,42 @@ Newest first.
 
 ## Dated log
 
+### 11/18/26 — The music sped up: a channel at rest stays at rest
+
+The hero's theme cost 8.9% of a frame on average, measured as the hero's work less the same
+ROM with `THEME.play()` taken out. Between rows nothing is sounded anew, yet a frame still
+paid 6.1%. Profiled by function with the player's functions out of line (`@noinline` in a
+scratch std), then by instruction inside one frame (a save state the frame before):
+
+- **No voice was ever steady.** `sound` marked a voice steady only when its instrument had
+  no envelope (`e.count == 0`). Every PSG sound has one, and a finished envelope holds its
+  last step for ever, so those voices were worked out every tick. A silent voice was never
+  marked at all: `sound` returned before the mark. The hero's song leaves six of its thirteen
+  voices silent, and each ran `tick_effects` and `sound` every tick. A voice is steady now
+  once its envelope is **held**: the step after this one is this one again
+  (`envelope_step(e, at + 1) == at`, so past its end with no loop or waiting at its
+  release). A silent voice is steady once no slide, volume slide or portamento is moving what
+  its next note starts from; vibrato and arpeggio are reset by that note. A release, a cell
+  and a mute clear it as before. `tables_changed` clears it too, since a held voice would
+  otherwise keep an edited envelope's old step until its next note.
+- **FM 3's keys were walked every tick** (`key_ch3`, about 1,100 cycles unrolled) because
+  some voice was never steady. Now it walks them only when one of FM 3's voices was worked on
+  that tick (`ch3_due`), or when a song starts or stops.
+- **The DAC's frame advance was a checked 32-bit multiply** (`dac_step * (Z80_RATE / 60)`,
+  `__muldi3`) every frame. It is worked out in `set_rate` now (`dac_per_frame`), and a
+  track's when it starts (`TrackPlay.per_frame`).
+- **By-value `self` on a voice copied its 80 bytes field by field**, twice, before each call
+  (`resting`, `unmoved`, `envelope_step`, `envelope_of`): they take `self: ref`. This was 30
+  points of the frame out of line, but inlined, LLVM had already dropped the copies. The real
+  build gained under a point, and the gain is in the out-of-line code a backend change could
+  bring back.
+
+Result in the hero: music 8.9% → 5.0% of a frame on average, an idle frame 6.1% → 2.6%;
+the hero standing 55.5% → 51.7%. Rows are unchanged, 9–17%, most of it the reading loop's
+work on blank cells. A row saying nothing to a voice still costs about 50 instructions for
+that voice. The order change is unchanged at 42%: notes started on six voices, and their
+pitches and levels worked out (`sound_fm`, `fm_pitch`) and queued, 26 writes.
+
 ### 11/18/26 — A context may name the enclosing function's own variable
 
 `let mk<e> = () -> Cache<e> => Cache { m: HashMap.new() }` was "cannot infer type

@@ -901,9 +901,13 @@ of Markdown.
   `MusicData` trait, a channel an effect plays on left to it; a note's envelope (a PSG
   sound's or an FM instrument's steps) loops and waits at its release as Furnace's macros
   do, two speeds alternate a row each, and a song's tick rate need not be 60 Hz (an owed
-  tick carried, at most two a frame); **a steady channel** — a held note nothing changes —
-  is not worked out again until something does (`MusicChannel.steady`, cleared by every
-  change; checked against the player before it, write for write, COMPLETED.md 10/16); a sampled instrument (`Sample`) on FM 6 turns it into
+  tick carried, at most two a frame); **a steady channel** — a held note nothing changes, its
+  envelope held at its last step or its release, or a silent channel nothing slides — is not
+  worked out again until something does (`MusicChannel.steady`, cleared by every change and
+  by `tables_changed`; checked against the player before it, write for write, COMPLETED.md
+  10/16 and 11/18), and FM 3's keys are looked at only when one of its voices was worked
+  on (`ch3_due`); **a voice's methods take `self: ref`** — by value, each call copied its
+  80 bytes; a sampled instrument (`Sample`) on FM 6 turns it into
   the DAC and the player says what the DAC plays (`MusicPlayer.dac`) — the runtime streams
   it, `std.game.sound` in its chip, the Genesis's Z80 from the cartridge — both through
   `dac_byte`'s level tables, so it is the same sound on each; `std.game.sound` mixes the
