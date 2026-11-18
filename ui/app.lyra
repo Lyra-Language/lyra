@@ -70,6 +70,7 @@ import ui.backend.{
   PointerUp,
   Resized,
   AppearanceChanged,
+  MotionChanged,
   Appearance,
   KeyPressed,
   WindowFocused,
@@ -777,6 +778,9 @@ impl Host<s, e> {
         WindowPlaced(_) => {
           self.placed(k, at, platform)
           if k > 0 { self.moved(k, at, platform) }
+        },
+        MotionChanged(_) => {
+          for j in 0..<self.windows.len() { self.windows[j].dirty = true }
         },
         AppearanceChanged(look) => {
           for j in 0..<self.windows.len() { self.windows[j].dirty = true }

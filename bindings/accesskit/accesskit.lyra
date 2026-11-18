@@ -114,7 +114,8 @@ pub let element = (
 pub let commit = () -> void => unsafe { lyra_access_commit() }
 
 /// Whether the system asks programs to move less (macOS's Reduce Motion, which assistive
-/// technology users often set); `false` with the stub.
+/// technology users often set; GNOME's `enable-animations` off, through the stub on Linux);
+/// `false` elsewhere. On macOS a change wakes a program waiting for input.
 pub let reduce_motion = () -> bool => unsafe { lyra_access_reduce_motion() }
 
 /// The oldest request assistive technology made, if any.

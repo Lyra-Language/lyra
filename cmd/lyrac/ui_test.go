@@ -2128,8 +2128,8 @@ resized to 300x500: 1 columns, heights 10 10 10 10, laid out 7, given back 0
 func TestRun_UiMediaTests(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ host_of, sandbox }
-import ui.script.{ ScriptPlatform, timed_platform, Played }
-import ui.backend.{ Renderer, Resized, DarkMode, LightMode }
+import ui.script.{ timed_platform, parse_steps }
+import ui.backend.{ Renderer, DarkMode }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new }
 import ui.style.{
@@ -2191,9 +2191,10 @@ let matching = () -> void => {
   }
 }
 
-/// A host's viewport, from a platform at two pixels a unit asking for less motion.
+/// A host's viewport, from a platform at two pixels a unit asking for less motion — and,
+/// once the system's ask changes, laid out again with no other reason to.
 let hosted = () -> void => {
-  let steps = [Played(Resized(Size { w: 300.0, h: 200.0 }))]
+  let Ok(steps) = parse_steps("resize:300,200 allow-motion reduce-motion") else { panic("script") }
   var platform = timed_platform(steps, Size { w: 300.0, h: 200.0 })
   platform.units = 2.0
   platform.reduced_motion = true
@@ -2211,6 +2212,8 @@ let hosted = () -> void => {
 1600x900: w>600 w>=600 not(400<w<800) ratio=16/9 2dppx reduced not-portrait-dark
 900x400: w>600 w>=600 not(400<w<800) ratio>16/9 not-portrait-dark
 400x0: not(400<w<800) not(w>600-dark)
+hosted: density 2, reduced motion true
+hosted: density 2, reduced motion false
 hosted: density 2, reduced motion true
 `
 	if got != want {

@@ -678,8 +678,10 @@ the actions it asks for back with the window each came from. `ui.sdl3` is its on
   destroyed (`stop_all()` as the program ends); `focus(window, on)` tells its adapter the
   window gained or lost the keyboard, which VoiceOver follows.
 - **`reduce_motion()`** is System Settings' Reduce Motion (`NSWorkspace`'s
-  `accessibilityDisplayShouldReduceMotion`), read each call; `false` with the stub, so a Mac
-  whose AccessKit could not be built is never asked.
+  `accessibilityDisplayShouldReduceMotion`), read each call; the first call also has a change
+  to it push an SDL event, waking a program waiting for input. On Linux the stub reads GNOME's
+  `enable-animations` (off is less motion) through GIO, opened by `dlopen` rather than linked,
+  so a desktop without GIO, its schema or the key answers `false`; elsewhere `false`.
 - **Built by `bindings/accesskit/build.sh`**, which `./build.sh` runs, into
   `build/lib/liblyra-accesskit.a`: AccessKit's **prebuilt release, pinned** (0.23.1) and its
   zip SHA-256-checked, downloaded into `build/deps/` (not vendored), its static library merged

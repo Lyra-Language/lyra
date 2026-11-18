@@ -9,6 +9,29 @@ Newest first.
 
 ## Dated log
 
+### 11/17/26 — Reduced motion on GNOME, and its change heard
+
+`Platform.reduce_motion` was macOS's alone and read only at a layout, so turning Reduce Motion
+on left an idle window as it was. Now `InputEvent` has `MotionChanged(bool)`, which lays every
+window out again as `AppearanceChanged` does. `ui.sdl3` keeps the answer it last gave and says
+when a read differs, after any wake, as it does for the look.
+
+- **macOS wakes the wait.** `lyra_access_reduce_motion`'s first call observes
+  `NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification`, pushing an SDL event as the
+  action queue does.
+- **GNOME is read through GIO, opened by `dlopen`.** Linking GIO would make every `ui` program
+  need it. GIO aborts on an unknown schema or key, so both are looked up first. Checked in a
+  Debian 12 container: no GIO, GIO without the schema, and the default all answer no.
+  `gsettings set … enable-animations false` from another process is seen at the next read,
+  with no main loop, since dconf reads its database each time. Writing the test found the
+  stub needed `<stddef.h>` for `NULL`, which the Mac's headers had brought in.
+- **GNOME's change wakes nothing.** GSettings' `changed` signal needs a GLib main loop, which
+  SDL does not run. Windows is not built for at all.
+
+Tests: `TestRun_UiMediaTests` scripts `allow-motion` and `reduce-motion` (new `ui.script`
+tokens) and reads each layout's viewport. With one window it cannot tell `MotionChanged`'s
+arm from the dirtying every event gives its own window.
+
 ### 11/17/26 — Six-button pads, battery saves and text boxes on the Genesis
 
 What every large Genesis game has and Vega's had not: `std.genesis.pad` read only a pad's

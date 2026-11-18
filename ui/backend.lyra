@@ -381,6 +381,9 @@ pub data InputEvent =
   | WindowUnfocused
   /// The system switched between its light and dark look, to this.
   | AppearanceChanged(Appearance)
+  /// The system's ask for less motion ([Platform.reduce_motion]) changed, to this: lay out
+  /// again, since a `prefers-reduced-motion` rule may now hold or not.
+  | MotionChanged(bool)
   /// Assistive technology asked something of the element identified as this — VoiceOver
   /// pressing a button, setting a slider — as the keyboard or the pointer would have.
   | AccessAction(string, AccessRequest)

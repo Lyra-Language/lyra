@@ -297,9 +297,26 @@ void lyra_access_commit(void) {
 }
 
 /// Whether the system asks programs to move less: System Settings' Reduce Motion, under
-/// Accessibility → Display. Read each time, so a change is seen at the next layout.
+/// Accessibility → Display. Read each time; the first call also has a change to the display's
+/// accessibility options wake a program waiting for input, which reads it again.
 bool lyra_access_reduce_motion(void) {
-  return [[NSWorkspace sharedWorkspace] accessibilityDisplayShouldReduceMotion];
+  NSWorkspace *workspace = [NSWorkspace sharedWorkspace];
+  static bool watching = false;
+  if (!watching) {
+    watching = true;
+    [workspace.notificationCenter
+        addObserverForName:NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification
+                    object:nil
+                     queue:nil
+                usingBlock:^(NSNotification *note) {
+                  (void)note;
+                  SDL_Event wake;
+                  SDL_zero(wake);
+                  wake.type = SDL_EVENT_USER;
+                  SDL_PushEvent(&wake);
+                }];
+  }
+  return workspace.accessibilityDisplayShouldReduceMotion;
 }
 
 /// The oldest queued action, if any: its kind (0 when the queue is empty), the window it came

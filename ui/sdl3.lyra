@@ -194,6 +194,7 @@ import ui.backend.{
   LightMode,
   DarkMode,
   AppearanceChanged,
+  MotionChanged,
   CloseRequested,
   QuitRequested,
   Resized,
@@ -411,6 +412,7 @@ pub let platform_for = (window: Window) -> SdlPlatform => {
   SdlPlatform {
     window: window,
     look: system_look(),
+    reduced: accesskit.reduce_motion(),
     listening: accesskit.start(window),
     access_keys: HashMap.new(),
   }
@@ -458,6 +460,8 @@ pub struct SdlPlatform {
   shape: Cursor = Arrow,
   /// The system's look as last reported, to say when it changes.
   look: Appearance = LightMode,
+  /// Whether the system asked for less motion, as last reported ([MotionChanged]).
+  reduced: bool = false,
   /// The main window's state as last said ([WindowStateChanged]).
   state: WindowState = WindowState {},
   /// Whether assistive technology can be told about the windows (AccessKit's adapters, one a
@@ -556,6 +560,13 @@ impl Platform for SdlPlatform {
       self.look = look
       events.push((MAIN_WINDOW, AppearanceChanged(look)))
     }
+    // Reduce Motion likewise: on macOS its change wakes the wait (`bindings.accesskit` pushes an
+    // event for it); elsewhere it is seen when something else does.
+    let reduced = accesskit.reduce_motion()
+    if reduced != self.reduced {
+      self.reduced = reduced
+      events.push((MAIN_WINDOW, MotionChanged(reduced)))
+    }
     // Minimized, maximized or fullscreen: read as the look is, said once a change.
     let state = state_of(window_flags(self.window))
     if state != self.state {
@@ -620,7 +631,7 @@ impl Platform for SdlPlatform {
   }
   now_ms = (self) => i64(ticks())
   appearance = pure (self) => self.look
-  reduce_motion = (self) => accesskit.reduce_motion()
+  reduce_motion = pure (self) => self.reduced
   apple = (self) => apple()
   open_url = (self, url) => open_url(url)
   set_size_limits = (self, id, least, most) => {

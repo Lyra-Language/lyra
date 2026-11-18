@@ -48,7 +48,7 @@ module ui.script
 //!   row, the last press counting 2 or 3; `scroll:N` scrolls down `N` lines (up for a negative `N`), `scroll:X,Y` across and down.
 //! - `resize:W,H` — the window resized; `drag:W,H` — dragged to that size while the platform
 //!   holds the loop (its live-resize hook called, no input); `dark`, `light` — the system's
-//!   look changed.
+//!   look changed; `reduce-motion`, `allow-motion` — its ask for less motion changed.
 //! - `wait:N` — `N` milliseconds pass on the platform's clock, as far as the program waits
 //!   (a timer due sooner fires first). Only [parse_steps] reads it; a script of inputs alone
 //!   is [parse_script]'s.
@@ -103,6 +103,7 @@ import ui.backend.{
   LightMode,
   DarkMode,
   AppearanceChanged,
+  MotionChanged,
   AccessTree,
   NativeMenu,
   MenuChosen,
@@ -286,6 +287,7 @@ impl Platform for ScriptPlatform {
           Resized(size) => return [(window, Resized(self.sized(window, size)))],
           WindowPlaced(at) => self.placed(window, at),
           AppearanceChanged(look) => { self.look = look },
+          MotionChanged(reduced) => { self.reduced_motion = reduced },
           _ => {},
         }
         [(window, input)]
@@ -597,6 +599,10 @@ pub let parse_steps = pure (script: string) -> Result<[]Step, string> => {
     }
     if token == "dark" || token == "light" {
       inputs.push(Played(AppearanceChanged(if token == "dark" { DarkMode } else { LightMode })))
+      continue
+    }
+    if token == "reduce-motion" || token == "allow-motion" {
+      inputs.push(Played(MotionChanged(token == "reduce-motion")))
       continue
     }
     if token == "maximize" || token == "minimize" || token == "restore" {

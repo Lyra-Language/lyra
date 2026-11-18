@@ -878,9 +878,11 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   (COMPLETED.md, 10/21).
 - **[DONE 11/17] `@media` range syntax and more features**: ranges, `aspect-ratio`,
   `resolution`, `prefers-reduced-motion` and `(not (…))`, as `Media.tests` (COMPLETED.md 11/17).
-- **[OPEN] `prefers-reduced-motion` is macOS's alone**: elsewhere `reduce_motion` answers no
-  (GNOME's `enable-animations`, Windows' `SPI_GETCLIENTAREAANIMATION` unread), and a change
-  wakes no idle window, being seen at the next layout.
+- **[DONE 11/17] `prefers-reduced-motion` was macOS's alone**: GNOME's `enable-animations` is
+  read too, and a change on macOS raises `MotionChanged` in an idle window. COMPLETED.md 11/17.
+- **[OPEN] Reduced motion: GNOME's change wakes no idle window**, seen when something else
+  does (its signal needs a GLib main loop); KDE's and Windows' `SPI_GETCLIENTAREAANIMATION`
+  are unread.
 - **[OPEN] Grid: no named areas, no negative lines, no `justify-content`/`align-content`.**
   `grid-template-areas`, `grid-area: name`, lines counted from the end (`-1`) and packing
   the tracks themselves are not built; tracks always stretch (CSS's `normal`).
