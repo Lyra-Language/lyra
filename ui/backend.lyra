@@ -169,6 +169,14 @@ pub trait Platform {
   /// Show the system's open or save dialog over the window, its answer to come as
   /// [FileAnswered] under this tag — later, the dialog being the user's while it is open.
   choose_file: (mut Self, WindowId, i32, FileDialog) -> void
+  /// Read the file at the path off the loop, its text to come as [FileRead] under this tag —
+  /// or `false`, not taken, and then `ui.app` reads it in place, holding the loop until it ends
+  /// (the default, for a platform with no way to do it later).
+  read_file_later: (mut Self, i32, string) -> bool = (self, tag, path) => false
+  /// Write the text as the file at the path off the loop, whether it landed to come as
+  /// [FileWritten] under this tag — or `false`, not taken, as [Platform.read_file_later].
+  write_file_later: (mut Self, i32, string, string) -> bool = (self, tag, path, text) =>
+    false
   /// Open another window as `spec` says, its number for the calls about it and the input in
   /// it — `None` if it could not be opened (a platform of one window). It is drawn by the
   /// same renderer as the others.
@@ -397,6 +405,12 @@ pub data InputEvent =
   /// The file dialog asked for under this tag ([Platform.choose_file]) answered: the path
   /// chosen, or `None` — closed without a choice, or not shown at all.
   | FileAnswered(i32, Maybe<string>)
+  /// The file read off the loop under this tag ([Platform.read_file_later]): its text, or
+  /// `None` where it could not be read.
+  | FileRead(i32, Maybe<string>)
+  /// The file written off the loop under this tag ([Platform.write_file_later]): whether all
+  /// of it landed.
+  | FileWritten(i32, bool)
   /// Files dropped on the window, by path, all of one drop together — on a Mac also a file
   /// opened from Finder, which the system hands over as a drop.
   | FilesDropped([]string)

@@ -7570,6 +7570,129 @@ let main = () -> void => {
 	}
 }
 
+// A file command is done off the loop where the platform can (Platform.read_file_later): the
+// script's platform takes each job, as ui.sdl3's worker does, and its answer is an event met
+// with its own command by tag — the missing file's None to its command, the written file's text
+// to the other's. With files_later off they are done in place, as before, with the same answers.
+func TestRun_UiFilesAnsweredOffTheLoop(t *testing.T) {
+	t.Parallel()
+	setenv(t, "UI_TMP", t.TempDir())
+	got := runUiProgram(t, `import ui.app.{ App, Command, Subscription, WriteFile, ReadFile, host_of }
+import ui.script.{ timed_platform, parse_steps }
+import ui.backend.{ Renderer }
+import ui.draw.{ Size, Color, TextureId }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, sized }
+import std.env.{ lookup }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, window, background, ops) => {}
+}
+
+data Msg = Wrote(bool) | Read(Maybe<string>) | Missing(Maybe<string>)
+
+let main = () -> u8 => {
+  let file = "${lookup("UI_TMP") ?? "/tmp"}/later.txt"
+  for later in [true, false] {
+    let Ok(steps) = parse_steps("wait:10 wait:10 wait:10") else { panic("script") }
+    var platform = timed_platform(steps, Size { w: 100.0, h: 100.0 })
+    platform.files_later = later
+    var renderer = Blank {}
+    var fonts = fonts_new()
+    let app = App {
+      view: pure (_: []string) -> Node<Msg> => sized::<Msg>(None, None),
+      update: pure (log: []string, msg: Msg) -> ([]string, []Command<Msg>) => match msg {
+        Wrote(ok) => ([...log, "wrote ${ok}"], []),
+        Read(text) => ([...log, "read ${text ?? "nothing"}"], []),
+        Missing(text) => ([...log, "missing ${text ?? "nothing"}"], []),
+      },
+      subscriptions: pure (_: []string) -> []Subscription<Msg> => [],
+      background: Color { r: 0, g: 0, b: 0 },
+      start: [
+        WriteFile(file, "later ${later}", Wrote),
+        ReadFile("${file}.missing", Missing),
+        ReadFile(file, Read),
+      ],
+    }
+    var host = host_of(app, [], platform)
+    let _ = host.step(platform, renderer, fonts)
+    let taken = [job in platform.files_taken | job.replace(file, "f")]
+    println("later ${later}: ${host.state.join(", ")}; taken: ${taken.join(", ")}")
+  }
+  0
+}
+`)
+	want := `later true: wrote true, missing nothing, read later true; taken: write f, read f.missing, read f
+later false: wrote true, missing nothing, read later false; taken: 
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// bindings.worker: files written and read on a thread of their own, each answer waited for on
+// its queue under its tag — the text whole, multi-byte and past a read's first buffer; a file
+// that is not there read as None, a write into a directory that is not there as false; and a
+// write and a read asked together taken in turn, the read seeing what was written.
+func TestRun_WorkerReadsAndWritesOffTheLoop(t *testing.T) {
+	t.Parallel()
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	dir := t.TempDir()
+	setenv(t, "UI_TMP", dir)
+	got := runUiProgram(t, `import bindings.worker.{ read, write, poll, FileText, FileWrote, WorkerAnswer }
+import std.env.{ lookup }
+
+let main = () -> void => {
+  let dir = lookup("UI_TMP") ?? "/tmp"
+  let text = [k in 0..<9000 | "é ✓ line ${k}\n"].join("")
+  println("started: ${write(1, "${dir}/a.txt", text)}")
+  println(said(wait()))
+  println("started: ${read(2, "${dir}/a.txt")}")
+  match wait() {
+    FileText(tag, Some(back)) => println("#${tag} read ${back.len()} runes, the same: ${back == text}"),
+    other => println(said(other)),
+  }
+  let _ = read(3, "${dir}/missing.txt")
+  println(said(wait()))
+  let _ = write(4, "${dir}/no/such/dir/b.txt", "x")
+  println(said(wait()))
+  // Asked together, the read after the write: taken in turn, it reads what was written.
+  let _ = write(5, "${dir}/c.txt", "second")
+  let _ = read(6, "${dir}/c.txt")
+  println(said(wait()))
+  println(said(wait()))
+}
+
+/// The next answer, waited for.
+let wait = () -> WorkerAnswer => {
+  loop {
+    if let Some(answer) = poll() { return answer }
+  }
+}
+
+let said = pure (a: WorkerAnswer) -> string => match a {
+  FileText(tag, Some(text)) => "#${tag} read ${text.len()} runes",
+  FileText(tag, None) => "#${tag} could not be read",
+  FileWrote(tag, landed) => "#${tag} wrote: ${landed}",
+}
+`)
+	want := "started: true\n#1 wrote: true\nstarted: true\n#2 read 124890 runes, the same: true\n#3 could not be read\n#4 wrote: false\n#5 wrote: true\n#6 read 6 runes\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // ui.color (WINDOW.md §6): CSS Color 4's text read and written — hex at every length, rgb() with
 // commas or spaces and a slash's alpha, oklab() and oklch() with percentages and degrees — CSS's
 // red the same each way it is written; an OKLCH green too vivid for sRGB mapped in by its chroma,

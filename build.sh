@@ -87,6 +87,13 @@ rm -f "$OUT/lib/hittest.o"
 rm -f "$OUT/lib/liblyra-dialog.a"
 ar rcs "$OUT/lib/liblyra-dialog.a" "$OUT/lib/dialog.o"
 rm -f "$OUT/lib/dialog.o"
+# **The C half of `bindings.worker`** (`worker.c`): a `ui` program's files read and written on a
+# thread each, their answers queued and the wait woken; a bare C compiler builds it, as the
+# dialog's, and every `ui.sdl3` program links it.
+"${LYRA_CC:-clang}" -O2 -std=c11 -c "$ROOT/bindings/worker/worker.c" -o "$OUT/lib/worker.o"
+rm -f "$OUT/lib/liblyra-worker.a"
+ar rcs "$OUT/lib/liblyra-worker.a" "$OUT/lib/worker.o"
+rm -f "$OUT/lib/worker.o"
 
 # **The C half of `bindings.audio`** (`audio.c`): MP3, FLAC, Ogg Vorbis and WAV decoded, the
 # four vendored public-domain decoders beside it (`NOTICE.md`) — what a modern game's tracks
@@ -182,4 +189,4 @@ else
   gpu_note="a stub liblyra-gpu.a (${gpu_err##*: })"
 fi
 
-printf 'built %s/{lyrac,lyra-lsp} %s, %s, lib/liblyra-{menubar,pty,wake,hittest,dialog,audio}.a, %s, %s and %s, with std -> ../std, bindings -> ../bindings, ui -> ../ui\n' "$OUT" "$fmt_note" "$lui_note" "$imgui_note" "$accesskit_note" "$gpu_note"
+printf 'built %s/{lyrac,lyra-lsp} %s, %s, lib/liblyra-{menubar,pty,wake,hittest,dialog,worker,audio}.a, %s, %s and %s, with std -> ../std, bindings -> ../bindings, ui -> ../ui\n' "$OUT" "$fmt_note" "$lui_note" "$imgui_note" "$accesskit_note" "$gpu_note"

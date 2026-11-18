@@ -925,9 +925,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   assignment, a generic struct literal's fields, a `None` default at two instantiations, a
   lambda constructor payload, an array element beside a typed sibling, and a method's
   receiver when its return settles it. (COMPLETED.md, 10/27.)
-- **[OPEN] `ui.app`: commands run where the host runs.** A file read holds the loop until it
-  ends; async I/O wants a worker and results the platform posts (an `InputEvent` carrying an
-  id, since it cannot carry the program's event type).
+- **[DONE 11/18] `ui.app`'s file commands run off the loop**: `Platform.read_file_later` and
+  `write_file_later`, answered as `FileRead`/`FileWritten` by tag; `ui.sdl3` through
+  `bindings.worker`'s one thread. COMPLETED.md 11/18.
 - **[DONE 10/23] lui's `ui` target's menus, tab bar, swatch, window buttons and `Fragment`**
   (`ui/WINDOW.md` step 8, COMPLETED.md 10/23).
 - **[DONE 10/27] Backend: a lambda capturing in a generic function** — any capture, by a

@@ -9,6 +9,42 @@ Newest first.
 
 ## Dated log
 
+### 11/18/26 — `ui.app`'s files read and written off the loop
+
+`ReadFile` and `WriteFile` were done where the host ran, so a large file or a slow disk held the
+loop: no frame, no input, until the read ended. The todo item named the shape. A worker does
+the I/O, and the platform posts the result as an `InputEvent` carrying a tag, since an input
+event cannot carry the program's event type. `ChooseFile` already worked that way.
+
+- **The platform takes a job or declines it.** `Platform.read_file_later(tag, path)` and
+  `write_file_later(tag, path, text)` answer whether they took it, `false` by default. A
+  platform with no worker needs nothing, and `ui.app` then does the job in place as before.
+  Taken, the answer comes as `FileRead(tag, Maybe<string>)` or `FileWritten(tag, bool)`. The
+  host keeps each command's continuation by tag (`reads`, `writes`, `next_job`) and dispatches
+  it when its answer comes, as it does a dialog's.
+- **`bindings.worker` is `ui.sdl3`'s.** Its C half runs the jobs on a thread of its own,
+  queues each answer under a mutex, and pushes an SDL event so an idle wait ends, as
+  `bindings.dialog` does. The answers are `std.io`'s: the whole file, `None` where it cannot be
+  opened, a write true only when all of it landed, mode 0644.
+  - **One thread, in order.** The first version started a thread per job. A `WriteFile` then a
+    `ReadFile` of the same file from one update could then finish in either order. Done in
+    place they never could, and Vega saves and reads back. Jobs now queue to one thread.
+  - **It names SDL3 to link** (`@link("SDL3", pkg: "sdl3")`): its C half calls SDL, and a
+    program using only it imports nothing of SDL's. The dialog shim gets SDL through its
+    `Window` type.
+  - glibc declares `read`, `write` and `creat` under `-std=c11` only with `_POSIX_C_SOURCE`.
+    It compiled clean on the Mac without it; a Debian 12 gcc build checked the define.
+- **`ScriptPlatform` takes the jobs too**, doing them at once and answering at the next
+  `next_events`, which is the same pass's wait, as the worker's wake is. So the scripted tests
+  go through the path `ui.sdl3` takes. `files_later: false` puts them back in place, and
+  `files_taken` records what it took. Every existing ui test passed unchanged, among them the
+  one that saves and reads back.
+
+Tests: `TestRun_WorkerReadsAndWritesOffTheLoop` (the worker itself: 125,000 runes of multi-byte
+text whole, a missing file, an impossible write, and a write and read asked together taken in
+turn); `TestRun_UiFilesAnsweredOffTheLoop` (the host: three jobs taken by the platform, each
+answer to its own command; the same answers with `files_later` off).
+
 ### 11/18/26 — The music sped up: a channel at rest stays at rest
 
 The hero's theme cost 8.9% of a frame on average, measured as the hero's work less the same

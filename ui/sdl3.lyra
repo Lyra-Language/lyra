@@ -157,6 +157,8 @@ import bindings.wake
 import bindings.menubar
 import bindings.hittest
 import bindings.dialog
+import bindings.worker
+import bindings.worker.{ FileText, FileWrote }
 import bindings.dialog.{ PathChosen, ChoiceCancelled, ChoiceFailed }
 import bindings.sdl3.{
   window_flags,
@@ -187,6 +189,8 @@ import ui.backend.{
   ToRestored,
   WindowStateChanged,
   FileAnswered,
+  FileRead,
+  FileWritten,
   FilesDropped,
   Renderer,
   InputEvent,
@@ -543,6 +547,14 @@ impl Platform for SdlPlatform {
         },
       }))
     }
+    // Files read and written off the loop, each answer having woken the wait above
+    // (`bindings.worker` pushes an event for it).
+    while let Some(answer) = worker.poll() {
+      events.push((MAIN_WINDOW, match answer {
+        FileText(tag, text) => FileRead(tag, text),
+        FileWrote(tag, landed) => FileWritten(tag, landed),
+      }))
+    }
     // What assistive technology asked for, of the window whose tree it reads; its request woke
     // the wait above. One of a window closed since goes nowhere.
     while let Some(raw) = accesskit.next_request() {
@@ -706,6 +718,8 @@ impl Platform for SdlPlatform {
     }
   }
   // A Mac's title bar stays the system's, its buttons where macOS puts them (`ui/WINDOW.md`).
+  read_file_later = (self, tag, path) => worker.read(tag, path)
+  write_file_later = (self, tag, path, text) => worker.write(tag, path, text)
   choose_file = (self, id, tag, d) => {
     let window = self.window_of(id) ?? self.window
     let _ = dialog.show(window, tag, d.save, d.filters, d.start)

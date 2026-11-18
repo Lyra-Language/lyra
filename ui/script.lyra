@@ -114,8 +114,11 @@ import ui.backend.{
   WindowStateChanged,
   FileDialog,
   FileAnswered,
+  FileRead,
+  FileWritten,
 }
 import ui.draw.{ Point, Size, Rect }
+import std.io.{ read_file, write_file }
 
 /// A platform with no window: its inputs come from a list of [Step]s, its clock moves only
 /// when a step says time passes, its size and scale are fixed until a step resizes it, and its
@@ -165,6 +168,12 @@ pub struct ScriptPlatform {
   answers: [](WindowId, InputEvent) = [],
   /// The file dialogs asked for and not yet answered, oldest first, each by its tag.
   dialogs: [](i32, FileDialog) = [],
+  /// Whether it reads and writes files as `ui.sdl3` does, off the loop: done at once, the
+  /// answer an event at the next pass ([Platform.read_file_later]) — or, `false`, left to
+  /// `ui.app` to do in place.
+  files_later: bool = true,
+  /// The file jobs it took so, in order: `read PATH` or `write PATH`.
+  files_taken: []string = [],
   opened: []string = [],
   access: AccessTree = AccessTree {},
   /// The least and greatest size the window may be (nothing for no limit), which a step's
@@ -423,6 +432,18 @@ impl Platform for ScriptPlatform {
     }
   }
   choose_file = (self, id, tag, dialog) => { self.dialogs.push((tag, dialog)) }
+  read_file_later = (self, tag, path) => {
+    if !self.files_later { return false }
+    self.files_taken.push("read ${path}")
+    self.answers.push((MAIN_WINDOW, FileRead(tag, read_file(path))))
+    true
+  }
+  write_file_later = (self, tag, path, text) => {
+    if !self.files_later { return false }
+    self.files_taken.push("write ${path}")
+    self.answers.push((MAIN_WINDOW, FileWritten(tag, write_file(path, text))))
+    true
+  }
   set_window_areas = (self, id, drags, keeps, margin) => {
     if id != MAIN_WINDOW {
       for i, w in self.others {

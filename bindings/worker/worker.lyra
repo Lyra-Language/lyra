@@ -1,0 +1,66 @@
+@link("lyra-worker")
+@link("SDL3", pkg: "sdl3")
+module bindings.worker
+//! A file read or written on a thread of its own, for a program whose loop sleeps in SDL's event
+//! wait — `ui.app`'s `ReadFile` and `WriteFile` on `ui.sdl3`. [read] and [write] return at once;
+//! the answer comes later, under the tag it was asked with, from [poll], after the program's
+//! events: the C half (`worker.c`) runs each on a thread, queues its answer and pushes an SDL
+//! event that ends the wait, as `bindings.dialog` does a dialog's.
+//!
+//! Its C half needs no SDL headers, only SDL3 linked (which this module asks for), and builds
+//! into `build/lib/liblyra-worker.a` with `build.sh`.
+
+import std.ffi.{ with_cstrings }
+
+/// What a job answered, under the tag it was asked with: a file's text (`None`, unreadable), or
+/// whether a write landed.
+pub data WorkerAnswer = FileText(i32, Maybe<string>) | FileWrote(i32, bool)
+
+/// Read the file at `path` off the loop; [poll] answers its text under `tag`. False when the job
+/// could not be started (no memory, no thread); then no answer will come.
+pub let read = (tag: i32, path: string) -> bool =>
+  path.with_cstring((p) => unsafe { lyra_worker_read(tag, p) })
+
+/// Write `text` as the whole of the file at `path` off the loop; [poll] answers whether it all
+/// landed under `tag`. False when the job could not be started; then no answer will come.
+pub let write = (tag: i32, path: string, text: string) -> bool =>
+  with_cstrings(
+    path,
+    text,
+    (p, t) => unsafe { lyra_worker_write(tag, p, t, text.byte_len()) }
+  )
+
+/// The oldest answer not yet read, or `None`.
+pub let poll = () -> Maybe<WorkerAnswer> => {
+  var tag: i32 = 0
+  var kind: i32 = -1
+  var ok = false
+  var length: i64 = 0
+  let c_tag = unsafe { &mut tag }
+  let c_kind = unsafe { &mut kind }
+  let c_ok = unsafe { &mut ok }
+  let c_length = unsafe { &mut length }
+  let bytes = unsafe { lyra_worker_poll(c_tag, c_kind, c_ok, c_length) }
+  match kind {
+    0 => Some(FileText(
+      tag,
+      if ok { Some(unsafe { bytes.decode_utf8(length) }) } else { None }
+    )),
+    1 => Some(FileWrote(tag, ok)),
+    _ => None,
+  }
+}
+
+@symbol("lyra_worker_read")
+unsafe extern lyra_worker_read: (tag: i32, path: ^u8) -> bool
+
+@symbol("lyra_worker_write")
+unsafe extern lyra_worker_write: (tag: i32, path: ^u8, text: ^u8, length: i64) -> bool
+
+@symbol("lyra_worker_poll")
+unsafe extern lyra_worker_poll: (
+  tag: ^mut i32,
+  kind: ^mut i32,
+  ok: ^mut bool,
+  length: ^mut i64
+) -> ^u8

@@ -93,6 +93,8 @@ import ui.backend.{
   ToRestored,
   FileDialog,
   FileAnswered,
+  FileRead,
+  FileWritten,
 }
 import ui.draw.{ Point, Size, Rect, Color }
 import ui.text.{ Fonts, FontSpec, FontMetrics, FontFile, GlyphAtlas, glyph_atlas }
@@ -496,6 +498,11 @@ pub struct Host<s, e> {
   /// The file dialogs open, each by the tag it was asked with and what its answer makes, and the
   /// next tag.
   dialogs: [](i32, (Maybe<string>) -> e) = [],
+  /// The files being read and written off the loop ([Platform.read_file_later]), each by its
+  /// tag and what its answer makes, and the tag the next one takes.
+  reads: [](i32, (Maybe<string>) -> e) = [],
+  writes: [](i32, (bool) -> e) = [],
+  next_job: i32 = 0,
   next_dialog: i32 = 0,
   last_frame: i64 = -1,
   /// Whether [App.start]'s commands have been carried out.
@@ -811,6 +818,24 @@ impl Host<s, e> {
           OnFilesDropped(make) => Some(make(paths)),
           _ => None,
         }),
+        FileRead(tag, text) => {
+          var waiting: [](i32, (Maybe<string>) -> e) = []
+          for (asked, make) in self.reads {
+            if asked == tag { self.dispatch(make(text), at, platform) } else {
+              waiting.push((asked, make))
+            }
+          }
+          self.reads = waiting
+        },
+        FileWritten(tag, landed) => {
+          var waiting: [](i32, (bool) -> e) = []
+          for (asked, make) in self.writes {
+            if asked == tag { self.dispatch(make(landed), at, platform) } else {
+              waiting.push((asked, make))
+            }
+          }
+          self.writes = waiting
+        },
         FileAnswered(tag, path) => {
           var waiting: [](i32, (Maybe<string>) -> e) = []
           for (asked, make) in self.dialogs {
@@ -1366,8 +1391,24 @@ impl Host<s, e> {
   ) -> void => {
     for command in commands {
       match command {
-        WriteFile(path, text, done) => self.waiting.push(done(write_file(path, text))),
-        ReadFile(path, done) => self.waiting.push(done(read_file(path))),
+        // Off the loop where the platform can (its answer an event, met by its tag), else
+        // here, holding the loop until it ends.
+        WriteFile(path, text, done) => {
+          let tag = self.next_job
+          self.next_job += 1
+          if platform.write_file_later(tag, path, text) {
+            self.writes.push((tag, done))
+          } else {
+            self.waiting.push(done(write_file(path, text)))
+          }
+        },
+        ReadFile(path, done) => {
+          let tag = self.next_job
+          self.next_job += 1
+          if platform.read_file_later(tag, path) { self.reads.push((tag, done)) } else {
+            self.waiting.push(done(read_file(path)))
+          }
+        },
         After(ms, later) => self.timers.push(Timer { at: now + ms, event: later }),
         CopyText(text) => platform.set_clipboard(text),
         PasteText(done) => self.waiting.push(done(platform.clipboard())),

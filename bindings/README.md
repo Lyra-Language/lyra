@@ -763,6 +763,19 @@ itself, as the wake's does: `build.sh` builds `liblyra-dialog.a` with a bare C c
 the test harness compiles it where `build/lib` has none. (`bindings.imgui` has its own, on
 ImGui's host, which draws every frame and needs no wake.)
 
+## `bindings/worker/`
+
+Files read and written off the loop, for a program whose loop sleeps in SDL's event wait —
+`ui.app`'s `ReadFile` and `WriteFile` on `ui.sdl3`: `read(tag, path)` and `write(tag, path,
+text)` return at once (false when the job could not be started), and the answer — `FileText(tag,
+Maybe<string>)` or `FileWrote(tag, bool)`, as `std.io`'s `read_file` and `write_file` answer —
+comes from `poll()`. **One thread takes the jobs in the order asked**, so a write and then a
+read of a file read what was written; the C half (`worker.c`) queues each answer under a mutex
+and pushes an SDL event that ends the wait, as the dialog's does. It names SDL3 to link
+(`@link("SDL3", pkg: "sdl3")`), since nothing else of SDL's need be imported; `build.sh` builds
+`liblyra-worker.a` with a bare C compiler, and the test harness compiles it where `build/lib` has
+none.
+
 ## `bindings/audio/`
 
 Compressed sound files decoded: MP3, FLAC, Ogg Vorbis and WAV, told apart by their first bytes —
