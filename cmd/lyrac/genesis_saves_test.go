@@ -227,7 +227,7 @@ func runROMWith(t *testing.T, romPath, frames string, extra ...string) screen {
 		t.Log("SHELIAK is not set; the ROM was built but not run")
 		t.SkipNow()
 	}
-	ppm := fmt.Sprintf("%s.%s.%s.ppm", romPath, frames, strings.NewReplacer(" ", "", ",", "", "-", "").Replace(strings.Join(extra, "")))
+	ppm := fmt.Sprintf("%s.%s.%s.ppm", romPath, frames, strings.NewReplacer(" ", "", ",", "", "-", "", "/", "_").Replace(strings.Join(extra, "")))
 	args := append([]string{romPath, "--frames", frames, "--ppm", ppm}, extra...)
 	cmd := command(t, emulator, args...)
 	cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy")
