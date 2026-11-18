@@ -9,6 +9,32 @@ Newest first.
 
 ## Dated log
 
+### 11/18/26 — The hero sped up, found by the profiler by function
+
+The Profiler's new list (each function's share of a ROM's work) pointed at three costs in
+`std.genesis`, each now cut. The hero walking right averaged 68.8% of a frame and ran late on
+87 of 600; now 62.7% and 24. Standing, 58.6% to 55.5%. A wrap at the field's open edge stalled
+25 frames, now 5.
+
+- **Collision walked cells for colliders that look for nothing there**: `EntityKind.hits_tiles`
+  asked every cell under each collider, and the hero's body looks only for pickups, which no
+  tile is. It now gathers the tile shapes' layers once and passes over a collider whose mask
+  meets none.
+- **`meets` asked far pairs at a full call's price**: `meets_at` saves eleven registers to find
+  a far star apart. A small `within_reach` now asks first, out of line too — inlined into
+  `main` it crowded the loop's registers and cost as much as it saved.
+- **`show_map` asked `cell_at` a cell at a time**: 2,048 calls a plane, each a modulo, a
+  multiply and two bounds checks. `write_run` walks a row instead, a plain map's in one run and
+  a block map's block numbers one after another, copying through pointers, checked once a
+  row and once a block. Vega's scenes gained `redraw_maps`, the planes without reloading the
+  art, which a wrap needs (the reload had also evicted the unpacked map).
+
+**What did not help**: taking `draw_with`'s frame-shape update out of line (its time is the
+call, the per-entity overhead of the generated code) — kept as it was. **What is left**: the
+vertical blank's handler, the music's frame (`music.frame`, 12% of the work, spread over its
+channel loop), and the per-call overhead of the 68000 code — register saves and 32-bit
+arithmetic — which is the backend's.
+
 ### 11/18/26 — `order` moves the drawing, not the focus
 
 A flex container or grid placed its children in `order`'s order, and the walks over them —

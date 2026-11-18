@@ -163,11 +163,10 @@ impl Camera {
     for row: u16 in 0..<vdp.PLANE_HEIGHT {
       let my = top.wrapping_add(row)
       vdp.set_vram_address(plane + (my % vdp.PLANE_HEIGHT) * vdp.PLANE_WIDTH * 2)
-      for column: u16 in 0..<vdp.PLANE_WIDTH {
-        // The map column this plane column holds while the view's left is at `left`.
-        let mx = left.wrapping_add((column + vdp.PLANE_WIDTH - shift) % vdp.PLANE_WIDTH)
-        vdp.write_word(blocks.cell_at(cells, width, mx, my))
-      }
+      // The plane's columns from 0 hold the map's from `left + 64 - shift` to the right edge
+      // of what it holds, then from `left`: two runs of the row.
+      write_run(cells, width, left.wrapping_add(vdp.PLANE_WIDTH - shift), my, shift)
+      write_run(cells, width, left, my, vdp.PLANE_WIDTH - shift)
     }
     vdp.release_vblank(held)
     vdp.set_scroll(plane, self.x, self.y)
@@ -482,6 +481,78 @@ let distance = pure (a: u16, b: u16) -> u16 => if a > b { a - b } else { b - a }
 
 /// Map column `mx` staged for the plane, the rows held from `top` (the margin above the view,
 /// wrapping below 0 to a row past the map, blank) down: one run by the VDP's step down the plane, two where it wraps round the plane's foot.
+/// `count` cells of map row `my` from column `mx` (each a column further, wrapping) written to
+/// the VDP's data port, where its address is — blank past the map's edges. Walked along the
+/// row, not asked a cell at a time ([blocks.cell_at]): a plain map's row is one run of the
+/// table; of a block map, the row's block numbers are read one after another, and each block's
+/// cells on the row copied as a run — each through a pointer, the table checked once a row and
+/// once a block rather than once a cell. A wrap of the hero's field redrew both planes, 4,096
+/// cells, a call each, and stood still for 25 frames (11/18).
+let write_run<const N: i64> = (
+  cells: ref [N]u16,
+  width: u16,
+  mx: u16,
+  my: u16,
+  count: u16
+) -> void => {
+  let columns = blocks.columns(width)
+  var x = mx
+  var left = count
+  if my < blocks.rows(cells, width) {
+    // Past the map's left (a column below 0 wraps high): blank, up to its first column.
+    while left > 0 && x >= columns {
+      vdp.write_word(0)
+      x = x.wrapping_add(1)
+      left -= 1
+    }
+    let first: ^u16 = unsafe { &cells[0] }
+    if (width & blocks.BLOCKS) == 0 {
+      let take = left.min(columns - x.min(columns))
+      let at = u32(my) * u32(columns) + u32(x)
+      if take > 0 && at + u32(take) <= u32(N) {
+        unsafe {
+          var p = first.offset(i64(at))
+          for _: u16 in 0..<take {
+            vdp.write_word(p^)
+            p = p.offset(1)
+          }
+        }
+        x += take
+        left -= take
+      }
+    } else {
+      let shift = cells[0]
+      let side: u16 = u16(1) << shift
+      let mask: u16 = side - 1
+      let across = (columns + mask) >> shift
+      let row_blocks = u32(cells[3]) + u32(my >> shift) * u32(cells[2])
+      let inner = 4 + (u32(my & mask) << shift)
+      if x < columns && row_blocks + u32(across) <= u32(N) {
+        unsafe {
+          var number = first.offset(i64(row_blocks + u32(x >> shift)))
+          var within = x & mask
+          while left > 0 && x < columns {
+            let take = (side - within).min(left).min(columns - x)
+            let at = inner + (u32(number^) << (2 * shift)) + u32(within)
+            number = number.offset(1)
+            if at + u32(take) > u32(N) { break }
+            var p = first.offset(i64(at))
+            for _: u16 in 0..<take {
+              vdp.write_word(p^)
+              p = p.offset(1)
+            }
+            x += take
+            left -= take
+            within = 0
+          }
+        }
+      }
+    }
+  }
+  // Past the map's right, its foot, or a table shorter than it says: blank.
+  for _: u16 in 0..<left { vdp.write_word(0) }
+}
+
 let stage_column<const N: i64> = (
   plane: u16,
   cells: ref [N]u16,

@@ -411,7 +411,28 @@ impl Entity {
   /// Whether it meets `other`: one of its colliders looks for a layer one of `other`'s is on,
   /// and their shapes overlap — each mirrored as its entity faces.
   pub let meets = pure (self: ref, other: ref Entity) -> bool =>
-    self.meets_at(self.x(), self.y(), other)
+    self.within_reach(other) && self.meets_at(self.x(), self.y(), other)
+
+  /// Whether its kind's reach and `other`'s, each placed as its entity faces, overlap — true
+  /// where either kind has none. Asked before [meets_at] is called: the hero asks it of
+  /// thirteen stars a frame, nearly all far off, and a call to `meets_at` saving eleven
+  /// registers and making its frame only to find them apart was an eighth of his frame
+  /// standing (11/18). Never inlined, as `meets_at` is not: in `main` it crowded the loop's
+  /// registers, and cost as much as it saved.
+  @noinline
+  let within_reach = pure (self: ref, other: ref Entity) -> bool => {
+    let a = self.kind.reach
+    let b = other.kind.reach
+    if a.height < 0 || b.height < 0 { return true }
+    let ax = i32(self.x()) + i32(if self.mirrored { self.kind.width - a.x - a.width } else { a.x })
+    let bx = i32(other.x()) + i32(if other.mirrored { other.kind.width - b.x - b.width } else { b.x })
+    let ay = i32(self.y()) + i32(a.y)
+    let by = i32(other.y()) + i32(b.y)
+    bx < ax + i32(a.width) &&
+      ax < bx + i32(b.width) &&
+      by < ay + i32(a.height) &&
+      ay < by + i32(b.height)
+  }
 
   /// [meets], were its top-left at (`ax`, `ay`).
   ///
@@ -970,12 +991,17 @@ impl EntityKind {
     bands: ref [B]u16,
     map_shapes: ref [P]Collider
   ) -> bool => {
-    // Tiles that carry no shapes — a map whose collision is its own — are not walked.
+    // Tiles that carry no shapes — a map whose collision is its own — are not walked, nor
+    // are they for a collider looking for no layer a tile's shape is on: the hero's body
+    // looks for pickups, never a wall, and walking its cells for nothing was most of the
+    // hero's collision, a sixth of his frame (11/18).
     let tiled = starts[starts.len() - 1] != 0
+    var tile_layers: u16 = 0
+    for k in 0..<K { tile_layers = tile_layers | shapes[k].layers }
     for i: u16 in 0..<self.collider_count {
       let c = self.colliders[i]
       let placed = if mirrored { c.mirrored(self.width) } else { c }
-      if tiled && placed.hits_map_moving(
+      if tiled && (c.mask & tile_layers) != 0 && placed.hits_map_moving(
         x,
         y,
         from_y,
