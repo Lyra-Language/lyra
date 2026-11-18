@@ -97,6 +97,7 @@ let main = () -> void => {
 // show 20 and miss four, but not the same four.
 func TestGenesis_SpritesTakeTurnsOnACrowdedLine(t *testing.T) {
 	t.Parallel()
+	genesisToolchainOrSkip(t)
 	still := genesisProgram(t, "still", turnsProgram("genesis", 24, false))
 	for _, frames := range []string{"30", "31"} {
 		lost := missing(litSquares(runROM(t, still, frames, ""), 24, 8, 12, 100))
