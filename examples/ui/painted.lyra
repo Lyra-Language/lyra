@@ -194,7 +194,7 @@ let list = pure () -> Node<Event> =>
       ))
     }
     ops
-  }).with_style(Style { height: Some(f32(ROWS) * ROW) })
+  }).with_style(Style { height: Some(Px(f32(ROWS) * ROW)) })
 
 const LIGHT: Color = Color { r: 0xEE, g: 0xD8, b: 0xB4 }
 const DARK: Color = Color { r: 0x8C, g: 0x5E, b: 0x3C }

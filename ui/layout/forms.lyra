@@ -6,7 +6,7 @@ module ui.layout
 //! the elements every control is — the framework's own part being what is dragged ([Drags]) and
 //! the group the arrow keys move a choice in ([OneOf]) — and styled through its parts.
 
-import ui.style.{ Style, Sheet }
+import ui.style.{ Style, Sheet, Px }
 
 /// A number field's value and what holds it: between `min` and `max`, moved by `step` — by
 /// its buttons, the arrow keys (ten steps with Shift) and dragging its `label` across, a step
@@ -216,7 +216,7 @@ pub let splitter<e> = pure (
     kind: kind,
     tag: "SplitEdge",
     class: if across { "across" } else { "down" },
-    style: if across { Style { width: Some(SPLIT_EDGE) } } else { Style { height: Some(SPLIT_EDGE) } },
+    style: if across { Style { width: Some(Px(SPLIT_EDGE)) } } else { Style { height: Some(Px(SPLIT_EDGE)) } },
   }
   let sized_first = if across { sized::<e>(
     Some(at),

@@ -168,7 +168,7 @@ let view = pure (state: State) -> Node<Event> => {
   let bar = row::<Event>([text::<Event>("Studio"), ...closed]).aligned(
     MainStart,
     CrossCenter
-  ).with_style(Style { gap: Some(8.0), height: Some(30.0) })
+  ).with_style(Style { gap: Some(8.0), height: Some(Px(30.0)) })
   themed::<Event>(light_theme(), Sheet {}, [
     padding(insets(8.0), column([
       bar,

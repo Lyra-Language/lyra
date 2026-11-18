@@ -417,8 +417,8 @@ let palette = pure (chosen: i64) -> Node<Event> => {
     }
     ops
   }).with_style(Style {
-    width: Some(2.0 * SWATCH + 3.0 * SWATCH_GAP),
-    height: Some(f32(rows) * SWATCH + f32(rows + 1) * SWATCH_GAP),
+    width: Some(Px(2.0 * SWATCH + 3.0 * SWATCH_GAP)),
+    height: Some(Px(f32(rows) * SWATCH + f32(rows + 1) * SWATCH_GAP)),
   }).takes_input(RawInput {
     on_key: (_: KeyInput) -> Maybe<Event> => None,
     on_text: (_: TextInput) -> Maybe<Event> => None,

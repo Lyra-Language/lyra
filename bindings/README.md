@@ -586,7 +586,8 @@ The example's interface is `examples/imgui/components_view.lui`.
   round; down then across; top, across, bottom; top, right, bottom, left — a margin's each a
   length or `auto`, so `margin: 0 auto` centres); and
   layout's, as CSS writes them:
-  `width`, `height` and their `min-`/`max-`, `row-gap`, `column-gap`, `flex` (`none`, `auto`,
+  `width`, `height` and their `min-`/`max-` (a length, or `N%` of the room it is laid out
+  in; a `{…}` value a length), `row-gap`, `column-gap`, `flex` (`none`, `auto`,
   or grow, shrink and basis — `flex: 1` is `1 1 0`), `flex-direction`, `flex-wrap`,
   `flex-grow`, `flex-shrink`, `flex-basis` (`auto`, a length, `N%`), `order`,
   `justify-content`, `align-content`, `align-items`, `align-self` (`baseline`, `first

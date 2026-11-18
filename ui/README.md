@@ -77,8 +77,13 @@ layer — implements the two traits; the display list is the whole contract.
   container's width is definite when bounded and its height only when fixed**, as a CSS block's
   is — so `fr` rows and a growing column need a `height`. **Every element honours `width`,
   `height` and their `min_`/`max_`** (border-box; within its parent's constraints, which
-  win). Row, Column and Expanded stay as they are — Flutter's, measuring children unbounded —
-  beside them. **Intrinsic widths** (`intrinsic_width`) are measured outside the layout cache,
+  win), each an `Extent`: `Px(n)` or `Percent(p)` of the room it is laid out in — the
+  constraints' bound (a column's width, a grid area), a flex container's definite main size
+  for an item's base, least and greatest, its cross size across — and as if unset where
+  that room is unbounded or the element is measured for its content (`intrinsic_width`), as
+  CSS's percentages of an indefinite size are. Row, Column and Expanded stay as they are —
+  Flutter's, measuring children unbounded, so a percentage along one is unset — beside
+  them. **Intrinsic widths** (`intrinsic_width`) are measured outside the layout cache,
   so the cache keeps only real layouts; an unchanged flex container or grid is given back
   whole like any element.
 - **`cursor`** (CSS's, inherited; lui's `cursor: text`, `pointer`…): the pointer's shape over

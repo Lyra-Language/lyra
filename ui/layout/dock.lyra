@@ -18,7 +18,7 @@ module ui.layout
 //! (`ui.app`'s host carries the drag). Let go outside every window, a dock that
 //! [Node.tears_off] raises a [DockTear], and the program opens a window for the panel.
 
-import ui.style.{ Style }
+import ui.style.{ Style, Px }
 
 /// An arrangement of panels, each by its key: a group of tabs, or a split of two arrangements.
 pub data DockTree = DockTabs(DockGroup) | DockSplit(DockSplitSpec)
@@ -200,7 +200,7 @@ let dock_part<e> = pure (
       kind: drags,
       tag: "SplitEdge",
       class: if across { "across" } else { "down" },
-      style: if across { Style { width: Some(SPLIT_EDGE) } } else { Style { height: Some(SPLIT_EDGE) } },
+      style: if across { Style { width: Some(Px(SPLIT_EDGE)) } } else { Style { height: Some(Px(SPLIT_EDGE)) } },
     }
     let flow: Kind<e> = Flow(split.axis, MainStart, CrossStretch)
     Node {

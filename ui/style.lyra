@@ -70,6 +70,28 @@ impl Insets {
   }
 }
 
+/// A size an element asks for (`width`, `height` and their `min_`/`max_`): a length in
+/// logical units, or a percentage of the size it is laid out in — its parent's content box,
+/// a flex container's or a grid area's — where that is definite. Of a size that is not (a
+/// height that grows with its content, a width measured for its content), a percentage is
+/// as if unset, as CSS's is.
+pub data Extent = Px(f32) | Percent(f32)
+
+impl Extent {
+  /// Its length in `room`: a length itself, a percentage of `room` — `None` without one.
+  pub let of = pure (self, room: Maybe<f32>) -> Maybe<f32> => match self {
+    Px(n) => Some(n),
+    Percent(p) => room.map((r) => r * p / 100.0),
+  }
+}
+
+/// `size`'s length in `room` ([Extent.of]), `None` when it is unset or cannot be resolved.
+pub let resolved_in = pure (size: Maybe<Extent>, room: Maybe<f32>) -> Maybe<f32> =>
+  match size {
+    Some(e) => e.of(room),
+    None => None,
+  }
+
 /// One side of a [Margins]: a length, or `auto` — the free space there, shared with the other
 /// `auto` sides along the same line or in the same area.
 pub data Margin = MarginPx(f32) | MarginAuto
@@ -145,12 +167,13 @@ pub struct Style {
   opacity: Maybe<f32> = None,
   /// The element's width and height, and the least and greatest each may be — within what
   /// its parent allows, which wins (lengths include padding: CSS's `box-sizing: border-box`).
-  width: Maybe<f32> = None,
-  height: Maybe<f32> = None,
-  min_width: Maybe<f32> = None,
-  max_width: Maybe<f32> = None,
-  min_height: Maybe<f32> = None,
-  max_height: Maybe<f32> = None,
+  /// A [Percent] is of the size it is laid out in, where that is definite ([Extent]).
+  width: Maybe<Extent> = None,
+  height: Maybe<Extent> = None,
+  min_width: Maybe<Extent> = None,
+  max_width: Maybe<Extent> = None,
+  min_height: Maybe<Extent> = None,
+  max_height: Maybe<Extent> = None,
   /// Space between a flex container's or a grid's rows, and between its columns (each
   /// `gap` where unset). For a flex row, `column_gap` is between its items and `row_gap`
   /// between its lines.
@@ -747,7 +770,7 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
   Rule {
     selector: "Progress",
     style: Style {
-      height: Some(6.0),
+      height: Some(Px(6.0)),
       radius: Some(3.0),
       background: Some(faded(c.text, 0.12))
     },
@@ -1045,7 +1068,7 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
       radius: Some(4.0),
       padding: Some(insets_xy(6.0, 3.0)),
       font_size: Some(12.0),
-      max_width: Some(320.0),
+      max_width: Some(Px(320.0)),
       box_shadow: Some([BoxShadow {
         x: 0.0,
         y: 2.0,
@@ -1153,13 +1176,13 @@ pub struct Computed {
   /// The opacity drawn with — the element's own times every one around it — and its own.
   opacity: f32 = 1.0,
   own_opacity: f32 = 1.0,
-  /// The sizes asked for; `None` for auto.
-  width: Maybe<f32> = None,
-  height: Maybe<f32> = None,
-  min_width: Maybe<f32> = None,
-  max_width: Maybe<f32> = None,
-  min_height: Maybe<f32> = None,
-  max_height: Maybe<f32> = None,
+  /// The sizes asked for; `None` for auto. A percentage is resolved where it is laid out.
+  width: Maybe<Extent> = None,
+  height: Maybe<Extent> = None,
+  min_width: Maybe<Extent> = None,
+  max_width: Maybe<Extent> = None,
+  min_height: Maybe<Extent> = None,
+  max_height: Maybe<Extent> = None,
   row_gap: f32 = 0.0,
   column_gap: f32 = 0.0,
   flex_direction: FlexDirection = FlexRow,

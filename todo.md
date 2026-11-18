@@ -888,9 +888,12 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   and lui. COMPLETED.md 11/18.
 - **[DONE 11/18] Flex and grid margins**: `Style.margin`, lengths and `auto` on every side,
   in both layouts and lui's `margin`. COMPLETED.md 11/18.
-- **[OPEN] No percentages but `flex-basis`**: `width: 50%` needs `width` and `height` (and
-  their `min_`/`max_`) to be a length type, since two fields would not cascade as one property.
-  That changes ~150 `Style` literals across lyra, Vega and Termina.
+- **[DONE 11/18] Percentages**: `width`, `height` and their `min_`/`max_` are an `Extent`,
+  `Px` or `Percent`, in `ui` and lui; lyra's, Vega's and Termina's literals converted.
+  COMPLETED.md 11/18.
+- **[OPEN] A Row's or Column's child has no percentage along its line**: Flutter's lines
+  measure children unbounded there, so `height: 50%` in a Column is unset (a flex column's
+  resolves). A percentage basis in `Constraints` would carry the line's definite size.
 - **[DONE 11/18] Baseline alignment in grids, and `last baseline`**: a grid row's baseline
   groups with their shims, and `AlignLastBaseline` in flex rows and grids. COMPLETED.md 11/18.
 - **[DONE 11/18] lui's two-value `padding` is CSS's**, down then across, with the three-value

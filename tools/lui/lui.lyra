@@ -1384,6 +1384,8 @@ const LAYOUT_NAMES = [
   "repeat_tracks",
   "GridSpan",
   "Margins",
+  "Px",
+  "Percent",
   "MarginPx",
   "MarginAuto",
   "FlowRow",
@@ -1765,7 +1767,9 @@ impl Writer {
           let set: Maybe<Result<[]string, string>> = match a.value {
             Quoted(text) => layout_declaration(property, text),
             Braced(code) =>
-              if NUMBER_PROPERTIES.any((n) => n == property) { Some(Ok(["${property}: Some(${code})"])) } else {
+              if SIZE_PROPERTIES.any((n) => n == property) {
+                Some(Ok(["${property}: Some(Px(${code}))"]))
+              } else if NUMBER_PROPERTIES.any((n) => n == property) { Some(Ok(["${property}: Some(${code})"])) } else {
                 Some(Err("${a.name} of <${t.name}> is written as text, not {…}"))
               },
             Bare => Some(Err("${a.name} of <${t.name}> needs a value")),
@@ -2479,10 +2483,10 @@ let layout_attribute = pure (_builder: string, name: string) -> string => match 
 }
 
 /// The layout properties a `{…}` value may give: lengths.
-const NUMBER_PROPERTIES = [
-  "gap",
-  "row_gap",
-  "column_gap",
+const NUMBER_PROPERTIES = ["gap", "row_gap", "column_gap"]
+
+/// The sizes a `{…}` value may give, a length in logical units (`Px`).
+const SIZE_PROPERTIES = [
   "width",
   "height",
   "min_width",
@@ -2504,12 +2508,12 @@ let layout_declaration = pure (
   ) -> Maybe<Result<[]string, string>> =>
     Some(made.map((v) => ["${field}: Some(${v})"]))
   match name {
-    "width" => one(name, ui_number(value)),
-    "height" => one(name, ui_number(value)),
-    "min_width" => one(name, ui_number(value)),
-    "max_width" => one(name, ui_number(value)),
-    "min_height" => one(name, ui_number(value)),
-    "max_height" => one(name, ui_number(value)),
+    "width" => one(name, extent_of(value)),
+    "height" => one(name, extent_of(value)),
+    "min_width" => one(name, extent_of(value)),
+    "max_width" => one(name, extent_of(value)),
+    "min_height" => one(name, extent_of(value)),
+    "max_height" => one(name, extent_of(value)),
     "row_gap" => one(name, ui_number(value)),
     "column_gap" => one(name, ui_number(value)),
     "gap" => one(name, ui_number(value)),
@@ -2667,6 +2671,17 @@ let overflow_of = pure (value: string) -> Result<string, string> => match value.
   "scroll" => Ok("OverflowScroll"),
   "auto" => Ok("OverflowAuto"),
   other => Err("overflow is visible, hidden, clip, scroll or auto, not ${other}"),
+}
+
+/// A size asked for (`width`, `height` and their `min-`/`max-`): a length in logical units (or
+/// a `$token`), or a percentage of the room it is laid out in (`50%`).
+let extent_of = pure (value: string) -> Result<string, string> => {
+  let v = value.trim()
+  if let Some(part) = v.strip_suffix("%") {
+    let n = number(part.trim()).map_err((_) => "${value} is not a percentage")?
+    return Ok("Percent(${n})")
+  }
+  Ok("Px(${ui_number(v)?})")
 }
 
 /// A whole number, as Lyra.

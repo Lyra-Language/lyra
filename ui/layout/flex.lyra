@@ -37,6 +37,7 @@ import ui.style.{
   BasisFraction,
   Margin,
   Margins,
+  resolved_in,
 }
 
 /// `children` laid out as a flex container computed as `style`, within `c` (inside its
@@ -63,6 +64,9 @@ let lay_flex<e> = (
   let cross_definite = if horizontal { height_definite } else { width_definite }
   let main_avail = along(axis, c.max_w, c.max_h)
   let cross_avail = along(axis, c.max_h, c.max_w)
+  // What an item's percentages are of: the container's sizes, where definite.
+  let main_room: Maybe<f32> = if main_definite { Some(main_avail) } else { None }
+  let cross_extent: Maybe<f32> = if cross_definite { Some(cross_avail) } else { None }
   let multi_line = style.flex_wrap != NoWrap
   // Items in `order`, ties in the tree's.
   var order: []i64 = []
@@ -78,7 +82,10 @@ let lay_flex<e> = (
     let child = children[i]
     let item = styles[i]
     let id = child_id(ctx.id, child, i)
-    let main_size = if horizontal { item.width } else { item.height }
+    let main_size = resolved_in(
+      if horizontal { item.width } else { item.height },
+      main_room
+    )
     let fixed: Maybe<f32> = match item.basis {
       BasisLength(n) => Some(n),
       BasisFraction(f) => if main_definite { Some(f * main_avail) } else { main_size },
@@ -96,9 +103,12 @@ let lay_flex<e> = (
         fonts
       ),
     }
-    let most = (if horizontal { item.max_width } else { item.max_height }) ?? UNBOUNDED
+    let most = resolved_in(
+      if horizontal { item.max_width } else { item.max_height },
+      main_room
+    ) ?? UNBOUNDED
     let across = (cross_avail - cross_margin(item.margin, horizontal)).max(0.0)
-    let least = item_least(child, item, horizontal, across, ctx, id, fonts)
+    let least = item_least(child, item, horizontal, across, main_room, ctx, id, fonts)
     items.push(Flexing {
       index: i,
       base: base,
@@ -248,11 +258,20 @@ let lay_flex<e> = (
         style.flex_wrap == WrapReverse
       )
       let how = own.align_self ?? style.align_items
-      let cross_auto = (if horizontal { own.height } else { own.width }).is_none()
+      let cross_auto = resolved_in(
+        if horizontal { own.height } else { own.width },
+        cross_extent
+      ).is_none()
       let cross_room = line_cross - sides.cross_before.length() - sides.cross_after.length()
       if how == AlignStretch && cross_auto && !sides.places_across() {
-        let least = (if horizontal { own.min_height } else { own.min_width }) ?? 0.0
-        let most = (if horizontal { own.max_height } else { own.max_width }) ?? UNBOUNDED
+        let least = resolved_in(
+          if horizontal { own.min_height } else { own.min_width },
+          cross_extent
+        ) ?? 0.0
+        let most = resolved_in(
+          if horizontal { own.max_height } else { own.max_width },
+          cross_extent
+        ) ?? UNBOUNDED
         let thick = cross_room.max(0.0).clamp(least, most.max(least))
         if (along(axis, one.size.h, one.size.w) - thick).abs() > 0.001 {
           one = lay(
@@ -508,22 +527,33 @@ let content_main<e> = (
 
 /// A flex item's least main size: the one its style asks for (`min-width: 0` lets it shrink
 /// to nothing), else CSS's automatic least size — its content's least, no more than a size
-/// asked for or its greatest; none for a scroll, which shows what does not fit.
+/// asked for or its greatest; none for a scroll, which shows what does not fit. Its
+/// percentages are of `main_room`, the container's main size where definite.
 let item_least<e> = (
   child: Node<e>,
   item: ref Computed,
   horizontal: bool,
   cross_avail: f32,
+  main_room: Maybe<f32>,
   ctx: ref Ctx,
   id: string,
   fonts: mut Fonts
 ) -> f32 => {
-  let asked = if horizontal { item.min_width } else { item.min_height }
+  let asked = resolved_in(
+    if horizontal { item.min_width } else { item.min_height },
+    main_room
+  )
   if let Some(m) = asked { return m }
   if is_scroll(child) { return 0.0 }
   let floor = content_main(child, horizontal, true, cross_avail, ctx, id, fonts)
-  let main_size = if horizontal { item.width } else { item.height }
-  let most = (if horizontal { item.max_width } else { item.max_height }) ?? UNBOUNDED
+  let main_size = resolved_in(
+    if horizontal { item.width } else { item.height },
+    main_room
+  )
+  let most = resolved_in(
+    if horizontal { item.max_width } else { item.max_height },
+    main_room
+  ) ?? UNBOUNDED
   (main_size ?? floor).min(floor).min(most)
 }
 
@@ -585,9 +615,12 @@ let intrinsic_width<e> = (
 ) -> f32 => {
   let styled = styled_at(node, cascade, ui, id)
   let style = styled.style
-  let floor = style.min_width ?? 0.0
-  let ceiling = (style.max_width ?? UNBOUNDED).max(floor)
-  if let Some(w) = style.width { if own { return w.clamp(floor, ceiling) } }
+  // Measured for its content, there is no width a percentage is of: as if unset.
+  let floor = resolved_in(style.min_width, None) ?? 0.0
+  let ceiling = (resolved_in(style.max_width, None) ?? UNBOUNDED).max(floor)
+  if let Some(w) = resolved_in(style.width, None) {
+    if own { return w.clamp(floor, ceiling) }
+  }
   let gaps = f32((node.children.len() - 1).max(0))
   // A box that scrolls or clips across lends its parent no width of its content's — only its
   // padding — as CSS's scroll containers do; otherwise a wide row inside one would widen
@@ -628,7 +661,7 @@ let intrinsic_width<e> = (
         for i, child in node.children {
           let child_at = child_id(id, child, i)
           let item = styled_at(child, styled.within, ui, child_at).style
-          let w = item_least(child, item, true, UNBOUNDED, ctx, child_at, fonts) +
+          let w = item_least(child, item, true, UNBOUNDED, None, ctx, child_at, fonts) +
             item.margin.horizontal()
           sum += w
           widest = widest.max(w)

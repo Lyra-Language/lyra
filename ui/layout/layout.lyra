@@ -96,6 +96,7 @@ import ui.text.{
 }
 import ui.style.{
   Style,
+  resolved_in,
   ScrollbarWidth,
   ScrollbarThin,
   ScrollbarNone,
@@ -2265,10 +2266,25 @@ let styled_at<e> = (
 
 /// `c` narrowed to the `width`, `height` and their least and greatest that `style` asks for —
 /// each within `c`, which wins, as a parent's constraints do. A least beats a greatest, as in
-/// CSS.
+/// CSS. A percentage is of `c`'s greatest, the room the parent gives (its content box, a
+/// grid area), and as if unset where that is unbounded.
 let sized_by = pure (c: Constraints, style: ref Computed) -> Constraints => {
-  let w = narrowed(c.min_w, c.max_w, style.width, style.min_width, style.max_width)
-  let h = narrowed(c.min_h, c.max_h, style.height, style.min_height, style.max_height)
+  let across: Maybe<f32> = if c.bounded_w() { Some(c.max_w) } else { None }
+  let down: Maybe<f32> = if c.bounded_h() { Some(c.max_h) } else { None }
+  let w = narrowed(
+    c.min_w,
+    c.max_w,
+    resolved_in(style.width, across),
+    resolved_in(style.min_width, across),
+    resolved_in(style.max_width, across)
+  )
+  let h = narrowed(
+    c.min_h,
+    c.max_h,
+    resolved_in(style.height, down),
+    resolved_in(style.min_height, down),
+    resolved_in(style.max_height, down)
+  )
   Constraints { min_w: w.0, max_w: w.1, min_h: h.0, max_h: h.1 }
 }
 

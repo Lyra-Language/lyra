@@ -9,6 +9,41 @@ Newest first.
 
 ## Dated log
 
+### 11/18/26 — Percentages: sizes are an Extent
+
+`width: 50%` needed `width` and `height` (and their `min_`/`max_`) to be one type of a length
+or a percentage. Two fields would not cascade as one property: a later rule's `width: 100`
+would leave an earlier rule's `50%` set. So `Style`'s and `Computed`'s six sizes are
+`Maybe<Extent>`, `Px(n)` or `Percent(p)` (`Length` was taken: the prelude has `alias Length =
+i64`).
+
+- **Resolved where laid out, never in the cascade**, against the room the size is of.
+  - `sized_by` takes the constraints' bound: a column's width, a grid area.
+  - Flex takes its definite main size for an item's base, least and greatest, and its cross
+    size across.
+  - Of an unbounded room, or measured for content (`intrinsic_width`), a percentage is as if
+    unset, as CSS's of an indefinite size are. An item of an auto grid track contributes
+    nothing for it, then takes its share of the track.
+  - `resolved_in(size, room)` is the one reader.
+- **Rows and Columns get none along their line.** Flutter's lines measure children unbounded
+  there. A flex column resolves it; todo.md records the gap.
+- **Transitions blend a kind with itself.** `Px` blends with `Px` and `Percent` with
+  `Percent`. Between a length and a percentage the size changes halfway, as between a size
+  and none: nothing says what lies between them without the room. The layout key writes
+  `%`.
+- **Converting about 150 literals took the compiler, not a search.** `Media`'s
+  `min_width` is a viewport's threshold, not a size, and stays `f32`. Two passes:
+  - The type errors' columns (`Some(` or the literal) wrapped 102 sites.
+  - That missed literals inside a call the compiler reported as `with_style` undefined.
+    A scanner wrapped every size field whose enclosing brace opens a `Style`, 23 more in
+    Vega and lyra's examples, then 47 in the test programs.
+- **The views regenerate.** lui writes `Px(…)` or `Percent(…)` (`extent_of`; a `{…}` value
+  `Px(code)`), so the lui views (Termina's settings page among them) were made again.
+
+Tests: `TestRun_UiPercentages` (a column, grid areas, a flex row's base, least, greatest, a
+fixed-height flex column, an auto track's item); `TestLui_UiTargetFlexAndGrid`'s `50%` and
+`12.5%`.
+
 ### 11/18/26 — lui's padding in CSS's order
 
 lui's ui target took `padding: 14 4` as 14 across and 4 down, as its imgui target's frame

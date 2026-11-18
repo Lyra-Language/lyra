@@ -714,7 +714,7 @@ let main = () -> u8 => {
 // `none`, `2 0 auto`), a basis as a percentage, order, the alignments, track lists with fr,
 // minmax and repeat, a dense column flow, grid lines with spans and from the end, named
 // areas (in a sheet and as an attribute), the content's packing, margins of one to four
-// lengths or auto in CSS's order (padding's too: `6 14` is 6 down, 14 across), last baseline — a later declaration
+// lengths or auto in CSS's order, sizes as lengths or percentages (padding's too: `6 14` is 6 down, 14 across), last baseline — a later declaration
 // replacing an earlier one, as in CSS; and the module checks clean.
 func TestLui_UiTargetFlexAndGrid(t *testing.T) {
 	t.Parallel()
@@ -734,6 +734,7 @@ func TestLui_UiTargetFlexAndGrid(t *testing.T) {
   .round { margin: 4 8 auto; align-self: last baseline }
   .pad2 { padding: 6 14 }
   .pad3 { padding: 1 2 3 }
+  .half { width: 50%; max-height: 12.5% }
 </style>
 <component name="view" event={Ev}>
   <Column>
@@ -768,9 +769,9 @@ func TestLui_UiTargetFlexAndGrid(t *testing.T) {
 		"flex_direction: Some(FlexColumnReverse), flex_wrap: Some(WrapReverse), justify_content: Some(JustifyBetween), align_items: Some(AlignBaseline), align_content: Some(JustifyStretch), gap: Some(8.0), row_gap: Some(12.0)",
 		"grid_columns: Some([px(100.0), fr(1.0), minmax(TrackMinContent, TrackFr(2.0)), ...repeat_tracks(2, [auto_track(), max_content()])])",
 		"grid_flow: Some(FlowColumnDense), justify_items: Some(AlignCenter), grid_auto_rows: Some(minmax(TrackPx(80.0), TrackAuto))",
-		"grow: Some(1.0), shrink: Some(1.0), basis: Some(BasisLength(0.0)), min_width: Some(120.0), order: Some(2), align_self: Some(AlignCenter)",
+		"grow: Some(1.0), shrink: Some(1.0), basis: Some(BasisLength(0.0)), min_width: Some(Px(120.0)), order: Some(2), align_self: Some(AlignCenter)",
 		"grow: Some(0.0), shrink: Some(0.0), basis: Some(BasisFraction(25.0 / 100.0)) }",
-		"grow: Some(2.0), shrink: Some(0.0), basis: Some(BasisAuto), max_height: Some(40.0)",
+		"grow: Some(2.0), shrink: Some(0.0), basis: Some(BasisAuto), max_height: Some(Px(40.0))",
 		"grid_column: Some(GridSpan { start: 2, span: 3 }), grid_row: Some(GridSpan { start: 1, span: 2 }), justify_self: Some(AlignEnd)",
 		"grid_column: Some(GridSpan { start: 1, end: -1 }), grid_row: Some(GridSpan { span: 2, end: -1 })",
 		"grid_column: Some(GridSpan { start: -2 }), grid_area: Some(\"main\")",
@@ -780,6 +781,7 @@ func TestLui_UiTargetFlexAndGrid(t *testing.T) {
 		"margin: Some(Margins { top: MarginPx(4.0), right: MarginPx(8.0), bottom: MarginAuto, left: MarginPx(8.0) }), align_self: Some(AlignLastBaseline)",
 		"padding: Some(insets_xy(14.0, 6.0))",
 		"padding: Some(Insets { top: 1.0, right: 2.0, bottom: 3.0, left: 2.0 })",
+		"width: Some(Percent(50.0)), max_height: Some(Percent(12.5))",
 	} {
 		if !strings.Contains(string(generated), want) {
 			t.Errorf("the generated module lacks %q:\n%s", want, generated)

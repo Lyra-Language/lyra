@@ -36,6 +36,9 @@ import ui.style.{
   TimingBezier,
   TimingSteps,
   Insets,
+  Extent,
+  Px,
+  Percent,
 }
 import ui.text.{ FontSpec }
 import ui.draw.{ Color, BoxShadow, Gradient, ColorStop, LinearGradient, RadialGradient }
@@ -203,7 +206,14 @@ pub let with_layout = pure (style: ref Computed, shown: ref Computed) -> Compute
 /// The properties that change sizes, as text: the layout cache's key for a moving element.
 pub let layout_key = pure (s: ref Computed) -> string => {
   let p = s.padding
-  "${p.top},${p.right},${p.bottom},${p.left};${s.gap},${s.row_gap},${s.column_gap};${s.width ?? -1.0},${s.height ?? -1.0},${s.min_width ?? -1.0},${s.max_width ?? -1.0},${s.min_height ?? -1.0},${s.max_height ?? -1.0};${s.border_width};${s.font.size},${s.font.line_height}"
+  "${p.top},${p.right},${p.bottom},${p.left};${s.gap},${s.row_gap},${s.column_gap};${extent_key(s.width)},${extent_key(s.height)},${extent_key(s.min_width)},${extent_key(s.max_width)},${extent_key(s.min_height)},${extent_key(s.max_height)};${s.border_width};${s.font.size},${s.font.line_height}"
+}
+
+/// A size asked for, as text: a length, a percentage with `%`, `-` for none.
+let extent_key = pure (size: Maybe<Extent>) -> string => match size {
+  Some(Px(n)) => "${n}",
+  Some(Percent(p)) => "${p}%",
+  None => "-",
 }
 
 /// The transition `transitions` gives `property`: the last entry naming it, `all` or a
@@ -418,10 +428,15 @@ let mix_fill = pure (a: Maybe<Color>, b: Maybe<Color>, p: f32) -> Maybe<Color> =
   }
 
 /// A size that may be `auto`, which does not blend.
-let mix_size = pure (a: Maybe<f32>, b: Maybe<f32>, p: f32) -> Maybe<f32> => match (a, b) {
-  (Some(x), Some(y)) => Some(mix(x, y, p)),
-  _ => if p < 0.5 { a } else { b },
-}
+/// Two sizes asked for, `p` of the way: lengths and percentages each blend with their own
+/// kind; a length and a percentage, or a size and none, change halfway, as nothing can say
+/// what lies between them without the room they are in.
+let mix_size = pure (a: Maybe<Extent>, b: Maybe<Extent>, p: f32) -> Maybe<Extent> =>
+  match (a, b) {
+    (Some(Px(x)), Some(Px(y))) => Some(Px(mix(x, y, p))),
+    (Some(Percent(x)), Some(Percent(y))) => Some(Percent(mix(x, y, p))),
+    _ => if p < 0.5 { a } else { b },
+  }
 
 let mix_insets = pure (a: Insets, b: Insets, p: f32) -> Insets =>
   Insets {
