@@ -32,7 +32,7 @@ module std.genesis.talk
 //! [picked] says which choice was last picked, by its place in the table, so the game can act
 //! on an answer.
 //!
-//! **Flags** are the game's, 32 of them ([MAX_FLAGS]), held here for every talk: a line may be
+//! **Flags** are the game's, 256 of them ([MAX_FLAGS]), held here for every talk: a line may be
 //! said only while a flag is set (`needs`) or unless one is (`unless`) — a line not said is
 //! passed over, to the line after it — and saying a line or picking a choice may set one
 //! (`sets`). So the guide greets a stranger once and a friend after. The game reads and sets
@@ -81,26 +81,29 @@ pub struct Choice {
 pub const END: i16 = -1
 
 /// How many flags there are, numbered from 0, and what a line or choice names for none.
-pub const MAX_FLAGS: i16 = 32
+pub const MAX_FLAGS: i16 = 256
 pub const NO_FLAG: i16 = -1
+/// The bytes the flags take, eight a byte: what [flags] gives a save.
+pub const FLAG_BYTES: i64 = 32
 
 /// Whether flag `n` is set (none outside 0 to [MAX_FLAGS] − 1 is).
 pub let flag = (n: i16) -> bool =>
-  n >= 0 && n < MAX_FLAGS && (held_flags >> u32(n)) & 1 == 1
+  n >= 0 && n < MAX_FLAGS && (held_flags[i64(n >> 3)] >> u8(n & 7)) & 1 == 1
 
 /// Flag `n` set, or let go.
 pub let set_flag = (n: i16) -> void => {
-  if n >= 0 && n < MAX_FLAGS { held_flags = held_flags | (u32(1) << u32(n)) }
+  if n >= 0 && n < MAX_FLAGS { held_flags[i64(n >> 3)] = held_flags[i64(n >> 3)] | (u8(1) << u8(n & 7)) }
 }
 pub let clear_flag = (n: i16) -> void => {
-  if n >= 0 && n < MAX_FLAGS { held_flags = held_flags & ~(u32(1) << u32(n)) }
+  if n >= 0 && n < MAX_FLAGS { held_flags[i64(n >> 3)] = held_flags[i64(n >> 3)] & ~(u8(1) << u8(n & 7)) }
 }
 
-/// Every flag, a bit each — what a save keeps — and every flag as `bits` says, from one.
-pub let flags = () -> u32 => held_flags
-pub let keep_flags = (bits: u32) -> void => { held_flags = bits }
+/// Every flag, a bit each, flag `n` bit `n % 8` of byte `n / 8` — what a save keeps — and
+/// every flag as `bits` says, from one.
+pub let flags = () -> [FLAG_BYTES]u8 => held_flags
+pub let keep_flags = (bits: ref [FLAG_BYTES]u8) -> void => { held_flags = bits }
 
-var held_flags: u32 = 0
+var held_flags: [FLAG_BYTES]u8 = #[0; FLAG_BYTES]
 
 /// The cells a portrait takes, across and down: a 32×32 sprite.
 pub const PORTRAIT_CELLS: u16 = 4

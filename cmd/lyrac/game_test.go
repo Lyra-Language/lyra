@@ -1270,7 +1270,7 @@ func TestRun_GameTalksFlagsChooseItsLines(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.lyra")
 	if err := os.WriteFile(src, []byte(`import std.game.talk
-import std.game.talk.{ Talk, Line, Choice, END }
+import std.game.talk.{ Talk, Line, Choice, END, FLAG_BYTES }
 import std.game.text.{ Font, TextBox }
 
 const LINES: [3]Line = #[
@@ -1298,9 +1298,13 @@ let main = () -> void => {
   t.choose(LINES, CHOICES, 1)
   t.press(LINES, CHOICES)
   println("never ${t.talking()} ${t.last_picked()}")
+  talk.set_flag(200)
+  talk.set_flag(256)
   let saved = talk.flags()
-  talk.keep_flags(1)
-  println("kept ${saved} ${talk.flag(0)} ${talk.flag(3)}")
+  var kept: [FLAG_BYTES]u8 = #[0; FLAG_BYTES]
+  kept[0] = 1
+  talk.keep_flags(kept)
+  println("kept ${saved[0]} ${saved[25]} ${talk.flag(0)} ${talk.flag(3)} ${talk.flag(200)} ${talk.flag(256)}")
 }
 `), 0o644); err != nil {
 		t.Fatal(err)
@@ -1309,7 +1313,7 @@ let main = () -> void => {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	want := "stranger 0 true\nover false\nfriend 1\npicked true false\nnever false 1\nkept 9 true false\n"
+	want := "stranger 0 true\nover false\nfriend 1\npicked true false\nnever false 1\nkept 9 1 true false false false\n"
 	if out != want {
 		t.Errorf("got:\n%s\nwant:\n%s", out, want)
 	}

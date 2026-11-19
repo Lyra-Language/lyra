@@ -205,7 +205,8 @@ let main = () -> void => {
 // TestGenesis_ATalksFlagsChooseItsLines plays a talk twice through std.genesis.talk's flags:
 // the first time line 0 ("unless" flag 0, setting it) is said, the second it is passed over
 // for line 1 (which "needs" flag 0); a choice there sets flag 3, which the game reads; a line
-// whose flags let none of the rest be said ends the talk; and keep_flags puts every flag back
+// whose flags let none of the rest be said ends the talk; flag 200 lands in its byte, 256 is
+// none; and keep_flags puts every flag back
 // as a save had them. Each step that goes as it should adds a colour to the backdrop's
 // red, green and blue, so a backdrop of all three is every step.
 func TestGenesis_ATalksFlagsChooseItsLines(t *testing.T) {
@@ -213,7 +214,7 @@ func TestGenesis_ATalksFlagsChooseItsLines(t *testing.T) {
 	genesisToolchainOrSkip(t)
 	out := genesisProgram(t, "flags", `import std.genesis.vdp
 import std.genesis.talk
-import std.genesis.talk.{ Talk, Line, Choice, END }
+import std.genesis.talk.{ Talk, Line, Choice, END, FLAG_BYTES }
 import std.genesis.text.{ Font, TextBox }
 
 const LINE: [8]u32 = #[0x22222222; 8]
@@ -251,10 +252,14 @@ let main = () -> void => {
   t.choose(LINES, CHOICES, 1)
   t.press(LINES, CHOICES)
   if !t.talking() && t.last_picked() == 1 { b += 3 }
-  // A save's flags put back: flag 0 alone, so line 1 again after line 0 is passed over.
+  // A save's flags put back: flag 0 alone, so flags 3 and 200 are let go; flag 256 is none.
+  talk.set_flag(200)
+  talk.set_flag(256)
   let saved = talk.flags()
-  talk.keep_flags(1)
-  if !talk.flag(3) && saved == 9 { b += 4 }
+  var kept: [FLAG_BYTES]u8 = #[0; FLAG_BYTES]
+  kept[0] = 1
+  talk.keep_flags(kept)
+  if !talk.flag(3) && !talk.flag(200) && !talk.flag(256) && saved[0] == 9 && saved[25] == 1 { b += 4 }
   vdp.set_color(0, 0, vdp.rgb(r, g, b))
   vdp.display_on()
   loop { vdp.wait_vblank() }
