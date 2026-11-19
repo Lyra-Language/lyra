@@ -1627,6 +1627,79 @@ set as text: volume 7, and as text that is no number 5
 	}
 }
 
+// A section: its band, the rule and the body each a shade over the panel, the title semibold
+// (`font_weight`, set by the theme's `Section::title` alone, its size kept) and its tooltip, `about`; the
+// body inset inside the edge and stretched across; heard as a group named by its title; and
+// with no children, the band alone. Heights are the font's, so only what is across and in
+// which order is printed.
+func TestRun_UiSectionSetsAGroupApart(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.draw.{ Size }
+import ui.text.{ fonts_new }
+import ui.style.{ Sheet, light_theme }
+import ui.layout.{ Node, Laid, GroupRole, Words, section, sized, column, themed, layout, loose, MainStart, CrossStretch }
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  let view: Node<void> = themed(light_theme(), Sheet {}, [column([
+    section::<void>("Things", [block("a"), block("b")], [], "What they are"),
+    section::<void>("Empty", []),
+  ]).aligned(MainStart, CrossStretch)])
+  let laid = layout(view, loose(Size { w: 200.0, h: 400.0 }), fonts)
+  show(laid, 0.0, 0.0, 0)
+  println("tips: ${tips(section::<void>("Things", [], [], "What they are"))} and ${tips(section::<void>("Things", []))}")
+  0
+}
+
+let block = pure (key: string) -> Node<void> => sized::<void>(None, Some(20.0)).keyed(key)
+
+/// The tooltips in a tree, by their words.
+let tips = (n: Node<void>) -> string => {
+  var found: []string = []
+  for t in n.tip { if let Words(words) = t.kind { found.push(words) } }
+  for c in n.children { let more = tips(c); if more.len() > 0 { found.push(more) } }
+  if found.len() == 0 { "none" } else { found.join(", ") }
+}
+
+var last_y: f32 = -1.0
+
+let show = (l: Laid<void>, x: f32, y: f32, depth: i64) -> void => {
+  var indent = ""
+  for _ in 0..<depth { indent = "${indent}  " }
+  var line = "${indent}${l.tag} x=${x} w=${l.size.w}"
+  if l.style.background.is_some() { line = "${line} shaded" }
+  if l.style.font.weight != 400 { line = "${line} weight=${l.style.font.weight} size=${l.style.font.size}" }
+  if l.role == GroupRole && l.label.len() > 0 { line = "${line} group=${l.label}" }
+  if y < last_y { line = "${line} ABOVE THE ONE BEFORE" }
+  last_y = y
+  println(line)
+  for c in l.children { show(c.laid, x + c.at.x, y + c.at.y, depth + 1) }
+}
+`)
+	want := `Themed x=0 w=200
+  Column x=0 w=200
+    Section x=0 w=200 shaded group=Things
+      Column x=1 w=198
+        Row x=1 w=198 shaded
+          Expanded x=11 w=178
+            Text x=11 w=178 weight=600 size=14
+        SizedBox x=1 w=198 shaded
+        Column x=1 w=198
+          SizedBox x=11 w=178
+          SizedBox x=11 w=178
+    Section x=0 w=200 shaded group=Empty
+      Column x=1 w=198
+        Row x=1 w=198 shaded
+          Expanded x=11 w=178
+            Text x=11 w=178 weight=600 size=14
+tips: What they are and none
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // A modal open keeps the program's shortcuts out, as it keeps every other input: Primary+s
 // (`App.shortcuts`) and Primary+o (a drawn menu bar's item, behind the dialog) are heard
 // with it closed and not with it open, while Primary+d, a menu inside the dialog, answers.

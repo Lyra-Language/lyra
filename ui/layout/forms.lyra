@@ -1,8 +1,8 @@
 module ui.layout
 //! The smaller controls a panel of forms is made of (`ui/VEGA.md` §5): a number field typed,
 //! stepped and scrubbed ([number_field]), radio buttons ([radio_group]), a section that
-//! collapses ([disclosure]), a progress bar ([progress]), a rule with or without text
-//! ([separator]) and two panes with the edge between them dragged ([splitter]). Each is made of
+//! collapses ([disclosure]), a group of controls under a title ([section]), a progress bar
+//! ([progress]), a rule with or without text ([separator]) and two panes with the edge between them dragged ([splitter]). Each is made of
 //! the elements every control is — the framework's own part being what is dragged ([Drags]) and
 //! the group the arrow keys move a choice in ([OneOf]) — and styled through its parts.
 
@@ -187,6 +187,36 @@ pub let separator<e> = pure (label: string = "") -> Node<e> => {
     Sheet {},
     [row::<e>(inside).with_style(Style { gap: Some(8.0) })]
   )
+}
+
+/// A group of a panel's controls under `title` (`Section`): the title (`Section::title`) in a
+/// band across the top (`Section::header`), `actions` — a button or two acting on the whole
+/// group — at the band's far end, a rule under it (`Section::rule`), and `children` below that
+/// (`Section::body`), stretched across. The theme sets it apart by a shade and an edge of its
+/// own, so where each of a panel's sections begins and ends is plain; heard as a group named
+/// by its title. `about`, where given, is the title's tooltip: what the section is for. With
+/// no `children`, the band alone.
+pub let section<e> = pure (
+  title: string,
+  children: []Node<e>,
+  actions: []Node<e> = [],
+  about: string = ""
+) -> Node<e> => {
+  let named = text::<e>(title).with_part("title")
+  let heading = if about.len() == 0 { named } else { named.tooltip(about) }
+  let header = row::<e>([expanded::<e>(heading), ...actions])
+    .with_part("header")
+  let below: []Node<e> = if children.len() == 0 { [] } else {
+    [
+      sized::<e>(None, Some(1.0)).with_part("rule"),
+      column::<e>(children).aligned(MainStart, CrossStretch).with_part("body"),
+    ]
+  }
+  component::<e>(
+    "Section",
+    Sheet {},
+    [column::<e>([header, ...below]).aligned(MainStart, CrossStretch)]
+  ).with_role(GroupRole).labelled(title)
 }
 
 /// A separator's line, taking the room left in its row.

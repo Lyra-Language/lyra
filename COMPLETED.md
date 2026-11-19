@@ -9,6 +9,22 @@ Newest first.
 
 ## Dated log
 
+### 11/19/26 — `ui.layout`'s `section`, and `font_weight`
+
+Vega's side panels were one column of controls, a section's title plain text like the labels
+under it, so where one group ended and the next began was hard to see. A `section(title,
+children, actions, about)` is a group set apart by a shade and an edge of its own, its title
+semibold in a band with a rule under it. Vega's panels are made of them now.
+
+- **Shades of the text, not colours of the theme's.** `faded(c.text, …)` over whatever the panel
+  is reads in the light theme and the dark alike, and inside another shaded element too; a fixed
+  grey would need a pair for each theme and still clash with a panel of another colour.
+- **The band's top corners are its own** (`Section::header`'s `corners`): nothing clips a
+  child to its parent's rounded corners, so a square band would poke out of them.
+- **`font_weight` is a style property of its own**, as `font_size` and `font_family` are: a
+  rule could only set the whole `font`, which also reset its size. It enters the layout key of a
+  moving element (`ui.motion`), since a heavier face is wider; it does not animate.
+
 ### 11/18/26 — `ui.app`'s files read and written off the loop
 
 `ReadFile` and `WriteFile` were done where the host ran, so a large file or a slow disk held the

@@ -813,6 +813,58 @@ func TestLui_LayoutsExampleIsCurrentAndChecks(t *testing.T) {
 	}
 }
 
+// font-weight in the ui target: a number from 100 to 900, `bold` and `normal` become
+// `font_weight`, the module checks clean, and a weight past the range is refused at its line.
+func TestLui_UiTargetFontWeight(t *testing.T) {
+	t.Parallel()
+	lui := buildLui(t)
+	dir := t.TempDir()
+	source := `<script target="ui">
+  pub data Ev = Go
+</script>
+<style global name="app_sheet">
+  .title { font-weight: 600 }
+  .loud { font-weight: bold }
+  .quiet { font-weight: normal }
+</style>
+<component name="view" event={Ev}>
+  <Text class="title">hi</Text>
+</component>
+`
+	path := filepath.Join(dir, "view.lui")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := command(t, lui, path).CombinedOutput(); err != nil {
+		t.Fatalf("lui refused it: %v\n%s", err, b)
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, "view.lyra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`Rule { selector: ".title", style: Style { font_weight: Some(600) } }, // view.lui:5`,
+		`Rule { selector: ".loud", style: Style { font_weight: Some(700) } }, // view.lui:6`,
+		`Rule { selector: ".quiet", style: Style { font_weight: Some(400) } }, // view.lui:7`,
+	} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("the generated module lacks %q:\n%s", want, generated)
+		}
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	stdout, stderr, code := captureRun(t, "check", filepath.Join(dir, "view.lyra"))
+	if code != 0 || strings.Contains(stdout+stderr, "warning") {
+		t.Errorf("checking the generated module exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	heavy := filepath.Join(dir, "heavy.lui")
+	if err := os.WriteFile(heavy, []byte(strings.Replace(source, "font-weight: bold", "font-weight: 950", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := command(t, lui, heavy).CombinedOutput(); err == nil || !strings.Contains(string(out), "heavy.lui:6: font-weight is a number from 100 to 900") {
+		t.Errorf("a weight past 900: %v %s", err, out)
+	}
+}
+
 // @media in the ui target: a query's features (lengths with or without px, orientation,
 // prefers-color-scheme), `and`, a comma and a leading `not` become a rule's []Media, on every
 // rule inside the block; a selector list is a rule for each selector, each at its own line,

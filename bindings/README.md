@@ -581,7 +581,8 @@ The example's interface is `examples/imgui/components_view.lui`.
   `t.colors.accent`, `$space.m` `t.space.m` — wherever a number or colour goes (not in an
   inline `style`, which has no theme); properties `color`, `background`, `border-color`,
   `border-width`, `radius` (or `rounding`, or `border-radius`: one number every corner's, two
-  to four each corner's in CSS's order, `Style.corners`), `gap`, `opacity`, `font-size`, `line-height`,
+  to four each corner's in CSS's order, `Style.corners`), `gap`, `opacity`, `font-size`, `font-weight` (100 to 900, `normal` or `bold`;
+  `Style.font_weight`, the size and family kept), `line-height`,
   `padding` and, for a flex or grid item, `margin` (one to four values in CSS's order — all
   round; down then across; top, across, bottom; top, right, bottom, left — a margin's each a
   length or `auto`, so `margin: 0 auto` centres); and

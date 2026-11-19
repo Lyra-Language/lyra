@@ -206,7 +206,7 @@ pub let with_layout = pure (style: ref Computed, shown: ref Computed) -> Compute
 /// The properties that change sizes, as text: the layout cache's key for a moving element.
 pub let layout_key = pure (s: ref Computed) -> string => {
   let p = s.padding
-  "${p.top},${p.right},${p.bottom},${p.left};${s.gap},${s.row_gap},${s.column_gap};${extent_key(s.width)},${extent_key(s.height)},${extent_key(s.min_width)},${extent_key(s.max_width)},${extent_key(s.min_height)},${extent_key(s.max_height)};${s.border_width};${s.font.size},${s.font.line_height}"
+  "${p.top},${p.right},${p.bottom},${p.left};${s.gap},${s.row_gap},${s.column_gap};${extent_key(s.width)},${extent_key(s.height)},${extent_key(s.min_width)},${extent_key(s.max_width)},${extent_key(s.min_height)},${extent_key(s.max_height)};${s.border_width};${s.font.size},${s.font.line_height},${s.font.weight}"
 }
 
 /// A size asked for, as text: a length, a percentage with `%`, `-` for none.

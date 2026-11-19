@@ -160,6 +160,9 @@ pub struct Style {
   /// The font's family alone, its size kept (CSS's `font-family`): a name [Fonts] has, as a
   /// select's list shows each font family in itself. Inherited (as part of the font).
   font_family: Maybe<string> = None,
+  /// The font's weight alone (CSS's `font-weight`: 400 regular, 600 semibold, 700 bold), its
+  /// family and size kept. Inherited (as part of the font).
+  font_weight: Maybe<i64> = None,
   /// Lines this many font sizes apart (CSS's unitless `line-height`). Inherited (as part of
   /// the font).
   line_height: Maybe<f32> = None,
@@ -405,6 +408,7 @@ impl Style {
     font: self.font.or(base.font),
     font_size: self.font_size.or(base.font_size),
     font_family: self.font_family.or(base.font_family),
+    font_weight: self.font_weight.or(base.font_weight),
     line_height: self.line_height.or(base.line_height),
     opacity: self.opacity.or(base.opacity),
     width: self.width.or(base.width),
@@ -778,6 +782,37 @@ pub let control_rules = pure (c: Palette) -> []Rule => [
   Rule {
     selector: "Progress::fill",
     style: Style { background: Some(c.accent), radius: Some(3.0) }
+  },
+  // A section: a panel's group of controls set apart by a shade and an edge of its own, its
+  // title semibold in a band a shade deeper, and a rule between the title and the controls.
+  // Shades of the text over whatever the panel is, so it reads in the light and dark alike.
+  Rule {
+    selector: "Section",
+    style: Style {
+      background: Some(faded(c.text, 0.03)),
+      border_color: Some(faded(c.text, 0.13)),
+      border_width: Some(1.0),
+      radius: Some(6.0),
+      padding: Some(insets(1.0)),
+    },
+  },
+  Rule {
+    selector: "Section::header",
+    style: Style {
+      background: Some(faded(c.text, 0.05)),
+      corners: Some(Radii { top_left: 5.0, top_right: 5.0 }),
+      padding: Some(insets_xy(10.0, 5.0)),
+      gap: Some(6.0),
+    },
+  },
+  Rule { selector: "Section::title", style: Style { font_weight: Some(600) } },
+  Rule {
+    selector: "Section::rule",
+    style: Style { background: Some(faded(c.text, 0.13)) }
+  },
+  Rule {
+    selector: "Section::body",
+    style: Style { padding: Some(insets(10.0)), gap: Some(8.0) }
   },
   Rule { selector: "Separator::line", style: Style { background: Some(c.border) } },
   Rule {
@@ -1328,6 +1363,7 @@ impl Cascade {
         base_font |
         family: s.font_family ?? base_font.family,
         size: s.font_size ?? base_font.size,
+        weight: s.font_weight ?? base_font.weight,
         line_height: s.line_height ?? base_font.line_height,
       },
       opacity: self.inherited.opacity * (s.opacity ?? 1.0),
