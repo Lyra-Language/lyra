@@ -1347,10 +1347,10 @@ sets V on every add. What stands between that and a ROM:
   `struct`, `union`, `trait`, `impl` and `tuple` declare, as `data` did, so `type(1)` and
   `alias = 4` do not parse. `scan_data_keyword`'s look-ahead would serve most; `extern` and
   `impl` are followed by more than a capital.
-- **[OPEN] LLVM `main` turns a volatile zero store into `clr`** (16c337766166, 08/25), which on
-  a 68000 reads the destination first — wrong for a volatile store, and fatal on the VDP's
-  control port. `tools/llvm-m68k.sh` pins e7dd336e0f78, before it (and before the later
-  MOVEM/PHI and MOVX fixes). Report upstream, then move the pin.
+- **[PARTIAL] LLVM `main` turns a volatile zero store into `clr`** (16c337766166, 08/25), which
+  on a 68000 reads the destination first, fatal on the VDP's control port. The fix for main,
+  with an `llc` test, is `tools/llvm-m68k-patches/upstream/` (checked 11/19). Left: send it
+  upstream, then move the pin past it and rebase 0001–0022.
 - **[OPEN] Report the small-code-model store upstream**: `counter = v` in C becomes
   `move.l (4,%sp), (counter,%pc)`, a PC-relative destination, under LLVM 22.1.8.
 - **[OPEN] Report the dropped stack index upstream**: `(stack object + index)` was

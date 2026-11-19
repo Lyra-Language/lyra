@@ -20,7 +20,9 @@
 #     volatile zero to the VDP's control port also reads the port, which resets the VDP's
 #     half-written command, and the Genesis shows nothing. A volatile store must not
 #     become a read-modify-write; until upstream stops selecting CLR for one on a 68000,
-#     the pin stays before it (so the later MOVEM/PHI and MOVX fixes wait too).
+#     the pin stays before it (so the later MOVEM/PHI and MOVX fixes wait too). The fix,
+#     written for main, is `tools/llvm-m68k-patches/upstream/` (its README), which this
+#     script does not apply: it is needed only once the pin moves past that commit.
 #
 # **Patched, by `tools/llvm-m68k-patches/*.patch`**, applied in order on top of the pin:
 #

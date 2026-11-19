@@ -9,6 +9,30 @@ Newest first.
 
 ## Dated log
 
+### 11/19/26 — A fix for LLVM main's `clr` on a volatile store
+
+LLVM main's 16c337766166 (#216636, 08/25) selects every store of zero to memory as `CLR`.
+On the 68000, `CLR` reads its destination before writing it, as the commit's own comment
+notes. For a volatile store the read is itself a side effect. `clr.w $c00004` reads the
+VDP's control port, which drops a half-written command, and every Genesis ROM went black.
+The pin stays at e7dd336e0f78, before that commit, so lyrac's builds were never affected.
+But the pin cannot move, and the later MOVEM/PHI and MOVX fixes wait with it.
+
+- **The fix is a `PatFrag`** (`MxClrStore`) over `store` that refuses a volatile store when
+  the CPU is below the 68010, whose `CLR` no longer reads. Both of `CLR`'s memory forms use
+  it, so such a store is a `MOVE` of zero again; a plain store, and every store on the 68010
+  and later, keeps `CLR`. It had to sit outside the instructions' `let Defs = [CCR]`
+  block, which would give a `PatFrag` a `Defs` field.
+- **Checked on upstream main fffc865e3aaa** (11/19), an `llc` built for M68k alone in
+  `~/Dev/llvm-m68k-main`, beside the pinned toolchain. Its new test,
+  `CodeGen/M68k/Data/store-zero-volatile.ll` (bytes, words, longs, through a pointer and to
+  a global, 68000 and 68010), fails without the fix. The M68k CodeGen suite passes with it,
+  except `pipeline.ll` and `is-pcrel-register-operand-legal.mir`, which fail on main without
+  it too.
+- **Not sent upstream.** The patch and the report's text are in
+  `tools/llvm-m68k-patches/upstream/`, which `llvm-m68k.sh` does not apply. Sending them,
+  then moving the pin and rebasing our 22 patches onto it, are what is left.
+
 ### 11/19/26 — a tab's × closes on release
 
 A press on the × closed the tab at once, while a button presses when let go — and there a
