@@ -9,6 +9,14 @@ Newest first.
 
 ## Dated log
 
+### 11/19/26 — a tab's × closes on release
+
+A press on the × closed the tab at once, while a button presses when let go — and there a
+press moved off it is no press. The × is no control of its own (its press is the tab's, so
+the tab's focus and selection stay put), so it is held apart: `Ui.closing` keeps the tab, and
+`pointer_up` closes it only on that tab's × still. A new press clears it, so a release lost
+to another window cannot swallow the next one.
+
 ### 11/19/26 — a press that hears the modifiers
 
 Vega's frame strip chooses several frames, Cmd- and Shift-clicked, and a `Pressable(e)` could

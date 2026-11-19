@@ -240,6 +240,9 @@ pub struct Ui {
   tip_since: i64 = -1,
   tip_rest: Point = Point {},
   tip_spent: string = "",
+  /// The tab whose × the primary button went down on: it closes when the button comes up
+  /// still on that ×, as a button presses, and not where the pointer has left it.
+  closing: string = "",
   /// Where the press on an element dragged to change a number ([Drags]) was, and its value
   /// then: a drag moves it from there.
   drag_from: Point = Point {},
@@ -1596,6 +1599,8 @@ impl Ui {
   /// pointer, and a field's caret goes where it was clicked.
   let pointer_down<e> = (self: mut, laid: Laid<e>, at: Point, clicks: i64) -> []e => {
     self.pointer = at
+    // A × held whose release went to another window is let go.
+    self.closing = ""
     if self.bar_press(laid, at) { return [] }
     // One of the window's own buttons, which is no control of the program's: held, as a
     // button is, until let go.
@@ -1640,9 +1645,13 @@ impl Ui {
       self.state.pressed = ""
       return []
     }
-    // A tab's ×: the tab closes, the press and the focus left where they were.
-    if let Tabbed(spot) = target.laid.kind {
-      if on_tab_close(laid, target, at) { return [(spot.on_close)(spot.index)] }
+    // A tab's ×: held, to close the tab when the button comes up on it ([pointer_up]); the
+    // press and the focus left where they were.
+    if let Tabbed(_) = target.laid.kind {
+      if on_tab_close(laid, target, at) {
+        self.closing = target.laid.id
+        return []
+      }
     }
     self.state.pressed = target.laid.id
     self.state.focus = target.laid.id
@@ -1683,6 +1692,14 @@ impl Ui {
     self.pointer = at
     let held = self.state.pressed
     self.state.pressed = ""
+    let closing = self.closing
+    self.closing = ""
+    if closing.len() > 0 {
+      let Some(tab) = control_at(laid, at) else { return [] }
+      if tab.laid.id != closing || !on_tab_close(laid, tab, at) { return [] }
+      let Tabbed(spot) = tab.laid.kind else { return [] }
+      return [(spot.on_close)(spot.index)]
+    }
     if self.state.dock_drop.dock.len() > 0 { return self.docked(laid) }
     if let Some(button) = window_control_at(laid, at) {
       if button.laid.id == held {

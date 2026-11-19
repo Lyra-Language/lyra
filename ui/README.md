@@ -534,7 +534,8 @@ layer — implements the two traits; the display list is the whole contract.
   (`text_overflow: TextEllipsis`) — and, closable, a × (`TabClose`), then
   `after`. **The order is the program's**: a drag past half of a movable neighbour raises
   `on_move(from, to)`, and a tab is keyed by its `TabSpec.key`, so the press stays on it as it
-  moves. A press selects (on the ×, closes, the focus left where it was); a middle click closes;
+  moves. A press selects (on the ×, closes once let go on it — not if the pointer left it — the
+  focus left where it was, `Ui.closing` holding it meanwhile); a middle click closes;
   the focused tab's Enter, Space, Left, Right, Home and End select. **A tab carries the spec's
   functions, not events** (`TabSpot`): a builder is pure, and may call none, so `ui.interact`
   calls them with its place. **Widths** (`lay_tab_strip`): as wide as it needs up to

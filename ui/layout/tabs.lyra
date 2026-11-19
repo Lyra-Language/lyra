@@ -65,7 +65,8 @@ pub const TAB_MOST: f32 = 220.0
 pub const TAB_GAP_LEAST: f32 = 2.0
 
 /// A tab bar (`TabBar`): each tab (`Tab`, `:checked` the selected) its label and, closable, a ×
-/// (`TabClose`), then `spec.after`. A press on a tab selects it, on its × closes it, and a
+/// (`TabClose`), then `spec.after`. A press on a tab selects it; its × closes it once the
+/// button comes up on it, as a button presses — not where the pointer has left it — and a
 /// middle click on it closes it; a drag moves it among the movable tabs; while a tab has the
 /// focus, Enter or Space selects it and Left, Right, Home and End select another.
 pub let tab_bar<e> = pure (spec: TabsSpec<e>) -> Node<e> => {

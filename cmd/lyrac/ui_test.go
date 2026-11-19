@@ -6228,7 +6228,7 @@ no menus: 0 handed over
 // A tab bar (WINDOW.md §3): tabs as wide as their labels where they fit; shrunk together, none
 // below TAB_LEAST, where they do not; past that as many as fit — the selected among them — and
 // the more-tabs button, whose menu lists the rest, one chosen as a press on it would (open
-// question 2). A press selects a tab, on its × closes it — the focus left where it was — a middle click closes one (not
+// question 2). A press selects a tab, on its × closes it once let go there — not off it, and the focus left where it was — a middle click closes one (not
 // Home, which is not closable); a drag past a neighbour's middle moves it, never past Home, which
 // is not movable, and the press stays on the tab through the move; the arrows, Home and End
 // select along the strip with the focus. Heard as a tab list of tabs.
@@ -6278,6 +6278,11 @@ let main = () -> u8 => {
   run.selected = 0
   play(run, fonts, click(tab_middle(run, fonts, 2)))
   say(run, fonts, "press Two")
+  let x = close_middle(run, fonts, 3)
+  play(run, fonts, [PointerMoved(x), PointerDown(Primary, x, 1)])
+  say(run, fonts, "hold Three's ×")
+  play(run, fonts, [PointerMoved(tab_middle(run, fonts, 1)), PointerUp(Primary, tab_middle(run, fonts, 1))])
+  say(run, fonts, "let go of it off the ×")
   play(run, fonts, click(close_middle(run, fonts, 3)))
   say(run, fonts, "press Three's ×")
   play(run, fonts, [PointerDown(Middle, tab_middle(run, fonts, 1), 1), PointerUp(Middle, tab_middle(run, fonts, 1))])
@@ -6464,6 +6469,8 @@ let key = pure (k: Key) -> []InputEvent => [KeyPressed(k, Modifiers {})]
 16 tabs, the last selected: narrowest at least TAB_LEAST, shrunk true, 8 shown, the more-tabs button true, the selected in view true
 the more-tabs menu: 8 items, the first chosen: [Selected(0)], selected Home
 press Two: [Selected(2)] Home One Two Three Four, selected Two, focus Two
+hold Three's ×: [] Home One Two Three Four, selected Two, focus Two
+let go of it off the ×: [] Home One Two Three Four, selected Two, focus Two
 press Three's ×: [Closed(3)] Home One Two Four, selected Two, focus Two
 middle click One: [Closed(1)] Home Two Four, selected Four, focus Two
 middle click Home: [] Home Two Four, selected Four, focus Two
