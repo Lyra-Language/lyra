@@ -1700,6 +1700,79 @@ tips: What they are and none
 	}
 }
 
+// A press hearing the modifiers (`button_with`, `PressedWith`): clicked with none, Shift,
+// Primary and both, through the window's own loop, it raises an event for each set held —
+// through `Node.map` too — and pressed from the keyboard (Tab to it, Shift+Enter), the keys
+// held with Enter; heard by assistive technology as a button.
+func TestRun_UiPressHearsTheModifiers(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ App, Command, Subscription, host_of }
+import ui.script.{ timed_platform, parse_steps }
+import ui.backend.{ Renderer, TextureId, Modifiers, AccessTree, AxButton }
+import ui.draw.{ Size, Color }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, column, sized, button_with }
+
+struct Blank {
+  textures: i64 = 0,
+}
+
+impl Renderer for Blank {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = pure (self, id, at, image) => true
+  draw = (self, window, background, ops) => {}
+}
+
+data Inner = Pressed(bool, bool)
+data Ev = Heard(Inner)
+
+let update = (heard: []string, e: Ev) -> ([]string, []Command<Ev>) => match e {
+  Heard(Pressed(shift, primary)) => ([...heard, "shift ${shift} primary ${primary}"], []),
+}
+
+let view = pure (_: []string) -> Node<Ev> => column([
+  button_with((m: Modifiers) -> Inner => Pressed(m.shift, m.primary), [sized::<Inner>(Some(100.0), Some(40.0))])
+    .labelled("Thumb")
+    .map((i: Inner) -> Ev => Heard(i)),
+])
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  let Ok(steps) = parse_steps("click:20,20 Shift+click:20,20 Primary+click:20,20 Primary+Shift+click:20,20 click:300,200 Tab Shift+Enter") else { return 2 }
+  var platform = timed_platform(steps, Size { w: 400.0, h: 300.0 })
+  var renderer = Blank {}
+  let app = App {
+    view: view,
+    update: update,
+    subscriptions: (_: []string) -> []Subscription<Ev> => [],
+    background: Color { r: 0, g: 0, b: 0 },
+  }
+  var host = host_of(app, [], platform)
+  while host.step(platform, renderer, fonts) {}
+  for line in host.state { println(line) }
+  for node in platform.access.nodes {
+    if node.role == AxButton { println("button ${node.label}") }
+  }
+  fonts.close()
+  0
+}
+`)
+	want := `shift false primary false
+shift true primary false
+shift false primary true
+shift true primary true
+shift true primary false
+button Thumb
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // A modal open keeps the program's shortcuts out, as it keeps every other input: Primary+s
 // (`App.shortcuts`) and Primary+o (a drawn menu bar's item, behind the dialog) are heard
 // with it closed and not with it open, while Primary+d, a menu inside the dialog, answers.

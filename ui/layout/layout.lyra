@@ -191,6 +191,11 @@ pub data Kind<e> =
   | Scope((Theme) -> Sheet)
   /// A button: this event when it is pressed.
   | Pressable(e)
+  /// A button that hears the modifier keys held as it is pressed ([button_with]): the event
+  /// for them — a list's item chosen alone, added with the primary modifier, a span with
+  /// Shift. Pressed from the keyboard, the keys held with Enter or Space; by assistive
+  /// technology, none.
+  | PressedWith((Modifiers) -> e)
   /// A checkbox, ticked or not: this event when it is toggled.
   | Checkable(bool, e)
   /// A slider.
@@ -608,6 +613,15 @@ pub let component_of<e> = pure (
 pub let button<e> = pure (label: string, on_click: e) -> Node<e> =>
   Node { kind: Pressable(on_click), tag: "Button", children: [text::<e>(label)] }
 
+/// A button as [button] is, which hears the modifier keys held as it is pressed:
+/// `on_press` with them ([PressedWith]). `tag` names it for the cascade, and `children` are
+/// what it shows — a thumbnail, a list's row.
+pub let button_with<e> = pure (
+  on_press: (Modifiers) -> e,
+  children: []Node<e>,
+  tag: string = "Button"
+) -> Node<e> => Node { kind: PressedWith(on_press), tag: tag, children: children }
+
 /// A checkbox labelled `label`, ticked when `checked`: its box (the `Checkbox::box` part, or
 /// `Checkbox::checked` while ticked) holding, when ticked, a fill (`Checkbox::fill`) inset from
 /// its border by the box's padding. `on_toggle` when it is clicked, or pressed from the
@@ -952,6 +966,7 @@ let mapped_kind<a, b> = pure (kind: Kind<a>, f: pure (a) -> b) -> Kind<b> => mat
   Theming(theme, sheet) => Theming(theme, sheet),
   Scope(sheet) => Scope(sheet),
   Pressable(event) => Pressable(f(event)),
+  PressedWith(on_press) => PressedWith((mods: Modifiers) -> b => f(on_press(mods))),
   Checkable(checked, event) => Checkable(checked, f(event)),
   Ranged(spec) => Ranged(SliderSpec {
     value: spec.value,
@@ -1815,6 +1830,7 @@ let same_kind<e> = (a: Kind<e>, b: Kind<e>, theme: Theme) -> bool => match (a, b
   (Theming(t1, s1), Theming(t2, s2)) => t1 == t2 && s1 == s2,
   (Scope(f1), Scope(f2)) => f1(theme) == f2(theme),
   (Pressable(_), Pressable(_)) => true,
+  (PressedWith(_), PressedWith(_)) => true,
   (Checkable(on1, _), Checkable(on2, _)) => on1 == on2,
   (Ranged(r1), Ranged(r2)) =>
     same_f32(
@@ -1865,6 +1881,7 @@ pub let child_id<e> = pure (parent: string, node: Node<e>, index: i64) -> string
 /// Whether an element of `kind` takes the focus: a control.
 pub let focusable<e> = pure (kind: Kind<e>) -> bool => match kind {
   Pressable(_) => true,
+  PressedWith(_) => true,
   Checkable(_, _) => true,
   Ranged(_) => true,
   Editable(_) => true,
@@ -2502,6 +2519,7 @@ let with_own_state<e> = pure (classes: string, node: Node<e>) -> string => {
 /// The role an element of `kind` has.
 let role_of<e> = pure (kind: Kind<e>) -> Role => match kind {
   Pressable(_) => ButtonRole,
+  PressedWith(_) => ButtonRole,
   Checkable(_, _) => CheckboxRole,
   Ranged(_) => SliderRole,
   Editable(_) => TextFieldRole,
@@ -2534,6 +2552,7 @@ let label_of<e> = pure (node: Node<e>, children: []Placed<e>) -> string => {
   match node.kind {
     Words(content) => content,
     Pressable(_) => text_inside(children),
+    PressedWith(_) => text_inside(children),
     // Its face's: what it floats is its menu.
     Opens(_) => if children.len() > 0 { text_inside([children[0]]) } else { "" },
     Checkable(_, _) => text_inside(children),

@@ -108,6 +108,7 @@ import ui.layout.{
   SliderSpec,
   SelectSpec,
   Pressable,
+  PressedWith,
   Checkable,
   Ranged,
   Editable,
@@ -1263,7 +1264,7 @@ impl Ui {
     PointerDown(Primary, at, clicks) => self.pointer_down(laid, at, clicks),
     // A middle click on a tab closes it, as browsers have it.
     PointerDown(Middle, at, _) => middle_on_tab(laid, at),
-    PointerUp(Primary, at) => self.pointer_up(laid, at),
+    PointerUp(Primary, at) => self.pointer_up(laid, at, platform.held()),
     Scrolled(across, down) => {
       self.scrolled(laid, across, down, platform.scroll_precise())
       []
@@ -1527,6 +1528,7 @@ impl Ui {
       Some(f) => if f.laid.field.is_some() { IBeam } else {
         match f.laid.kind {
           Pressable(_) => Hand,
+          PressedWith(_) => Hand,
           Painted(painter) => match painter.input {
             Some(raw) => raw.cursor,
             None => Arrow
@@ -1677,7 +1679,7 @@ impl Ui {
 
   /// The primary button came up at `at`: a button or checkbox held and still under the
   /// pointer is pressed.
-  let pointer_up<e> = (self: mut, laid: Laid<e>, at: Point) -> []e => {
+  let pointer_up<e> = (self: mut, laid: Laid<e>, at: Point, mods: Modifiers) -> []e => {
     self.pointer = at
     let held = self.state.pressed
     self.state.pressed = ""
@@ -1693,7 +1695,7 @@ impl Ui {
     if self.state.open.len() > 0 && option_of(self.state.open, held).is_some() {
       return self.choose_option(target.laid)
     }
-    let events = activated(target.laid)
+    let events = activated(target.laid, mods)
     if self.menu_level(held) >= 0 { self.menu_chosen() }
     events
   }
@@ -2103,6 +2105,10 @@ impl Ui {
     match focused.laid.kind {
       Pressable(_) =>
         if key == Enter || key == Character(' ') { activated(focused.laid) } else { [] },
+      PressedWith(_) =>
+        if key == Enter || key == Character(' ') {
+          activated(focused.laid, mods)
+        } else { [] },
       Checkable(_, _) =>
         if key == Enter || key == Character(' ') { activated(focused.laid) } else { [] },
       Ranged(spec) => step_slider(spec, key),
@@ -2999,13 +3005,16 @@ let keep_field_scrolls<e> = (laid: Laid<e>, ui: mut Ui) -> void => {
 
 // ── Controls ─────────────────────────────────────────────────────────────────
 
-/// The event a button or checkbox raises when it is pressed.
-let activated<e> = pure (laid: Laid<e>) -> []e => match laid.kind {
-  Pressable(event) => [event],
-  Checkable(_, event) => [event],
-  Radio(_, event) => [event],
-  _ => [],
-}
+/// The event a button or checkbox raises when it is pressed, `mods` held — which only a
+/// [PressedWith] hears.
+let activated<e> = (laid: Laid<e>, mods: Modifiers = Modifiers {}) -> []e =>
+  match laid.kind {
+    Pressable(event) => [event],
+    PressedWith(on_press) => [on_press(mods)],
+    Checkable(_, event) => [event],
+    Radio(_, event) => [event],
+    _ => [],
+  }
 
 /// A slider's value for the pointer at `at`, on its step, and the event for it if it moved.
 let slide_to<e> = (found: Found<e>, spec: SliderSpec<e>, at: Point) -> []e => {

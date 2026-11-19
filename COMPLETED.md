@@ -9,6 +9,18 @@ Newest first.
 
 ## Dated log
 
+### 11/19/26 — a press that hears the modifiers
+
+Vega's frame strip chooses several frames, Cmd- and Shift-clicked, and a `Pressable(e)` could
+not tell a plain click from either: its event is made before anything is pressed. Raw input
+heard the modifiers, but a thumbnail made raw would lose the focus, the keyboard and the
+button role. `PressedWith((Modifiers) -> e)` (`button_with`) is a button whose event is made
+from the keys held: `activated` takes them — the pointer's release asks `Platform.held()`, a
+key passes its own, an assistive technology's click none.
+
+- **Not `pure`.** A pure `activated` cannot call the program's function, as a slider's
+  `on_change` is called outside one; the press's function is a plain `(Modifiers) -> e`.
+
 ### 11/19/26 — `ui.layout`'s `section`, and `font_weight`
 
 Vega's side panels were one column of controls, a section's title plain text like the labels
