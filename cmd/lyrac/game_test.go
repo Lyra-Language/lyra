@@ -513,6 +513,48 @@ let main = () -> u8 => {
 	}
 }
 
+// A cutscene's camera (`pan_to`): a step of its speed on each axis towards a point, whether it
+// is there — 25 steps to (100, 50) at 4, along the straight line, both axes arriving together —
+// a step at most 4 on X and 2 on Y — the target held inside
+// the world, and a world smaller than the view centred; `centred_on` the view with a rectangle
+// in its middle.
+func TestRun_GameCameraPans(t *testing.T) {
+	t.Parallel()
+	setenv(t, "LYRA_STD", repoRoot(t))
+	src := filepath.Join(t.TempDir(), "main.lyra")
+	if err := os.WriteFile(src, []byte(`import std.game.camera.{ Camera }
+
+let main = () -> u8 => {
+  var view = Camera { world_width: 640.0, world_height: 384.0, view_width: 320.0, view_height: 224.0 }
+  var steps = 0
+  var bent = false
+  loop {
+    let (wx, wy) = (view.x, view.y)
+    let there = view.pan_to(100.0, 50.0, 4.0)
+    // Halfway along X, halfway along Y: a straight line.
+    if view.x > 49.5 && view.x < 50.5 && (view.y < 24.5 || view.y > 25.5) { bent = true }
+    if view.x - wx > 4.01 || view.y - wy > 2.01 { bent = true }
+    if there { break }
+    steps += 1
+  }
+  if bent || steps + 1 != 25 || view.x < 99.5 || view.x > 100.5 || view.y < 49.5 || view.y > 50.5 { return 1 }
+  while !view.pan_to(1000.0, 1000.0, 8.0) {}
+  if view.x < 319.5 || view.x > 320.5 || view.y < 159.5 || view.y > 160.5 { return 2 }
+  let (cx, cy) = view.centred_on(200.0, 100.0, 16.0, 24.0)
+  if cx < 47.5 || cx > 48.5 || cy < 0.0 - 0.5 || cy > 0.5 { return 3 }
+  var small = Camera { world_width: 200.0, world_height: 100.0, view_width: 320.0, view_height: 224.0 }
+  while !small.pan_to(50.0, 50.0, 2.0) {}
+  if small.x < -60.5 || small.x > -59.5 || small.y < -62.5 || small.y > -61.5 { return 4 }
+  0
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, stderr, code := captureRun(t, "run", src); code != 0 {
+		t.Errorf("case %d failed; stderr: %s", code, stderr)
+	}
+}
+
 // A screen filling the window by showing more (`Expand`) grows along the window's longer
 // side, and a camera told the new size (`resize_view`) stays centred where it was, its zone
 // moved by half the growth, never past the world — and a world smaller than the view is

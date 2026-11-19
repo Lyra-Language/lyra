@@ -10,7 +10,8 @@ import (
 // five frames, stepped five times, so each has taken one step: palette 0's colour 1 (the
 // backdrop) is what was its 3, blue, and palette 1's colour 1 (a cell of plane A) what was its
 // 2, green. Then `fade_to` takes every colour to white, and with `fade_back` after it back to
-// what was shown.
+// what was shown — and the same a step a frame (`start_fade_to`, `start_fade_back`,
+// `step_fade`), as a cutscene fades while its game goes on.
 func TestGenesis_PaletteCyclesAndFades(t *testing.T) {
 	t.Parallel()
 	genesisToolchainOrSkip(t)
@@ -45,6 +46,24 @@ let main = () -> void => {
   %s
   loop {}
 }
+
+/// The fade begun stepped a frame at a time, as a cutscene steps it: over after its four
+/// steps, and over at once after that — else palette 1's cell is red, which no case wants.
+let stepped = () -> void => {
+  var steps = 0
+  loop {
+    steps += 1
+    let over = palette.step_fade()
+    vdp.wait_vblank()
+    vdp.send_colors()
+    if over { break }
+  }
+  if steps != 4 || !palette.step_fade() {
+    vdp.set_color(1, 1, vdp.rgb(7, 0, 0))
+    vdp.set_color(1, 2, vdp.rgb(7, 0, 0))
+    vdp.set_color(1, 3, vdp.rgb(7, 0, 0))
+  }
+}
 `, fades)
 	}
 	at := func(s screen, x, y int) string {
@@ -57,6 +76,8 @@ let main = () -> void => {
 		{"", "0000ff", "00ff00", "a step each: forward brings 3 to 1, backward 2"},
 		{"palette.fade_to(vdp.rgb(7, 7, 7), 4)", "ffffff", "ffffff", "faded to white"},
 		{"palette.fade_to(vdp.rgb(7, 7, 7), 4)\n  palette.fade_back(4)", "0000ff", "00ff00", "faded to white and back"},
+		{"palette.start_fade_to(vdp.rgb(7, 7, 7), 4)\n  stepped()", "ffffff", "ffffff", "faded to white a step a frame"},
+		{"palette.start_fade_to(vdp.rgb(7, 7, 7), 4)\n  stepped()\n  palette.start_fade_back(4)\n  stepped()", "0000ff", "00ff00", "faded to white and back a step a frame"},
 	} {
 		out := genesisProgram(t, "palette", program(c.fades))
 		s := runROM(t, out, "120", "")

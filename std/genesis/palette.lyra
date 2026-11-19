@@ -16,6 +16,9 @@ module std.genesis.palette
 //! }
 //! palette.fade_to(vdp.rgb(0, 0, 0), 30)   // half a second to black, waiting
 //! palette.fade_back(30)                    // and back
+//!
+//! palette.start_fade_to(vdp.rgb(0, 0, 0), 30)   // or a step a frame, the game going on
+//! loop { if palette.step_fade() { break } … }   // once a frame; true once it is over
 //! ```
 //!
 //! **What they change reaches CRAM in the vertical blank**, queued (`vdp.queue_color`) and sent
@@ -57,15 +60,51 @@ pub let step_cycles<const N: i64> = (cycles: ref [N]Cycle) -> void => {
 /// a step each vertical blank, returning once it is there: the screen to black, to white, or a
 /// flash of a colour. What it showed is kept for [fade_back].
 pub let fade_to = (color: u16, frames: u16) -> void => {
-  for i: u16 in 0..<64 { before[i] = vdp.color_of(i / 16, i % 16) }
-  var targets: [64]u16 = #[color; 64]
-  faded_to = color
-  fade(targets, frames, true)
+  start_fade_to(color, frames)
+  waited()
 }
 
-/// Every colour back from what it shows to what it showed before the last [fade_to], over
-/// `frames` frames, returning once it is there.
-pub let fade_back = (frames: u16) -> void => fade(before, frames, false)
+/// Every colour back from what it shows to what it showed before the last [fade_to] (or
+/// [start_fade_to]), over `frames` frames, returning once it is there.
+pub let fade_back = (frames: u16) -> void => {
+  start_fade_back(frames)
+  waited()
+}
+
+/// A fade that does not wait: [fade_to]'s begun, each step taken by [step_fade] once a frame
+/// — what a cutscene fades by while the game goes on.
+pub let start_fade_to = (color: u16, frames: u16) -> void => {
+  for i: u16 in 0..<64 {
+    before[i] = vdp.color_of(i / 16, i % 16)
+    fade_target[i] = color
+  }
+  faded_to = color
+  begin(true, frames)
+}
+
+/// [fade_back]'s begun, each step taken by [step_fade].
+pub let start_fade_back = (frames: u16) -> void => {
+  for i: u16 in 0..<64 { fade_target[i] = before[i] }
+  begin(false, frames)
+}
+
+/// A step of the fade begun ([start_fade_to], [start_fade_back]): its colours queued for the
+/// next vertical blank, as [step_cycles]'s are. Whether it is over — at once where none was
+/// begun.
+pub let step_fade = () -> bool => {
+  if fade_step >= fade_steps { return true }
+  fade_step += 1
+  for i: u16 in 0..<64 {
+    vdp.queue_color(
+      i / 16,
+      i % 16,
+      mixed(fade_from[i], fade_target[i], fade_step, fade_steps)
+    )
+  }
+  let levels = i16(fade_step) * 7 / i16(fade_steps)
+  vdp.set_fade(faded_to, if fading_out { levels } else { 7 - levels })
+  fade_step >= fade_steps
+}
 
 // ── Beneath ──────────────────────────────────────────────────────────────────────────
 
@@ -75,6 +114,14 @@ var ticks: u16 = 0
 /// The colours before the last [fade_to], and the colour it faded to.
 var before: [64]u16 = #[0; 64]
 var faded_to: u16 = 0
+
+/// The fade under way: each colour from what it showed to its target, `fade_steps` steps, of
+/// which `fade_step` are taken; out to [faded_to] or back from it.
+var fade_from: [64]u16 = #[0; 64]
+var fade_target: [64]u16 = #[0; 64]
+var fade_step: u16 = 0
+var fade_steps: u16 = 0
+var fading_out: bool = false
 
 /// Cycle `c`'s colours one place on (or back).
 let turn = (c: Cycle) -> void => {
@@ -96,20 +143,22 @@ let turn = (c: Cycle) -> void => {
   }
 }
 
-/// Every colour from what it shows to `targets` over `frames` frames, a step a vertical blank
-/// — `out` to [fade_to]'s colour, else back from it. The VDP is told how far along it is
+/// A fade begun from what every colour shows now, over `frames` frames — `out` to [faded_to],
+/// else back from it — towards [fade_target]. The VDP is told how far along it is at each step
 /// (`vdp.set_fade`), so colours set partway down the picture (`std.genesis.raster`) fade too.
-let fade = (targets: ref [64]u16, frames: u16, out: bool) -> void => {
-  var from: [64]u16 = #[0; 64]
-  for i: u16 in 0..<64 { from[i] = vdp.color_of(i / 16, i % 16) }
-  let steps = frames.max(1)
-  for k: u16 in 1..<=steps {
-    for i: u16 in 0..<64 {
-      vdp.queue_color(i / 16, i % 16, mixed(from[i], targets[i], k, steps))
-    }
-    let levels = i16(k) * 7 / i16(steps)
-    vdp.set_fade(faded_to, if out { levels } else { 7 - levels })
+let begin = (out: bool, frames: u16) -> void => {
+  for i: u16 in 0..<64 { fade_from[i] = vdp.color_of(i / 16, i % 16) }
+  fade_steps = frames.max(1)
+  fade_step = 0
+  fading_out = out
+}
+
+/// The fade begun stepped a vertical blank at a time, returning once it is over and shown.
+let waited = () -> void => {
+  loop {
+    let over = step_fade()
     next_blank()
+    if over { break }
   }
 }
 

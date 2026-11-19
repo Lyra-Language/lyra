@@ -755,6 +755,47 @@ let main = () -> void => {
 	}
 }
 
+// TestGenesis_ACameraPans is TestRun_GameCameraPans on the 68000: 25 frames' steps to (100,
+// 50) at 4 pixels along the straight line, `last_x` and `last_y` where each step started (what `scroll_map` writes
+// from), the target held inside the world, and `centred_on`. The backdrop is blue where every
+// case holds, green where one does not.
+func TestGenesis_ACameraPans(t *testing.T) {
+	t.Parallel()
+	genesisToolchainOrSkip(t)
+	out := genesisProgram(t, "pans", `import std.genesis.vdp
+import std.genesis.camera.{ Camera }
+
+let main = () -> void => {
+  vdp.init()
+  var view = Camera { world_width: 640, world_height: 384 }
+  var ok = true
+  var steps: i16 = 0
+  loop {
+    steps += 1
+    let before = view.x
+    let there = view.pan_to(100, 50, 4)
+    if view.last_x != before { ok = false }
+    // Along the straight line: X at 4 a frame, Y at 2, halfway along each together.
+    if view.x == 52 && view.y != 26 { ok = false }
+    if there { break }
+  }
+  if steps != 25 || view.x != 100 || view.y != 50 { ok = false }
+  while !view.pan_to(1000, 1000, 8) {}
+  if view.x != 320 || view.y != 160 { ok = false }
+  let (cx, cy) = view.centred_on(200, 100, 16, 24)
+  if cx != 48 || cy != 0 { ok = false }
+  vdp.set_color(0, 0, if ok { vdp.rgb(0, 0, 7) } else { vdp.rgb(0, 7, 0) })
+  vdp.display_on()
+  loop { vdp.wait_vblank() }
+}
+`)
+	s := runROMWith(t, out, "20")
+	i := (4*s.width + 4) * 3
+	if got := fmt.Sprintf("%02x%02x%02x", s.pixels[i], s.pixels[i+1], s.pixels[i+2]); got != "0000ff" {
+		t.Errorf("the backdrop is %s, want 0000ff: a case of the pan failed", got)
+	}
+}
+
 // TestGenesis_ACameraScrollsBack is the scroll the other way: from (480, 96) left to x 0,
 // then up to y 0. (10, 20) comes into view only by a column written going left, (30, 5)
 // only by a row written going up — neither was in the plane the view started with.

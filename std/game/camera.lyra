@@ -91,6 +91,41 @@ impl Camera {
     )
   }
 
+  /// The view a step of `speed` pixels towards top-left (`x`, `y`) along the straight line — the
+  /// longer way at `speed`, the shorter its share, so both arrive together — the target
+  /// held inside the world, as [follow] holds the view — whether it is there now: a
+  /// cutscene's camera, which pans rather than follows. Once an update in place of [follow].
+  pub let pan_to = (self: mut, x: f32, y: f32, speed: f32) -> bool => {
+    let tx = inside(x, self.view_width, self.world_width)
+    let ty = inside(y, self.view_height, self.world_height)
+    // Along the straight line: the longer way at `speed`, the shorter its share, both
+    // arriving together.
+    let fast = speed.max(0.25)
+    let dx = (tx - self.x).abs()
+    let dy = (ty - self.y).abs()
+    let far = dx.max(dy)
+    let (bx, by) = if far < 0.0001 {
+      (fast, fast)
+    } else { (fast * dx / far, fast * dy / far) }
+    self.x = toward(self.x, tx, bx)
+    self.y = toward(self.y, ty, by)
+    !(self.x < tx) && !(self.x > tx) && !(self.y < ty) && !(self.y > ty)
+  }
+
+  /// The view's top-left with the rectangle `x`, `y`, `width` × `height` in its middle, held
+  /// inside the world as [follow] holds the view: where [pan_to] takes a cutscene's camera back
+  /// to what it follows.
+  pub let centred_on = pure (
+    self,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32
+  ) -> (f32, f32) => (
+    inside(x + width / 2.0 - self.view_width / 2.0, self.view_width, self.world_width),
+    inside(y + height / 2.0 - self.view_height / 2.0, self.view_height, self.world_height)
+  )
+
   /// The view made `width` × `height` — the screen's, when it fills the window by showing
   /// more (`screen.Expand`, whose size changes with the window): kept centred where it was,
   /// its zone moved by half the growth so it stays where it was in the screen's middle, and
@@ -210,6 +245,10 @@ impl Camera {
 /// between `low` and `high` on the screen, then kept inside `world`, at a whole pixel.
 /// Something bigger than the zone is centred on it; a world smaller than the view is centred
 /// in it ([inside]).
+/// `at` moved `by` towards `to`, never past it.
+let toward = pure (at: f32, to: f32, by: f32) -> f32 =>
+  if at < to { (at + by).min(to) } else { (at - by).max(to) }
+
 let along = pure (
   at: f32,
   from: f32,

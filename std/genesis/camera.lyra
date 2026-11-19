@@ -137,6 +137,49 @@ impl Camera {
     )
   }
 
+  /// The view a step of `speed` pixels towards top-left (`x`, `y`) along the straight line — the
+  /// longer way at `speed`, the shorter its share, so both arrive together — the target
+  /// held inside the world, as [follow] holds the view — whether it is there now: a
+  /// cutscene's camera, which pans rather than follows. Once a frame in place of [follow],
+  /// which it stands for in [scroll_map]'s `last_x` and `last_y`.
+  pub let pan_to = (self: mut, x: i16, y: i16, speed: i16) -> bool => {
+    self.last_x = self.x
+    self.last_y = self.y
+    let tx = x.clamp(0, (self.world_width - vdp.SCREEN_WIDTH).max(0))
+    let ty = y.clamp(0, (self.world_height - vdp.SCREEN_HEIGHT).max(0))
+    // Along the straight line: the longer way at `speed`, the shorter its share, rounded up
+    // so it never falls behind, both arriving together.
+    let dx = i32((tx - self.x).abs())
+    let dy = i32((ty - self.y).abs())
+    let fast = i32(speed.max(1))
+    let (bx, by) = if dx >= dy {
+      (fast, if dx == 0 { 0 } else { (fast * dy + dx - 1) / dx })
+    } else { ((fast * dx + dy - 1) / dy, fast) }
+    self.x = toward(self.x, tx, i16(bx))
+    self.y = toward(self.y, ty, i16(by))
+    self.x == tx && self.y == ty
+  }
+
+  /// The view's top-left with the rectangle `x`, `y`, `width` × `height` in its middle, held
+  /// inside the world as [follow] holds the view: where [pan_to] takes a cutscene's camera back
+  /// to what it follows.
+  pub let centred_on = pure (
+    self,
+    x: i16,
+    y: i16,
+    width: i16,
+    height: i16
+  ) -> (i16, i16) => (
+    (x + width / 2 - vdp.SCREEN_WIDTH / 2).clamp(
+      0,
+      (self.world_width - vdp.SCREEN_WIDTH).max(0)
+    ),
+    (y + height / 2 - vdp.SCREEN_HEIGHT / 2).clamp(
+      0,
+      (self.world_height - vdp.SCREEN_HEIGHT).max(0)
+    )
+  )
+
   /// Where world position (`x`, `y`) is on the screen, for a sprite.
   pub let on_screen = pure (self, x: i16, y: i16) -> (i16, i16) =>
     (x - self.x, y - self.y)
@@ -454,6 +497,10 @@ let write_band = (band: Band, x: i32, from: i16, lines: i16, ticks: u32) -> void
 /// One axis of [follow]: the view's start `at` moved so `from`..`from + size` stays
 /// between `low` and `high` on the screen, then kept inside `world`. Something bigger than
 /// the zone is centred on it — pushed from one edge to the other, the view would shake.
+/// `at` moved `by` towards `to`, never past it.
+let toward = pure (at: i16, to: i16, by: i16) -> i16 =>
+  if at < to { (at + by).min(to) } else { (at - by).max(to) }
+
 let along = pure (
   at: i16,
   from: i16,
@@ -571,9 +618,7 @@ let stage_column<const N: i64> = (
       vdp.PLANE_WIDTH * 2,
       run
     )
-    for k: u16 in 0..<run {
-      vdp.put_staged(at + k, blocks.cell_at(cells, width, mx, my.wrapping_add(k)))
-    }
+    staged_down(cells, width, mx, my, run, at)
     my = my.wrapping_add(run)
     left -= run
   }
@@ -595,11 +640,178 @@ let stage_row<const N: i64> = (
     let column = mx % vdp.PLANE_WIDTH
     let run = remaining.min(vdp.PLANE_WIDTH - column)
     let at = staged(row_start + column * 2, 2, run)
-    for k: u16 in 0..<run {
-      vdp.put_staged(at + k, blocks.cell_at(cells, width, mx.wrapping_add(k), my))
-    }
+    staged_across(cells, width, mx, my, run, at)
     mx = mx.wrapping_add(run)
     remaining -= run
+  }
+}
+
+/// `count` cells of map row `my` from column `mx` (each a column further, wrapping) staged from
+/// `at` — blank past the map's edges — walked along the row as [write_run] walks it, not asked
+/// a cell at a time: a camera panning four pixels a frame staged a column every other frame
+/// and a row with it, a `cell_at` call a cell, and the hero's tour fell to 20 frames a second
+/// while it panned (11/19).
+let staged_across<const N: i64> = (
+  cells: ref [N]u16,
+  width: u16,
+  mx: u16,
+  my: u16,
+  count: u16,
+  at: u16
+) -> void => {
+  var q = vdp.staged_from(at)
+  let columns = blocks.columns(width)
+  var x = mx
+  var k: u16 = 0
+  if my < blocks.rows(cells, width) {
+    while k < count && x >= columns {
+      unsafe {
+        q^ = 0
+        q = q.offset(1)
+      }
+      x = x.wrapping_add(1)
+      k += 1
+    }
+    let first: ^u16 = unsafe { &cells[0] }
+    if (width & blocks.BLOCKS) == 0 {
+      let take = (count - k).min(columns - x.min(columns))
+      let from = u32(my) * u32(columns) + u32(x)
+      if take > 0 && from + u32(take) <= u32(N) {
+        unsafe {
+          var p = first.offset(i64(from))
+          for _: u16 in 0..<take {
+            q^ = p^
+            q = q.offset(1)
+            p = p.offset(1)
+            k += 1
+          }
+        }
+        x += take
+      }
+    } else {
+      let shift = cells[0]
+      let side: u16 = u16(1) << shift
+      let mask: u16 = side - 1
+      let across = (columns + mask) >> shift
+      let row_blocks = u32(cells[3]) + u32(my >> shift) * u32(cells[2])
+      let inner = 4 + (u32(my & mask) << shift)
+      if x < columns && row_blocks + u32(across) <= u32(N) {
+        unsafe {
+          var number = first.offset(i64(row_blocks + u32(x >> shift)))
+          var within = x & mask
+          while k < count && x < columns {
+            let take = (side - within).min(count - k).min(columns - x)
+            let from = inner + (u32(number^) << (2 * shift)) + u32(within)
+            number = number.offset(1)
+            if from + u32(take) > u32(N) { break }
+            var p = first.offset(i64(from))
+            for _: u16 in 0..<take {
+              q^ = p^
+              q = q.offset(1)
+              p = p.offset(1)
+              k += 1
+            }
+            x += take
+            within = 0
+          }
+        }
+      }
+    }
+  }
+  while k < count {
+    unsafe {
+      q^ = 0
+      q = q.offset(1)
+    }
+    k += 1
+  }
+}
+
+/// `count` cells of map column `mx` from row `my` (each a row further, wrapping) staged from
+/// `at` — blank past the map's edges: a plain map's column a pointer stepping a row's width
+/// down the table; a block map's, each block's number read once and its cells in the column
+/// stepped down a block's side — not a `cell_at` call a cell ([staged_across] says why).
+let staged_down<const N: i64> = (
+  cells: ref [N]u16,
+  width: u16,
+  mx: u16,
+  my: u16,
+  count: u16,
+  at: u16
+) -> void => {
+  var q = vdp.staged_from(at)
+  let columns = blocks.columns(width)
+  let rows = blocks.rows(cells, width)
+  var y = my
+  var k: u16 = 0
+  if mx < columns {
+    // Above the map's top (a row below 0 wraps high), or past its foot: blank, up to its first row.
+    while k < count && y >= rows {
+      unsafe {
+        q^ = 0
+        q = q.offset(1)
+      }
+      y = y.wrapping_add(1)
+      k += 1
+    }
+    let first: ^u16 = unsafe { &cells[0] }
+    if (width & blocks.BLOCKS) == 0 {
+      let take = (count - k).min(rows - y.min(rows))
+      let from = u32(y) * u32(columns) + u32(mx)
+      if take > 0 && from + u32(take - 1) * u32(columns) < u32(N) {
+        unsafe {
+          var p = first.offset(i64(from))
+          for _: u16 in 0..<take {
+            q^ = p^
+            q = q.offset(1)
+            p = p.offset(i64(columns))
+            k += 1
+          }
+        }
+        y += take
+      }
+    } else {
+      // The column's block numbers a table row apart, found once and stepped down: each
+      // block's number read, and its cells in the column a block's side apart. The table is
+      // checked once for the numbers and once a block for its cells.
+      let shift = cells[0]
+      let side: u16 = u16(1) << shift
+      let mask: u16 = side - 1
+      let across = u32(cells[2])
+      let numbers = u32(cells[3])
+      let held = (numbers - 4) >> (2 * shift)
+      let first_number = numbers + u32(y >> shift) * across + u32(mx >> shift)
+      let last_number = numbers + u32((rows - 1) >> shift) * across + u32(mx >> shift)
+      if y < rows && last_number < u32(N) {
+        let inner = 4 + u32(mx & mask)
+        var within = y & mask
+        unsafe {
+          var number = first.offset(i64(first_number))
+          while k < count && y < rows {
+            let n = u32(number^)
+            if n >= held { break }
+            let take = (side - within).min(count - k).min(rows - y)
+            var p = first.offset(i64(inner + (n << (2 * shift)) + (u32(within) << shift)))
+            for _: u16 in 0..<take {
+              q^ = p^
+              q = q.offset(1)
+              p = p.offset(i64(side))
+            }
+            k += take
+            y += take
+            within = 0
+            number = number.offset(i64(across))
+          }
+        }
+      }
+    }
+  }
+  while k < count {
+    unsafe {
+      q^ = 0
+      q = q.offset(1)
+    }
+    k += 1
   }
 }
 

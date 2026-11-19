@@ -443,6 +443,12 @@ pub const NO_ROOM: u16 = 0xFFFF
 /// Staged word `at` ([stage]'s answer and on) set to `word`.
 pub let put_staged = (at: u16, word: u16) -> void => { staged[at] = word }
 
+/// Staged word `at` ([stage]'s answer) as a pointer, for a caller filling the run [stage] made
+/// room for a word after another through it — [put_staged] a call and a check a word, which
+/// staging a camera's columns and rows paid a cell at a time (11/19). Only the words [stage]
+/// answered room for are the caller's.
+pub let staged_from = (at: u16) -> ^mut u16 => unsafe { &mut staged[at] }
+
 /// The staged runs into `plane`'s 4 KB forgotten — what a plane redrawn whole makes stale.
 pub let drop_staged = (plane: u16) -> void => {
   var kept: u16 = 0
