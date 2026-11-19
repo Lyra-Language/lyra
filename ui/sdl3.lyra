@@ -356,6 +356,9 @@ pub let first_window = (
   // A trackpad's flick goes on after the fingers lift, as the system's own scroll views do —
   // SDL leaves the momentum out on macOS unless asked, before it starts.
   let _ = set_hint("SDL_MAC_SCROLL_MOMENTUM", "1")
+  // The display left to sleep and the screensaver to start, as any application's: SDL keeps
+  // them off for as long as it runs unless asked, a game's choice, not a window of controls'.
+  let _ = set_hint("SDL_VIDEO_ALLOW_SCREENSAVER", "1")
   if !init(INIT_VIDEO) {
     return Err("SDL could not start: ${last_error()}")
   }

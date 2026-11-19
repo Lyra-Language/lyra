@@ -1429,6 +1429,10 @@ sets V on every add. What stands between that and a ROM:
   as the argument is made (COMPLETED.md 10/11, `sret.go`).
 - **[DONE 10/11] `sret` on the 68000** — not the M68k LLVM: a libc `memcpy` declared with an
   `i64` length, read as 0 by a 32-bit `size_t`. LLVM's intrinsics now (COMPLETED.md 10/11).
+- **[OPEN] A function of a `ref` parameter passes for one of a value** (11/19, Termina):
+  `Menus { of: menus_of }` with `of: (s) -> …` and `menus_of = (t: ref Term) -> …` checks,
+  and the call hands the `Term` by value where an address is read — a segfault at start-up.
+  Refuse it (or adapt it), as lyra-W031's advice to add `ref` makes it easy to write.
 
 ## Builds in parts (`lyrac`, 10/29)
 
