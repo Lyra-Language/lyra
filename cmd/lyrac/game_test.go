@@ -1266,6 +1266,10 @@ let main = () -> u8 => {
 // keeps put back.
 func TestRun_GameTalksFlagsChooseItsLines(t *testing.T) {
 	t.Parallel()
+	// std.game links SDL3, though this program opens no window.
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
 	setenv(t, "LYRA_STD", repoRoot(t))
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.lyra")
