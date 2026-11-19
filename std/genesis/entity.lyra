@@ -185,6 +185,24 @@ impl Entity {
     self.was_y = y
   }
 
+  /// A frame of a scripted walk to top-left (`x`, `y`) — a cutscene's — nothing stopping it:
+  /// `speed` 256ths of a pixel a frame along each axis, its kind's top speed for 0 (a pixel a
+  /// frame where that is none too), facing the way it goes across (`mirrored` going left). Its
+  /// speed is left at none. Whether it is there.
+  pub let walk_to = (self: mut, x: i16, y: i16, speed: i16 = 0) -> bool => {
+    let by = i32(if speed > 0 { speed } else if self.kind.max_speed > 0 { self.kind.max_speed } else { 256 })
+    let tx = i32(x) << 8
+    let ty = i32(y) << 8
+    self.vx = 0
+    self.vy = 0
+    self.was_x = self.x()
+    self.was_y = self.y()
+    if tx != self.fx { self.mirrored = tx < self.fx }
+    self.fx = if tx > self.fx { (self.fx + by).min(tx) } else { (self.fx - by).max(tx) }
+    self.fy = if ty > self.fy { (self.fy + by).min(ty) } else { (self.fy - by).max(ty) }
+    self.fx == tx && self.fy == ty
+  }
+
   /// A frame's push, `dx` and `dy` each -1, 0 or 1 (the pad's directions): a pushed axis gains
   /// the kind's acceleration towards its top speed, one not pushed loses its friction until
   /// it stands. With gravity the vertical axis is gravity's, falling at most [MAX_FALL], and

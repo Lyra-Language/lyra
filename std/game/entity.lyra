@@ -195,6 +195,23 @@ impl Entity {
     self.shown_in = -1
   }
 
+  /// An update of a scripted walk to top-left (`x`, `y`) — a cutscene's — nothing stopping it:
+  /// `speed` pixels an update along each axis, its kind's top speed for 0 (a pixel an update
+  /// where that is none too), facing the way it goes across (`mirrored` going left), and drawn
+  /// sliding there as a move is. Its speed is left at none. Whether it is there.
+  pub let walk_to = (self: mut, x: f32, y: f32, speed: f32 = 0.0) -> bool => {
+    let by = if speed > 0.0 { speed } else if self.kind.max_speed > 0.0 { self.kind.max_speed } else { 1.0 }
+    self.vx = 0.0
+    self.vy = 0.0
+    self.was_x = self.fx
+    self.was_y = self.fy
+    if x < self.fx || x > self.fx { self.mirrored = x < self.fx }
+    self.fx = if x > self.fx { (self.fx + by).min(x) } else { (self.fx - by).max(x) }
+    self.fy = if y > self.fy { (self.fy + by).min(y) } else { (self.fy - by).max(y) }
+    // Held to the point exactly on the step that reaches it (min and max), so there.
+    !(self.fx < x || self.fx > x || self.fy < y || self.fy > y)
+  }
+
   /// Shown this update at (`sx`, `sy`) on the screen, its sprites added from `first`
   /// (`sprites.listed()` before they were): they slide from where it was shown the update
   /// before — once an update, as it is drawn, whether or not it is on the screen.

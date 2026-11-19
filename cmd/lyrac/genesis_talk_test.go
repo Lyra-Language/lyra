@@ -201,3 +201,68 @@ let main = () -> void => {
 		t.Errorf("the framed box:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+// TestGenesis_ATalksFlagsChooseItsLines plays a talk twice through std.genesis.talk's flags:
+// the first time line 0 ("unless" flag 0, setting it) is said, the second it is passed over
+// for line 1 (which "needs" flag 0); a choice there sets flag 3, which the game reads; a line
+// whose flags let none of the rest be said ends the talk; and keep_flags puts every flag back
+// as a save had them. Each step that goes as it should adds a colour to the backdrop's
+// red, green and blue, so a backdrop of all three is every step.
+func TestGenesis_ATalksFlagsChooseItsLines(t *testing.T) {
+	t.Parallel()
+	genesisToolchainOrSkip(t)
+	out := genesisProgram(t, "flags", `import std.genesis.vdp
+import std.genesis.talk
+import std.genesis.talk.{ Talk, Line, Choice, END }
+import std.genesis.text.{ Font, TextBox }
+
+const LINE: [8]u32 = #[0x22222222; 8]
+
+const LINES: [3]Line = #[
+  Line { who: "A", words: "HI", unless: 0, sets: 0, then: END },
+  Line { who: "A", words: "AGAIN", needs: 0, first_choice: 0, choices: 2 },
+  Line { who: "A", words: "NEVER", needs: 5, then: END },
+]
+const CHOICES: [2]Choice = #[Choice { words: "YES", sets: 3 }, Choice { words: "NO", then: 2 }]
+
+let main = () -> void => {
+  vdp.init()
+  for k: u16 in 1..<61 { vdp.load_tiles(k, LINE) }
+  vdp.window_rows_below(8)
+  var t = Talk { box: TextBox { x: 2, y: 20, width: 14, height: 6, font: Font { tile: 1, count: 59 } } }
+  var r: u16 = 0
+  var g: u16 = 0
+  var b: u16 = 0
+  // A stranger: line 0, which sets flag 0 and ends.
+  t.start(LINES, CHOICES)
+  if t.line == 0 && talk.flag(0) { r += 3 }
+  t.press(LINES, CHOICES)
+  t.press(LINES, CHOICES)
+  if !t.talking() { r += 4 }
+  // A friend: line 0 passed over for line 1; its first choice sets flag 3.
+  t.start(LINES, CHOICES)
+  if t.line == 1 { g += 3 }
+  t.press(LINES, CHOICES)
+  t.press(LINES, CHOICES)
+  if talk.flag(3) && !t.talking() { g += 4 }
+  // The second choice goes on to line 2, which needs flag 5: none of the rest is said.
+  t.start(LINES, CHOICES)
+  t.press(LINES, CHOICES)
+  t.choose(LINES, CHOICES, 1)
+  t.press(LINES, CHOICES)
+  if !t.talking() && t.last_picked() == 1 { b += 3 }
+  // A save's flags put back: flag 0 alone, so line 1 again after line 0 is passed over.
+  let saved = talk.flags()
+  talk.keep_flags(1)
+  if !talk.flag(3) && saved == 9 { b += 4 }
+  vdp.set_color(0, 0, vdp.rgb(r, g, b))
+  vdp.display_on()
+  loop { vdp.wait_vblank() }
+}
+`)
+	s := runROMWith(t, out, "20")
+	i := (4*s.width + 4) * 3
+	if got := fmt.Sprintf("%02x%02x%02x", s.pixels[i], s.pixels[i+1], s.pixels[i+2]); got != "ffffff" {
+		t.Errorf("the backdrop is %s, want ffffff: red, green and blue each for its steps", got)
+	}
+}

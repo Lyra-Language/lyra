@@ -21,6 +21,12 @@ module std.game.talk
 //! one chosen. A press ([press]) types the rest of a line still typing, and on a typed one goes
 //! on; [choose] moves among the choices; [last_picked] says which was picked last.
 //!
+//! **Flags** are the game's, 32 of them ([MAX_FLAGS]), held here for every talk, as
+//! `std.genesis.talk` holds them: a line may be said only while a flag is set (`needs`) or
+//! unless one is (`unless`) — a line not said is passed over, to the line after it — and
+//! saying a line or picking a choice may set one (`sets`). The game reads and sets them too
+//! ([flag], [set_flag], [clear_flag]) and keeps them in a save ([flags], [keep_flags]).
+//!
 //! **Drawn each frame** ([draw]), as everything on the modern screen is: the speaker and the
 //! choices, then the box. A portrait is the game's to draw, at [portrait_at], before the box,
 //! so it is in front of it (a sprite added earlier is drawn in front).
@@ -38,16 +44,45 @@ pub struct Line {
   /// Its choices: `choices` of the choices table, from `first_choice`.
   first_choice: i64 = 0,
   choices: i64 = 0,
+  /// Said only while flag `needs` is set and flag `unless` is not ([NO_FLAG] for no such
+  /// test), and passed over to the line after it otherwise; setting flag `sets` as it is said.
+  needs: i64 = NO_FLAG,
+  unless: i64 = NO_FLAG,
+  sets: i64 = NO_FLAG,
 }
 
-/// A choice the player may pick: its words, and the line it goes on to, or [END].
+/// A choice the player may pick: its words, the line it goes on to, or [END], and the flag
+/// picking it sets ([NO_FLAG] for none).
 pub struct Choice {
   words: string,
   then: i64 = END,
+  sets: i64 = NO_FLAG,
 }
 
 /// What follows the last line: the talk is over.
 pub const END: i64 = -1
+
+/// How many flags there are, numbered from 0, and what a line or choice names for none.
+pub const MAX_FLAGS: i64 = 32
+pub const NO_FLAG: i64 = -1
+
+/// Whether flag `n` is set (none outside 0 to [MAX_FLAGS] − 1 is).
+pub let flag = (n: i64) -> bool =>
+  n >= 0 && n < MAX_FLAGS && (held_flags >> u32(n)) & 1 == 1
+
+/// Flag `n` set, or let go.
+pub let set_flag = (n: i64) -> void => {
+  if n >= 0 && n < MAX_FLAGS { held_flags = held_flags | (u32(1) << u32(n)) }
+}
+pub let clear_flag = (n: i64) -> void => {
+  if n >= 0 && n < MAX_FLAGS { held_flags = held_flags & ~(u32(1) << u32(n)) }
+}
+
+/// Every flag, a bit each — what a save keeps — and every flag as `bits` says, from one.
+pub let flags = () -> u32 => held_flags
+pub let keep_flags = (bits: u32) -> void => { held_flags = bits }
+
+var held_flags: u32 = 0
 
 /// The glyphs a portrait takes, across and down.
 pub const PORTRAIT_GLYPHS: i64 = 4
@@ -109,6 +144,7 @@ impl Talk {
     if line.choices > 0 {
       let at = line.first_choice + self.chosen
       self.picked = at
+      set_flag(choices[at].sets)
       self.say(lines, choices[at].then)
     } else {
       self.say(lines, line.then)
@@ -174,14 +210,18 @@ impl Talk {
     self.box.draw()
   }
 
-  /// Line `at` begun in the box, room left for its portrait; or, at [END], the box shut and
+  /// Line `from` begun in the box — or the first after it its flags let be said — room left
+  /// for its portrait, and its flag set; or, at [END] or past the last line, the box shut and
   /// the talk over.
-  let say<const N: i64> = (self: mut, lines: ref [N]Line, at: i64) -> void => {
+  let say<const N: i64> = (self: mut, lines: ref [N]Line, from: i64) -> void => {
+    var at = from
+    while at >= 0 && at < N && !said(lines[at]) { at += 1 }
     if at < 0 || at >= N {
       self.box.close()
       self.line = -1
       return
     }
+    set_flag(lines[at].sets)
     self.line = at
     self.chosen = 0
     self.listed = false
@@ -207,3 +247,7 @@ impl Talk {
     }
   }
 }
+
+/// Whether `line`'s flags let it be said.
+let said = (line: Line) -> bool =>
+  (line.needs < 0 || flag(line.needs)) && (line.unless < 0 || !flag(line.unless))

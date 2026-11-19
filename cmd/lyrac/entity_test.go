@@ -1128,3 +1128,68 @@ let main = () -> u8 => {
   0
 }
 `
+
+// TestRun_EntitiesWalkWhereACutsceneSays is `walk_to` on the Genesis's and the modern
+// runtime's entities: the kind's top speed an axis at a time to the point, never past it,
+// facing left going left and keeping its facing going straight down, its speed left at none;
+// a speed of its own; and a pixel a frame for a kind with no top speed.
+func TestRun_EntitiesWalkWhereACutsceneSays(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	for _, rt := range []struct {
+		name string
+		repl *strings.Replacer
+	}{
+		{"genesis", strings.NewReplacer("@RT", "genesis", "@D", "", "@TOP", "512", "@NONE", "0", "@FOUR", "1024")},
+		{"game", strings.NewReplacer("@RT", "game", "@D", ".0", "@TOP", "2.0", "@NONE", "0.0", "@FOUR", "4.0")},
+	} {
+		t.Run(rt.name, func(t *testing.T) {
+			src := filepath.Join(t.TempDir(), "main.lyra")
+			if err := os.WriteFile(src, []byte(rt.repl.Replace(entityWalkSource)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, stderr, code := captureRun(t, "run", src); code != 0 {
+				t.Errorf("case %d failed; stderr: %s", code, stderr)
+			}
+		})
+	}
+}
+
+const entityWalkSource = `import std.@RT.collision.{ Shape, Collider }
+import std.@RT.entity.{ Animation, EntityKind }
+
+const STILL: Animation = Animation { sprite: 0, first: 0, count: 1, total: 1, looping: false }
+const NONE: Collider = Collider { shape: Shape { x: 0@D, y: 0@D, width: 0@D, height: 0@D }, layers: 0, mask: 0 }
+const WALKER: EntityKind = EntityKind {
+  width: 8@D,
+  height: 8@D,
+  animation: STILL,
+  colliders: #[NONE, NONE, NONE, NONE],
+  collider_count: 0,
+  max_speed: @TOP,
+  acceleration: @TOP,
+  friction: @TOP,
+  gravity: @NONE
+}
+let main = () -> u8 => {
+  // Two pixels a frame left and one down to (5, 21): there on the third, not past it.
+  var e = WALKER.spawn(10@D, 20@D)
+  e.vx = @TOP
+  if e.walk_to(5@D, 21@D) { return 1 }
+  if e.x() != 8@D || e.y() != 21@D || !e.mirrored || e.vx != @NONE { return 2 }
+  if e.walk_to(5@D, 21@D) { return 3 }
+  if !e.walk_to(5@D, 21@D) || e.x() != 5@D { return 4 }
+  // Straight down at its own speed: four pixels a frame, still facing left.
+  if e.walk_to(5@D, 29@D, @FOUR) || e.y() != 25@D || !e.mirrored { return 5 }
+  // Right: facing right again.
+  let _ = e.walk_to(9@D, 29@D, @FOUR)
+  if e.x() != 9@D || e.mirrored { return 6 }
+  // No top speed: a pixel a frame.
+  let still = EntityKind { WALKER | max_speed: @NONE }
+  var s = still.spawn(0@D, 0@D)
+  let _ = s.walk_to(3@D, 0@D)
+  if s.x() != 1@D { return 7 }
+  0
+}
+`

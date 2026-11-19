@@ -1259,3 +1259,58 @@ let main = () -> u8 => {
 		t.Errorf("ten updates in, %d letters are typed:\n%s", typed, cells(second))
 	}
 }
+
+// TestRun_GameTalksFlagsChooseItsLines is the Genesis's flags test on std.game.talk: a line
+// said to a stranger once and passed over after, a line a friend hears, a choice setting a
+// flag the game reads, a line no flag lets be said ending the talk, and the flags a save
+// keeps put back.
+func TestRun_GameTalksFlagsChooseItsLines(t *testing.T) {
+	t.Parallel()
+	setenv(t, "LYRA_STD", repoRoot(t))
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.lyra")
+	if err := os.WriteFile(src, []byte(`import std.game.talk
+import std.game.talk.{ Talk, Line, Choice, END }
+import std.game.text.{ Font, TextBox }
+
+const LINES: [3]Line = #[
+  Line { who: "A", words: "HI", unless: 0, sets: 0, then: END },
+  Line { who: "A", words: "AGAIN", needs: 0, first_choice: 0, choices: 2 },
+  Line { who: "A", words: "NEVER", needs: 5, then: END },
+]
+const CHOICES: [2]Choice = #[Choice { words: "YES", sets: 3 }, Choice { words: "NO", then: 2 }]
+
+let main = () -> void => {
+  let font = Font { glyph_width: 1, glyph_height: 1, columns: 61, count: 59 }
+  var t = Talk { box: TextBox { x: 0, y: 0, width: 14, height: 6, font: font } }
+  t.start(LINES, CHOICES)
+  println("stranger ${t.line} ${talk.flag(0)}")
+  t.press(LINES, CHOICES)
+  t.press(LINES, CHOICES)
+  println("over ${t.talking()}")
+  t.start(LINES, CHOICES)
+  println("friend ${t.line}")
+  t.press(LINES, CHOICES)
+  t.press(LINES, CHOICES)
+  println("picked ${talk.flag(3)} ${t.talking()}")
+  t.start(LINES, CHOICES)
+  t.press(LINES, CHOICES)
+  t.choose(LINES, CHOICES, 1)
+  t.press(LINES, CHOICES)
+  println("never ${t.talking()} ${t.last_picked()}")
+  let saved = talk.flags()
+  talk.keep_flags(1)
+  println("kept ${saved} ${talk.flag(0)} ${talk.flag(3)}")
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, code := captureRun(t, "run", src)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	want := "stranger 0 true\nover false\nfriend 1\npicked true false\nnever false 1\nkept 9 true false\n"
+	if out != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out, want)
+	}
+}
