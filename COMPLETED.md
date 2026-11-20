@@ -9,6 +9,26 @@ Newest first.
 
 ## Dated log
 
+### 11/20/26 — A swatch is heard as a colour well
+
+A swatch was a `Pressable` labelled with its colour's text, so assistive technology heard a
+button called "#3366ff". AccessKit has a role for it, `COLOR_WELL`, and a colour value beside
+it, so a screen reader can say what it is and what colour it shows.
+
+- **`ColorWellRole`** (`ui.layout`) on the swatch's face, heard as **`AxColorWell`**
+  (`ui.backend`, code 22). Its node takes the colour of the patch inside it
+  (`ui.access.patch_color`) as `AccessNode.color`, keeps the colour's text as its label, and
+  is pressed (`ACCESS_CLICK`) to open its picker, as a button is.
+- **The colour crosses as one `i64`**: `lyra_access_node`'s new last argument, `0xRRGGBBAA`, or
+  `-1` for none. `bindings.accesskit.element` takes it as `color: i64 = -1`, so the binding
+  needs no `ui.draw` type, and `accesskit.m` sets `accesskit_node_set_color_value` from it.
+  The stub takes the argument too.
+- **Not heard through VoiceOver yet.** Turning VoiceOver on is a system setting, so the role
+  and value are checked as the tree `ui.access` builds, not as spoken. The todo item names it.
+
+Tests: `TestRun_UiSwatchIsHeardAsAColorWell` (the role, the colour with its alpha, the label as
+the colour's text, the click, and no button).
+
 ### 11/20/26 — lui names an import's module from the program's root
 
 An `<import src="widgets.lui"/>` took its module from the path as written from the importing

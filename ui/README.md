@@ -91,7 +91,10 @@ layer — implements the two traits; the display list is the whole contract.
   an element, before the framework's own choice (an I-beam over a field, a hand over a button)
   and after a dragged edge's arrows (`Ui.cursor_at`), so a painter's command line can be an
   I-beam inside a grid that is an arrow. **`TerminalRole`** (`.with_role(TerminalRole)`) is
-  heard as AccessKit's terminal (`AxTerminal`, code 21), named by the element's label.
+  heard as AccessKit's terminal (`AxTerminal`, code 21), named by the element's label. **A
+  swatch is a colour well** (`ColorWellRole`, `AxColorWell`, code 22): its node's `color` is the
+  colour its patch shows, which AccessKit has as the node's colour value; its label is the
+  colour's text, and it is pressed to open its picker.
 - **`text_align`** (CSS's `text-align`, inherited; lui's `text-align: left | center | right |
   start | end`): `TextLeft`, `TextCenter`, `TextRight` — each line of a paragraph moved by the
   room beside it in its box (`lines_aligned`). Text runs left to right only, so `start` is left.

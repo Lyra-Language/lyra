@@ -419,6 +419,9 @@ pub data Role =
   /// A terminal: an element painting one (`.with_role(TerminalRole)` on a painter, which is
   /// otherwise a group), heard as AccessKit's terminal, named by its `label`.
   | TerminalRole
+  /// A colour well: a swatch ([swatch]), heard as the colour its patch shows, its label the
+  /// colour's text, pressed to open its picker.
+  | ColorWellRole
 
 /// A row's axis or a column's.
 pub data Axis = Horizontal | Vertical

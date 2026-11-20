@@ -678,8 +678,8 @@ the actions it asks for back with the window each came from. `ui.sdl3` is its on
 
 - **A snapshot, not callbacks.** AccessKit asks for the tree from a callback, whenever
   VoiceOver starts listening, and a Lyra closure cannot be one. So the program hands over the
-  whole tree each time it changes — `begin(window, root, focus)`, an `element(…)` a node,
-  `commit()` — and `accesskit.m` keeps it with that window's adapter (a `surface`, allocated
+  whole tree each time it changes — `begin(window, root, focus)`, an `element(…)` a node (a
+  colour well's colour its last argument, `0xRRGGBBAA`, `-1` for none), `commit()` — and `accesskit.m` keeps it with that window's adapter (a `surface`, allocated
   alone so the adapter's callbacks keep a pointer to it), builds AccessKit's nodes from it when
   asked, and sends AccessKit an update when it is already listening. An action request is
   queued there with SDL's number for its window and an `SDL_EVENT_USER` pushed to wake a

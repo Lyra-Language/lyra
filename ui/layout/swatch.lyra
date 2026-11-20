@@ -49,6 +49,7 @@ pub let swatch<e> = pure (
   let face = Node {
     kind: kind,
     tag: "Swatch",
+    role: Some(ColorWellRole),
     label: color_text(color),
     children: [sized::<e>(
       Some(22.0),

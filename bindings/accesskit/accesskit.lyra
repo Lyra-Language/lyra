@@ -64,7 +64,7 @@ pub let begin = (window: Window, root: u64, focus: u64) -> void =>
 /// One node of the tree: what it is and says (and, as `description`, more about it — its
 /// tooltip), where it is (in the window's pixels, from its content's top left), whether it
 /// is ticked (`-1` for neither), its number and range when it has one, the actions it offers,
-/// and its children's ids.
+/// its children's ids, and a colour well's colour (`0xRRGGBBAA`, `-1` for none).
 pub let element = (
   id: u64,
   role: RoleCode,
@@ -78,7 +78,8 @@ pub let element = (
   toggled: i32,
   numeric: Maybe<(f64, f64, f64, f64)>,
   actions: i32,
-  children: []u64
+  children: []u64,
+  color: i64 = -1
 ) -> void => {
   let (has, n, low, high, step): (i32, f64, f64, f64, f64) = match numeric {
     Some((v, a, b, s)) => (1, v, a, b, s),
@@ -105,7 +106,8 @@ pub let element = (
       step,
       actions,
       kids,
-      children.len()
+      children.len(),
+      color
     )
   })))
 }
@@ -170,7 +172,8 @@ unsafe extern lyra_access_node: (
   step: f64,
   actions: i32,
   children: ^u64,
-  child_count: i64
+  child_count: i64,
+  color: i64
 ) -> void
 unsafe extern lyra_access_commit: () -> void
 unsafe extern lyra_access_reduce_motion: () -> bool

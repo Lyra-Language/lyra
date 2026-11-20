@@ -694,6 +694,7 @@ import ui.layout.{
   RowRole,
   DialogRole,
   TerminalRole,
+  ColorWellRole,
   FieldSpec,
   SliderSpec,
   Vertical,
@@ -924,6 +925,7 @@ let role_name = pure (role: Role) -> string => match role {
   RowRole => "row",
   DialogRole => "dialog",
   TerminalRole => "terminal",
+  ColorWellRole => "color well",
 }
 `)
 	want := `hits a,c,b,c
@@ -1467,7 +1469,7 @@ func TestRun_UiAccessibilityTree(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ sandbox, host_of }
 import ui.script.{ script_platform, ScriptPlatform }
-import ui.backend.{ AxWindow, AxGroup, AxLabel, AxImage, AxButton, AxCheckbox, AxSlider, AxTextInput, AxScroll, AxComboBox, AxListBox, AxOption, AxTabList, AxTab, AxRadio, AxRadioGroup, AxProgress, AxTable, AxRow, AxDialog, AxTerminal, AxContainer, Renderer, InputEvent, AccessAction, AccessTree, AccessNode, AxSetValue, AxClick, AxIncrement, AxFocus, AxSetNumber }
+import ui.backend.{ AxWindow, AxGroup, AxLabel, AxImage, AxButton, AxCheckbox, AxSlider, AxTextInput, AxScroll, AxComboBox, AxListBox, AxOption, AxTabList, AxTab, AxRadio, AxRadioGroup, AxProgress, AxTable, AxRow, AxDialog, AxTerminal, AxColorWell, AxContainer, Renderer, InputEvent, AccessAction, AccessTree, AccessNode, AxSetValue, AxClick, AxIncrement, AxFocus, AxSetNumber }
 import ui.access.{ access_node }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new, Fonts }
@@ -1599,6 +1601,7 @@ let role_name = pure (node: AccessNode) -> string => match node.role {
   AxRow => "row",
   AxDialog => "dialog",
   AxTerminal => "terminal",
+  AxColorWell => "color well",
   AxContainer => "container",
 }
 `)
@@ -2456,6 +2459,42 @@ measured: a@0,0 0x20 b@0,0 300x20
 `
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A swatch is heard as a colour well: AccessKit's role for it, the colour its patch shows as
+// the node's colour (which the bridge hands AccessKit as its colour value), its text as the
+// label, and pressed to open its picker — not as a button labelled with the text.
+func TestRun_UiSwatchIsHeardAsAColorWell(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.draw.{ Size, Color }
+import ui.text.{ fonts_new }
+import ui.layout.{ swatch, layout, loose }
+import ui.access.{ access_tree }
+import ui.backend.{ AxColorWell, AxButton, ACCESS_CLICK }
+
+data Ev = Open | Pick(Color) | Shut
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  let view = swatch(Color { r: 51, g: 102, b: 255, a: 200 }, false, Open, Pick, Shut).keyed("well")
+  let laid = layout(view, loose(Size { w: 200.0, h: 100.0 }), fonts)
+  for n in access_tree(laid, "").nodes {
+    if n.role == AxColorWell {
+      let c = n.color ?? Color { r: 0, g: 0, b: 0, a: 0 }
+      println("well: ${n.label}; colour ${c.r} ${c.g} ${c.b} ${c.a}; pressed ${(n.actions & ACCESS_CLICK) != 0}")
+    }
+    if n.role == AxButton { println("button: ${n.label}") }
+  }
+  0
+}
+`)
+	if !strings.Contains(got, "; colour 51 102 255 200; pressed true") || strings.Contains(got, "button:") {
+		t.Errorf("a swatch is not heard as a colour well with its colour:\n%s", got)
+	}
+	if !strings.HasPrefix(got, "well: #") {
+		t.Errorf("its label is not the colour's text:\n%s", got)
 	}
 }
 

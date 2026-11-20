@@ -45,14 +45,17 @@ import ui.backend.{
   AxRow,
   AxDialog,
   AxTerminal,
+  AxColorWell,
   ACCESS_FOCUS,
   ACCESS_CLICK,
   ACCESS_SET_VALUE,
   ACCESS_INCREMENT,
   ACCESS_DECREMENT,
 }
-import ui.draw.{ Point, Rect }
+import ui.draw.{ Point, Rect, Color }
 import ui.layout.{
+  ColorPatch,
+  ColorWellRole,
   Laid,
   is_tip,
   in_tree_order,
@@ -172,6 +175,16 @@ let heard_as<e> = pure (laid: Laid<e>) -> Maybe<AccessRole> => match laid.role {
   RowRole => Some(AxRow),
   DialogRole => Some(AxDialog),
   TerminalRole => Some(AxTerminal),
+  ColorWellRole => Some(AxColorWell),
+}
+
+/// The colour of the patch in `laid` (a swatch's), the first found.
+let patch_color<e> = pure (laid: Laid<e>) -> Maybe<Color> => {
+  if let ColorPatch(c) = laid.kind { return Some(c) }
+  for child in laid.children {
+    if let Some(c) = patch_color(child.laid) { return Some(c) }
+  }
+  None
 }
 
 /// The node for `laid`, heard as `role`.
@@ -226,6 +239,12 @@ let node_for<e> = pure (
       actions: node.actions | ACCESS_SET_VALUE,
     },
     _ if role == AxButton => AccessNode { node | actions: node.actions | ACCESS_CLICK },
+    // A swatch is heard as the colour it shows, and pressed to open its picker.
+    _ if role == AxColorWell =>
+      AccessNode {
+        node | color: patch_color(laid),
+        actions: node.actions | ACCESS_CLICK
+      },
     _ => node,
   }
 }

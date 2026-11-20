@@ -37,6 +37,8 @@ typedef struct {
   int actions;
   uint64_t *children;
   int64_t child_count;
+  /// A colour well's colour, 0xRRGGBBAA; -1 for none.
+  int64_t color;
 } element;
 
 /// A queued action: the window it came from (SDL's number), what, on which element, and its
@@ -99,6 +101,7 @@ static accesskit_role role_of(int role) {
     case 19: return ACCESSKIT_ROLE_ROW;
     case 20: return ACCESSKIT_ROLE_DIALOG;
     case 21: return ACCESSKIT_ROLE_TERMINAL;
+    case 22: return ACCESSKIT_ROLE_COLOR_WELL;
     default: return ACCESSKIT_ROLE_GENERIC_CONTAINER;
   }
 }
@@ -127,6 +130,11 @@ static accesskit_tree_update *snapshot(void *userdata) {
       accesskit_node_set_min_numeric_value(node, e->min);
       accesskit_node_set_max_numeric_value(node, e->max);
       if (e->step > 0) accesskit_node_set_numeric_value_step(node, e->step);
+    }
+    if (e->color >= 0) {
+      accesskit_color c = {(uint8_t)(e->color >> 24), (uint8_t)(e->color >> 16),
+                           (uint8_t)(e->color >> 8), (uint8_t)e->color};
+      accesskit_node_set_color_value(node, c);
     }
     if (e->actions & 1) accesskit_node_add_action(node, ACCESSKIT_ACTION_FOCUS);
     if (e->actions & 2) accesskit_node_add_action(node, ACCESSKIT_ACTION_CLICK);
@@ -269,7 +277,7 @@ void lyra_access_node(uint64_t id, int32_t role, const char *label, const char *
                       const char *description, double x, double y, double w, double h, int32_t toggled,
                       int32_t has_numeric, double numeric, double min, double max,
                       double step, int32_t actions, const uint64_t *children,
-                      int64_t child_count) {
+                      int64_t child_count, int64_t color) {
   surface *s = building;
   if (!s) return;
   if (s->element_count == s->element_cap) {
@@ -283,7 +291,7 @@ void lyra_access_node(uint64_t id, int32_t role, const char *label, const char *
   }
   s->elements[s->element_count++] = (element){
       id, role, strdup(label), strdup(value), strdup(description), x, y, w, h, toggled, has_numeric,
-      numeric, min, max, step, actions, kids, child_count};
+      numeric, min, max, step, actions, kids, child_count, color};
 }
 
 /// The snapshot begun to AccessKit, if assistive technology is listening to its window.

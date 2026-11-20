@@ -961,8 +961,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   `<Select>`) — its list floats over the page (`Laid.floats`) (COMPLETED.md, 10/22).
 - **[DONE 10/23] `ui`: a select's list scrolls and flips** — placed as a popup's content is
   (`ui/WINDOW.md` step 1, COMPLETED.md 10/23).
-- **[OPEN] `ui`: a swatch is heard as a button** labelled with its colour's text; AccessKit's
-  colour well role (and its value) would say what it is. `AccessRole` has no such role yet.
+- **[DONE 11/20] `ui`: a swatch is heard as a colour well**: `ColorWellRole`/`AxColorWell`, its
+  patch's colour AccessKit's colour value. Not yet heard through VoiceOver itself. COMPLETED.md
+  11/20.
 - **[OPEN] `ui`: AccessKit is not told a select is expanded, nor what a popup or a menu is** —
   an open popup's content is heard as its elements, with no dialog role around them, and a
   menu bar, its menus and items as buttons, not AccessKit's menu roles; a tab list's selected

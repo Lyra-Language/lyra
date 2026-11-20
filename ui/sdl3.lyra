@@ -269,6 +269,7 @@ import ui.backend.{
   AxRow,
   AxDialog,
   AxTerminal,
+  AxColorWell,
   AxListBox,
   AxOption,
   AxContainer,
@@ -778,7 +779,11 @@ impl Platform for SdlPlatform {
         },
         node.numeric,
         node.actions,
-        node.children
+        node.children,
+        match node.color {
+          Some(c) => (i64(c.r) << 24) | (i64(c.g) << 16) | (i64(c.b) << 8) | i64(c.a),
+          None => -1,
+        }
       )
     }
     accesskit.commit()
@@ -892,6 +897,7 @@ let role_code = pure (role: AccessRole) -> i32 => match role {
   AxRow => 19,
   AxDialog => 20,
   AxTerminal => 21,
+  AxColorWell => 22,
   AxContainer => 0,
 }
 

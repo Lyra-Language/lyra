@@ -270,6 +270,8 @@ pub struct AccessNode {
   numeric: Maybe<(f64, f64, f64, f64)> = None,
   actions: i32 = 0,
   children: []u64 = [],
+  /// A colour well's colour.
+  color: Maybe<Color> = None,
 }
 
 /// Actions an [AccessNode] offers, or-ed: to take the focus, be pressed, have its value set,
@@ -305,6 +307,8 @@ pub data AccessRole =
   | AxDialog
   /// A terminal.
   | AxTerminal
+  /// A colour well: a swatch showing a colour ([AccessNode.color]) that opens a picker.
+  | AxColorWell
   | AxContainer
 
 /// What assistive technology asks of an element.
