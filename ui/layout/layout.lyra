@@ -3407,6 +3407,35 @@ const EVERYWHERE: Rect = Rect {
   h: 2.0 * UNBOUNDED
 }
 
+/// The flares beside `box`'s bottom corners ([Style.flare]), `r` wide and high: each the square
+/// beside a corner less the quarter circle centred `r` above it and `r` out — a ring's corner
+/// clipped to the square, the ring's hole that circle and its width reaching the square's far
+/// corner (√2 r from the centre), since the display list has rounded rectangles and no paths.
+let push_flares = (ops: mut []DrawOp, box: Rect, r: f32, color: Color) -> void => {
+  let width = r * 0.5
+  let outer = r + width
+  let bottom = box.y + box.h
+  for left in [true, false] {
+    let square = Rect {
+      x: if left { box.x - r } else { box.x + box.w },
+      y: bottom - r,
+      w: r,
+      h: r,
+    }
+    let centre_x = if left { box.x - r } else { box.x + box.w + r }
+    let ring = Rect {
+      x: centre_x - outer,
+      y: bottom - r - outer,
+      w: 2.0 * outer,
+      h: 2.0 * outer,
+    }
+    let round = if left { Radii { bottom_right: outer } } else { Radii { bottom_left: outer } }
+    ops.push(PushClip(square, Radii {}))
+    ops.push(Border(ring, round, width, color))
+    ops.push(PopClip)
+  }
+}
+
 /// `laid` painted into `ops` at `origin`, inside `clip` — the part of the display the clips
 /// around it leave, which a painter is told of.
 let paint_into<e, r> where r: Renderer = (
@@ -3442,11 +3471,10 @@ let paint_into<e, r> where r: Renderer = (
     }
   }
   if s.backdrop_blur > 0.0 { ops.push(Backdrop(box, corners, s.backdrop_blur)) }
-  if let Some(fill) = s.background { ops.push(Fill(
-    box,
-    corners,
-    faded(fill, s.opacity)
-  )) }
+  if let Some(fill) = s.background {
+    ops.push(Fill(box, corners, faded(fill, s.opacity)))
+    if s.flare > 0.0 { push_flares(ops, box, s.flare, faded(fill, s.opacity)) }
+  }
   if let Some(gradient) = s.background_gradient {
     let stops = [stop in gradient.stops | ColorStop { stop | color: faded(
       stop.color,

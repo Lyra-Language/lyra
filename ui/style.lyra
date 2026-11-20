@@ -144,6 +144,10 @@ pub struct Style {
   /// Each corner's radius — CSS's four `border-*-radius` longhands as one, `border-radius: 6 6
   /// 0 0` in a sheet — which, where set, the corners are rounded by rather than `radius`.
   corners: Maybe<Radii> = None,
+  /// The bottom corners flared outward: beside each, a quarter circle this wide curving out from
+  /// the element's side to meet what it stands on, as a browser's tab meets its toolbar —
+  /// drawn in the background's colour, outside the element's box.
+  flare: Maybe<f32> = None,
   /// Space between the element's edge and what is inside it.
   padding: Maybe<Insets> = None,
   /// Space round a flex or grid item, outside its edge (CSS's `margin`); an `auto` side
@@ -402,6 +406,7 @@ impl Style {
     border_width: self.border_width.or(base.border_width),
     radius: self.radius.or(base.radius),
     corners: self.corners.or(base.corners),
+    flare: self.flare.or(base.flare),
     padding: self.padding.or(base.padding),
     margin: self.margin.or(base.margin),
     gap: self.gap.or(base.gap),
@@ -1204,6 +1209,8 @@ pub struct Computed {
   radius: f32 = 0.0,
   /// Each corner's radius, where the style set them ([Style.corners]); `radius` otherwise.
   corners: Maybe<Radii> = None,
+  /// How far the bottom corners flare outward ([Style.flare]); 0 for not at all.
+  flare: f32 = 0.0,
   padding: Insets = Insets {},
   margin: Margins = Margins {},
   gap: f32 = 0.0,
@@ -1356,6 +1363,7 @@ impl Cascade {
       border_width: s.border_width ?? 0.0,
       radius: s.radius ?? 0.0,
       corners: s.corners,
+      flare: (s.flare ?? 0.0).max(0.0),
       padding: s.padding ?? Insets {},
       margin: s.margin ?? Margins {},
       gap: s.gap ?? 0.0,
