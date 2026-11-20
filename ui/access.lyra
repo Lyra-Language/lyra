@@ -46,6 +46,14 @@ import ui.backend.{
   AxDialog,
   AxTerminal,
   AxColorWell,
+  AxMenuBar,
+  AxMenu,
+  AxMenuItem,
+  AxCheckedMenuItem,
+  AxPopup,
+  PopupMenu,
+  PopupList,
+  PopupDialog,
   ACCESS_FOCUS,
   ACCESS_CLICK,
   ACCESS_SET_VALUE,
@@ -56,6 +64,13 @@ import ui.draw.{ Point, Rect, Color }
 import ui.layout.{
   ColorPatch,
   ColorWellRole,
+  MenuBarRole,
+  MenuRole,
+  MenuItemRole,
+  CheckedMenuItemRole,
+  PopsUp,
+  Opens,
+  Tabbed,
   Laid,
   is_tip,
   in_tree_order,
@@ -144,7 +159,35 @@ let gather<e> = (laid: Laid<e>, origin: Point, nodes: mut []AccessNode) -> []u64
     // A tooltip showing is its element's description, not a node.
     if is_tip(child.laid) { continue }
     let corner = Point { x: origin.x + child.at.x, y: origin.y + child.at.y }
-    for id in gather(child.laid, corner, nodes) { children.push(id) }
+    let ids = gather(child.laid, corner, nodes)
+    if let PopsUp(open, _, _) = laid.kind {
+      if child.laid.floats {
+        // What a popup floats is heard as one, its elements inside it.
+        let popup = access_id("${child.laid.id}#popup")
+        let bounds = Rect {
+          x: corner.x,
+          y: corner.y,
+          w: child.laid.size.w,
+          h: child.laid.size.h
+        }
+        nodes.push(AccessNode {
+          key: child.laid.id,
+          id: popup,
+          role: AxPopup,
+          bounds: bounds,
+          children: ids
+        })
+        children.push(popup)
+        continue
+      }
+      // Its anchor opens it, and says whether it has.
+      for k, n in nodes {
+        if ids.contains(n.id) {
+          nodes[k] = AccessNode { n | expanded: Some(open), popup: PopupDialog }
+        }
+      }
+    }
+    for id in ids { children.push(id) }
   }
   let Some(role) = heard else { return children }
   let id = access_id(laid.id)
@@ -176,7 +219,16 @@ let heard_as<e> = pure (laid: Laid<e>) -> Maybe<AccessRole> => match laid.role {
   DialogRole => Some(AxDialog),
   TerminalRole => Some(AxTerminal),
   ColorWellRole => Some(AxColorWell),
+  MenuBarRole => Some(AxMenuBar),
+  MenuRole => Some(AxMenu),
+  MenuItemRole => Some(AxMenuItem),
+  CheckedMenuItemRole => Some(AxCheckedMenuItem),
 }
+
+/// Whether something floats from `laid` — an open select's list, an open menu — which is
+/// how a control is laid out while what it opens is open.
+let floats_open<e> = pure (laid: Laid<e>) -> bool =>
+  laid.children.any((p) => p.laid.floats)
 
 /// The colour of the patch in `laid` (a swatch's), the first found.
 let patch_color<e> = pure (laid: Laid<e>) -> Maybe<Color> => {
@@ -220,7 +272,25 @@ let node_for<e> = pure (
         ""
       },
       actions: node.actions | ACCESS_CLICK,
+      expanded: Some(floats_open(laid)),
+      popup: PopupList,
     },
+    // A menu's title, a submenu's item or a menu button: it opens a menu, open or not.
+    Opens(_) => AccessNode {
+      node |
+      actions: node.actions | ACCESS_CLICK,
+      expanded: Some(floats_open(laid)),
+      popup: PopupMenu,
+    },
+    // A tab is chosen by a click, and says whether it is the one shown.
+    Tabbed(spot) =>
+      AccessNode {
+        node | selected: Some(spot.selected),
+        actions: node.actions | ACCESS_CLICK
+      },
+    _ if role == AxMenuItem => AccessNode { node | actions: node.actions | ACCESS_CLICK },
+    _ if role == AxCheckedMenuItem =>
+      AccessNode { node | toggled: Some(true), actions: node.actions | ACCESS_CLICK },
     Checkable(ticked, _) =>
       AccessNode { node | toggled: Some(ticked), actions: node.actions | ACCESS_CLICK },
     // A radio button, or a table's row: chosen, and chosen by a click.

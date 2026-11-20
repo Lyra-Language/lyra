@@ -964,10 +964,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/20] `ui`: a swatch is heard as a colour well**: `ColorWellRole`/`AxColorWell`, its
   patch's colour AccessKit's colour value. Not yet heard through VoiceOver itself. COMPLETED.md
   11/20.
-- **[OPEN] `ui`: AccessKit is not told a select is expanded, nor what a popup or a menu is** —
-  an open popup's content is heard as its elements, with no dialog role around them, and a
-  menu bar, its menus and items as buttons, not AccessKit's menu roles; a tab list's selected
-  tab is not said to be (AccessKit's `selected`, which `AccessNode` has no field for).
+- **[DONE 11/20] `ui`: AccessKit is told a select is expanded, and what a popup or a menu is** —
+  expanded and has-popup on selects and openers, menu roles, a popup's dialog, a tab's
+  `selected` (COMPLETED.md 11/20); checked as the tree `ui.access` builds, not yet in VoiceOver.
 - **[OPEN] `ui`: a disabled control is not told to assistive technology** (AccessKit's
   `disabled` flag), nor disabled through its ancestors (CSS's disabled `fieldset`).
 - **[OPEN] `ui.interact`: a caret moves by rune, not grapheme cluster.** `é` written as `e`

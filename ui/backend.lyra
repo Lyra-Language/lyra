@@ -272,6 +272,12 @@ pub struct AccessNode {
   children: []u64 = [],
   /// A colour well's colour.
   color: Maybe<Color> = None,
+  /// Whether what it opens is open (a select's list, a menu, a popup), and whether it is the
+  /// tab chosen; `None` where it says neither.
+  expanded: Maybe<bool> = None,
+  selected: Maybe<bool> = None,
+  /// What it opens.
+  popup: AccessPopup = NoPopup,
 }
 
 /// Actions an [AccessNode] offers, or-ed: to take the focus, be pressed, have its value set,
@@ -309,7 +315,17 @@ pub data AccessRole =
   | AxTerminal
   /// A colour well: a swatch showing a colour ([AccessNode.color]) that opens a picker.
   | AxColorWell
+  /// A menu bar, an open menu, an item of one, and an item ticked.
+  | AxMenuBar
+  | AxMenu
+  | AxMenuItem
+  | AxCheckedMenuItem
+  /// What an open popup floats: a dialog, but not a modal one — the rest still takes input.
+  | AxPopup
   | AxContainer
+
+/// What pressing a control opens, which assistive technology says before it is pressed.
+pub data AccessPopup = NoPopup | PopupMenu | PopupList | PopupDialog
 
 /// What assistive technology asks of an element.
 pub data AccessRequest =

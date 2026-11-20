@@ -78,13 +78,14 @@ pub let menu_bar<e> = pure (menus: []Menu<e>) -> Node<e> => {
   Node {
     kind: kind,
     tag: "MenuBar",
+    role: Some(MenuBarRole),
     children: [m in menus | opener::<e>(
       text::<e>(m.label),
       m.entries,
       FloatBelow,
       true,
       "MenuTitle"
-    )],
+    ).with_role(MenuItemRole)],
   }
 }
 
@@ -115,6 +116,7 @@ pub let menu_list<e> = pure (entries: []MenuEntry<e>) -> Node<e> => {
   Node {
     kind: kind,
     tag: "Menu",
+    role: Some(MenuRole),
     style: Style { overflow_y: Some(OverflowAuto) },
     children: [i in 0..<entries.len() | entry_node(entries[i]).keyed("${i}")],
     key: "menu",
@@ -132,6 +134,9 @@ let entry_node<e> = pure (entry: MenuEntry<e>) -> Node<e> => match entry {
     Node {
       kind: kind,
       tag: "MenuItem",
+      role: Some(if item.checked { CheckedMenuItemRole } else { MenuItemRole }),
+      // Its label alone, heard: not the check, which its role says, nor the shortcut.
+      label: item.label,
       disabled: !item.enabled,
       children: [item_row::<e>(item.label, item.checked, trailing)],
     }
@@ -144,7 +149,8 @@ let entry_node<e> = pure (entry: MenuEntry<e>) -> Node<e> => match entry {
       false,
       "MenuItem"
     )
-    .with_class("submenu"),
+    .with_class("submenu")
+    .with_role(MenuItemRole),
   MenuSeparator => padding::<e>(
     Insets { top: 4.0, bottom: 4.0 },
     Node { kind: Measured(None, Some(1.0)), tag: "MenuSeparator" }

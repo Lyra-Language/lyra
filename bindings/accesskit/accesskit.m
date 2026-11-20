@@ -39,6 +39,9 @@ typedef struct {
   int64_t child_count;
   /// A colour well's colour, 0xRRGGBBAA; -1 for none.
   int64_t color;
+  /// Packed: expanded said (1) and true (2), selected said (4) and true (8), and what it
+  /// opens in bits 4–5 (0 none, 1 a menu, 2 a list box, 3 a dialog).
+  int32_t states;
 } element;
 
 /// A queued action: the window it came from (SDL's number), what, on which element, and its
@@ -102,6 +105,11 @@ static accesskit_role role_of(int role) {
     case 20: return ACCESSKIT_ROLE_DIALOG;
     case 21: return ACCESSKIT_ROLE_TERMINAL;
     case 22: return ACCESSKIT_ROLE_COLOR_WELL;
+    case 23: return ACCESSKIT_ROLE_MENU_BAR;
+    case 24: return ACCESSKIT_ROLE_MENU;
+    case 25: return ACCESSKIT_ROLE_MENU_ITEM;
+    case 26: return ACCESSKIT_ROLE_MENU_ITEM_CHECK_BOX;
+    case 27: return ACCESSKIT_ROLE_DIALOG;
     default: return ACCESSKIT_ROLE_GENERIC_CONTAINER;
   }
 }
@@ -135,6 +143,14 @@ static accesskit_tree_update *snapshot(void *userdata) {
       accesskit_color c = {(uint8_t)(e->color >> 24), (uint8_t)(e->color >> 16),
                            (uint8_t)(e->color >> 8), (uint8_t)e->color};
       accesskit_node_set_color_value(node, c);
+    }
+    if (e->states & 1) accesskit_node_set_expanded(node, (e->states & 2) != 0);
+    if (e->states & 4) accesskit_node_set_selected(node, (e->states & 8) != 0);
+    switch ((e->states >> 4) & 3) {
+      case 1: accesskit_node_set_has_popup(node, ACCESSKIT_HAS_POPUP_MENU); break;
+      case 2: accesskit_node_set_has_popup(node, ACCESSKIT_HAS_POPUP_LISTBOX); break;
+      case 3: accesskit_node_set_has_popup(node, ACCESSKIT_HAS_POPUP_DIALOG); break;
+      default: break;
     }
     if (e->actions & 1) accesskit_node_add_action(node, ACCESSKIT_ACTION_FOCUS);
     if (e->actions & 2) accesskit_node_add_action(node, ACCESSKIT_ACTION_CLICK);
@@ -277,7 +293,7 @@ void lyra_access_node(uint64_t id, int32_t role, const char *label, const char *
                       const char *description, double x, double y, double w, double h, int32_t toggled,
                       int32_t has_numeric, double numeric, double min, double max,
                       double step, int32_t actions, const uint64_t *children,
-                      int64_t child_count, int64_t color) {
+                      int64_t child_count, int64_t color, int32_t states) {
   surface *s = building;
   if (!s) return;
   if (s->element_count == s->element_cap) {
@@ -291,7 +307,7 @@ void lyra_access_node(uint64_t id, int32_t role, const char *label, const char *
   }
   s->elements[s->element_count++] = (element){
       id, role, strdup(label), strdup(value), strdup(description), x, y, w, h, toggled, has_numeric,
-      numeric, min, max, step, actions, kids, child_count, color};
+      numeric, min, max, step, actions, kids, child_count, color, states};
 }
 
 /// The snapshot begun to AccessKit, if assistive technology is listening to its window.

@@ -270,6 +270,17 @@ import ui.backend.{
   AxDialog,
   AxTerminal,
   AxColorWell,
+  AxMenuBar,
+  AxMenu,
+  AxMenuItem,
+  AxCheckedMenuItem,
+  AxPopup,
+  AccessNode,
+  AccessPopup,
+  NoPopup,
+  PopupMenu,
+  PopupList,
+  PopupDialog,
   AxListBox,
   AxOption,
   AxContainer,
@@ -783,7 +794,8 @@ impl Platform for SdlPlatform {
         match node.color {
           Some(c) => (i64(c.r) << 24) | (i64(c.g) << 16) | (i64(c.b) << 8) | i64(c.a),
           None => -1,
-        }
+        },
+        states_code(node)
       )
     }
     accesskit.commit()
@@ -874,6 +886,23 @@ impl SdlPlatform {
 /// display was half the size of the control and at half its offset.
 pub let access_bounds = pure (bounds: Rect, scale: f32) -> Rect => bounds.scaled(scale)
 
+/// A node's states as `bindings.accesskit` packs them: whether it says it is expanded (bit 0)
+/// and is (bit 1), whether it says it is selected (bit 2) and is (bit 3), and what it opens
+/// (bits 4 and 5: none, a menu, a list, a dialog).
+let states_code = pure (node: ref AccessNode) -> i32 => {
+  var out: i32 = 0
+  if let Some(open) = node.expanded { out = out | 1 | (if open { 2 } else { 0 }) }
+  if let Some(chosen) = node.selected { out = out | 4 | (if chosen { 8 } else { 0 }) }
+  out | (popup_code(node.popup) << 4)
+}
+
+let popup_code = pure (popup: AccessPopup) -> i32 => match popup {
+  NoPopup => 0,
+  PopupMenu => 1,
+  PopupList => 2,
+  PopupDialog => 3,
+}
+
 /// A role as `bindings.accesskit` numbers it.
 let role_code = pure (role: AccessRole) -> i32 => match role {
   AxWindow => 1,
@@ -898,6 +927,11 @@ let role_code = pure (role: AccessRole) -> i32 => match role {
   AxDialog => 20,
   AxTerminal => 21,
   AxColorWell => 22,
+  AxMenuBar => 23,
+  AxMenu => 24,
+  AxMenuItem => 25,
+  AxCheckedMenuItem => 26,
+  AxPopup => 27,
   AxContainer => 0,
 }
 

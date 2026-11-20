@@ -695,6 +695,10 @@ import ui.layout.{
   DialogRole,
   TerminalRole,
   ColorWellRole,
+  MenuBarRole,
+  MenuRole,
+  MenuItemRole,
+  CheckedMenuItemRole,
   FieldSpec,
   SliderSpec,
   Vertical,
@@ -926,6 +930,10 @@ let role_name = pure (role: Role) -> string => match role {
   DialogRole => "dialog",
   TerminalRole => "terminal",
   ColorWellRole => "color well",
+  MenuBarRole => "menu bar",
+  MenuRole => "menu",
+  MenuItemRole => "menu item",
+  CheckedMenuItemRole => "checked menu item",
 }
 `)
 	want := `hits a,c,b,c
@@ -1469,7 +1477,7 @@ func TestRun_UiAccessibilityTree(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ sandbox, host_of }
 import ui.script.{ script_platform, ScriptPlatform }
-import ui.backend.{ AxWindow, AxGroup, AxLabel, AxImage, AxButton, AxCheckbox, AxSlider, AxTextInput, AxScroll, AxComboBox, AxListBox, AxOption, AxTabList, AxTab, AxRadio, AxRadioGroup, AxProgress, AxTable, AxRow, AxDialog, AxTerminal, AxColorWell, AxContainer, Renderer, InputEvent, AccessAction, AccessTree, AccessNode, AxSetValue, AxClick, AxIncrement, AxFocus, AxSetNumber }
+import ui.backend.{ AxWindow, AxGroup, AxLabel, AxImage, AxButton, AxCheckbox, AxSlider, AxTextInput, AxScroll, AxComboBox, AxListBox, AxOption, AxTabList, AxTab, AxRadio, AxRadioGroup, AxProgress, AxTable, AxRow, AxDialog, AxTerminal, AxColorWell, AxMenuBar, AxMenu, AxMenuItem, AxCheckedMenuItem, AxPopup, AxContainer, Renderer, InputEvent, AccessAction, AccessTree, AccessNode, AxSetValue, AxClick, AxIncrement, AxFocus, AxSetNumber }
 import ui.access.{ access_node }
 import ui.draw.{ Size, Color, TextureId }
 import ui.text.{ fonts_new, Fonts }
@@ -1602,6 +1610,11 @@ let role_name = pure (node: AccessNode) -> string => match node.role {
   AxDialog => "dialog",
   AxTerminal => "terminal",
   AxColorWell => "color well",
+  AxMenuBar => "menu bar",
+  AxMenu => "menu",
+  AxMenuItem => "menu item",
+  AxCheckedMenuItem => "checked menu item",
+  AxPopup => "popup",
   AxContainer => "container",
 }
 `)
@@ -1785,7 +1798,7 @@ func TestRun_UiModalKeepsShortcutsOut(t *testing.T) {
 	t.Parallel()
 	got := runUiProgram(t, `import ui.app.{ App, Command, Subscription, Shortcuts, Shortcut, host_of }
 import ui.script.{ timed_platform, parse_steps }
-import ui.backend.{ Renderer, TextureId, Character, Modifiers, Chord, AccessTree, AccessNode, AxWindow, AxDialog, AxButton, AxLabel }
+import ui.backend.{ Renderer, TextureId, Character, Modifiers, Chord, AccessTree, AccessNode, AxWindow, AxDialog, AxButton, AxLabel, AxMenuBar, AxMenuItem }
 import ui.draw.{ Size, Color }
 import ui.text.{ fonts_new }
 import ui.layout.{ Node, column, text, button, modal, menu_bar, menu_button, Menu, MenuItemEntry, MenuItem }
@@ -1866,6 +1879,8 @@ let print_tree = (tree: AccessTree, id: u64, depth: i64) -> void => {
       AxDialog => "dialog",
       AxButton => "button",
       AxLabel => "label",
+      AxMenuBar => "menu bar",
+      AxMenuItem => "menu item",
       _ => "other",
     }
     let said = if node.label.len() > 0 { " ${node.label}" } else if node.value.len() > 0 { " ${node.value}" } else { "" }
@@ -1876,7 +1891,8 @@ let print_tree = (tree: AccessTree, id: u64, depth: i64) -> void => {
 `)
 	want := `modal closed: heard save, open
   window
-    button File
+    menu bar
+      menu item File
     button Behind
 modal open: heard delete
   window
@@ -2495,6 +2511,88 @@ let main = () -> u8 => {
 	}
 	if !strings.HasPrefix(got, "well: #") {
 		t.Errorf("its label is not the colour's text:\n%s", got)
+	}
+}
+
+// What opens something says what and whether it is open, and what it opens is heard as what
+// it is: a select's list (open), and a menu button — a button opening a menu (closed); a menu
+// bar, its title open on its menu, whose items are menu items — a checked one checked, heard
+// by its label alone, and a submenu's opening a menu; the tab chosen selected and the other
+// not; and an open popup's content a popup, its anchor saying it opens a dialog and is open.
+func TestRun_UiMenusSelectsTabsAndPopupsAreHeard(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.draw.{ Size }
+import ui.text.{ fonts_new }
+import ui.layout.{ column, text, button, select, SelectSpec, popup, menu_bar, menu_button, Menu, MenuItemEntry, MenuItem, Submenu, tab_bar, TabsSpec, TabSpec, layout_with, interaction_new, Interaction, loose }
+import ui.access.{ access_tree }
+import ui.backend.{ AccessRole, NoPopup, PopupMenu, PopupList, PopupDialog, AxMenuBar, AxMenu, AxMenuItem, AxCheckedMenuItem, AxPopup, AxComboBox, AxTab, AxButton }
+
+data Ev = Pick(i64) | New | Wrap | Shut | Tab(i64) | Close(i64) | Move(i64, i64) | Nothing
+
+let says = pure (b: Maybe<bool>) -> string => match b {
+  Some(true) => "yes",
+  Some(false) => "no",
+  None => "-",
+}
+
+let heard = pure (role: AccessRole) -> string => match role {
+  AxComboBox => "select",
+  AxMenuBar => "menu bar",
+  AxMenu => "menu",
+  AxMenuItem => "item",
+  AxCheckedMenuItem => "checked item",
+  AxPopup => "popup",
+  AxTab => "tab",
+  AxButton => "button",
+  _ => "",
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  let items = [
+    MenuItemEntry(MenuItem { label: "New", on_select: New }),
+    MenuItemEntry(MenuItem { label: "Wrap", on_select: Wrap, checked: true }),
+    Submenu("More", [MenuItemEntry(MenuItem { label: "Deep", on_select: New })]),
+  ]
+  let view = column::<Ev>([
+    select(SelectSpec { options: ["one", "two"], selected: 1, on_change: Pick }).keyed("sel"),
+    menu_bar([Menu { label: "File", entries: items }]).keyed("bar"),
+    menu_button(text::<Ev>("Tools"), items).keyed("mb"),
+    tab_bar(TabsSpec { tabs: [TabSpec { label: "A", key: "a" }, TabSpec { label: "B", key: "b" }], selected: 1, on_select: Tab, on_close: Close, on_move: Move }).keyed("tabs"),
+    popup(button::<Ev>("Open", Nothing), true, text::<Ev>("inside"), Shut).keyed("pop"),
+  ])
+  let ui = Interaction { interaction_new() | open: "#/:sel", menus: ["#/:bar/0"] }
+  let laid = layout_with(view, loose(Size { w: 600.0, h: 600.0 }), fonts, ui)
+  for n in access_tree(laid, "").nodes {
+    let role = heard(n.role)
+    if role == "" { continue }
+    let opens = match n.popup {
+      NoPopup => "",
+      PopupMenu => " opens a menu",
+      PopupList => " opens a list",
+      PopupDialog => " opens a dialog",
+    }
+    println("${role} '${n.label}'${opens} expanded ${says(n.expanded)} selected ${says(n.selected)} checked ${says(n.toggled)}")
+  }
+  0
+}
+`)
+	want := `select '' opens a list expanded yes selected - checked -
+item 'New' expanded - selected - checked -
+checked item 'Wrap' expanded - selected - checked yes
+item 'More' opens a menu expanded no selected - checked -
+menu '' expanded - selected - checked -
+item 'File' opens a menu expanded yes selected - checked -
+menu bar '' expanded - selected - checked -
+button 'Tools' opens a menu expanded no selected - checked -
+tab 'A' expanded - selected no checked -
+tab 'B' expanded - selected yes checked -
+button 'Open' opens a dialog expanded yes selected - checked -
+popup '' expanded - selected - checked -
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
 }
 

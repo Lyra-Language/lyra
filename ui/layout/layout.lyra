@@ -422,6 +422,13 @@ pub data Role =
   /// A colour well: a swatch ([swatch]), heard as the colour its patch shows, its label the
   /// colour's text, pressed to open its picker.
   | ColorWellRole
+  /// A menu bar ([menu_bar]), the menu a title or button opens ([menu_list]), and an item of
+  /// one — a title in a bar and a submenu's item among them — or an item ticked
+  /// (`MenuItem.checked`).
+  | MenuBarRole
+  | MenuRole
+  | MenuItemRole
+  | CheckedMenuItemRole
 
 /// A row's axis or a column's.
 pub data Axis = Horizontal | Vertical

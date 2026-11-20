@@ -94,7 +94,15 @@ layer — implements the two traits; the display list is the whole contract.
   heard as AccessKit's terminal (`AxTerminal`, code 21), named by the element's label. **A
   swatch is a colour well** (`ColorWellRole`, `AxColorWell`, code 22): its node's `color` is the
   colour its patch shows, which AccessKit has as the node's colour value; its label is the
-  colour's text, and it is pressed to open its picker.
+  colour's text, and it is pressed to open its picker. **What opens something says so**: a
+  select is expanded while its list is open and opens a list box, a menu's title, a menu
+  button and a submenu's item each open a menu and are expanded while it is
+  (`AccessNode.expanded`, `popup`); a menu bar, a menu and its items have AccessKit's menu
+  roles (`MenuBarRole`, `MenuRole`, `MenuItemRole`, `CheckedMenuItemRole` — an item heard by its
+  label alone, its check the role's), an open popup's content is a non-modal dialog
+  (`AxPopup`) around its elements, its anchor opening a dialog and expanded, and a tab says
+  whether it is the one chosen (`selected`). Codes 23–27; the states cross packed
+  (`states_code`).
 - **`text_align`** (CSS's `text-align`, inherited; lui's `text-align: left | center | right |
   start | end`): `TextLeft`, `TextCenter`, `TextRight` — each line of a paragraph moved by the
   room beside it in its box (`lines_aligned`). Text runs left to right only, so `start` is left.

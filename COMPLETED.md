@@ -9,6 +9,34 @@ Newest first.
 
 ## Dated log
 
+### 11/20/26 — Menus, popups, a select's list and the chosen tab are heard as what they are
+
+AccessKit heard a select with no word of its list being open, a menu bar, its menus and
+items as buttons, an open popup's content as loose elements, and every tab alike. Each is a
+property or role AccessKit has; the tree never said them.
+
+- **Openers say what they open and whether it is open**: `AccessNode` gains `expanded` and
+  `selected` (`Maybe<bool>`) and `popup` (`AccessPopup`: none, a menu, a list, a dialog). A
+  select opens a list and an `Opens` (a menu's title, a menu button, a submenu's item) a menu,
+  each expanded while something floats from it (`floats_open`) — read from the layout, as the
+  open list is laid out only then, not from `Interaction`, which `ui.access` is not given.
+- **Menu roles** (`MenuBarRole`, `MenuRole`, `MenuItemRole`, `CheckedMenuItemRole`, heard as
+  `AxMenuBar`…`AxCheckedMenuItem`) set by `ui.layout.menu` on its nodes. A checked item is
+  AccessKit's check-box menu item, toggled; **an item's label is its own**, since the text
+  inside it was "✓ Wrap" and its shortcut. A menu button stays a button that opens a menu,
+  as ARIA's menu button is.
+- **A popup's content is a dialog** (`AxPopup`, AccessKit's non-modal `DIALOG`) around its
+  elements, keyed by the content and given an id of its own (`#popup`) since the content may
+  be heard itself; its anchor's nodes open a dialog and are expanded.
+- **A tab says whether it is chosen** (`selected` from its `TabSpot`).
+- **States cross packed**, one `i32` after the colour (`states_code` in `ui.sdl3`; bits in
+  bindings/README.md), so the extern grew one argument rather than five; `accesskit.m` sets
+  `expanded`, `selected` and `has_popup` from it, and roles 23–27.
+- **Not heard through VoiceOver yet**, as the colour well was not: checked as the tree.
+
+Tests: `TestRun_UiMenusSelectsTabsAndPopupsAreHeard` (an open select, a menu bar open on a
+menu with a checked item and a submenu, a closed menu button, two tabs, an open popup).
+
 ### 11/20/26 — A swatch is heard as a colour well
 
 A swatch was a `Pressable` labelled with its colour's text, so assistive technology heard a
