@@ -174,9 +174,13 @@ func (tc *TypeChecker) contextBindings(declaredReturn types.Type, vars map[strin
 	if !unifyGenericTarget(declared, want, vars, out) {
 		return nil
 	}
+	// A context naming the enclosing generics' own variables settles them as types
+	// (rigidTypeVarsAt): `apply((_) => None)` returned from `settled<w>() -> Maybe<w>` binds
+	// apply's `u` to `w`.
+	rigid := tc.rigidTypeVarsAt(loc)
 	for k, v := range out {
 		// A context that is itself open (a bare `Box`, or a literal) settles nothing.
-		if v == nil || !mentionsNoTypeVar(v) || isUntypedLiteralType(v) {
+		if v == nil || !isConcreteEnoughToElaborate(v, rigid) || isUntypedLiteralType(v) {
 			delete(out, k)
 		}
 	}
@@ -592,7 +596,7 @@ func (tc *TypeChecker) solveDataTypeVars(decl *ast.TypeDeclStmt, declaredFields 
 		// A lambda payload takes what its field states, as a struct field's does
 		// (inferStructGenericArgs) — the concrete parts only, so a parameter this loop is
 		// solving is left to the lambda's body.
-		tc.elaborateLambda(arg, substituteGenerics(declaredFields[i], fromContext), nil)
+		tc.elaborateLambdaInScope(arg, substituteGenerics(declaredFields[i], fromContext))
 		argType := tc.inferExprType(arg)
 		if restoreExpected != nil {
 			restoreExpected()

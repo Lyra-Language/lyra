@@ -570,7 +570,7 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 		// checkLambdaBody, which walks the body — after it, the body has already reported
 		// `undefined symbol "x"` and left the return width unset.
 		if decl.Type != nil {
-			tc.elaborateLambda(decl.Value, decl.Type, nil)
+			tc.elaborateLambdaInScope(decl.Value, decl.Type)
 		}
 		// Put this binding's `where` bounds in scope for its body, exactly as an impl's
 		// are (checkTraitImpl). Without it a bound was collected and then read by
@@ -1935,7 +1935,7 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 	// afterwards is too late — `self.cache = HashMap.new()` was "cannot infer type
 	// variables k, v" though the field's type says both (10/27). A lambda is elaborated
 	// from it first, as an argument is.
-	tc.elaborateLambda(stmt.Value, targetType, nil)
+	tc.elaborateLambdaInScope(stmt.Value, targetType)
 	restoreExpected := tc.pushExpectedType(targetType, stmt.Value.GetLocation())
 	valueType := tc.inferExprType(stmt.Value)
 	restoreExpected()
@@ -5203,7 +5203,7 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 					// `Scope((Theme) -> Sheet)` gets `_: Theme` and its return. A data type
 					// with no parameters never reaches solveDataTypeVars' loop, so this is
 					// the one place it can (10/27).
-					tc.elaborateLambda(elem, substituteGenerics(declaredFields[i], subst), nil)
+					tc.elaborateLambdaInScope(elem, substituteGenerics(declaredFields[i], subst))
 					if want := substituteGenerics(declaredFields[i], subst); mentionsNoTypeVar(want) {
 						restoreExpected = tc.pushExpectedType(want, elem.GetLocation())
 					}
@@ -5892,7 +5892,7 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		// field went unchecked, and the backend refused the store the check would have
 		// settled (10/27).
 		if mentionsGenericParam(declaredFieldTypes[name], unsolvedParams(genericParamNames, typeSubst)) {
-			tc.elaborateLambda(f.Value, expected, nil)
+			tc.elaborateLambdaInScope(f.Value, expected)
 			tc.inferExprType(f.Value) // still record the value's type
 			continue
 		}
@@ -5905,7 +5905,7 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		// is `Ev` once `e` is. The backend lowers a lambda value from its annotations, and
 		// an unannotated return was "a lambda used as a value needs a return type
 		// annotation" there, on a literal the typechecker had accepted.
-		tc.elaborateLambda(f.Value, expected, nil)
+		tc.elaborateLambdaInScope(f.Value, expected)
 		// The declared field type is a **context for the value's inference**, not only
 		// something to check it against afterwards — the same push an annotated binding,
 		// a declared return and an argument slot each make (pushExpectedType). Without
@@ -6127,7 +6127,7 @@ func (tc *TypeChecker) inferStructGenericArgs(expr *ast.StructInstanceExpr, stru
 		// Only the concrete parts are written (elaborateLambda), so `e` is left to the body —
 		// which is what solves it. Without this `v` was undefined, the parameter mentioning
 		// no type variable notwithstanding (10/19).
-		tc.elaborateLambda(f.Value, substituteGenerics(declared, typeSubst), nil)
+		tc.elaborateLambdaInScope(f.Value, substituteGenerics(declared, typeSubst))
 		var vt types.Type
 		if context != nil {
 			restoreExpected := tc.pushExpectedType(tc.resolveType(context, f.Value.GetLocation()), f.Value.GetLocation())
@@ -6310,6 +6310,12 @@ func (tc *TypeChecker) lambdaSignature(lambda *ast.LambdaExpr) *types.LambdaType
 }
 
 func (tc *TypeChecker) inferLambdaExprType(lambda *ast.LambdaExpr) types.Type {
+	// A lambda written where a function type is expected — a return's, most often — takes
+	// that type's blanks as an annotated binding's lambda does (elaborateLambdaInScope); the
+	// enclosing generics' variables count as types, less a call argument's open ones.
+	if want := tc.currentExpectedType(); want != nil {
+		tc.elaborateLambdaInScope(lambda, want)
+	}
 	t := tc.lambdaSignature(lambda)
 	// A constructor no context could type has been refused, once; its body would only
 	// report the parameters the program never wrote.

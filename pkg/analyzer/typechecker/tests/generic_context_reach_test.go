@@ -90,6 +90,25 @@ struct Store<k, v> { n: i64 }
 let store_new<k, v> = () -> Store<k, v> => Store { n: 0 }
 struct Only<e> { cache: Store<string, e> }
 let mk<e> = () -> Opt<Only<e>> => Has(Only { cache: store_new() })`,
+		// A lambda takes the function's own variable from the type it is written against:
+		// a binding's annotation, a return, a field — and a call's return context (11/20).
+		"a lambda in a binding naming the function's variable": `
+data Opt<e> = Has(e) | Nope
+let make<t> = (x: t) -> Opt<t> => {
+    let h: (i64) -> Opt<t> = (_) => Nope
+    h(1)
+}`,
+		"a lambda returned under the function's variable": `
+data Opt<e> = Has(e) | Nope
+let make<t> = (x: t) -> (i64) -> Opt<t> => (_: i64) => Nope`,
+		"a lambda in a field naming the function's variable": `
+data Opt<e> = Has(e) | Nope
+struct Holder<t> { f: (i64) -> Opt<t> }
+let make<t> = (x: t) -> Holder<t> => Holder { f: (_: i64) => Nope }`,
+		"a call whose return is the function's variable": `
+data Opt<e> = Has(e) | Nope
+let apply<u> = (f: (i64) -> Opt<u>) -> Opt<u> => f(1)
+let settled<w> = (x: w) -> Opt<w> => apply((_: i64) => Nope)`,
 		"a local generic's own variable": `
 struct Store<k, v> { n: i64 }
 let store_new<k, v> = () -> Store<k, v> => Store { n: 0 }
@@ -120,6 +139,22 @@ let f = () -> void => {
 }`, false)
 	assertErrorsAre(t, res,
 		"store_new: cannot infer type variables k, v from these arguments; name them explicitly with ::<k, v>")
+}
+
+// A lambda passed where nothing settles the callee's variable takes no type for it, though
+// the enclosing function has a variable of that name: `apply`'s `u` is open, so `Nope` is
+// still unsolved (11/20).
+func TestGenericContext_ALambdaTakesNoOpenVariable(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+data Opt<e> = Has(e) | Nope
+let apply<u> = (f: (i64) -> Opt<u>) -> Opt<u> => f(1)
+let unsettled<u> = (x: u) -> i64 => {
+    let r = apply((_: i64) => Nope)
+    0
+}`, false)
+	if len(res.errors) == 0 {
+		t.Fatal("apply's open u was taken for the enclosing function's")
+	}
 }
 
 // A call argument's context names the callee's open variables, and one sharing its name with

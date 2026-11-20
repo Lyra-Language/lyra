@@ -65,6 +65,19 @@ func (tc *TypeChecker) elaborateLambda(expr ast.Expression, want types.Type, pla
 	}
 }
 
+// elaborateLambdaInScope elaborates a lambda from a type the program wrote — a binding's
+// annotation, a field's or payload's declared type, a return — with the type variables of
+// the generics enclosing it planted as types (rigidTypeVarsAt): inside `make<t>`,
+// `let h: (string) -> Maybe<t> = (_) => None` gives the lambda `-> Maybe<t>`, so `None` is
+// solved. A call's argument goes through elaborateLambda with its own plantable set, since
+// its slot may still name the callee's open variables.
+func (tc *TypeChecker) elaborateLambdaInScope(expr ast.Expression, want types.Type) {
+	if _, ok := expr.(*ast.LambdaExpr); !ok {
+		return
+	}
+	tc.elaborateLambda(expr, want, tc.rigidTypeVarsAt(expr.GetLocation()))
+}
+
 // isConcreteEnoughToElaborate reports whether a type from the expected signature can be
 // written onto the lambda as if the programmer had.
 //

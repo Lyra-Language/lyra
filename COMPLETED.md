@@ -9,6 +9,33 @@ Newest first.
 
 ## Dated log
 
+### 11/20/26 — A lambda takes its context from the enclosing function's own variable
+
+Inside `make<t>`, `let h: (string) -> Maybe<t> = (_: string) => None` was refused ("cannot
+tell what `None` holds"), and so was the same lambda returned under `-> (string) -> Maybe<t>`
+or held in a field of that type. A lambda takes its blanks from its slot's type through
+`elaborateLambda`. That plants only the parts concrete except for a `plantable` set, which
+these sites passed as none. `t` is a type in `make`'s body, as `rigidTypeVarsAt` has said for
+struct literals and payloads since 11/18.
+
+- **The written-type sites plant the enclosing variables** (`elaborateLambdaInScope`): an
+  annotated binding, an assignment, a struct field (both of `inferStructInstanceExpr`'s
+  paths and `inferStructGenericArgs`'), a constructor's payload (both paths). A call's
+  argument keeps `elaborateLambda` with its own plantable set: its slot can still name the
+  callee's open variables.
+- **A returned lambda had no elaboration at all.** It was inferred against the pushed expected
+  type, which nothing read. `inferLambdaExprType` now elaborates from it with the same set.
+  Where that expected type is a call argument's, `rigidTypeVarsAt` has subtracted the callee's
+  open variables (`unsolvedContextVars`), so a name clash plants nothing.
+- **A call's return context too** (`contextBindings`): `apply((_) => None)` returned from
+  `settled<w>() -> Maybe<w>` was "cannot infer type variable u". The context `Maybe<w>` was
+  dropped for naming a variable, though `w` is `settled`'s. It now binds `u := w`. With
+  nothing settling `u`, as in `let r = apply((_) => None)` inside a function of its own `u`, it
+  is still refused.
+
+Tests: four cases of `TestGenericContext_ReachesTheValue` (a binding, a return, a field, a call's
+return), each failing before the change, and `TestGenericContext_ALambdaTakesNoOpenVariable`.
+
 ### 11/19/26 — A fix for LLVM main's `clr` on a volatile store
 
 LLVM main's 16c337766166 (#216636, 08/25) selects every store of zero to memory as `CLR`.
