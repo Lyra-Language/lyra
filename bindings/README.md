@@ -649,8 +649,16 @@ The example's interface is `examples/imgui/components_view.lui`.
   `TextInput::placeholder`) — and a part it lacks is lui's error, as a misspelt prop is.
 - **Another file's components**: `<import src="widgets.lui"/>` at the top reads that file,
   checks calls to its components as this file's are, and imports the ones called from its
-  module — the path without `.lui` (`/` as `.`), or `module="…"`. `lyra-lsp` passes the
-  markup's path, so imports resolve in the editors too.
+  module. That module is the `<import>`'s `module="…"`, else the one the imported file's own
+  `<script module="…">` names, else its path from this file (`/` as `.`, no `.lui`, `..` up
+  a level) taken from this file's module. **`<script module="views.main">` names a file's
+  module** from its program's root: lui writes it as the generated module's header (which
+  lyrac checks against the file's place), so `widgets.lui` beside it is `views.widgets` and
+  `../shared/card.lui` is `shared.card`. Without one, a file is taken to sit at the root, and
+  a path climbing above it is an error asking for a name. An imported file's own imports are
+  its module's business: Lyra has no re-exports, so a component one of them declares is
+  imported where it is called. `lyra-lsp` passes the markup's path, so imports resolve in the
+  editors too.
 - **Tested** by `cmd/lyrac/lui_test.go`: the examples' modules (both targets) are what lui
   makes and check clean, each kind of mistake is reported at its line, and a token's or a
   script's error from lyrac is mapped back.

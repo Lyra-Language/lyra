@@ -543,6 +543,7 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		{"margin value", ui + "<style global>\n  .g { margin: 4 wide }\n</style>", "x.lui:3: a margin is a length or auto, not wide"},
 		{"margin count", ui + "<style global>\n  .g { margin: 1 2 3 4 5 }\n</style>", "x.lui:3: margin is one to four lengths or auto, not 1 2 3 4 5"},
 		{"grid line zero", ui + "<style global>\n  .g { grid-column: 0 / -1 }\n</style>", "x.lui:3: grid lines are N, span N, N / M, N / span M or span N / M (a negative N or M from the end), not 0 / -1"},
+		{"script module", "<script target=\"ui\" module=\"views-main\"></script>\n<component name=\"a\">\n  <Column/>\n</component>", "x.lui:1: module is a dotted path of names (views.main), not \"views-main\""},
 		{"media nested", ui + "<style global>\n  @media (min-width: 1) {\n    @media (max-width: 2) {\n      .a { gap: 1 }\n    }\n  }\n</style>", "x.lui:4: an @media inside an @media"},
 		{"at-rule", ui + "<style global>\n  @supports (x: y) {\n  }\n</style>", "x.lui:3: @supports is not an at-rule of a <style>; @media is"},
 		{"selector in a list", ui + "<style global>\n  .a,\n  Column Text { gap: 1 }\n</style>", "x.lui:4: Column Text is not a selector ui reads"},
@@ -600,6 +601,139 @@ func TestLui_UiTargetReportsMistakesAtTheirLine(t *testing.T) {
 		}
 		if !strings.Contains(string(out), c.want) {
 			t.Errorf("%s: got %q, want it to contain %q", c.name, out, c.want)
+		}
+	}
+}
+
+// An import's module is named from the program's root: `<script module="views.main">` writes
+// the module's header and names the files it imports from it — `widgets.lui` beside it is
+// `views.widgets`, `../shared/card.lui` is `shared.card` — and a file that names its own
+// (`shared.card`) is imported by that name from a file that does not. The program, its main at
+// the root, compiles and lays both views out. A path climbing above the program's root, or
+// above a file whose module is not named, is refused.
+func TestLui_ImportsNamedFromTheProgramsRoot(t *testing.T) {
+	t.Parallel()
+	skipWithoutText(t)
+	lui := buildLui(t)
+	root := t.TempDir()
+	files := map[string]string{
+		"views/widgets.lui": `<script target="ui"></script>
+<component name="badge" props={{ words: string }}>
+  <Text>{words}</Text>
+</component>
+`,
+		"shared/card.lui": `<script target="ui" module="shared.card"></script>
+<component name="card" props={{ title: string }}>
+  <Column><Text>{title}</Text></Column>
+</component>
+`,
+		"views/main.lui": `<script target="ui" module="views.main">
+  pub data Ev = Go
+</script>
+<import src="widgets.lui"/>
+<import src="../shared/card.lui"/>
+<component name="main_view" event={Ev}>
+  <Column>
+    <badge words="hi"/>
+    <card title="t"/>
+  </Column>
+</component>
+`,
+		"views/side.lui": `<script target="ui">
+  pub data SideEv = Poke
+</script>
+<import src="../shared/card.lui"/>
+<component name="side_view" event={SideEv}>
+  <card title="s"/>
+</component>
+`,
+	}
+	for name, text := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"views/widgets.lui", "shared/card.lui", "views/main.lui", "views/side.lui"} {
+		if b, err := command(t, lui, filepath.Join(root, name)).CombinedOutput(); err != nil {
+			t.Fatalf("lui refused %s: %v\n%s", name, err, b)
+		}
+	}
+	read := func(name string) string {
+		b, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	for file, wants := range map[string][]string{
+		"views/main.lyra":  {"\nmodule views.main\n", "import views.widgets.{ badge }", "import shared.card.{ card }"},
+		"shared/card.lyra": {"\nmodule shared.card\n"},
+		"views/side.lyra":  {"import shared.card.{ card }"},
+	} {
+		got := read(file)
+		for _, want := range wants {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s lacks %q:\n%s", file, want, got)
+			}
+		}
+	}
+	if strings.Contains(read("views/side.lyra"), "\nmodule ") {
+		t.Errorf("views/side.lyra has a module header no markup asked for")
+	}
+	main := filepath.Join(root, "main.lyra")
+	if err := os.WriteFile(main, []byte(`import views.main.{ main_view }
+import views.side.{ side_view }
+import ui.layout.{ layout, loose }
+import ui.text.{ fonts_new }
+import ui.draw.{ Size }
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  let a = layout(main_view(), loose(Size { w: 200.0, h: 200.0 }), fonts)
+  let b = layout(side_view(), loose(Size { w: 200.0, h: 200.0 }), fonts)
+  println("${a.children.len()} ${b.children.len()}")
+  0
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setenv(t, "LYRA_STD", repoRoot(t))
+	stdout, stderr, code := captureRun(t, "check", main)
+	if code != 0 || strings.Contains(stdout+stderr, "error") {
+		t.Errorf("the program does not check (exit %d):\n%s%s", code, stdout, stderr)
+	}
+	// Above the root, and above a file whose module is not named.
+	for name, text := range map[string]string{
+		"views/top.lui": `<script target="ui" module="views.top"></script>
+<import src="../../outside.lui"/>
+`,
+		"views/loose.lui": `<script target="ui"></script>
+<import src="../shared/plain.lui"/>
+`,
+		"outside.lui": `<script target="ui"></script>
+`,
+		"shared/plain.lui": `<script target="ui"></script>
+`,
+	} {
+		path := filepath.Join(root, name)
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(root), "outside.lui"), []byte("<script target=\"ui\"></script>\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{
+		"views/top.lui":   "top.lui:2: ../../outside.lui climbs above module views.top",
+		"views/loose.lui": "loose.lui:2: ../shared/plain.lui climbs above this file, whose module is not named",
+	} {
+		out, err := command(t, lui, filepath.Join(root, name)).CombinedOutput()
+		if err == nil || !strings.Contains(string(out), want) {
+			t.Errorf("lui on %s: %v\n%s\nwant it to say %q", name, err, out, want)
 		}
 	}
 }

@@ -938,9 +938,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   parameter**, asking for an annotation. (COMPLETED.md, 10/29.)
 - **[DONE 10/29] A string pattern holding an escape** (`"\\"` as a `match` arm) matches
   what its literal builds; lui's `rune_literal` is a `match` again. (COMPLETED.md, 10/29.)
-- **[OPEN] lui: an import's module is its path from the importing file**, `/` as `.` — right
-  when both are under the program's root as written, else `module="…"`. Imports are one level:
-  an imported file's own imports are not read.
+- **[DONE 11/20] lui names an import's module from the program's root**: `<script module="…">`
+  names a file's module (and writes its header); an import takes the imported file's, or its
+  path resolved from this one's, `..` included. COMPLETED.md 11/20.
 - **[DONE 11/01] A body binding over a bounded parameter is not the parameter** — a `pure`
   function could run `let g = noisy; g(1)` (COMPLETED.md, 11/01). Passing a captured `pure`
   parameter on had worked since 10/27; this entry had gone unclosed.

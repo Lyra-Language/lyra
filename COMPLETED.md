@@ -9,6 +9,31 @@ Newest first.
 
 ## Dated log
 
+### 11/20/26 — lui names an import's module from the program's root
+
+An `<import src="widgets.lui"/>` took its module from the path as written from the importing
+file, `/` as `.`. That is right only when the importing file sits at its program's root:
+`widgets.lui` beside `views/main.lui` is the module `views.widgets`, but lui wrote
+`import widgets`. And `../shared/card.lui` became `...shared.card`, no module at all. lui
+cannot know the root, since a generated module has no header and is named by its place.
+
+- **A file may say its module**: `<script module="views.main">`, which lui writes as the
+  generated module's `module` header. lyrac refuses a header contradicting the file's place,
+  so the name is checked, not trusted.
+- **An import's module, in order**: the `<import>`'s `module="…"`; the imported file's own
+  `<script module>`; its path resolved against this file's module (its directory's parts, `.`
+  staying, `..` going up). With no module named, this file is taken to be at the root. A path
+  climbing above the root, or above an unnamed file, is an error asking for a name, and so is
+  a part that is no name (`my-widgets`).
+- **"Imports are one level" is not a gap.** An imported file's own imports are its generated
+  module's business. Lyra has no re-exports, so a component one of them declares is imported
+  where it is called, and lui already says "no component X in this file or one it imports".
+- No view in the workspace imports another, and all 13 generate as before.
+
+Tests: `TestLui_ImportsNamedFromTheProgramsRoot`. It builds a root with `views/` and `shared/`;
+lyrac checks a `main.lyra` there laying out both views; and both climbing errors are covered.
+`TestLui_UiTargetReportsMistakesAtTheirLine` covers a module that is no path.
+
 ### 11/20/26 — A lambda takes its context from the enclosing function's own variable
 
 Inside `make<t>`, `let h: (string) -> Maybe<t> = (_: string) => None` was refused ("cannot
