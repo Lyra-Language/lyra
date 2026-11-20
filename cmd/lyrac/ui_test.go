@@ -2596,6 +2596,67 @@ popup '' expanded - selected - checked -
 	}
 }
 
+// A disabled element disables every control inside it, as CSS's disabled fieldset does: they
+// take no focus, look disabled (`Button:disabled`) and are said to be disabled to assistive
+// technology, offering it no action — a label inside is heard as it was. Disabling the group
+// in a later frame reaches a button whose own node did not change, past the layout cache.
+func TestRun_UiADisabledGroupDisablesItsControls(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.draw.{ Size }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, Laid, column, text, button, checkbox, layout_cached, layout_cache, interaction_new, loose }
+import ui.interact.{ focus_order }
+import ui.access.{ access_tree }
+
+data Ev = Go | Tick | Off
+
+let view = pure (off: bool) -> Node<Ev> => column::<Ev>([
+  column::<Ev>([
+    text::<Ev>("Inside"),
+    button::<Ev>("Save", Go).keyed("save"),
+    checkbox::<Ev>("Keep", false, Tick).keyed("keep"),
+  ]).keyed("group").disabled_if(off),
+  button::<Ev>("Out", Go).keyed("out"),
+  button::<Ev>("Dead", Off).keyed("dead").disabled_if(true),
+])
+
+let find = pure (laid: ref Laid<Ev>, id: string) -> Maybe<Laid<Ev>> => {
+  if laid.id == id { return Some(laid) }
+  for p in laid.children { if let Some(found) = find(p.laid, id) { return Some(found) } }
+  None
+}
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  var cache = layout_cache::<Ev>()
+  let ui = interaction_new()
+  for off in [false, true] {
+    let laid = layout_cached(view(off), loose(Size { w: 400.0, h: 400.0 }), fonts, ui, cache)
+    var tabbed: []string = []
+    focus_order(laid, tabbed)
+    let dead = find(laid, "#/:dead") ?? laid
+    let save = find(laid, "#/:group/:save") ?? laid
+    let looks = save.style.background == dead.style.background
+    var heard: []string = []
+    for n in access_tree(laid, "").nodes {
+      if n.label.len() > 0 || n.value.len() > 0 {
+        heard.push("${n.label}${n.value}${if n.disabled { " disabled" } else { "" }} ${n.actions}")
+      }
+    }
+    println("off ${off}: tabbed ${tabbed.join(" ")}; save disabled ${save.disabled}, looks it ${looks}; heard ${heard.join(", ")}")
+  }
+  0
+}
+`)
+	want := `off false: tabbed #/:group/:save #/:group/:keep #/:out; save disabled false, looks it false; heard Inside 0, Save 3, Keep 3, Out 3, Dead disabled 0
+off true: tabbed #/:out; save disabled true, looks it true; heard Inside 0, Save disabled 0, Keep disabled 0, Out 3, Dead disabled 0
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // order moves where a flex item or grid item is drawn, not where Tab or assistive technology
 // finds it: CSS keeps both to the tree's order. The third button, ordered first, is drawn
 // first and left of the others, and still tabbed to and heard third.

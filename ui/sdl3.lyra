@@ -888,11 +888,12 @@ pub let access_bounds = pure (bounds: Rect, scale: f32) -> Rect => bounds.scaled
 
 /// A node's states as `bindings.accesskit` packs them: whether it says it is expanded (bit 0)
 /// and is (bit 1), whether it says it is selected (bit 2) and is (bit 3), and what it opens
-/// (bits 4 and 5: none, a menu, a list, a dialog).
+/// (bits 4 and 5: none, a menu, a list, a dialog), and whether it is disabled (bit 6).
 let states_code = pure (node: ref AccessNode) -> i32 => {
   var out: i32 = 0
   if let Some(open) = node.expanded { out = out | 1 | (if open { 2 } else { 0 }) }
   if let Some(chosen) = node.selected { out = out | 4 | (if chosen { 8 } else { 0 }) }
+  if node.disabled { out = out | 64 }
   out | (popup_code(node.popup) << 4)
 }
 

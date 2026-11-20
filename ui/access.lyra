@@ -191,7 +191,11 @@ let gather<e> = (laid: Laid<e>, origin: Point, nodes: mut []AccessNode) -> []u64
   }
   let Some(role) = heard else { return children }
   let id = access_id(laid.id)
-  nodes.push(node_for(laid, role, id, origin, children))
+  let node = node_for(laid, role, id, origin, children)
+  // A disabled control is heard, and said to be disabled, but does nothing it is asked.
+  nodes.push(if laid.disabled {
+    AccessNode { node | disabled: true, actions: 0 }
+  } else { node })
   [id]
 }
 

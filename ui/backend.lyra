@@ -278,6 +278,8 @@ pub struct AccessNode {
   selected: Maybe<bool> = None,
   /// What it opens.
   popup: AccessPopup = NoPopup,
+  /// Whether it takes no input ([ui.layout.Node.disabled], its own or an element's around it).
+  disabled: bool = false,
 }
 
 /// Actions an [AccessNode] offers, or-ed: to take the focus, be pressed, have its value set,

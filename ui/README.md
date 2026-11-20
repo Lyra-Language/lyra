@@ -336,7 +336,11 @@ layer — implements the two traits; the display list is the whole contract.
   **A class is only ever the program's**: the framework adds none, and a class named `hover` is
   just a class (lui refuses one, as a mistake). **A disabled control takes no input** — not
   pressed, not focused, skipped by Tab, its accessibility actions ignored — but is hovered
-  like any element, and gives up the focus or press it held when it becomes disabled. A focused control gets
+  like any element, and gives up the focus or press it held when it becomes disabled. **A
+  disabled element disables every control inside it**, as CSS's disabled `fieldset` does
+  (`Cascade.disabled`, carried down; `disabled_within`): they match `:disabled` and take no
+  input, while what is not a control is as it was. Assistive technology hears a disabled
+  control as AccessKit's disabled, offered no action (`AccessNode.disabled`). A focused control gets
   a ring in the theme's `focus` colour. A control's insides are parts (`Checkbox::box`,
   `Slider::thumb`, `TextInput::placeholder`); `control_rules` gives a theme its defaults.
 - **A read-only field** (`FieldSpec.read_only`, `read_only_input(value)`, lui's `readonly`) is

@@ -681,7 +681,7 @@ the actions it asks for back with the window each came from. `ui.sdl3` is its on
   whole tree each time it changes — `begin(window, root, focus)`, an `element(…)` a node (a
   colour well's colour, `0xRRGGBBAA`, `-1` for none, and its states last, packed — expanded
   said and true in bits 0–1, selected in 2–3, what it opens in 4–5: none, a menu, a list box,
-  a dialog), `commit()` — and `accesskit.m` keeps it with that window's adapter (a `surface`, allocated
+  a dialog, disabled in 6), `commit()` — and `accesskit.m` keeps it with that window's adapter (a `surface`, allocated
   alone so the adapter's callbacks keep a pointer to it), builds AccessKit's nodes from it when
   asked, and sends AccessKit an update when it is already listening. An action request is
   queued there with SDL's number for its window and an `SDL_EVENT_USER` pushed to wake a

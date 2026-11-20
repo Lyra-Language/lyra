@@ -1296,6 +1296,9 @@ pub struct Cascade {
   /// from the root element's.
   window: Style = Style {},
   inherited: Computed,
+  /// Whether an element around is disabled ([ui.layout.Node.disabled]): every control below
+  /// it is too, as inside CSS's disabled `fieldset`.
+  disabled: bool = false,
 }
 
 /// The cascade at the root of a tree drawn in `theme`, the window's layer empty.

@@ -9,6 +9,28 @@ Newest first.
 
 ## Dated log
 
+### 11/20/26 — A disabled element disables what it holds, and is heard as disabled
+
+`Node.disabled` reached only the control it was set on: a group disabled with
+`.disabled_if(true)` left every button inside it working, and AccessKit was never told a
+control was disabled, so VoiceOver offered to press one that would do nothing.
+
+- **Disabled is carried down the cascade** (`Cascade.disabled`), set for what a disabled
+  element holds, and each control laid out below it is disabled (`disabled_within`, in
+  `lay_fresh` and `styled_at`): `:disabled` matches, Tab skips it, presses miss it — every
+  rule that reads `Laid.disabled` holds without a change. As in CSS's fieldset, only controls
+  (`focusable`) take it; a label inside is styled as it was.
+- **The cascade, not the node, carries it**, so the layout cache — which compares an element's
+  cascade as well as its node — lays a button out again when the group around it is
+  disabled, though the button's own node did not change. Rewriting the tree's nodes before
+  layout would have done the same at the cost of a copy of the tree each frame.
+- **Heard as disabled**: `AccessNode.disabled`, offering no action, sent as bit 6 of the
+  packed states; `accesskit.m` calls `accesskit_node_set_disabled`.
+
+Tests: `TestRun_UiADisabledGroupDisablesItsControls` (focus order, the `Button:disabled` look,
+the tree's disabled nodes and their actions, across two frames of one cache); it fails with
+`disabled_within` made the identity.
+
 ### 11/20/26 — Menus, popups, a select's list and the chosen tab are heard as what they are
 
 AccessKit heard a select with no word of its list being open, a menu bar, its menus and

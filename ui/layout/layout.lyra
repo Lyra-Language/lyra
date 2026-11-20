@@ -1904,6 +1904,12 @@ pub let focusable<e> = pure (kind: Kind<e>) -> bool => match kind {
   _ => false,
 }
 
+/// `node` as it is inside `cascade`: a control below a disabled element disabled.
+let disabled_within<e> = pure (node: Node<e>, cascade: ref Cascade) -> Node<e> =>
+  if cascade.disabled && !node.disabled && focusable(node.kind) {
+    Node { node | disabled: true }
+  } else { node }
+
 /// Whether `kind` is a painter's.
 let is_painted<e> = pure (kind: Kind<e>) -> bool => match kind {
   Painted(_) => true,
@@ -1921,7 +1927,7 @@ let lay_fresh<e> = (
   cache: mut LayoutCache<e>
 ) -> Laid<e> => {
   // A field keeping a draft lays it out, the draft its value.
-  let node = drafted(written, ui, id)
+  let node = disabled_within(drafted(written, ui, id), cascade)
   let styled = styled_at(node, cascade, ui, id)
   let own = styled.own
   let style = styled.style
@@ -2255,11 +2261,12 @@ struct Styled {
 /// `node`'s [Styled], at `cascade`, identified as `id` — what laying it out starts from, and
 /// what a flex container or grid reads of an item before it lays the item out.
 let styled_at<e> = (
-  node: Node<e>,
+  written: Node<e>,
   cascade: ref Cascade,
   ui: ref Interaction,
   id: string
 ) -> Styled => {
+  let node = disabled_within(written, cascade)
   // A theme reaches its own node; a component's sheet — and a control's insides — only what
   // it holds.
   // Each sheet as the viewport has it: its media rules in force or not.
@@ -2294,6 +2301,10 @@ let styled_at<e> = (
     } else {
       own.inside(style)
     },
+  }
+  // What a disabled element holds is disabled too.
+  let within = if node.disabled && !within.disabled { Cascade { within | disabled: true } } else {
+    within
   }
   let space = match node.kind {
     Inset(extra) => style.padding.plus(extra),

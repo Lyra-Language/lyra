@@ -967,8 +967,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 - **[DONE 11/20] `ui`: AccessKit is told a select is expanded, and what a popup or a menu is** —
   expanded and has-popup on selects and openers, menu roles, a popup's dialog, a tab's
   `selected` (COMPLETED.md 11/20); checked as the tree `ui.access` builds, not yet in VoiceOver.
-- **[OPEN] `ui`: a disabled control is not told to assistive technology** (AccessKit's
-  `disabled` flag), nor disabled through its ancestors (CSS's disabled `fieldset`).
+- **[DONE 11/20] `ui`: a disabled control is told to assistive technology**, and a disabled
+  element disables the controls inside it, as CSS's disabled `fieldset` (COMPLETED.md 11/20).
 - **[OPEN] `ui.interact`: a caret moves by rune, not grapheme cluster.** `é` written as `e`
   and a combining accent, or an emoji sequence, takes several Left presses; needs UAX #29.
 - **[OPEN] `ui.interact`: a field's caret does not blink**, and typing is not coalesced into

@@ -40,7 +40,7 @@ typedef struct {
   /// A colour well's colour, 0xRRGGBBAA; -1 for none.
   int64_t color;
   /// Packed: expanded said (1) and true (2), selected said (4) and true (8), and what it
-  /// opens in bits 4–5 (0 none, 1 a menu, 2 a list box, 3 a dialog).
+  /// opens in bits 4–5 (0 none, 1 a menu, 2 a list box, 3 a dialog); disabled (64).
   int32_t states;
 } element;
 
@@ -144,6 +144,7 @@ static accesskit_tree_update *snapshot(void *userdata) {
                            (uint8_t)(e->color >> 8), (uint8_t)e->color};
       accesskit_node_set_color_value(node, c);
     }
+    if (e->states & 64) accesskit_node_set_disabled(node);
     if (e->states & 1) accesskit_node_set_expanded(node, (e->states & 2) != 0);
     if (e->states & 4) accesskit_node_set_selected(node, (e->states & 8) != 0);
     switch ((e->states >> 4) & 3) {

@@ -65,7 +65,7 @@ pub let begin = (window: Window, root: u64, focus: u64) -> void =>
 /// tooltip), where it is (in the window's pixels, from its content's top left), whether it
 /// is ticked (`-1` for neither), its number and range when it has one, the actions it offers,
 /// its children's ids, a colour well's colour (`0xRRGGBBAA`, `-1` for none), and its states
-/// packed as `accesskit.m` reads them (expanded, selected, what it opens; `0` for none).
+/// packed as `accesskit.m` reads them (expanded, selected, what it opens, disabled; `0` for none).
 pub let element = (
   id: u64,
   role: RoleCode,
