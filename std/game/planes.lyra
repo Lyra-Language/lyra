@@ -33,6 +33,10 @@ module std.game.planes
 //! plane may **repeat across** ([set_repeats]), its map shown again past each side, which
 //! bands moving apart from the plane want; a console needs it for them, this runtime not.
 //!
+//! **Its columns may ripple up and down**, as the Genesis's column scroll does: a
+//! [ColumnWave] given each update by [scroll_columns], a column every [COLUMN_TILES] tiles of
+//! the screen.
+//!
 //! This module only keeps the planes; `std.game.screen` draws them, so a game's camera and
 //! collision can name these without the window.
 
@@ -99,6 +103,19 @@ pub struct Band {
   wave_updates: f32 = 0.0,
 }
 
+/// A plane's columns rippling up and down, as the Genesis's column scroll does — for
+/// [scroll_columns]: each [COLUMN_TILES] tiles of the screen moved by up to `wave` pixels, a
+/// sine `wave_length` pixels across passing in `wave_updates` updates (0 still; below 0 the
+/// other way). `std.genesis.camera`'s `ColumnWave`, in its units.
+pub struct ColumnWave {
+  wave: f32 = 0.0,
+  wave_length: f32 = 64.0,
+  wave_updates: f32 = 0.0,
+}
+
+/// How wide a column of a [ColumnWave] is, in tiles: the Genesis's two.
+pub const COLUMN_TILES: i64 = 2
+
 /// What a plane holds: its cells row by row, `width` a row, and where its top-left is
 /// scrolled to — the world position at the screen's top-left.
 pub struct Plane {
@@ -122,6 +139,12 @@ pub struct Plane {
   was_view_x: f32 = 0.0,
   ticks: i64 = 0,
   banded_in: i64 = -1,
+  /// Its columns' ripple ([scroll_columns]) and the updates counted for it; and the count as
+  /// drawn, between the update before and this one (`std.game.screen` sets it).
+  columns: ColumnWave = ColumnWave {},
+  column_ticks: i64 = 0,
+  columned_in: i64 = -1,
+  column_shown: f32 = 0.0,
 }
 
 /// A cell's bits for palette `p`: `FRONT | planes.palette(2) | tile`.
@@ -146,7 +169,9 @@ pub let write_plane<const N: i64> = (
     layout: None,
     repeats: false,
     bands: [],
-    banded_in: -1
+    banded_in: -1,
+    columns: ColumnWave {},
+    columned_in: -1
   }
   sprites.snap()
 }
@@ -206,6 +231,15 @@ pub let scroll_bands<const N: i64> = (
   if all[plane].bands.len() != N { all[plane].bands = [b in bands | b] }
   all[plane].view_x = view_x
   all[plane].ticks = ticks
+}
+
+/// Each of `plane`'s columns moved up or down from its scroll as `wave` says, `ticks` counting
+/// updates. Once an update, after the plane is scrolled.
+pub let scroll_columns = (plane: i64, wave: ColumnWave, ticks: i64) -> void => {
+  if plane < 0 || plane >= all.len() { return }
+  all[plane].columns = wave
+  all[plane].column_ticks = ticks
+  all[plane].columned_in = sprites.updates()
 }
 
 /// `plane` laid out as `layout` says, once its map is written.
@@ -295,6 +329,24 @@ impl Plane {
     } else {
       (self.view_x, f32(self.ticks))
     }
+
+  /// Its columns' updates counted, `t` of the way from the update before to this one.
+  pub let column_ticks_at = (self: ref, t: f32) -> f32 =>
+    if self.columned_in == sprites.updates() {
+      f32(self.column_ticks) - 1.0 + t
+    } else { f32(self.column_ticks) }
+
+  /// How far its column `k` (from the screen's left) is moved down, its ripple `ticks` in.
+  pub let column_offset = pure (self, k: i64, column_width: f32, ticks: f32) -> f32 => {
+    let w = self.columns
+    let passing = if w.wave_updates > 0.0001 || w.wave_updates < -0.0001 {
+      ticks / w.wave_updates
+    } else { 0.0 }
+    let along = if w.wave_length > 0.0001 || w.wave_length < -0.0001 {
+      f32(k) * column_width / w.wave_length
+    } else { 0.0 }
+    w.wave * ((passing + along) * 6.2831853).sin()
+  }
 
   /// Where it is scrolled to `t` of the way from the update before to this one (0 to 1):
   /// between where it was and where it is when this update scrolled it, else where it is.

@@ -79,6 +79,10 @@ pub let init = () -> void => {
   mode = INIT_REGISTERS[1]
   line_mode = 0
   banded = 0
+  columned = 0
+  columns_from = #[NO_WORD; 2]
+  columns_changed = false
+  plain_words = #[NO_WORD; 2]
   lines_changed = false
   for i: u16 in 0..<64 { shown[i] = 0 }
 }
@@ -333,27 +337,46 @@ pub let write_cell = (plane: u16, x: u16, y: u16, word: u16) -> void => {
 /// top-left — the whole screen at once. A plane wraps at its edges, so any position will
 /// do. With line scrolling on ([use_bands]) every line of the plane is given `x`, unless the
 /// plane's lines are its bands', when only `y` is set — and both go to the VDP with the
-/// lines, in the next vertical blank ([send_lines]).
+/// lines, in the next vertical blank ([send_lines]). With column scrolling on
+/// ([use_columns]) every column of the plane is given `y` when it changes, which [set_column]
+/// moves a column from — every frame, after this — where the plane's columns move apart.
 pub let set_scroll = (plane: u16, x: i16, y: i16) -> void => {
   let which: u16 = if plane == PLANE_A { 0 } else { 2 }
   let bit: u8 = if plane == PLANE_A { 1 } else { 2 }
   let word = line_word(i32(x))
   let down = u16(i32(y) & 1023)
+  lines_down[which / 2] = down
+  // In column mode every column takes the plane's scroll when it changes — a plane whose
+  // columns move apart then has them moved from it by [set_column] each frame, and one shown
+  // before its first ripple is where it is scrolled, not where a scene before left it.
+  if columned != 0 && columns_from[which / 2] != down {
+    columns_from[which / 2] = down
+    var k = which / 2
+    while k < 2 * SCREEN_COLUMNS {
+      columns_down[k] = down
+      k += 2
+    }
+    columns_changed = true
+  }
   if line_mode != 0 {
-    if (banded & bit) == 0 {
+    // A plane scrolled whole needs its lines rewritten only when it moved: the table was
+    // a tenth of the overlook's frame, half of it this plane's same word (11/20).
+    if (banded & bit) == 0 && plain_words[which / 2] != word {
+      plain_words[which / 2] = word
       begin_lines(plane)
-      for _: i16 in 0..<SCREEN_HEIGHT { write_line(word) }
+      fill_lines(word, SCREEN_HEIGHT)
       end_lines()
     }
-    lines_down[which / 2] = down
     lines_changed = true
     return
   }
   let held = hold_vblank()
   set_address(VRAM_WRITE, HSCROLL + which)
   write_word(word)
-  set_address(VSRAM_WRITE, which)
-  write_word(down)
+  if columned == 0 {
+    set_address(VSRAM_WRITE, which)
+    write_word(down)
+  }
   release_vblank(held)
 }
 
@@ -381,8 +404,50 @@ pub const SHADOW_INDEX: u16 = 15
 pub let use_bands = (plane_a: bool, plane_b: bool) -> void => {
   banded = (if plane_a { 1 } else { 0 }) | (if plane_b { 2 } else { 0 })
   line_mode = if banded != 0 { 3 } else { 0 }
-  set_register(11, line_mode)
+  plain_words = #[NO_WORD; 2]
+  set_scroll_modes()
 }
+
+/// The screen's columns, [COLUMN_WIDTH] pixels each, scrolled up and down on their own — the
+/// VDP's column scroll — for the planes said, each column moved from the plane's own scroll
+/// by [set_column]; the other plane's columns all keep its scroll ([set_scroll]). Both false
+/// turns it off. Once, as a scene starts.
+pub let use_columns = (plane_a: bool, plane_b: bool) -> void => {
+  columned = (if plane_a { 1 } else { 0 }) | (if plane_b { 2 } else { 0 })
+  set_scroll_modes()
+  // Every column taken from the planes' scrolls again, and from the next [set_scroll]'s.
+  for k: u16 in 0..<2 * SCREEN_COLUMNS { columns_down[k] = lines_down[k & 1] }
+  columns_from = #[NO_WORD; 2]
+  columns_changed = true
+}
+
+/// How wide a column of [use_columns] is, in pixels, and how many the 40-cell screen has.
+pub const COLUMN_WIDTH: i16 = 16
+pub const SCREEN_COLUMNS: u16 = 20
+
+/// Column `column` of `plane` (`0` the screen's left) scrolled `offset` pixels further down
+/// than the plane's own scroll ([set_scroll], which must come first in the frame) — the map
+/// moving up in it. Sent in the next vertical blank, with the lines ([send_lines]).
+pub let set_column = (plane: u16, column: u16, offset: i16) -> void => {
+  if column >= SCREEN_COLUMNS { return }
+  let k: u16 = if plane == PLANE_A { 0 } else { 1 }
+  columns_down[2 * column + k] = lines_down[k].wrapping_add(u16(offset)) & 1023
+  columns_changed = true
+}
+
+/// Every column of `plane` at once, for a game rippling them all ([set_column] one at a time
+/// costs a call and its checks a column): the plane's own scroll ([set_scroll], this frame's)
+/// and its first column's word — the next column's two words on, [SCREEN_COLUMNS] of them —
+/// which the caller writes, each the scroll plus its offset, `& 1023`.
+pub let columns_of = (plane: u16) -> (u16, ^mut u16) => {
+  let k: u16 = if plane == PLANE_A { 0 } else { 1 }
+  columns_changed = true
+  (lines_down[k], unsafe { &mut columns_down[k] })
+}
+
+/// Register 11 as [use_bands] and [use_columns] have it.
+let set_scroll_modes = () -> void =>
+  set_register(11, line_mode | (if columned != 0 { 4 } else { 0 }))
 
 /// `plane`'s lines of the horizontal scroll from line 0, a [write_line] each: [line_word]s
 /// for the screen's lines in turn, then [end_lines]. **Into a copy in RAM**, which
@@ -401,21 +466,64 @@ pub let write_line = (word: u16) -> void => {
   line_at += 2
 }
 
+/// The next `count` lines all `word`, after [begin_lines] — as many [write_line]s, at half
+/// their cost: four a turn of the loop, through a pointer.
+pub let fill_lines = (word: u16, count: i16) -> void => {
+  if count <= 0 || line_at >= 2 * 224 { return }
+  let n = u16(count).min((2 * 224 - line_at + 1) / 2)
+  unsafe {
+    var p: ^mut u16 = &mut lines[line_at]
+    var left = n
+    while left >= 4 {
+      p^ = word
+      p.offset(2)^ = word
+      p.offset(4)^ = word
+      p.offset(6)^ = word
+      p = p.offset(8)
+      left -= 4
+    }
+    while left > 0 {
+      p^ = word
+      p = p.offset(2)
+      left -= 1
+    }
+  }
+  line_at += 2 * n
+}
+
 /// The lines [begin_lines] began written, to go out in the next vertical blank.
 pub let end_lines = () -> void => { lines_changed = true }
 
-/// The line scroll and the planes' vertical scroll, as [write_line] and [set_scroll] left
-/// them, sent if changed: by DMA, in the vertical blank — `sprites.show` calls it.
+/// The line scroll, the column scroll and the planes' vertical scroll, as [write_line],
+/// [set_column] and [set_scroll] left them, sent if changed: the lines by DMA, in the
+/// vertical blank — `sprites.show` calls it.
 pub let send_lines = () -> void => {
-  if !lines_changed || line_mode == 0 { return }
-  lines_changed = false
-  let from = u32(unsafe { (&lines).address() })
-  dma_to_vram(from, HSCROLL, 2 * 224)
-  let held = hold_vblank()
-  set_address(VSRAM_WRITE, 0)
-  write_word(lines_down[0])
-  write_word(lines_down[1])
-  release_vblank(held)
+  if lines_changed && line_mode != 0 {
+    lines_changed = false
+    let from = u32(unsafe { (&lines).address() })
+    dma_to_vram(from, HSCROLL, 2 * 224)
+    if columned == 0 {
+      let held = hold_vblank()
+      set_address(VSRAM_WRITE, 0)
+      write_word(lines_down[0])
+      write_word(lines_down[1])
+      release_vblank(held)
+    }
+  }
+  if columns_changed && columned != 0 {
+    columns_changed = false
+    let held = hold_vblank()
+    set_address(VSRAM_WRITE, 0)
+    unsafe {
+      let port = data_port()
+      var p: ^u16 = &columns_down[0]
+      for _: u16 in 0..<2 * SCREEN_COLUMNS {
+        port.write_volatile(p^)
+        p = p.offset(1)
+      }
+    }
+    release_vblank(held)
+  }
 }
 
 /// Room for `words` words to go to byte `address` of VRAM in the next vertical blank, by DMA
@@ -595,8 +703,21 @@ var banded: u8 = 0
 /// [write_line] writes next; whether they changed since last sent.
 var lines: [448]u16 = #[0; 448]
 var lines_down: [2]u16 = #[0; 2]
+/// No line's word: a line's is at most 1023.
+const NO_WORD: u16 = 0xFFFF
+/// The word each plane scrolled whole last filled its lines with, or [NO_WORD].
+var plain_words: [2]u16 = #[NO_WORD; 2]
 var line_at: u16 = 0
 var lines_changed: bool = false
+
+/// The planes whose columns move apart ([use_columns]): bit 0 plane A's, bit 1 plane B's —
+/// and VSRAM in column mode, a column's plane A word then its plane B word; whether it
+/// changed since last sent.
+var columned: u8 = 0
+var columns_down: [40]u16 = #[0; 40]
+/// The scroll each plane's columns were last all set to by [set_scroll], or [NO_WORD].
+var columns_from: [2]u16 = #[NO_WORD; 2]
+var columns_changed: bool = false
 
 /// The words [stage] keeps for the next vertical blank, and its runs: each a VRAM address, the
 /// step between its words, where its words start here and how many. Room for a frame of two

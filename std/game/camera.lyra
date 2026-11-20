@@ -239,6 +239,12 @@ impl Camera {
     }
 }
 
+/// Each of `plane`'s columns moved up or down from its scroll as `wave` says, `ticks` counting
+/// updates — after the plane is scrolled this update (`planes.scroll_columns`;
+/// `std.genesis.camera`'s name).
+pub let scroll_columns = (plane: i64, wave: planes.ColumnWave, ticks: i64) -> void =>
+  planes.scroll_columns(plane, wave, ticks)
+
 // ── Beneath ──────────────────────────────────────────────────────────────────────────
 
 /// One axis of [follow]: the view's start `at` moved so `from`..`from + size` stays

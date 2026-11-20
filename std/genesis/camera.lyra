@@ -52,6 +52,10 @@ module std.genesis.camera
 //! apart from the plane show other columns than its own scroll does, so they need a map that
 //! repeats across the plane — 8, 16, 32 or 64 cells wide — shown by [show_repeating] and
 //! kept by [scroll_repeating]; a ripple alone needs nothing.
+//!
+//! **Its columns may ripple up and down** — the VDP's column scroll, a column every 16 pixels
+//! of the screen: a [ColumnWave] given each frame by [scroll_columns], at most
+//! [MAX_COLUMN_WAVE] pixels, the row the plane holds past the view's top and foot.
 
 import std.genesis.vdp
 import std.genesis.blocks
@@ -98,6 +102,19 @@ pub struct Band {
 /// How far a ripple may move a line of a map that does not repeat: the columns the plane
 /// holds past each side of the view.
 pub const MAX_RIPPLE: i16 = 64
+
+/// A plane's columns rippling up and down — the VDP's column scroll, a column every
+/// `vdp.COLUMN_WIDTH` pixels of the screen — for [scroll_columns]: each moved by up to `wave`
+/// pixels (at most [MAX_COLUMN_WAVE]), a sine whose phase moves on `wave_step` a column and
+/// `wave_speed` a frame, both in 65536ths of a turn. Heat, a water's surface, a quake.
+pub struct ColumnWave {
+  wave: i16 = 0,
+  wave_step: u16 = 0,
+  wave_speed: u16 = 0,
+}
+
+/// How far a column may move: the row the plane holds above and below the view.
+pub const MAX_COLUMN_WAVE: i16 = 8
 
 /// Where the view is in a world, and where it was.
 pub struct Camera {
@@ -358,10 +375,8 @@ impl Camera {
         let until = if k < N {
           (bands[k].top - plane_y).min(vdp.SCREEN_HEIGHT)
         } else { vdp.SCREEN_HEIGHT }
-        while line < until {
-          vdp.write_line(plain)
-          line += 1
-        }
+        vdp.fill_lines(plain, until - line)
+        line = until
       } else {
         let until = (bands[k].top + bands[k].height - plane_y).min(vdp.SCREEN_HEIGHT)
         write_band(bands[k], i32(self.x), y - bands[k].top, until - line, ticks)
@@ -391,8 +406,9 @@ const ROW_MARGIN: u16 = 1
 const HELD_ROWS: u16 = 31
 const HELD_COLUMNS: u16 = 57
 
-/// A quarter turn of a sine, from 0 to its top (127), in 64 steps: [sine] makes the rest.
-const QUARTER_SINE: [65]i8 = #[
+/// A turn of a sine in 256 steps, at most 127 either way — whole, so a ripple's [sine] is one
+/// read, not a quarter turn's table folded four ways (a column ripple's cost halved, 11/20).
+const SINE: [256]i8 = #[
   0,
   3,
   6,
@@ -458,7 +474,217 @@ const QUARTER_SINE: [65]i8 = #[
   127,
   127,
   127,
+  127,
+  127,
+  127,
+  126,
+  126,
+  126,
+  125,
+  125,
+  124,
+  123,
+  122,
+  122,
+  121,
+  120,
+  118,
+  117,
+  116,
+  115,
+  113,
+  112,
+  111,
+  109,
+  107,
+  106,
+  104,
+  102,
+  100,
+  98,
+  96,
+  94,
+  92,
+  90,
+  88,
+  85,
+  83,
+  81,
+  78,
+  76,
+  73,
+  71,
+  68,
+  65,
+  63,
+  60,
+  57,
+  54,
+  51,
+  49,
+  46,
+  43,
+  40,
+  37,
+  34,
+  31,
+  28,
+  25,
+  22,
+  19,
+  16,
+  12,
+  9,
+  6,
+  3,
+  0,
+  -3,
+  -6,
+  -9,
+  -12,
+  -16,
+  -19,
+  -22,
+  -25,
+  -28,
+  -31,
+  -34,
+  -37,
+  -40,
+  -43,
+  -46,
+  -49,
+  -51,
+  -54,
+  -57,
+  -60,
+  -63,
+  -65,
+  -68,
+  -71,
+  -73,
+  -76,
+  -78,
+  -81,
+  -83,
+  -85,
+  -88,
+  -90,
+  -92,
+  -94,
+  -96,
+  -98,
+  -100,
+  -102,
+  -104,
+  -106,
+  -107,
+  -109,
+  -111,
+  -112,
+  -113,
+  -115,
+  -116,
+  -117,
+  -118,
+  -120,
+  -121,
+  -122,
+  -122,
+  -123,
+  -124,
+  -125,
+  -125,
+  -126,
+  -126,
+  -126,
+  -127,
+  -127,
+  -127,
+  -127,
+  -127,
+  -127,
+  -127,
+  -126,
+  -126,
+  -126,
+  -125,
+  -125,
+  -124,
+  -123,
+  -122,
+  -122,
+  -121,
+  -120,
+  -118,
+  -117,
+  -116,
+  -115,
+  -113,
+  -112,
+  -111,
+  -109,
+  -107,
+  -106,
+  -104,
+  -102,
+  -100,
+  -98,
+  -96,
+  -94,
+  -92,
+  -90,
+  -88,
+  -85,
+  -83,
+  -81,
+  -78,
+  -76,
+  -73,
+  -71,
+  -68,
+  -65,
+  -63,
+  -60,
+  -57,
+  -54,
+  -51,
+  -49,
+  -46,
+  -43,
+  -40,
+  -37,
+  -34,
+  -31,
+  -28,
+  -25,
+  -22,
+  -19,
+  -16,
+  -12,
+  -9,
+  -6,
+  -3,
 ]
+
+/// Each of `plane`'s columns moved up or down from its scroll as `wave` says, `ticks` counting
+/// frames — after the plane's scroll this frame ([scroll_map], [scroll_repeating] or
+/// `vdp.set_scroll`), with `vdp.use_columns` saying the plane's columns move apart.
+pub let scroll_columns = (plane: u16, wave: ColumnWave, ticks: u32) -> void => {
+  var phase = u16(ticks).wrapping_mul(wave.wave_speed)
+  let (down, first) = vdp.columns_of(plane)
+  // A sine's 127 times a wave of at most MAX_WAVE's 128 fits an i16: no i32 multiply.
+  let amount = wave.wave.clamp(-128, 128)
+  unsafe {
+    var p = first
+    for _: u16 in 0..<vdp.SCREEN_COLUMNS {
+      let ripple = i16(sine(phase >> 8)).wrapping_mul(amount) >> 7
+      p^ = down.wrapping_add(u16(ripple)) & 1023
+      p = p.offset(2)
+      phase = phase.wrapping_add(wave.wave_step)
+    }
+  }
+}
 
 /// `lines` of `band`'s words, from its line `from` — the view's x `x`, the frame `ticks`.
 let write_band = (band: Band, x: i32, from: i16, lines: i16, ticks: u32) -> void => {
@@ -473,8 +699,7 @@ let write_band = (band: Band, x: i32, from: i16, lines: i16, ticks: u32) -> void
   at += step * i32(from)
   if band.wave == 0 {
     if step == 0 {
-      let word = vdp.line_word(at >> 8)
-      for _: i16 in 0..<lines { vdp.write_line(word) }
+      vdp.fill_lines(vdp.line_word(at >> 8), lines)
       return
     }
     for _: i16 in 0..<lines {
@@ -870,11 +1095,5 @@ let write_whole_row<const N: i64> = (
   }
 }
 
-/// The sine of `step` 256ths of a turn, at most 127 either way: a quarter turn's table
-/// mirrored and turned over.
-let sine = pure (step: u16) -> i8 => {
-  let k = i64(step & 63)
-  let quarter = step >> 6
-  let rising = if quarter == 0 || quarter == 2 { QUARTER_SINE[k] } else { QUARTER_SINE[64 - k] }
-  if quarter < 2 { rising } else { -rising }
-}
+/// The sine of `step` 256ths of a turn, at most 127 either way.
+let sine = pure (step: u16) -> i8 => SINE[i64(step & 255)]

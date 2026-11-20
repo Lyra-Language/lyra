@@ -34,6 +34,32 @@ Tests: `TestLui_ImportsNamedFromTheProgramsRoot`. It builds a root with `views/`
 lyrac checks a `main.lyra` there laying out both views; and both climbing errors are covered.
 `TestLui_UiTargetReportsMistakesAtTheirLine` covers a module that is no path.
 
+### 11/20/26 — Column scroll, and a cheaper line table
+
+- **Measured first** (Vega's leftover: "the line table's cost, DMA'd from RAM if too much"):
+  the table was already DMA'd, but filling it was a tenth of the overlook's frame — two
+  loops of 224 words, one the still plane's `set_scroll` rewriting the same word every frame.
+  `vdp.fill_lines` writes a run four words a turn through a pointer, and a plane scrolled
+  whole keeps its lines until it moves (`plain_words`): 35.6% of the frame to 29.1%, the
+  pictures identical.
+- **Columns** (`vdp.use_columns`, `set_column`, `columns_of`; `camera.scroll_columns`,
+  `ColumnWave`): VSRAM's 20 column pairs kept in RAM and written in the vertical blank with
+  the lines. Register 11 holds both modes now (`set_scroll_modes`). At most 8 pixels: the
+  plane holds one row past the view. First built it cost 7% of the frame — `set_scroll`
+  filling 20 columns on every call, `set_column`'s call and checks a column, `sine` folding a
+  quarter table four ways — and 2% after: only a still plane's columns filled, and only when
+  it moved; the ripple written through a pointer; a whole 256-step sine table, one read.
+- **A rippled plane shown before its first ripple** kept the columns a scene before had
+  scrolled to: the heroes' overlook held at Start drew its near hills 80 lines high, which
+  Vega's sky check caught. `set_scroll` now fills every plane's columns whenever its scroll
+  changes (`columns_from`), the ripple moving them from there.
+- **`std.game` draws a plane a column at a time** when it ripples (`draw_cells` cut to
+  screen columns, a tile's source cut across as it already was down), so it matches the
+  Genesis's 16-pixel columns at 8-pixel tiles.
+
+Tests: `TestGenesis_ColumnsRipplePlanesUpAndDown` (alone and with line scroll in register 11
+beside it), `TestRun_GameColumnsRipplePlanesUpAndDown`.
+
 ### 11/20/26 — A lambda takes its context from the enclosing function's own variable
 
 Inside `make<t>`, `let h: (string) -> Maybe<t> = (_: string) => None` was refused ("cannot

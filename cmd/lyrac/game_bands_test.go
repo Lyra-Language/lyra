@@ -130,3 +130,69 @@ let main = () -> u8 => {
 		t.Errorf("the plane remembers where it was the update before as: %s, want was 8 now 10", strings.TrimSpace(string(out)))
 	}
 }
+
+// TestRun_GameColumnsRipplePlanesUpAndDown is TestGenesis_ColumnsRipplePlanesUpAndDown on
+// std.game: a green line across plane B at map line 96, its 16-pixel columns rippled a
+// quarter turn a column, 8 pixels at most — moved 0, 8, 0 and -8, the line at 96, 88, 96
+// and 104 — and plane A's line at 40 in every column, its columns its own scroll's. The
+// columns are cut inside a tile too: the screen scrolled 4 pixels across, column 1 (16–31)
+// shows half of two tiles each.
+func TestRun_GameColumnsRipplePlanesUpAndDown(t *testing.T) {
+	t.Parallel()
+	src := filepath.Join(t.TempDir(), "main.lyra")
+	if err := os.WriteFile(src, []byte(`import std.game.screen
+import std.game.planes
+import std.game.camera
+import std.game.planes.{ ColumnWave }
+import std.game.sprites
+
+let main = () -> u8 => {
+  if !screen.open("columns", 320, 224) { return 2 }
+  var tiles: [128]u32 = #[0; 128]
+  for x in 8..<16 { tiles[x] = 0xFF00FF00 }
+  screen.load_tiles(2, tiles)
+  var back: [1792]u32 = #[0; 1792]
+  var front: [1792]u32 = #[0; 1792]
+  for x in 0..<64 {
+    back[12 * 64 + x] = 1
+    front[5 * 64 + x] = 1
+  }
+  planes.write_plane(planes.PLANE_B, back, 64)
+  planes.write_plane(planes.PLANE_A, front, 64)
+  planes.set_scroll(planes.PLANE_A, 4.0, 0.0)
+  planes.set_scroll(planes.PLANE_B, 4.0, 0.0)
+  camera.scroll_columns(planes.PLANE_B, ColumnWave { wave: 8.0, wave_length: 64.0 }, 0)
+  while screen.running() {
+    sprites.clear()
+    screen.show()
+  }
+  screen.close()
+  0
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	frame := playGame(t, src, "--frames", "1")
+	for _, c := range []struct {
+		x    int
+		want []int
+		what string
+	}{
+		{8, []int{40, 96}, "column 0, not moved"},
+		{17, []int{40, 88}, "column 1, moved 8 down: the map up"},
+		{30, []int{40, 88}, "column 1's last pixel, the next tile's"},
+		{40, []int{40, 96}, "column 2, not moved"},
+		{56, []int{40, 104}, "column 3, moved 8 up"},
+		{72, []int{40, 96}, "column 4, a turn on"},
+	} {
+		var got []int
+		for y := 0; y < frame.h; y++ {
+			if frame.at(c.x, y) == [3]byte{0, 255, 0} {
+				got = append(got, y)
+			}
+		}
+		if !slices.Equal(got, c.want) {
+			t.Errorf("x %d (%s): lines at %v, want %v", c.x, c.what, got, c.want)
+		}
+	}
+}

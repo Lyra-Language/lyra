@@ -733,7 +733,7 @@ let draw_planes = (r: Renderer, front: bool, t: f32) -> void => {
 /// `p` where it shows `t` of the way from the update before.
 let scrolled = (p: Plane, t: f32) -> Plane => {
   let (x, y) = p.scrolled_at(t)
-  Plane { p | x: x, y: y }
+  Plane { p | x: x, y: y, column_shown: p.column_ticks_at(t) }
 }
 
 /// A plane between screen rows `top` and `bottom` where it shows `t` of the way from the
@@ -790,21 +790,54 @@ let band_x = pure (band: Band, view_x: f32, ticks: f32, from: f32) -> f32 => {
 }
 
 /// A plane's cells that show between screen rows `top` and `bottom`, those in front or
-/// those behind — its map again past each side where it repeats.
+/// those behind — its map again past each side where it repeats, and each of its columns
+/// moved by its ripple ([planes.scroll_columns]).
 let draw_plane = (r: Renderer, p: Plane, front: bool, top: i64, bottom: i64) -> void => {
   if p.width <= 0 || top >= bottom { return }
   if let Some(layout) = p.layout {
     draw_laid_out(r, p, layout, front)
     return
   }
+  if apart(p.columns.wave, 0.0) {
+    let column = planes.COLUMN_TILES * tile_side
+    var k = 0
+    while k * column < width() {
+      let down = p.column_offset(k, f32(column), p.column_shown).round()
+      draw_cells(
+        r,
+        Plane { p | y: p.y + f32(down) },
+        front,
+        top,
+        bottom,
+        k * column,
+        (k + 1) * column
+      )
+      k += 1
+    }
+    return
+  }
+  draw_cells(r, p, front, top, bottom, 0, width())
+}
+
+/// [draw_plane]'s cells between screen columns `left` and `right` too.
+let draw_cells = (
+  r: Renderer,
+  p: Plane,
+  front: bool,
+  top: i64,
+  bottom: i64,
+  left: i64,
+  right_edge: i64
+) -> void => {
   let rows = p.cells.len() / p.width
   let sx = p.x.floor()
   let sy = p.y.floor()
   // A repeating map's columns run on past its edges, each its column mod the width.
+  let leftmost = sx + left
   let first_column = if p.repeats {
-    (sx - sx %% tile_side) / tile_side
-  } else { (sx / tile_side).max(0) }
-  let right = sx + width() - 1
+    (leftmost - leftmost %% tile_side) / tile_side
+  } else { (leftmost / tile_side).max(0) }
+  let right = sx + right_edge - 1
   let last_column = if p.repeats {
     (right - right %% tile_side) / tile_side
   } else { (right / tile_side).min(p.width - 1) }
@@ -821,22 +854,29 @@ let draw_plane = (r: Renderer, p: Plane, front: bool, top: i64, bottom: i64) -> 
       let from = y.max(top)
       let to = (y + tile_side).min(bottom)
       if from >= to { continue }
+      // And the part between `left` and `right_edge`.
+      let x = column * tile_side - sx
+      let x_from = x.max(left)
+      let x_to = (x + tile_side).min(right_edge)
+      if x_from >= x_to { continue }
       let flip_y = (word & FLIP_Y) != 0
+      let flip_x = (word & FLIP_X) != 0
       let cut = if flip_y { y + tile_side - to } else { from - y }
+      let cut_x = if flip_x { x + tile_side - x_to } else { x_from - x }
       let (ax, ay) = tile_at(tile)
       let source = Rect {
-        x: f32(ax),
+        x: f32(ax + cut_x),
         y: f32(ay + cut),
-        w: f32(tile_side),
+        w: f32(x_to - x_from),
         h: f32(to - from),
       }
       let place = Rect {
-        x: f32(column * tile_side - sx),
+        x: f32(x_from),
         y: f32(from),
-        w: f32(tile_side),
+        w: f32(x_to - x_from),
         h: f32(to - from)
       }
-      draw_texture_flipped(r, art, source, place, flips((word & FLIP_X) != 0, flip_y))
+      draw_texture_flipped(r, art, source, place, flips(flip_x, flip_y))
     }
   }
 }
