@@ -443,10 +443,29 @@ func (l *lowerer) lowerStringCStringPtr(block *ir.Block, call *ast.FunctionCallE
 	byteLen := block.NewExtractValue(str, 1)
 
 	i8ptr := lltypes.NewPointer(lltypes.I8)
-	memchr, _ := l.declareLibc("memchr", i8ptr, i8ptr, lltypes.I32, lltypes.I64)
-	found := block.NewCall(memchr, data, i32c(0), byteLen)
+	// The length as C's size_t: 32 bits on the 68000, 16 on the Z80. Passed as an i64 there,
+	// the 68000's memchr read its high half — 0 — searched nothing, and a NUL went unseen.
+	size := l.cSizeType()
+	var length value.Value = byteLen
+	if size != lltypes.I64 {
+		length = block.NewTrunc(byteLen, size)
+	}
+	memchr, _ := l.declareLibc("memchr", i8ptr, i8ptr, lltypes.I32, size)
+	found := block.NewCall(memchr, data, i32c(0), length)
 	block = l.emitTrapIf(block,
 		block.NewICmp(enum.IPredNE, found, constant.NewNull(i8ptr)),
 		l.panicInteriorNULFunc())
 	return data, block, nil
+}
+
+// cSizeType is C's size_t on the target: 32 bits on the 68000, 16 on the Z80, 64 on every
+// platform a host program builds for (all LP64).
+func (l *lowerer) cSizeType() *lltypes.IntType {
+	switch l.arch {
+	case M68k:
+		return lltypes.I32
+	case Z80:
+		return lltypes.I16
+	}
+	return lltypes.I64
 }

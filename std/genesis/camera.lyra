@@ -568,22 +568,26 @@ let write_run<const N: i64> = (
         left -= take
       }
     } else {
+      // A block's cost one number read and checked against the blocks held, the run's end
+      // worked out once — as [staged_across] walks a row.
       let shift = cells[0]
       let side: u16 = u16(1) << shift
       let mask: u16 = side - 1
-      let across = (columns + mask) >> shift
-      let row_blocks = u32(cells[3]) + u32(my >> shift) * u32(cells[2])
-      let inner = 4 + (u32(my & mask) << shift)
-      if x < columns && row_blocks + u32(across) <= u32(N) {
+      let words = 2 * shift
+      let numbers = u32(cells[3])
+      let held = (numbers - 4) >> words
+      let row_blocks = numbers + u32(my >> shift) * u32(cells[2])
+      let end = columns.min(x + left)
+      if x < end && row_blocks + u32((end - 1) >> shift) < u32(N) {
         unsafe {
+          let base = first.offset(i64(4 + (u32(my & mask) << shift)))
           var number = first.offset(i64(row_blocks + u32(x >> shift)))
           var within = x & mask
-          while left > 0 && x < columns {
-            let take = (side - within).min(left).min(columns - x)
-            let at = inner + (u32(number^) << (2 * shift)) + u32(within)
-            number = number.offset(1)
-            if at + u32(take) > u32(N) { break }
-            var p = first.offset(i64(at))
+          while x < end {
+            let n = u32(number^)
+            if n >= held { break }
+            let take = (side - within).min(end - x)
+            var p = base.offset(i64((n << words) + u32(within)))
             for _: u16 in 0..<take {
               vdp.write_word(p^)
               p = p.offset(1)
@@ -591,6 +595,7 @@ let write_run<const N: i64> = (
             x += take
             left -= take
             within = 0
+            number = number.offset(1)
           }
         }
       }
@@ -689,30 +694,36 @@ let staged_across<const N: i64> = (
         x += take
       }
     } else {
+      // The row's block numbers read one after another, each block's cells on the row copied
+      // as a run: a block's cost one number read and checked against the blocks held, the
+      // run's end worked out once.
       let shift = cells[0]
       let side: u16 = u16(1) << shift
       let mask: u16 = side - 1
-      let across = (columns + mask) >> shift
-      let row_blocks = u32(cells[3]) + u32(my >> shift) * u32(cells[2])
-      let inner = 4 + (u32(my & mask) << shift)
-      if x < columns && row_blocks + u32(across) <= u32(N) {
+      let words = 2 * shift
+      let numbers = u32(cells[3])
+      let held = (numbers - 4) >> words
+      let row_blocks = numbers + u32(my >> shift) * u32(cells[2])
+      let end = columns.min(x + (count - k))
+      if x < end && row_blocks + u32((end - 1) >> shift) < u32(N) {
         unsafe {
+          let base = first.offset(i64(4 + (u32(my & mask) << shift)))
           var number = first.offset(i64(row_blocks + u32(x >> shift)))
           var within = x & mask
-          while k < count && x < columns {
-            let take = (side - within).min(count - k).min(columns - x)
-            let from = inner + (u32(number^) << (2 * shift)) + u32(within)
-            number = number.offset(1)
-            if from + u32(take) > u32(N) { break }
-            var p = first.offset(i64(from))
+          while x < end {
+            let n = u32(number^)
+            if n >= held { break }
+            let take = (side - within).min(end - x)
+            var p = base.offset(i64((n << words) + u32(within)))
             for _: u16 in 0..<take {
               q^ = p^
               q = q.offset(1)
               p = p.offset(1)
-              k += 1
             }
             x += take
+            k += take
             within = 0
+            number = number.offset(1)
           }
         }
       }
@@ -771,34 +782,35 @@ let staged_down<const N: i64> = (
         y += take
       }
     } else {
-      // The column's block numbers a table row apart, found once and stepped down: each
-      // block's number read, and its cells in the column a block's side apart. The table is
-      // checked once for the numbers and once a block for its cells.
+      // The column's block numbers a table row apart, found once and stepped down: a block's
+      // cost one number read and checked against the blocks held, its cells in the column a
+      // block's side apart, the run's end worked out once.
       let shift = cells[0]
       let side: u16 = u16(1) << shift
       let mask: u16 = side - 1
+      let words = 2 * shift
       let across = u32(cells[2])
       let numbers = u32(cells[3])
-      let held = (numbers - 4) >> (2 * shift)
+      let held = (numbers - 4) >> words
+      let end = rows.min(y + (count - k))
       let first_number = numbers + u32(y >> shift) * across + u32(mx >> shift)
-      let last_number = numbers + u32((rows - 1) >> shift) * across + u32(mx >> shift)
-      if y < rows && last_number < u32(N) {
-        let inner = 4 + u32(mx & mask)
-        var within = y & mask
+      if y < end && numbers + u32((end - 1) >> shift) * across + u32(mx >> shift) < u32(N) {
         unsafe {
+          let base = first.offset(i64(4 + u32(mx & mask)))
           var number = first.offset(i64(first_number))
-          while k < count && y < rows {
+          var within = y & mask
+          while y < end {
             let n = u32(number^)
             if n >= held { break }
-            let take = (side - within).min(count - k).min(rows - y)
-            var p = first.offset(i64(inner + (n << (2 * shift)) + (u32(within) << shift)))
+            let take = (side - within).min(end - y)
+            var p = base.offset(i64((n << words) + (u32(within) << shift)))
             for _: u16 in 0..<take {
               q^ = p^
               q = q.offset(1)
               p = p.offset(i64(side))
             }
-            k += take
             y += take
+            k += take
             within = 0
             number = number.offset(i64(across))
           }

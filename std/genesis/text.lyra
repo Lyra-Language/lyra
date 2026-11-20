@@ -103,9 +103,54 @@ pub let write = (
 
 /// Cells `width` × `height` of `plane` from (`x`, `y`) blanked: the blank tile, 0.
 pub let clear = (plane: u16, x: u16, y: u16, width: u16, height: u16) -> void => {
-  for row in 0..<height {
-    for column in 0..<width { vdp.write_cell(plane, x + column, y + row, 0) }
+  for row in 0..<height { fill_row(plane, x, y + row, width, 0, 0, 0) }
+}
+
+/// Cells `width` of `plane`'s row `y` from column `x` written: `first` in the first, `last`
+/// in the last and `middle` between — a box's row, its frame's edges either side — one
+/// address set and the words written as a run where the row does not wrap round the plane's
+/// edge, a cell at a time where it does. A box opened a cell at a time (`vdp.write_cell`, its
+/// address worked out with a multiply and a divide each) took most of a frame (11/19).
+pub let fill_row = (
+  plane: u16,
+  x: u16,
+  y: u16,
+  width: u16,
+  first: u16,
+  middle: u16,
+  last: u16
+) -> void => {
+  if width == 0 { return }
+  let left = x % vdp.PLANE_WIDTH
+  if left + width > vdp.PLANE_WIDTH {
+    for column in 0..<width {
+      vdp.write_cell(
+        plane,
+        x + column,
+        y,
+        if column == 0 { first } else if column + 1 >= width { last } else { middle }
+      )
+    }
+    return
   }
+  let held = vdp.hold_vblank()
+  vdp.set_vram_address(plane + ((y % vdp.PLANE_HEIGHT) * vdp.PLANE_WIDTH + left) * 2)
+  vdp.write_word(first)
+  // The middle four words a turn: a loop's own count and test were most of a word's cost.
+  var n = if width > 2 { width - 2 } else { 0 }
+  while n >= 4 {
+    vdp.write_word(middle)
+    vdp.write_word(middle)
+    vdp.write_word(middle)
+    vdp.write_word(middle)
+    n -= 4
+  }
+  while n > 0 {
+    vdp.write_word(middle)
+    n -= 1
+  }
+  if width > 1 { vdp.write_word(last) }
+  vdp.release_vblank(held)
 }
 
 /// A box of dialogue: cells `width` × `height` of `plane` from (`x`, `y`), filled with the
@@ -132,16 +177,22 @@ pub struct TextBox {
   spacing: u16 = 0,
   frame: u16 = 0,
   frame_stride: u16 = 3,
-  typed: u16 = 0,
+  /// Where in its words' bytes the next letter is: each letter found from there, never by
+  /// walking the words from their start — typed at once, a line's letters each walked all
+  /// those before them, and a press on a long line took two frames (11/19).
+  at: u16 = 0,
   tick: u16 = 0,
   column: u16 = 0,
   row: u16 = 0,
   shown: bool = false,
   done: bool = false,
+  /// Asked for the rest at once ([finish]): typed [HURRY_LETTERS] a frame until it is in.
+  hurried: bool = false,
 }
 
-/// What a box's words hold where it has got to: no letter left.
-const NO_LETTER: u32 = 0xFFFFFFFF
+/// The letters a frame a box hurried to its end types: the rest of a long line in a few
+/// frames, which looks at once — typed in one, a line took more than the frame (11/19).
+pub const HURRY_LETTERS: u16 = 12
 
 impl TextBox {
   /// The box drawn, empty, to type a line from its start.
@@ -151,33 +202,46 @@ impl TextBox {
     let base = 0x8000 | ((self.font.palette & 3) << 13) | self.frame
     for row in 0..<self.height {
       let down: u16 = if row == 0 { 0 } else if row + 1 >= self.height { 2 } else { 1 }
-      for column in 0..<self.width {
-        let across: u16 = if column == 0 { 0 } else if column + 1 >= self.width { 2 } else { 1 }
-        let word = if self.frame == 0 { space } else { base + down * self.frame_stride + across }
-        vdp.write_cell(self.plane, self.x + column, self.y + row, word)
+      let edge = base + down * self.frame_stride
+      if self.frame == 0 {
+        fill_row(self.plane, self.x, self.y + row, self.width, space, space, space)
+      } else {
+        fill_row(self.plane, self.x, self.y + row, self.width, edge, edge + 1, edge + 2)
       }
     }
-    self.typed = 0
+    self.at = 0
     self.tick = 0
     self.column = 0
     self.row = 0
     self.shown = true
     self.done = false
+    self.hurried = false
   }
 
   /// A frame of typing `words`: the next letter once every `frames` frames, until all are in.
   /// Call it every frame the box is open, with the same words.
   pub let update = (self: mut, words: string) -> void => {
     if !self.shown || self.done { return }
+    if self.hurried {
+      self.type_letters(words, HURRY_LETTERS)
+      return
+    }
     self.tick += 1
     if self.tick < self.frames.max(1) { return }
     self.tick = 0
-    self.type_letter(words)
+    self.type_letters(words, 1)
   }
 
-  /// The rest of `words` typed at once.
+  /// The rest of `words` typed: [HURRY_LETTERS] now and as many each frame [update] is called
+  /// until it is all in — or, asked again while it hurries, all of it at once.
   pub let finish = (self: mut, words: string) -> void => {
-    while self.shown && !self.done { self.type_letter(words) }
+    if !self.shown || self.done { return }
+    if self.hurried {
+      self.type_letters(words, 0xFFFF)
+      return
+    }
+    self.hurried = true
+    self.type_letters(words, HURRY_LETTERS)
   }
 
   /// What a press to go on does: the rest typed while it is typing, else the box shut.
@@ -223,47 +287,85 @@ impl TextBox {
     bit | ((self.font.palette & 3) << 13) | (self.frame + down * self.frame_stride + across)
   }
 
-  /// The next letter of `words` into the box: wrapped at a word that would pass the right
-  /// edge, a newline starting a row, and the box done at its end or its last row.
-  let type_letter = (self: mut, words: string) -> void => {
+  /// Up to `count` letters of `words` into the box from where it has got to ([TextBox.at]):
+  /// wrapped at a word that would pass the right edge, a newline starting a row, and the box
+  /// done at its end or its last row. Each letter is read where the last left off and the word
+  /// after it looked along only to its end, so typing a line is a walk along it, once.
+  let type_letters = (self: mut, words: string, count: u16) -> void => {
     let inner_width = self.inner_width()
     let lines = self.lines()
-    // The letter typed next, and the length of the word after it.
-    var k: u16 = 0
-    var letter = NO_LETTER
-    var word_after: u16 = 0
-    for c in words {
-      if letter != NO_LETTER {
-        let code = u32(c)
-        if code == 32 || code == 10 { break }
-        word_after += 1
-      } else if k == self.typed {
-        letter = u32(c)
-      }
-      k += 1
-    }
-    self.typed += 1
-    if letter == NO_LETTER {
-      self.done = true
-      return
-    }
-    let wraps = letter == 10 || self.column >= inner_width ||
-      (letter == 32 && self.column + 1 + word_after > inner_width)
-    if wraps {
-      self.column = 0
-      self.row += 1
-      if self.row >= lines {
+    let size = u16(words.byte_len())
+    let bytes: ^u8 = unsafe { words.cstring_ptr() }
+    // The letters of a row written as a run: the VDP's address set at the row's first and
+    // stepping on by itself, the interrupt held off so nothing moves it in between.
+    let held = vdp.hold_vblank()
+    var placed = false
+    var left = count
+    while left > 0 && !self.done {
+      left -= 1
+      if self.at >= size {
         self.done = true
-        return
+        break
       }
-      if letter == 10 || letter == 32 { return }
+      let (letter, length) = letter_at(bytes, self.at, size)
+      self.at += length
+      // At a space, the word after it — its letters up to a space, a newline or the end —
+      // says whether it would pass the right edge.
+      var word_after: u16 = 0
+      if letter == 32 {
+        var k = self.at
+        while k < size {
+          let b = unsafe { bytes.offset(i64(k))^ }
+          if b == 32 || b == 10 { break }
+          // A continuation byte is part of a letter already counted.
+          if (b & 0xC0) != 0x80 { word_after += 1 }
+          k += 1
+        }
+      }
+      let wraps = letter == 10 || self.column >= inner_width ||
+        (letter == 32 && self.column + 1 + word_after > inner_width)
+      if wraps {
+        self.column = 0
+        self.row += 1
+        placed = false
+        if self.row >= lines {
+          self.done = true
+          break
+        }
+        if letter == 10 || letter == 32 { continue }
+      }
+      let column = (self.x + 1 + self.indent + self.column) % vdp.PLANE_WIDTH
+      // A row passing the plane's right edge goes on at its left, where the VDP's next
+      // address would not.
+      if !placed || column == 0 {
+        let row = self.line_row(self.row) % vdp.PLANE_HEIGHT
+        vdp.set_vram_address(self.plane + (row * vdp.PLANE_WIDTH + column) * 2)
+        placed = true
+      }
+      vdp.write_word(self.font.word_of(letter))
+      self.column += 1
     }
-    vdp.write_cell(
-      self.plane,
-      self.x + 1 + self.indent + self.column,
-      self.line_row(self.row),
-      self.font.word_of(letter)
-    )
-    self.column += 1
+    vdp.release_vblank(held)
   }
+}
+
+/// The letter (a code point) at byte `at` of `size` bytes from `bytes`, UTF-8, and how many
+/// bytes it takes; a byte that begins no letter is taken as itself.
+pub let letter_at = pure (bytes: ^u8, at: u16, size: u16) -> (u32, u16) => {
+  let first = unsafe { bytes.offset(i64(at))^ }
+  let (length, bits): (u16, u32) = if first < 0x80 {
+    (1, u32(first))
+  } else if (first & 0xE0) == 0xC0 {
+    (2, u32(first & 0x1F))
+  } else if (first & 0xF0) == 0xE0 {
+    (3, u32(first & 0x0F))
+  } else if (first & 0xF8) == 0xF0 {
+    (4, u32(first & 0x07))
+  } else { (1, u32(first)) }
+  if at + length > size { return (u32(first), 1) }
+  var code = bits
+  for k: u16 in 1..<length {
+    code = (code << 6) | u32(unsafe { bytes.offset(i64(at + k))^ } & 0x3F)
+  }
+  (code, length)
 }

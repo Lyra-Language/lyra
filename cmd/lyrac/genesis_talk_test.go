@@ -202,6 +202,60 @@ let main = () -> void => {
 	}
 }
 
+// TestGenesis_APressHurriesALongLine: a press on a line still typing hurries it — 12 letters
+// at once and as many each frame after (`HURRY_LETTERS`), its choices listed only once it is
+// all in — so a long line never types in one frame; and a second press while it hurries types
+// the rest at once. Each step that goes as it should adds to the backdrop's red, green and
+// blue, so a backdrop of all three is every step.
+func TestGenesis_APressHurriesALongLine(t *testing.T) {
+	t.Parallel()
+	genesisToolchainOrSkip(t)
+	out := genesisProgram(t, "hurry", `import std.genesis.vdp
+import std.genesis.talk.{ Talk, Line, Choice, END }
+import std.genesis.text.{ Font, TextBox }
+
+const LINE: [8]u32 = #[0x22222222; 8]
+
+const LINES: [1]Line = #[
+  Line { who: "A", words: "ONE TWO THREE FOUR FIVE SIX SEVEN EIGHT NINE", first_choice: 0, choices: 1 },
+]
+const CHOICES: [1]Choice = #[Choice { words: "YES", then: END }]
+
+let main = () -> void => {
+  vdp.init()
+  for k: u16 in 1..<61 { vdp.load_tiles(k, LINE) }
+  vdp.window_rows_below(10)
+  var t = Talk { box: TextBox { x: 1, y: 18, width: 30, height: 10, font: Font { tile: 1, count: 59 } } }
+  var r: u16 = 0
+  var g: u16 = 0
+  var b: u16 = 0
+  t.start(LINES, CHOICES)
+  t.press(LINES, CHOICES)
+  // Hurried, not done: still typing, its choice not listed yet.
+  if t.box.typing() && t.box.hurried { r += 3 }
+  if !t.listed { r += 4 }
+  // Four frames bring in its other 32 letters, and the choice is listed.
+  for _: u16 in 0..<4 { t.update(LINES, CHOICES) }
+  if !t.box.typing() { g += 3 }
+  if t.listed { g += 4 }
+  // Again, pressed twice: the second press types the rest at once.
+  t.start(LINES, CHOICES)
+  t.press(LINES, CHOICES)
+  t.press(LINES, CHOICES)
+  if !t.box.typing() { b += 3 }
+  if t.listed { b += 4 }
+  vdp.set_color(0, 0, vdp.rgb(r, g, b))
+  vdp.display_on()
+  loop { vdp.wait_vblank() }
+}
+`)
+	s := runROMWith(t, out, "20")
+	i := (4*s.width + 4) * 3
+	if got := fmt.Sprintf("%02x%02x%02x", s.pixels[i], s.pixels[i+1], s.pixels[i+2]); got != "ffffff" {
+		t.Errorf("the backdrop is %s, want ffffff: red, green and blue each for its steps", got)
+	}
+}
+
 // TestGenesis_ATalksFlagsChooseItsLines plays a talk twice through std.genesis.talk's flags:
 // the first time line 0 ("unless" flag 0, setting it) is said, the second it is passed over
 // for line 1 (which "needs" flag 0); a choice there sets flag 3, which the game reads; a line

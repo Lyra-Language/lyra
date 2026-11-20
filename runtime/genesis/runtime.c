@@ -262,6 +262,22 @@ void *memset(void *to, int value, size_t n) {
     return to;
 }
 
+/*
+ * The first byte `value` among `n` from `from`, or none: what a string's `cstring_ptr` asks to
+ * be sure it holds no NUL before its end — a text box reads its line's bytes so (11/19).
+ */
+void *memchr(const void *from, int value, size_t n) {
+    const u8 *s = from;
+    const u8 v = (u8)value;
+    while (n--) {
+        if (*s == v) {
+            return (void *)s;
+        }
+        s++;
+    }
+    return 0;
+}
+
 int memcmp(const void *a, const void *b, size_t n) {
     const u8 *x = a, *y = b;
     for (; n--; x++, y++) {

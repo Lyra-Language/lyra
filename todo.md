@@ -1302,6 +1302,17 @@ sets V on every add. What stands between that and a ROM:
 - **[DONE 11/18] A struct holding a string links on the Genesis**: `runtime/genesis` defines a
   `free` that faults and never runs — without `malloc` every box is static — so
   `std.genesis.talk`'s `Line` holds its strings (COMPLETED.md 11/18).
+- **[DONE 11/19] `cstring_ptr` on the 68000**: its interior-NUL check called `memchr` with an
+  `i64` length, the 68000's C reading the high half, 0 — no check at all; the length is now
+  C's `size_t` there (`cSizeType`), and `runtime/genesis` has a `memchr`
+  (`TestGenesis_AStringsBytesAreRead`).
+- **[OPEN] The Genesis hero's last dropped frames**: the field's wrap redraws both planes
+  (4,000 cells, ~4.5 frames of the 68000's walk, the screen black) — keeping the planes and
+  moving where map columns land in them would avoid it; and a text box opening on a frame
+  whose vertical blank plays a music row overruns (~11 in 600 talking frames).
+- **[OPEN] E085 named for a private callee**: a std function calling another module's private
+  one was reported at the game's call as "`start` allocates" (E085) beside the E028 that was
+  the cause; the E085 should not appear.
 - **[OPEN] Sizes are still `i64`** (next item) — the reason a game's `[]T` could not work
   even with an allocator. Fixed arrays and scalars are what a Genesis program has today.
 - **[PARTIAL] A Genesis layer in Lyra**: `std.genesis.vdp`, `.pad` and `.sprites` (09/30)

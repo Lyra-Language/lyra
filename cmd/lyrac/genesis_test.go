@@ -755,6 +755,39 @@ let main = () -> void => {
 	}
 }
 
+// TestGenesis_AStringsBytesAreRead is the runtime's `memchr`, which `cstring_ptr` asks to be
+// sure a string holds no NUL before its end: "AB"'s bytes read through the pointer (the
+// backdrop blue), and a string with a NUL inside it refused (the runtime's panic screen, red).
+func TestGenesis_AStringsBytesAreRead(t *testing.T) {
+	t.Parallel()
+	genesisToolchainOrSkip(t)
+	program := func(text string) string {
+		return `import std.genesis.vdp
+
+let main = () -> void => {
+  vdp.init()
+  let words = "` + text + `"
+  let p: ^u8 = unsafe { words.cstring_ptr() }
+  let ok = unsafe { p^ == 65 && p.offset(1)^ == 66 }
+  vdp.set_color(0, 0, if ok { vdp.rgb(0, 0, 7) } else { vdp.rgb(0, 7, 0) })
+  vdp.display_on()
+  loop { vdp.wait_vblank() }
+}
+`
+	}
+	for _, c := range []struct{ text, want, what string }{
+		{"AB", "0000ff", "a string's bytes read through its pointer"},
+		{`A\u0000B`, "ff0000", "a NUL inside it refused, the panic screen red"},
+	} {
+		out := genesisProgram(t, "bytes", program(c.text))
+		s := runROMWith(t, out, "20")
+		i := (4*s.width + 4) * 3
+		if got := fmt.Sprintf("%02x%02x%02x", s.pixels[i], s.pixels[i+1], s.pixels[i+2]); got != c.want {
+			t.Errorf("%s: the backdrop is %s, want %s", c.what, got, c.want)
+		}
+	}
+}
+
 // TestGenesis_ACameraPans is TestRun_GameCameraPans on the 68000: 25 frames' steps to (100,
 // 50) at 4 pixels along the straight line, `last_x` and `last_y` where each step started (what `scroll_map` writes
 // from), the target held inside the world, and `centred_on`. The backdrop is blue where every
