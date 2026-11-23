@@ -1,0 +1,177 @@
+module std.unicode
+//! Unicode text as people see it: its **grapheme clusters**, each a character to a reader — `é`
+//! written as `e` and a combining accent, a flag written as two regional indicators, a family
+//! of emoji joined by zero-width joiners, a Hangul syllable written as its jamo, a Devanagari
+//! conjunct. A caret moves over one, and Backspace takes it whole.
+//!
+//! The boundaries are UAX #29's extended grapheme clusters, rules GB1 to GB999, read from the
+//! Unicode version `UNICODE_VERSION` names (the table, `grapheme_table.lyra`, is generated
+//! from its character database by `tools/unicode/gen.lyra`) and held to every case of its
+//! `GraphemeBreakTest.txt` (`cmd/lyrac/unicode_test.go`).
+//!
+//! ```
+//! import std.unicode
+//!
+//! println("e\u0301👍🏽!".graphemes().len())               // 3
+//! println("🇫🇷".to_runes().grapheme_boundaries().len())   // 2: 0, and the end
+//! ```
+
+impl []rune {
+  /// Where these runes break into grapheme clusters: the rune indices each cluster starts at,
+  /// then the end — `[0, …, len]`, so cluster `k` is the runes from `out[k]` to `out[k + 1]`.
+  /// No runes are `[0]`.
+  pub let grapheme_boundaries = pure (self: ref) -> []i64 => {
+    var out: []i64 = [0]
+    if self.len() == 0 { return out }
+    var before = grapheme_class(self[0])
+    var context = BreakContext {}.after(before)
+    for i in 1..<self.len() {
+      let next = grapheme_class(self[i])
+      if breaks_between(before, next, context) { out.push(i) }
+      context = context.after(next)
+      before = next
+    }
+    out.push(self.len())
+    out
+  }
+
+  /// The start of the cluster before rune index `at` — where Left takes a caret there; `0` at
+  /// the start. An index inside a cluster goes to that cluster's start.
+  pub let grapheme_before = pure (self: ref, at: i64) -> i64 => {
+    var out = 0
+    for b in self.grapheme_boundaries() {
+      if b >= at { break }
+      out = b
+    }
+    out
+  }
+
+  /// The end of the cluster after rune index `at` — where Right takes a caret there; the end
+  /// at the end. An index inside a cluster goes to that cluster's end.
+  pub let grapheme_after = pure (self: ref, at: i64) -> i64 => {
+    for b in self.grapheme_boundaries() { if b > at { return b } }
+    self.len()
+  }
+
+  /// The boundary nearest rune index `at`, the earlier of two as near: where a caret placed
+  /// inside a cluster goes.
+  pub let nearest_grapheme_boundary = pure (self: ref, at: i64) -> i64 => {
+    var best = 0
+    for b in self.grapheme_boundaries() {
+      if (b - at).abs() < (best - at).abs() { best = b }
+    }
+    best
+  }
+}
+
+impl string {
+  /// The string's grapheme clusters, in order: a character to a reader each.
+  pub let graphemes = pure (self) -> []string => {
+    let runes = self.to_runes()
+    let bounds = runes.grapheme_boundaries()
+    [k in 0..<(bounds.len() - 1) | runes.slice(bounds[k], bounds[k + 1]).join()]
+  }
+}
+
+// ── The rules ────────────────────────────────────────────────────────────────
+
+/// A rune's class, as `grapheme_table.lyra` packs it: its `Grapheme_Cluster_Break` value in
+/// the low four bits, `Extended_Pictographic` in the fifth, its `Indic_Conjunct_Break` in
+/// the sixth and seventh.
+alias Class = u8
+
+const OTHER: u8 = 0
+const CR: u8 = 1
+const LF: u8 = 2
+const CONTROL: u8 = 3
+const EXTEND: u8 = 4
+const ZWJ: u8 = 5
+const REGIONAL_INDICATOR: u8 = 6
+const PREPEND: u8 = 7
+const SPACING_MARK: u8 = 8
+const L: u8 = 9
+const V: u8 = 10
+const T: u8 = 11
+const LV: u8 = 12
+const LVT: u8 = 13
+const PICTOGRAPHIC: u8 = 16
+const CONJUNCT_MASK: u8 = 96
+const CONJUNCT_LINKER: u8 = 32
+const CONJUNCT_CONSONANT: u8 = 64
+const CONJUNCT_EXTEND: u8 = 96
+
+/// What the rules beyond the pair either side of a boundary ask of the runes before it,
+/// ending at the rune just before: how many regional indicators run there (GB12, GB13);
+/// whether they end an `Extended_Pictographic Extend*` (`pictograph`) or that and a ZWJ
+/// (`joined`, GB11); and whether they end an `InCB=Consonant [Extend Linker]*` (`consonant`)
+/// with a Linker among them (`linked`, GB9c).
+struct BreakContext {
+  indicators: i64 = 0,
+  pictograph: bool = false,
+  joined: bool = false,
+  consonant: bool = false,
+  linked: bool = false,
+}
+
+impl BreakContext {
+  /// The context once a rune of class `c` follows.
+  let after = pure (self, c: Class) -> BreakContext => {
+    let gcb = c & 15
+    let conjunct = c & CONJUNCT_MASK
+    BreakContext {
+      indicators: if gcb == REGIONAL_INDICATOR { self.indicators + 1 } else { 0 },
+      pictograph: (c & PICTOGRAPHIC) != 0 || (gcb == EXTEND && self.pictograph),
+      joined: gcb == ZWJ && self.pictograph,
+      consonant: conjunct == CONJUNCT_CONSONANT ||
+        (self.consonant && (conjunct == CONJUNCT_LINKER || conjunct == CONJUNCT_EXTEND)),
+      linked: conjunct != CONJUNCT_CONSONANT && self.consonant &&
+        (conjunct == CONJUNCT_LINKER || (conjunct == CONJUNCT_EXTEND && self.linked)),
+    }
+  }
+}
+
+/// Whether a cluster ends between a rune of class `a` and one of class `b`, `context` the
+/// runes up to and including `a`: UAX #29's rules in their order, the first that applies.
+let breaks_between = pure (a: Class, b: Class, context: BreakContext) -> bool => {
+  let x = a & 15
+  let y = b & 15
+  // GB3, GB4, GB5: CR LF together; around any other control, a break.
+  if x == CR && y == LF { return false }
+  if x == CR || x == LF || x == CONTROL || y == CR || y == LF || y == CONTROL { return true }
+  // GB6, GB7, GB8: a Hangul syllable's jamo.
+  if x == L && (y == L || y == V || y == LV || y == LVT) { return false }
+  if (x == LV || x == V) && (y == V || y == T) { return false }
+  if (x == LVT || x == T) && y == T { return false }
+  // GB9, GB9a, GB9b: before extending marks, ZWJ and spacing marks, after a prepended one.
+  if y == EXTEND || y == ZWJ || y == SPACING_MARK || x == PREPEND { return false }
+  // GB9c: an Indic conjunct, consonants joined by a linker.
+  if (b & CONJUNCT_MASK) == CONJUNCT_CONSONANT && context.consonant && context.linked {
+    return false
+  }
+  // GB11: an emoji ZWJ sequence.
+  if context.joined && (b & PICTOGRAPHIC) != 0 { return false }
+  // GB12, GB13: a flag, regional indicators in pairs.
+  if x == REGIONAL_INDICATOR && y == REGIONAL_INDICATOR && context.indicators % 2 == 1 {
+    return false
+  }
+  // GB999.
+  true
+}
+
+/// The class of `c`: ASCII's from the rules themselves, the rest from the table's runs.
+let grapheme_class = pure (c: rune) -> Class => {
+  let code = i64(c)
+  if code < 0x7f {
+    return if code == 0x0d { CR } else if code == 0x0a { LF } else if code < 0x20 {
+      CONTROL
+    } else { OTHER }
+  }
+  // The last run starting at or before `code`.
+  var low = 0
+  var high = GRAPHEME_RUNS.len() - 1
+  while low < high {
+    let mid = (low + high + 1) / 2
+    if i64(GRAPHEME_RUNS[mid] >> 8) <= code { low = mid } else { high = mid - 1 }
+  }
+  u8(GRAPHEME_RUNS[low] & 0xff)
+}

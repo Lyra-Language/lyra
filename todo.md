@@ -969,8 +969,10 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   `selected` (COMPLETED.md 11/20); checked as the tree `ui.access` builds, not yet in VoiceOver.
 - **[DONE 11/20] `ui`: a disabled control is told to assistive technology**, and a disabled
   element disables the controls inside it, as CSS's disabled `fieldset` (COMPLETED.md 11/20).
-- **[OPEN] `ui.interact`: a caret moves by rune, not grapheme cluster.** `é` written as `e`
-  and a combining accent, or an emoji sequence, takes several Left presses; needs UAX #29.
+- **[DONE 11/23] `ui.interact`: a caret moves by grapheme cluster**, through `std.unicode`
+  (UAX #29, Unicode 17), Backspace and Delete with it (COMPLETED.md 11/23).
+- **[OPEN] Termina's command line moves by rune**: its editor (`src/editor/editor.lyra`)
+  steps and erases a rune at a time, as `ui` did; `std.unicode`'s `grapheme_before`/`after`.
 - **[OPEN] `ui.interact`: a field's caret does not blink**, and typing is not coalesced into
   one undo step a word. Blinking wants phase 4's timers.
 - **[DONE 11/01] `Node<void>` compiles**: a void value is the empty struct everywhere but a

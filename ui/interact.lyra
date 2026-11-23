@@ -174,6 +174,7 @@ import ui.style.{ OverflowClip, Computed }
 import ui.motion.{ Motion, advance, shown_at, in_motion, moves_sizes }
 import ui.style
 import std.collections.{ HashMap }
+import std.unicode
 
 /// An edit of the focused text field a program asks for ([Ui.edit_focused], the host's
 /// `Command.EditField`): Edit's items, whose keys the Mac's own bar holds — AppKit gives ⌘A,
@@ -2233,7 +2234,7 @@ impl Ui {
         } else if by_word {
           ed.word_before()
         } else if shift {
-          ed.caret - 1
+          ed.runes.grapheme_before(ed.caret)
         } else {
           ed.left()
         }
@@ -2245,7 +2246,7 @@ impl Ui {
         } else if by_word {
           ed.word_after()
         } else if shift {
-          ed.caret + 1
+          ed.runes.grapheme_after(ed.caret)
         } else {
           ed.right()
         }
@@ -2384,17 +2385,23 @@ impl Editing {
     Editing { self | caret: at, anchor: if extend { self.anchor } else { at } }
   }
 
-  /// Where Left takes the caret: to the selection's start if there is one, else a rune back.
-  /// (Shift-Left moves the caret itself a rune, extending the selection.)
+  /// Where Left takes the caret: to the selection's start if there is one, else a character
+  /// back — a grapheme cluster ([std.unicode]), so over `e` and its combining accent, a flag
+  /// or an emoji sequence at once. (Shift-Left moves the caret itself a character, extending
+  /// the selection.)
   pub let left = pure (self) -> i64 =>
-    if self.caret != self.anchor { self.caret.min(self.anchor) } else { (self.caret - 1).max(0) }
+    if self.caret != self.anchor {
+      self.caret.min(self.anchor)
+    } else {
+      self.runes.grapheme_before(self.caret)
+    }
 
-  /// Where Right takes the caret: to the selection's end, else a rune on.
+  /// Where Right takes the caret: to the selection's end, else a character on.
   pub let right = pure (self) -> i64 =>
     if self.caret != self.anchor {
       self.caret.max(self.anchor)
     } else {
-      (self.caret + 1).min(self.runes.len())
+      self.runes.grapheme_after(self.caret)
     }
 
   /// The start of the word before the caret: back over spaces, then over the word.
@@ -2427,18 +2434,18 @@ impl Editing {
     (from, to)
   }
 
-  /// Backspace: the selection deleted, else the rune — or with `by_word` the word — before the
-  /// caret.
+  /// Backspace: the selection deleted, else the character — the whole grapheme cluster — or
+  /// with `by_word` the word before the caret.
   pub let erase_back = pure (self, by_word: bool) -> Editing => {
     if self.caret != self.anchor { return self.insert("") }
-    let from = if by_word { self.word_before() } else { (self.caret - 1).max(0) }
+    let from = if by_word { self.word_before() } else { self.runes.grapheme_before(self.caret) }
     Editing { self | anchor: from }.insert("")
   }
 
-  /// Delete: the selection deleted, else the rune — or the word — after the caret.
+  /// Delete: the selection deleted, else the character — or the word — after the caret.
   pub let erase_forward = pure (self, by_word: bool) -> Editing => {
     if self.caret != self.anchor { return self.insert("") }
-    let to = if by_word { self.word_after() } else { (self.caret + 1).min(self.runes.len()) }
+    let to = if by_word { self.word_after() } else { self.runes.grapheme_after(self.caret) }
     Editing { self | anchor: to }.insert("")
   }
 }
@@ -3075,7 +3082,8 @@ let changed<e> = (spec: SliderSpec<e>, value: f32) -> []e => {
   if (v - spec.value).abs() < 0.000001 { [] } else { [(spec.on_change)(v)] }
 }
 
-/// The rune index a click at `at` puts a field's caret before.
+/// The rune index a click at `at` puts a field's caret before — always between two characters,
+/// never inside a grapheme cluster.
 let rune_at_x<e> = pure (found: Found<e>, at: Point) -> i64 => {
   let Editable(spec) = found.laid.kind else { return 0 }
   let Prose(block) = found.laid.content else { return 0 }
@@ -3085,7 +3093,7 @@ let rune_at_x<e> = pure (found: Found<e>, at: Point) -> i64 => {
   // The byte offset back to a rune index: the runes before it.
   var index = 0
   while index < spec.value.len() && byte_at(spec.value, index) < offset { index += 1 }
-  index
+  spec.value.to_runes().nearest_grapheme_boundary(index)
 }
 
 /// The rune under `at` in a text field, by index — not the gap nearest it, which [rune_at_x]

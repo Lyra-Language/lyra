@@ -9,6 +9,35 @@ Newest first.
 
 ## Dated log
 
+### 11/23/26 — A caret moves by character: grapheme clusters in `std.unicode`
+
+A text field's Left, Right, Backspace and Delete moved a rune at a time, so `é` written as
+`e` and U+0301 took two presses, a flag two, and a family of emoji joined by zero-width
+joiners seven — each stop a caret inside a character, and Backspace leaving half a flag.
+
+- **`std.unicode`**, a new module: UAX #29's extended grapheme clusters, rules GB1 to GB999
+  in order (GB9c's Indic conjuncts and GB11's emoji ZWJ sequences carried as a small context
+  of what the runes before a boundary end in), on `[]rune` — `grapheme_boundaries`,
+  `grapheme_before`, `grapheme_after`, `nearest_grapheme_boundary` — and `string.graphemes`.
+- **The data is a generated table**, one `u32` a run of code points of one class — the
+  first code point shifted 8, or-ed with its `Grapheme_Cluster_Break`, `Extended_Pictographic`
+  and `Indic_Conjunct_Break` — 2,168 runs, binary-searched, ASCII answered from the rules
+  without it. `tools/unicode/gen.lyra` writes it from the three character-database files
+  `tools/unicode/unicode.sh` downloads, pinned by SHA-256, and a test holds the table to
+  what it writes where those files are (not on CI, which downloads nothing).
+- **Held to Unicode's own test**: all 766 cases of 17.0's `GraphemeBreakTest.txt`, the file
+  checked in unchanged; with GB11 switched off, three fail.
+- **`ui.interact` asks it**: `Editing.left`/`right`, Shift with the arrows, `erase_back` and
+  `erase_forward`, and a click's index snapped to the nearest boundary (HarfBuzz's clusters
+  mostly agree already). Backspace takes the whole cluster, as Delete does, rather than the
+  last rune of one, which some platforms do for combining marks: one rule for both keys, and
+  what the caret steps over is what goes. Words and double clicks are unchanged.
+- **The boundaries are worked out over the whole text at each key** — a field's text is a
+  line, and that is linear in it; a long text would want to start from a known boundary.
+
+Tests: `TestRun_UnicodeBreaksGraphemesAsUAX29Says`, `TestRun_UnicodeTableIsWhatTheGeneratorWrites`,
+`TestRun_UiFieldCaretMovesByGraphemeCluster`.
+
 ### 11/20/26 — A split: a plane's vertical scroll changed at a line
 
 `std.genesis.raster` changed only colours. A **split** is a row of its table whose `color` is

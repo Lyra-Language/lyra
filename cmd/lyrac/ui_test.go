@@ -4730,6 +4730,79 @@ off held: 0 events
 	}
 }
 
+// A text field's caret moves by character — a grapheme cluster — not by rune: over `e` and
+// its combining accent, a flag of two regional indicators and a thumbs up with its skin
+// tone each in one press of Left or Right, Shift with them too; Backspace and Delete take a
+// cluster whole; and an index inside one is moved to its edge. Then the same through keys:
+// End and Left, Backspace taking the thumbs up, Left twice, Delete taking the accented e.
+func TestRun_UiFieldCaretMovesByGraphemeCluster(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.interact.{ Ui, ui_new, Editing }
+import ui.script.{ script_platform }
+import ui.backend.{ PointerMoved, PointerDown, PointerUp, Primary, KeyPressed, Modifiers, End, ArrowLeft, Backspace, Delete }
+import ui.draw.{ Size, Point }
+import ui.text.{ Fonts, fonts_new }
+import ui.layout.{ Node, Laid, LayoutCache, layout_cache, column, text_input, FieldSpec, tight }
+
+data Ev = Edited(string)
+
+// a, e and U+0301, the French flag, a thumbs up and its tone, b: runes 0, 1-2, 3-4, 5-6, 7.
+const TEXT: string = "ae\u0301🇫🇷👍🏽b"
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  let runes = TEXT.to_runes()
+  var ed = Editing { runes: runes, caret: runes.len(), anchor: runes.len() }
+  var lefts: []string = []
+  while ed.caret > 0 {
+    ed = ed.move_to(ed.left(), false)
+    lefts.push("${ed.caret}")
+  }
+  var rights: []string = []
+  while ed.caret < runes.len() {
+    ed = ed.move_to(ed.right(), false)
+    rights.push("${ed.caret}")
+  }
+  println("left ${lefts.join(" ")}; right ${rights.join(" ")}")
+  let back = Editing { runes: runes, caret: 7, anchor: 7 }.erase_back(false)
+  let forward = Editing { runes: runes, caret: 3, anchor: 3 }.erase_forward(false)
+  println("backspace '${back.text() == "ae\u0301🇫🇷b"}' caret ${back.caret}; delete '${forward.text() == "ae\u0301👍🏽b"}' caret ${forward.caret}")
+  let inside = Editing { runes: runes, caret: 4, anchor: 4 }
+  println("inside the flag: left ${inside.left()} right ${inside.right()}")
+
+  var ui = ui_new()
+  var cache: LayoutCache<Ev> = layout_cache()
+  var platform = script_platform([], Size { w: 300.0, h: 100.0 })
+  var value = TEXT
+  let laid = frame(ui, cache, fonts, value)
+  let field = laid.children[0]
+  let at = Point { x: field.at.x + 4.0, y: field.at.y + field.laid.size.h / 2.0 }
+  for input in [PointerMoved(at), PointerDown(Primary, at, 1), PointerUp(Primary, at)] {
+    let _ = ui.handle(frame(ui, cache, fonts, value), input, platform)
+  }
+  for k in [End, ArrowLeft, Backspace, ArrowLeft, ArrowLeft, Delete] {
+    for e in ui.handle(frame(ui, cache, fonts, value), KeyPressed(k, Modifiers {}), platform) {
+      match e { Edited(t) => { value = t } }
+    }
+  }
+  println("keys: ${value == "a🇫🇷b"} (${value.to_runes().len()} runes)")
+  0
+}
+
+let frame = (ui: mut Ui, cache: mut LayoutCache<Ev>, fonts: mut Fonts, value: string) -> Laid<Ev> =>
+  ui.frame_within(column([text_input(FieldSpec { value: value, on_edit: Edited })]), tight(Size { w: 300.0, h: 100.0 }), fonts, cache)
+`)
+	want := `left 7 5 3 1 0; right 1 3 5 7 8
+backspace 'true' caret 5; delete 'true' caret 3
+inside the flag: left 3 right 5
+keys: true (4 runes)
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // Edit's items handed to the focused field (Ui.edit_focused, Command.EditField), as the Mac's
 // bar takes their keys before a field hears them: all of a colour's text selected and copied,
 // another pasted over it — the field's edit raised — and nothing with no field focused.

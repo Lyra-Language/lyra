@@ -571,8 +571,10 @@ layer — implements the two traits; the display list is the whole contract.
   item and SDL hears the key too, so the host gives it to nothing. A script plays a bar where
   its `native_menus` says, and chooses with `menu:N`.
 - **The keyboard**: Tab/Shift-Tab through the controls in the tree's order, wrapping; Space
-  and Enter press; the arrows, Page Up/Down, Home and End move a slider; a field edits by rune
-  (not yet grapheme cluster), by word with Alt (Control off a Mac), to the ends with Command or
+  and Enter press; the arrows, Page Up/Down, Home and End move a slider; a field edits by
+  character — a grapheme cluster (`std.unicode`): Left, Right, Backspace and Delete take `e`
+  and its combining accent, a flag or an emoji sequence at once, and a click never puts the
+  caret inside one — by word with Alt (Control off a Mac), to the ends with Command or
   Home/End, selects with Shift, and takes the primary modifier's A, C, X, V and Z.
 - **A field's clicks**: one puts the caret there and a drag selects by rune; a double click
   selects the word under the pointer (or the run of spaces it is on) and a drag goes on by

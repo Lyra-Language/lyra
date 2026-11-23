@@ -1,0 +1,170 @@
+//! Writes `std/unicode/grapheme_table.lyra` from the Unicode Character Database: each code
+//! point's grapheme class — its `Grapheme_Cluster_Break` (GraphemeBreakProperty.txt), whether
+//! it is `Extended_Pictographic` (emoji-data.txt) and its `Indic_Conjunct_Break`
+//! (DerivedCoreProperties.txt) — as the ranges of one class, each `start << 8 | class`.
+//!
+//! ```text
+//! build/lyrac run tools/unicode/gen.lyra -- build/deps/unicode-17.0.0 > std/unicode/grapheme_table.lyra
+//! ```
+//!
+//! `tools/unicode/unicode.sh` downloads the files, pinned and checked, and runs it.
+import std.io.{ read_file, write_stderr }
+
+/// The Unicode version the files are, written into the table.
+const VERSION: string = "17.0.0"
+/// One past the last code point.
+const CODE_POINTS: i64 = 0x110000
+
+let main = () -> u8 => {
+  let args = program_args()
+  if args.len() != 2 {
+    let _ = write_stderr("usage: gen UCD-DIRECTORY\n")
+    return 2
+  }
+  let dir = args[1]
+  var classes: []u8 = [0; CODE_POINTS]
+  let breaks = read_ranges("${dir}/GraphemeBreakProperty.txt") ?? []
+  let emoji = read_ranges("${dir}/emoji-data.txt") ?? []
+  let derived = read_ranges("${dir}/DerivedCoreProperties.txt") ?? []
+  if breaks.len() == 0 || emoji.len() == 0 || derived.len() == 0 {
+    let _ = write_stderr("gen: ${dir} lacks a file, or one is empty\n")
+    return 1
+  }
+  for r in breaks {
+    let value = break_value(r.fields[0])
+    if value < 0 {
+      let _ = write_stderr("gen: unknown Grapheme_Cluster_Break value ${r.fields[0]}\n")
+      return 1
+    }
+    mark_range(classes, r, u8(value))
+  }
+  for r in emoji {
+    if r.fields[0] == "Extended_Pictographic" { mark_range(classes, r, PICTOGRAPHIC) }
+  }
+  for r in derived {
+    if r.fields[0] == "InCB" {
+      let value = conjunct_value(r.fields[1])
+      if value < 0 {
+        let _ = write_stderr("gen: unknown Indic_Conjunct_Break value ${r.fields[1]}\n")
+        return 1
+      }
+      mark_range(classes, r, u8(value))
+    }
+  }
+  print(table_source(classes))
+  0
+}
+
+/// A line of a UCD file: the code points it names and its fields after them, trimmed.
+struct Ranged {
+  low: i64,
+  high: i64,
+  fields: []string,
+}
+
+/// The class bits: a `Grapheme_Cluster_Break` value in the low four, `Extended_Pictographic`,
+/// then the `Indic_Conjunct_Break` value in two (`std.unicode` reads them alike).
+const PICTOGRAPHIC: u8 = 16
+const CONJUNCT_LINKER: u8 = 32
+const CONJUNCT_CONSONANT: u8 = 64
+const CONJUNCT_EXTEND: u8 = 96
+
+/// The lines of the file at `path` that name code points, comments dropped; `None` when it
+/// cannot be read or a line is not one.
+let read_ranges = (path: string) -> Maybe<[]Ranged> => {
+  let text = read_file(path) ?? ""
+  if text.len() == 0 { return None }
+  var out: []Ranged = []
+  for whole in text.lines() {
+    let line = (whole.split("#")[0]).trim()
+    if line.len() == 0 { continue }
+    let parts = [p in line.split(";") | p.trim()]
+    let points = parts[0].split("..")
+    let low = parse_hex(points[0]) ?? -1
+    let high = parse_hex(points[points.len() - 1]) ?? -1
+    if low < 0 || high < low || high >= CODE_POINTS || parts.len() < 2 { return None }
+    out.push(Ranged { low: low, high: high, fields: parts.slice(1, parts.len()) })
+  }
+  Some(out)
+}
+
+/// `bits` or-ed into the class of every code point `r` names.
+let mark_range = (classes: mut []u8, r: ref Ranged, bits: u8) -> void => {
+  for c in r.low..<(r.high + 1) { classes[c] = classes[c] | bits }
+}
+
+/// A `Grapheme_Cluster_Break` value's number, `Other` 0; -1 for one unknown.
+let break_value = pure (name: string) -> i64 => match name {
+  "CR" => 1,
+  "LF" => 2,
+  "Control" => 3,
+  "Extend" => 4,
+  "ZWJ" => 5,
+  "Regional_Indicator" => 6,
+  "Prepend" => 7,
+  "SpacingMark" => 8,
+  "L" => 9,
+  "V" => 10,
+  "T" => 11,
+  "LV" => 12,
+  "LVT" => 13,
+  _ => -1,
+}
+
+/// An `Indic_Conjunct_Break` value's bits; -1 for one unknown.
+let conjunct_value = pure (name: string) -> i64 => match name {
+  "Linker" => i64(CONJUNCT_LINKER),
+  "Consonant" => i64(CONJUNCT_CONSONANT),
+  "Extend" => i64(CONJUNCT_EXTEND),
+  _ => -1,
+}
+
+/// Hexadecimal digits as a number; `None` for anything else.
+let parse_hex = pure (s: string) -> Maybe<i64> => {
+  if s.len() == 0 || s.len() > 8 { return None }
+  var out = 0
+  for c in s {
+    let digit = if c >= '0' && c <= '9' {
+      i64(c) - i64('0')
+    } else if c >= 'A' && c <= 'F' {
+      i64(c) - i64('A') + 10
+    } else if c >= 'a' && c <= 'f' {
+      i64(c) - i64('a') + 10
+    } else {
+      return None
+    }
+    out = out * 16 + digit
+  }
+  Some(out)
+}
+
+/// The table's source: a run of code points of one class an entry, from where it starts.
+let table_source = pure (classes: ref []u8) -> string => {
+  var entries: []string = []
+  for c in 0..<CODE_POINTS {
+    if c == 0 || classes[c] != classes[c - 1] {
+      entries.push("0x${u32((c << 8) | i64(classes[c])).to_hex(8)}")
+    }
+  }
+  var lines: []string = []
+  var i = 0
+  while i < entries.len() {
+    let end = (i + 8).min(entries.len())
+    lines.push("  ${entries.slice(i, end).join(", ")},")
+    i = end
+  }
+  [
+    "module std.unicode",
+    "// Generated by tools/unicode/gen.lyra from Unicode ${VERSION}'s character database; do",
+    "// not edit. Each entry is a run of code points of one grapheme class: the first code point",
+    "// shifted left 8, or-ed with the class (std/unicode/graphemes.lyra reads the bits).",
+    "",
+    "/// The Unicode version the table is.",
+    "pub const UNICODE_VERSION: string = \"${VERSION}\"",
+    "",
+    "const GRAPHEME_RUNS: [${entries.len()}]u32 = #[",
+    ...lines,
+    "]",
+    "",
+  ].join("\n")
+}
