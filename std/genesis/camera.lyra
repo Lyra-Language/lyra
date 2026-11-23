@@ -213,8 +213,9 @@ impl Camera {
     // From the margin's first column, before the view's left: wrapping below 0 is a column
     // past the map's edge, blank, at the plane column it would have.
     let left = cell_of(self.x).wrapping_sub(MARGIN)
-    // From the row above the view: the margin, which a row past the map's top leaves blank.
-    let top = cell_of(self.y).wrapping_sub(ROW_MARGIN)
+    // From the row above the view: the margin, which a row past the map's top leaves blank —
+    // or, for a map no taller than the plane, from its top: it is held whole ([held_whole]).
+    let top = first_row(self.y, cells, width)
     let shift = left % vdp.PLANE_WIDTH
     // What was staged for the plane would land on these, a frame late.
     vdp.drop_staged(plane)
@@ -262,13 +263,23 @@ impl Camera {
       self.show_map(plane, cells, width)
       return
     }
-    let held_top = top.wrapping_sub(ROW_MARGIN)
+    let whole = held_whole(cells, width)
+    let held_top = first_row(self.y, cells, width)
+    let column_rows = if whole { vdp.PLANE_HEIGHT } else { HELD_ROWS }
     let held = vdp.hold_vblank()
     // The columns held run from MARGIN before the view's left to MARGIN past its right, the
-    // rows from ROW_MARGIN above its top to ROW_MARGIN below its foot.
+    // rows from ROW_MARGIN above its top to ROW_MARGIN below its foot — or every row of a map
+    // held whole, which streams no rows.
     if left > old_left {
       for k: u16 in 0..<left - old_left {
-        stage_column(plane, cells, width, old_left + VIEW_COLUMNS + MARGIN + k, held_top)
+        stage_column(
+          plane,
+          cells,
+          width,
+          old_left + VIEW_COLUMNS + MARGIN + k,
+          held_top,
+          column_rows
+        )
       }
     } else if left < old_left {
       for k: u16 in 0..<old_left - left {
@@ -277,11 +288,12 @@ impl Camera {
           cells,
           width,
           left.wrapping_sub(MARGIN).wrapping_add(k),
-          held_top
+          held_top,
+          column_rows
         )
       }
     }
-    if top > old_top {
+    if whole {} else if top > old_top {
       for my: u16 in old_top + VIEW_ROWS + ROW_MARGIN..<top + VIEW_ROWS + ROW_MARGIN {
         stage_row(plane, cells, width, my, left)
       }
@@ -308,7 +320,7 @@ impl Camera {
     cells: ref [N]u16,
     width: u16
   ) -> void => {
-    let top = cell_of(self.y).wrapping_sub(ROW_MARGIN)
+    let top = first_row(self.y, cells, width)
     vdp.drop_staged(plane)
     let held = vdp.hold_vblank()
     for row: u16 in 0..<vdp.PLANE_HEIGHT {
@@ -334,7 +346,8 @@ impl Camera {
       return
     }
     let held = vdp.hold_vblank()
-    if top > old_top {
+    // A map held whole ([held_whole]) is all in the plane: no row comes into view.
+    if held_whole(cells, width) {} else if top > old_top {
       for my: u16 in old_top + VIEW_ROWS + ROW_MARGIN..<top + VIEW_ROWS + ROW_MARGIN {
         stage_whole_row(plane, cells, width, my)
       }
@@ -405,6 +418,17 @@ const ROW_MARGIN: u16 = 1
 /// The rows held, and the columns: what a staged column and row are long.
 const HELD_ROWS: u16 = 31
 const HELD_COLUMNS: u16 = 57
+
+/// Whether a map is held in its plane whole, its rows at their own places, none streamed: one
+/// no taller than the plane's 32. Streamed round the view, a row past the map's foot was
+/// written blank over the row it wraps onto, which a split's part below may show (11/21).
+let held_whole<const N: i64> = pure (cells: ref [N]u16, width: u16) -> bool =>
+  blocks.rows(cells, width) <= vdp.PLANE_HEIGHT
+
+/// The first map row a plane holds with the view's top at `y`: the row above the view (the
+/// margin), or the map's top for a map held whole.
+let first_row<const N: i64> = pure (y: i16, cells: ref [N]u16, width: u16) -> u16 =>
+  if held_whole(cells, width) { 0 } else { cell_of(y).wrapping_sub(ROW_MARGIN) }
 
 /// A turn of a sine in 256 steps, at most 127 either way — whole, so a ripple's [sine] is one
 /// read, not a quarter turn's table folded four ways (a column ripple's cost halved, 11/20).
@@ -835,11 +859,12 @@ let stage_column<const N: i64> = (
   cells: ref [N]u16,
   width: u16,
   mx: u16,
-  top: u16
+  top: u16,
+  rows: u16
 ) -> void => {
   let column = mx % vdp.PLANE_WIDTH
   var my = top
-  var left = HELD_ROWS
+  var left = rows
   while left > 0 {
     let row = my % vdp.PLANE_HEIGHT
     let run = left.min(vdp.PLANE_HEIGHT - row)

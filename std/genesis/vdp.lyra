@@ -84,6 +84,11 @@ pub let init = () -> void => {
   columns_changed = false
   plain_words = #[NO_WORD; 2]
   lines_changed = false
+  lines_down = #[0; 2]
+  scroll_each_frame = false
+  split_asked = #[0; 2]
+  split_down = #[0; 2]
+  split_shown = #[0; 2]
   for i: u16 in 0..<64 { shown[i] = 0 }
 }
 
@@ -155,6 +160,29 @@ pub let write_color_now = (at: u16, color: u16) -> void => {
 /// Whether [send_colors] sends all 64 colours every vertical blank, queued or not: on while
 /// colours change partway down the picture, so each frame's top starts from [color_of]'s.
 pub let send_colors_each_frame = (on: bool) -> void => { colors_each_frame = on }
+
+/// Whether the planes' vertical scroll goes to the VDP only in the vertical blank, by
+/// [send_lines], and every frame: on while a plane's scroll changes partway down the picture
+/// (a split, `std.genesis.raster`), so [set_scroll] mid-picture moves nothing until the next
+/// frame's top, which starts from it again.
+pub let send_scroll_each_frame = (on: bool) -> void => {
+  scroll_each_frame = on
+  split_asked = lines_down
+  split_down = lines_down
+  split_shown = lines_down
+}
+
+/// The vertical scroll `plane` (`PLANE_A` or `PLANE_B`) takes from a split's line down
+/// (`std.genesis.raster`), taken up by the plane's next [set_scroll] with its own — so the
+/// two parts move on the same frame, a vertical blank never sending one without the other.
+pub let set_split_scroll = (plane: u16, y: i16) -> void => {
+  split_asked[if plane == PLANE_A { 0 } else { 1 }] = u16(i32(y) & 1023)
+}
+
+/// Where the vertical scroll this frame's split of plane `k` (0 A, 1 B) shows is kept:
+/// [set_split_scroll]'s as the vertical blank found it. What the horizontal interrupt reads,
+/// through the pointer, for the split's line.
+pub let split_word_at = (k: u16) -> ^u16 => unsafe { &split_shown[i64(k & 1)] }
 
 /// Wait for the next vertical blank to begin — the time between frames when a game
 /// changes what is shown, once a frame (60 times a second on an NTSC console).
@@ -345,7 +373,15 @@ pub let set_scroll = (plane: u16, x: i16, y: i16) -> void => {
   let bit: u8 = if plane == PLANE_A { 1 } else { 2 }
   let word = line_word(i32(x))
   let down = u16(i32(y) & 1023)
-  lines_down[which / 2] = down
+  if scroll_each_frame {
+    // The plane's scroll and its split's together, the vertical blank held off between.
+    let held = hold_vblank()
+    lines_down[which / 2] = down
+    split_down[which / 2] = split_asked[which / 2]
+    release_vblank(held)
+  } else {
+    lines_down[which / 2] = down
+  }
   // In column mode every column takes the plane's scroll when it changes — a plane whose
   // columns move apart then has them moved from it by [set_column] each frame, and one shown
   // before its first ripple is where it is scrolled, not where a scene before left it.
@@ -373,7 +409,7 @@ pub let set_scroll = (plane: u16, x: i16, y: i16) -> void => {
   let held = hold_vblank()
   set_address(VRAM_WRITE, HSCROLL + which)
   write_word(word)
-  if columned == 0 {
+  if columned == 0 && !scroll_each_frame {
     set_address(VSRAM_WRITE, which)
     write_word(down)
   }
@@ -498,11 +534,21 @@ pub let end_lines = () -> void => { lines_changed = true }
 /// [set_column] and [set_scroll] left them, sent if changed: the lines by DMA, in the
 /// vertical blank — `sprites.show` calls it.
 pub let send_lines = () -> void => {
+  if scroll_each_frame {
+    split_shown = split_down
+    if columned == 0 {
+      let held = hold_vblank()
+      set_address(VSRAM_WRITE, 0)
+      write_word(lines_down[0])
+      write_word(lines_down[1])
+      release_vblank(held)
+    }
+  }
   if lines_changed && line_mode != 0 {
     lines_changed = false
     let from = u32(unsafe { (&lines).address() })
     dma_to_vram(from, HSCROLL, 2 * 224)
-    if columned == 0 {
+    if columned == 0 && !scroll_each_frame {
       let held = hold_vblank()
       set_address(VSRAM_WRITE, 0)
       write_word(lines_down[0])
@@ -747,6 +793,14 @@ var hblank_on: bool = false
 
 /// Whether [send_colors] sends every colour each vertical blank ([send_colors_each_frame]).
 var colors_each_frame: bool = false
+
+/// Whether the vertical scroll goes out each vertical blank ([send_scroll_each_frame]), and
+/// each plane's split scroll as asked ([set_split_scroll]), as taken up with the plane's own
+/// ([set_scroll]) and as this frame shows it.
+var scroll_each_frame: bool = false
+var split_asked: [2]u16 = #[0; 2]
+var split_down: [2]u16 = #[0; 2]
+var split_shown: [2]u16 = #[0; 2]
 
 /// Whether [dma_to_vram] takes the Z80's bus ([guard_dma]).
 var dma_guarded: bool = false

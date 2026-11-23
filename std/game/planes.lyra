@@ -145,6 +145,12 @@ pub struct Plane {
   column_ticks: i64 = 0,
   columned_in: i64 = -1,
   column_shown: f32 = 0.0,
+  /// From screen line `split_line` down (0: no split), scrolled down to `split_y` rather
+  /// than `y` ([set_split]), and where that was before the update numbered `split_in`.
+  split_line: i64 = 0,
+  split_y: f32 = 0.0,
+  was_split_y: f32 = 0.0,
+  split_in: i64 = -1,
 }
 
 /// A cell's bits for palette `p`: `FRONT | planes.palette(2) | tile`.
@@ -171,7 +177,9 @@ pub let write_plane<const N: i64> = (
     bands: [],
     banded_in: -1,
     columns: ColumnWave {},
-    columned_in: -1
+    columned_in: -1,
+    split_line: 0,
+    split_in: -1
   }
   sprites.snap()
 }
@@ -240,6 +248,24 @@ pub let scroll_columns = (plane: i64, wave: ColumnWave, ticks: i64) -> void => {
   all[plane].columns = wave
   all[plane].column_ticks = ticks
   all[plane].columned_in = sprites.updates()
+}
+
+/// `plane` split at screen line `line`: from it down, scrolled down to world line `y` at the
+/// screen's top, as [set_scroll]'s `y`, rather than its own — a ground held still under a sky
+/// that follows the camera, or moving at its own speed. Once an update; a `line` of 0 or
+/// less, no split. The Genesis's raster split (`std.genesis.raster`).
+pub let set_split = (plane: i64, line: i64, y: f32) -> void => {
+  if plane < 0 || plane >= all.len() { return }
+  let now = sprites.updates()
+  if all[plane].split_in != now {
+    let fresh = all[plane].split_in < 0 ||
+      sprites.snapped() ||
+      all[plane].split_line != line
+    all[plane].was_split_y = if fresh { y } else { all[plane].split_y }
+    all[plane].split_in = now
+  }
+  all[plane].split_line = line.max(0)
+  all[plane].split_y = y
 }
 
 /// `plane` laid out as `layout` says, once its map is written.
@@ -329,6 +355,12 @@ impl Plane {
     } else {
       (self.view_x, f32(self.ticks))
     }
+
+  /// Where its part below the split shows, `t` of the way from the update before to this one.
+  pub let split_at = (self: ref, t: f32) -> f32 =>
+    if self.split_in == sprites.updates() {
+      self.was_split_y + (self.split_y - self.was_split_y) * t
+    } else { self.split_y }
 
   /// Its columns' updates counted, `t` of the way from the update before to this one.
   pub let column_ticks_at = (self: ref, t: f32) -> f32 =>

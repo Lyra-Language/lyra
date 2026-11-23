@@ -196,3 +196,57 @@ let main = () -> u8 => {
 		}
 	}
 }
+
+// TestRun_GameSplitScrollsAPlaneApartBelowALine draws a green line across plane B at every
+// eighth map line, the plane scrolled 0 and split at screen line 112 to 1 (std.game.planes'
+// set_split, the Genesis's raster split): the lines above are at multiples of 8, those below
+// one line sooner.
+func TestRun_GameSplitScrollsAPlaneApartBelowALine(t *testing.T) {
+	t.Parallel()
+	src := filepath.Join(t.TempDir(), "main.lyra")
+	if err := os.WriteFile(src, []byte(`import std.game.screen
+import std.game.planes
+import std.game.sprites
+
+let main = () -> u8 => {
+  if !screen.open("split", 320, 224) { return 2 }
+  var tiles: [128]u32 = #[0; 128]
+  for x in 8..<16 { tiles[x] = 0xFF00FF00 }
+  screen.load_tiles(2, tiles)
+  var back: [2048]u32 = #[0; 2048]
+  for y in 0..<32 {
+    for x in 0..<64 { back[y * 64 + x] = 1 }
+  }
+  planes.write_plane(planes.PLANE_B, back, 64)
+  planes.set_scroll(planes.PLANE_B, 0.0, 0.0)
+  planes.set_split(planes.PLANE_B, 112, 1.0)
+  while screen.running() {
+    sprites.clear()
+    screen.show()
+  }
+  screen.close()
+  0
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	frame := playGame(t, src, "--frames", "1")
+	var want []int
+	for y := 0; y < 112; y += 8 {
+		want = append(want, y)
+	}
+	for y := 119; y < 224; y += 8 {
+		want = append(want, y)
+	}
+	for _, x := range []int{0, 160, 319} {
+		var got []int
+		for y := 0; y < frame.h; y++ {
+			if frame.at(x, y) == [3]byte{0, 255, 0} {
+				got = append(got, y)
+			}
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("x %d: lines at %v, want %v", x, got, want)
+		}
+	}
+}

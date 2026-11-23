@@ -9,6 +9,47 @@ Newest first.
 
 ## Dated log
 
+### 11/20/26 — A split: a plane's vertical scroll changed at a line
+
+`std.genesis.raster` changed only colours. A **split** is a row of its table whose `color` is
+`SPLIT_A` or `SPLIT_B`: from its line down, that plane is scrolled to what `scroll_split`
+gave — a ground held still under a sky that follows the camera. `std.game.planes.set_split`
+is the same on the modern target, the plane drawn in two parts. Vega's scenes split a plane
+each (`ScrollSplit`); the heroes' overlooks hold their far hills' foot still from line 161.
+
+- **The VDP takes a line's vertical scroll as the line two before it ends** (Sheliak latches
+  full-screen scroll at slot 165, when the counter moves on, for the line the fetches then
+  prepare). Written in the gap a colour is written in, a split began a line late; so a split
+  is made the line before its own, written as soon as the interrupt comes, and the interrupt's
+  step must divide `line - 1`. Vega counts it so (`interrupt_lines`), and orders a split ahead
+  of a colour made on the same line — behind it, the split would wait for the colour's gap.
+- **A vertical blank between two calls sent half an update.** The game's loop gave the
+  split's scroll and the plane's in turn, and `wait_vblank` returns a hundred cycles before
+  the interrupt runs: the blank sent the plane's new scroll with the split's old one, the part
+  below a frame behind every other frame. `scroll_split` now only records it; `set_scroll`
+  takes it up with the plane's own, the interrupt held off between, and the vertical blank
+  copies both for the frame (`split_shown`). With a split on, `set_scroll` writes no VSRAM
+  mid-picture: `send_lines` sends it each blank (`send_scroll_each_frame`).
+- **The colours' path may test nothing.** Choosing the wait and the word by the change's kind
+  put a test inside the wait loop, and the colours started pixels into their lines at the
+  left edge (`TestGenesis_RasterEffects`). `make_ready` now works out where the wait ends
+  (`ready_until`, 0 for a split) and where the word is read from (`ready_from`, a pointer to
+  the colour's word or to the VDP module's split word), and the address command goes as one
+  long, cheaper than the two words it replaced.
+
+Tests: `TestGenesis_SplitScrollsAPlaneApartBelowALine` (still, both scroll modes: line 111
+plain, 112 split; it failed a line late before the first fix),
+`TestGenesis_SplitMovesWithTheTopOnTheSameFrame` (moved from the loop each frame; it failed
+on the torn update), `TestRun_GameSplitScrollsAPlaneApartBelowALine`.
+
+**A map no taller than the plane is held whole** (`camera.held_whole`). Vega's split example
+(`examples/split-test`: a sky over a horizon and ground, the camera bobbing 32 lines) showed
+16 black lines at its top: the camera streamed rows round the view even for a map that fits
+the plane, and the row past the map's foot, written blank, landed on the plane row it wraps
+onto — the map's own top. Such a map is now written from its top row and never streamed by
+rows; its columns are staged the plane's full 32 rows. Vega's `--check` plays the example in
+Sheliak (`rom_checks.check_split_test`).
+
 ### 11/20/26 — A disabled element disables what it holds, and is heard as disabled
 
 `Node.disabled` reached only the control it was set on: a group disabled with

@@ -738,7 +738,8 @@ let scrolled = (p: Plane, t: f32) -> Plane => {
 
 /// A plane between screen rows `top` and `bottom` where it shows `t` of the way from the
 /// update before, its bands' lines each where its band puts it ([planes.scroll_bands]): a
-/// band moving as one in a strip, one ramping or rippling a line at a time.
+/// band moving as one in a strip, one ramping or rippling a line at a time; and below its
+/// split, scrolled as the split says.
 let draw_banded = (
   r: Renderer,
   plane: Plane,
@@ -748,6 +749,26 @@ let draw_banded = (
   bottom: i64
 ) -> void => {
   let p = scrolled(plane, t)
+  if p.split_line > 0 && p.split_line < bottom {
+    // Split ([planes.set_split]): above its line the plane's own scroll, below it the split's.
+    let at = p.split_line.max(top)
+    draw_bands(r, p, t, front, top, at)
+    draw_bands(r, Plane { p | y: p.split_at(t) }, t, front, at, bottom)
+  } else {
+    draw_bands(r, p, t, front, top, bottom)
+  }
+}
+
+/// [draw_banded]'s plane `p`, as it shows `t` of the way from the update before, between
+/// screen rows `top` and `bottom`.
+let draw_bands = (
+  r: Renderer,
+  p: Plane,
+  t: f32,
+  front: bool,
+  top: i64,
+  bottom: i64
+) -> void => {
   if p.bands.len() == 0 {
     draw_plane(r, p, front, top, bottom)
     return
