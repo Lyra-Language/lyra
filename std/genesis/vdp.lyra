@@ -138,6 +138,15 @@ pub let enable_hblank_interrupt = (lines: u8) -> void => {
   set_register(0, 0x14)
 }
 
+/// The horizontal interrupt every `lines + 1` lines from the next time the count runs out —
+/// register 10 alone, for a handler setting the step after its first (`std.genesis.raster`).
+pub let set_hblank_lines = (lines: u8) -> void => set_register(10, lines)
+
+/// Whether each frame's horizontal interrupt comes first at its top line, the vertical blank
+/// ([send_colors]) setting the count to 0, the handler there setting the step again: what
+/// changes kept to the world need, which come on any line, the first lines too.
+pub let hblank_from_top = (on: bool) -> void => { from_top = on }
+
 /// Stop the horizontal interrupt.
 pub let disable_hblank_interrupt = () -> void => {
   hblank_on = false
@@ -160,6 +169,51 @@ pub let write_color_now = (at: u16, color: u16) -> void => {
 /// Whether [send_colors] sends all 64 colours every vertical blank, queued or not: on while
 /// colours change partway down the picture, so each frame's top starts from [color_of]'s.
 pub let send_colors_each_frame = (on: bool) -> void => { colors_each_frame = on }
+
+/// No raster plan asked for ([ask_raster_plan]).
+pub const NO_RASTER_PLAN: u8 = 0xFF
+
+/// Raster plan `plan` (0 to 2, `std.genesis.raster`'s) shown from the next frame — taken up
+/// by [send_colors] in the vertical blank, with the colours its top takes
+/// ([set_raster_top]); [NO_RASTER_PLAN] asks for none, keeping the one shown.
+pub let ask_raster_plan = (plan: u8) -> void => unsafe { asked_at().write_volatile(plan) }
+
+/// The raster plan this frame shows, as the vertical blank took it up.
+pub let raster_plan = () -> u8 => unsafe { shown_at().read_volatile() }
+
+/// The raster plan the next frame shows, as asked for so far: the one asked for, else the
+/// one shown.
+pub let next_raster_plan = () -> u8 =>
+{
+  let asked = unsafe { asked_at().read_volatile() }
+  if asked != NO_RASTER_PLAN { asked } else { unsafe { shown_at().read_volatile() } }
+}
+
+/// Raster plan `plan` shown at once, as raster effects start or stop, none asked for.
+pub let show_raster_plan = (plan: u8) -> void => {
+  unsafe {
+    shown_at().write_volatile(plan.min(RASTER_PLANS - 1))
+    asked_at().write_volatile(NO_RASTER_PLAN)
+  }
+}
+
+/// The colours raster plan `plan` gives the screen's top: CRAM colour `at[k]` is `word[k]`
+/// for the first `count`, written after the others in the vertical blank (and faded with
+/// them). Set while the plan is not shown.
+pub let set_raster_top = (
+  plan: u8,
+  at: ref [16]u16,
+  word: ref [16]u16,
+  count: u16
+) -> void => {
+  let which = plan.min(RASTER_PLANS - 1)
+  let base = i64(which) * 16
+  for k: u16 in 0..<16 {
+    top_at[base + i64(k)] = at[i64(k)]
+    top_word[base + i64(k)] = word[i64(k)]
+  }
+  top_count[i64(which)] = count.min(16)
+}
 
 /// Whether the planes' vertical scroll goes to the VDP only in the vertical blank, by
 /// [send_lines], and every frame: on while a plane's scroll changes partway down the picture
@@ -231,6 +285,16 @@ pub let queue_color = (palette: u16, index: u16, color: u16) -> void => {
 /// The colours [queue_color] changed, all 64 to CRAM; nothing when none did. In the vertical
 /// blank: `sprites.show` calls it first; a game that does not call that, after [wait_vblank].
 pub let send_colors = () -> void => {
+  let asked = unsafe { asked_at().read_volatile() }
+  if asked != NO_RASTER_PLAN {
+    unsafe {
+      shown_at().write_volatile(asked.min(RASTER_PLANS - 1))
+      asked_at().write_volatile(NO_RASTER_PLAN)
+    }
+  }
+  // The frame's first horizontal interrupt at its top line ([hblank_from_top]): the count is
+  // taken from register 10 on every line of the blank.
+  if from_top { set_register(10, 0) }
   if !colors_queued && !colors_each_frame { return }
   colors_queued = false
   // Written, not sent by DMA: a DMA holds the Z80's bus, and its sample played flatter for
@@ -238,6 +302,14 @@ pub let send_colors = () -> void => {
   let held = hold_vblank()
   set_address(CRAM_WRITE, 0)
   for i: u16 in 0..<64 { write_word(shown[i]) }
+  // The colours the raster plan's changes kept to the world give the top: above the screen.
+  if colors_each_frame {
+    let base = i64(plan_shown) * 16
+    for k: u16 in 0..<top_count[i64(plan_shown)] {
+      set_address(CRAM_WRITE, (top_at[base + i64(k)] & 63) * 2)
+      write_word(faded(top_word[base + i64(k)]))
+    }
+  }
   release_vblank(held)
 }
 
@@ -801,6 +873,26 @@ var scroll_each_frame: bool = false
 var split_asked: [2]u16 = #[0; 2]
 var split_down: [2]u16 = #[0; 2]
 var split_shown: [2]u16 = #[0; 2]
+
+/// The raster plan asked for and the one shown ([ask_raster_plan]); each plan's top colours
+/// ([set_raster_top]), sixteen a plan.
+var plan_asked: u8 = NO_RASTER_PLAN
+var plan_shown: u8 = 0
+
+/// [plan_asked] and [plan_shown], read and written volatile: the game's loop asks and reads,
+/// the vertical blank takes up, and an optimizer seeing a loop that writes the one and never
+/// changes the other kept them in registers — a plan asked for every frame was never shown.
+let asked_at = () -> ^mut u8 => unsafe { &mut plan_asked }
+let shown_at = () -> ^mut u8 => unsafe { &mut plan_shown }
+var top_at: [48]u16 = #[0; 48]
+var top_word: [48]u16 = #[0; 48]
+var top_count: [3]u16 = #[0; 3]
+
+/// How many raster plans there are.
+const RASTER_PLANS: u8 = 3
+
+/// Whether each frame's horizontal interrupt comes first at its top ([hblank_from_top]).
+var from_top: bool = false
 
 /// Whether [dma_to_vram] takes the Z80's bus ([guard_dma]).
 var dma_guarded: bool = false

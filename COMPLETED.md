@@ -9,6 +9,94 @@ Newest first.
 
 ## Dated log
 
+### 11/23/26 — A song started as the vertical blank came: the hero's chord
+
+Vega's hero check heard two notes of its theme's FM 3 chord off pitch once the raster plans
+added 1.5 KB of RAM — and with HEAD's raster code and an unused array of 768 or 1024 words,
+but not 512 or 1400, and never with a start-up delay. The music's object code was byte for
+byte the same, and its state did not move.
+
+- **Found by diffing**: the YM2612's writes (a scratch Sheliak printing them), DAC writes
+  filtered out, showed FM 3 set up as one channel; the player's RAM dumped each frame showed
+  the channels' FM 3 operator fields 0 for a frame where the good build had 1–4; a
+  watchpoint on one showed the same instruction writing them, a frame late.
+- **The cause**: `Tune.play`, from the game's loop, set the song and `playing` before giving
+  out FM 3's operators, and the vertical blank's interrupt — which runs the player — could
+  land between. That tick set FM 3 up as an ordinary channel, its patch on all four
+  operators, and what it wrote stayed cached as written. The layout moved where in the frame
+  the start ran.
+- **The fix**: `std.genesis.sound` holds the vertical blank (`vdp.hold_vblank`) around every
+  change the loop makes to what it plays — an effect, a song, a track, started or stopped.
+  `TestGenesis_SongStartedAsTheVerticalBlankComes` starts one at lines 215, 220 and 223,
+  which lost E5 every time before.
+
+### 11/23/26 — Raster changes kept to the world: a waterline
+
+`std.genesis.raster`'s rows could only be lines of the screen. A row with `raster.WORLD` in
+its colour is a line of the world, placed each frame by `raster.scroll_world(camera_y)`: a
+waterline that moves on the screen with the stone, colouring the screen from the top while
+it is above it. Vega's raster effects take **Kept to the world** (file format 49), and
+`examples/waterline` shows one.
+
+- **A frame's changes became a plan**, built in the game's loop and taken up by the
+  vertical blank with the colours a change above the screen gives its top
+  (`vdp.ask_raster_plan`, `set_raster_top`). The interrupt's step stays fixed — robust to an
+  interrupt held off by the loop, where reprogramming register 10 per change was not — and a
+  moving change is made by the interrupt before it, which waits; Vega takes a step of 8
+  beside such changes.
+- **Two plans and an ask of none lost every plan.** `scroll_world` asked for none, built into
+  the other plan, then asked for it. The test's loop wakes on the blank's flag, about a
+  hundred cycles before its interrupt, and builds for longer: the interrupt found none asked
+  for every frame, and only a camera that moved each frame shifted the timing enough to
+  show. Three plans now — shown, asked for, built — and the one built is never asked for
+  until whole.
+- **The vertical scroll waits for the blank with them** (`send_scroll_each_frame`), or a
+  plane scrolled mid-picture led the waterline by a frame.
+- **The frame's interrupts start at its top line** where changes are kept to the world: the
+  vertical blank sets register 10 to 0 (`vdp.hblank_from_top`) and the first interrupt, at
+  line 0, sets the step — the next, already counted from 0, comes at line 1, then every
+  step. From the step's own first, line 7, a waterline in the first lines came up to 7 low.
+  Making a newly asked plan's first change ready there still took about two lines, so a
+  plan's first two changes are worked out as it is built (`prepare_first`) and only copied
+  (`take_first`); one due on line 1 or 2 still comes at line 3, measured and left.
+- **What follows a write is judged from the line written**, not the one the interrupt came on:
+  the frame's first interrupt waited to line 8, and a change on line 9 was left to the
+  interrupt counted for line 1 — held off meanwhile, taken after line 8, too late.
+- **The handler stayed cheap where it is timed.** Each frame's first change is made ready as
+  the last frame's last is made, from the plan the blank will take up; a frame's first
+  interrupt only re-plans if one was asked for since (`asked_since`). A plan holds each
+  change's line, colour and word, so making one ready copies no `Raster` through 64-bit
+  index arithmetic. The work after the timed write moved into a `@noinline` function: in the
+  handler, its registers were saved on the way in and a frame's first colour came pixels
+  into its line.
+- **A map no taller than the plane is held whole** came earlier (11/21); a demo whose game set
+  `camera.y` without `last_y` streamed dozens of rows a frame and held the vertical blank's
+  interrupt into the picture, where its colours landed mid-screen — a game moves the camera as
+  `follow` does.
+- **Two consecutive lines at one interrupt**: the second, worked out by `the_rest` after the
+  first was written, took just over the line there is between them — a call, a register
+  save, bounds checks — and came about 100 pixels into its line. `make_ready` makes the next
+  change ready too (`second_*`), and the handler writes it straight after the first. Two
+  colours on the same line are still not exact, so the demo changes the mortar's colour at
+  world line 256 and the stone's at 257.
+- **A run of consecutive lines, a line apiece.** The demo's sea life (fish, their colours
+  changed too) wanted eight changes at the surface, and a third consecutive one came a line
+  late, a fourth two: each change `the_rest` worked out — its line, its wait, its command,
+  through 64-bit index arithmetic — took more than a line. `build_plan` now works each out
+  as it builds the plan (`worked_out`: `plan_made`, `plan_until`, `plan_command`) and the loop
+  reads them; then the third came only pixels late, from the call into `the_rest` after the
+  second's write. The handler now points the port and reads the second's word, and
+  `the_rest` writes it — already running when the third comes due. Six on consecutive lines
+  are each on their line (`TestGenesis_RasterRunOfConsecutiveLines`), and Vega costs a run
+  a line apiece after its first, not a step each.
+- **The top took four colours** from changes above the screen; eight under water left four
+  dry with the camera below the surface. `MAX_TOPS` is 16.
+
+Tests: `TestGenesis_RasterKeptToTheWorld` (the camera at 0, 3, 40, past the change and short of
+it, beside a change kept to the screen; it failed with the ask of none),
+`TestGenesis_RasterKeptToTheWorldMovesWithThePlane`, `TestGenesis_RasterConsecutiveLinesAtOneInterrupt`
+(the second line's colour from x 160 on before); Vega's `rom_checks.check_waterline`.
+
 ### 11/23/26 — A caret moves by character: grapheme clusters in `std.unicode`
 
 A text field's Left, Right, Backspace and Delete moved a rune at a time, so `é` written as

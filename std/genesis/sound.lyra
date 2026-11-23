@@ -12,6 +12,12 @@ module std.genesis.sound
 //! assets.update_sounds()       // Vega's: sound.update(its steps) or update_music(…)
 //! ```
 //!
+//! **What the game's loop starts or stops is changed with the vertical blank held off**
+//! (`vdp.hold_vblank`): the interrupt plays what the loop changes, and one landing in the
+//! middle of a song's start ticked it with extended FM 3's operators not yet given out —
+//! its chord a patch on FM 3 and three notes wrong, as the program's layout happened to
+//! time it (11/23).
+//!
 //! **The playing is `std.chips.effects`' and `std.chips.music`'s**, what they say each frame
 //! written to the PSG's port and the YM2612's — as `std.game.sound` writes the same to the
 //! chips it runs, so an effect or a song is the same sound in a ROM and a modern game. A
@@ -95,7 +101,11 @@ pub let init = () -> void => {
 impl Effect {
   /// Start the effect from its first step, in place of any its channel was playing. It is
   /// heard from the next [update].
-  pub let play = (self) -> void => player.start(self)
+  pub let play = (self) -> void => {
+    let held = vdp.hold_vblank()
+    player.start(self)
+    vdp.release_vblank(held)
+  }
 }
 
 /// Whether an effect is still playing.
@@ -105,13 +115,19 @@ impl Tune {
   /// Play the song from its start, in place of any song playing; heard from the next
   /// [update_music], under the effects.
   pub let play = (self) -> void => {
+    let held = vdp.hold_vblank()
     music_track.on = false
     music.play_song(self)
+    vdp.release_vblank(held)
   }
 }
 
 /// Stop the song playing.
-pub let stop_music = () -> void => music.stop()
+pub let stop_music = () -> void => {
+  let held = vdp.hold_vblank()
+  music.stop()
+  vdp.release_vblank(held)
+}
 
 /// **Tracks** (`std.genesis.track`'s, long recordings — music, a voice — as 8-bit bytes in
 /// the cartridge) play on the DAC too: of everything that wants it in a frame, a sampled
@@ -136,17 +152,21 @@ pub let start_track = (t: Sample, voice: bool) -> void => {
     start: track_starts,
     per_frame: track_step(t.rate) * (Z80_RATE / 60)
   }
+  let held = vdp.hold_vblank()
   if voice {
     voice_track = started
   } else {
     music.stop()
     music_track = started
   }
+  vdp.release_vblank(held)
 }
 
 /// The voice track, or the music track, stopped.
 pub let stop_track = (voice: bool) -> void => {
+  let held = vdp.hold_vblank()
   if voice { voice_track.on = false } else { music_track.on = false }
+  vdp.release_vblank(held)
 }
 
 /// Whether the voice track, or the music track, is playing.

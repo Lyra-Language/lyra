@@ -865,3 +865,82 @@ let main = () -> void => {
 	}
 	check("Genesis", gsamples[onset:], rate)
 }
+
+// TestGenesis_SongStartedAsTheVerticalBlankComes starts an extended FM 3 song from the
+// game's loop just before the vertical blank, whose interrupt plays it: E5, on FM 3's
+// operator 2, must still be heard beside A4. With the interrupt let in partway through the
+// start it ticked the song before FM 3's operators were given out — FM 3 set up as one
+// channel, its patch on all four, and E5 never keyed; in Vega's hero the chord went wrong
+// or right as the program's layout happened to time the start (11/23).
+func TestGenesis_SongStartedAsTheVerticalBlankComes(t *testing.T) {
+	t.Parallel()
+	genesisToolchainOrSkip(t)
+	emulator := os.Getenv("SHELIAK")
+	if emulator == "" {
+		t.Skip("SHELIAK is not set")
+	}
+	root := repoRoot(t)
+	setenv(t, "LYRA_STD", root)
+	a4 := 7670453.0 / 144 * 1083 * 16 / (1 << 21)
+	e5 := 7670453.0 / 144 * 811 * 32 / (1 << 21)
+	for _, line := range []int{215, 220, 223} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "lyra.toml"), []byte("target = \"genesis\"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		src := filepath.Join(dir, "song.lyra")
+		program := "import std.genesis.vdp\nimport std.genesis.sound\n" + extendedTables + fmt.Sprintf(`
+let tables = Tables
+
+@interrupt(vblank)
+let on_vblank = () -> void => sound.update_music(STEPS, PATCHES, tables, SAMPLE_BYTES)
+
+let main = () -> void => {
+  vdp.init()
+  sound.init()
+  vdp.display_on()
+  vdp.enable_vblank_interrupt()
+  for _: u16 in 0..<3 { vdp.wait_vblank() }
+  while vdp.line_now() != %d {}
+  TUNE.play()
+  loop {}
+}
+`, line)
+		if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		rom := filepath.Join(dir, "song.bin")
+		if _, stderr, code := captureRun(t, "build", "-o", rom, src); code != 0 {
+			t.Fatalf("build exited %d: %s", code, stderr)
+		}
+		wav := filepath.Join(dir, "song.wav")
+		cmd := command(t, emulator, rom, "--frames", "70", "--wav", wav)
+		cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=dummy", "SDL_AUDIO_DRIVER=dummy")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("sheliak: %v\n%s", err, out)
+		}
+		samples, rate := wavSamplesRate(t, wav)
+		onset := 0
+		for i, v := range samples {
+			if math.Abs(v) > 0.05 {
+				onset = i
+				break
+			}
+		}
+		frame := rate / 60
+		window := samples[onset+2*frame : onset+30*frame]
+		power := func(f float64) float64 {
+			var re, im float64
+			for i, v := range window {
+				re += v * math.Cos(2*math.Pi*f*float64(i)/float64(rate))
+				im += v * math.Sin(2*math.Pi*f*float64(i)/float64(rate))
+			}
+			return re*re + im*im
+		}
+		for _, f := range []float64{a4, e5} {
+			if at, off := power(f), power(f*1.03); at < 100*off {
+				t.Errorf("started at line %d: FM 3's %.1f Hz is not heard: %.3g there, %.3g beside it", line, f, at, off)
+			}
+		}
+	}
+}
