@@ -587,6 +587,10 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 - **[IDEA] A `Regex` value type**, literal-constructed and compile-time-compiled like the
   existing DFA positions (`lyra-E052` today). Runtime-built patterns would be a separate
   feature.
+- **[IDEA] Regex captures in a pattern** (`r"^(?<n>[0-9.]+)(?<unit>px|%)$" => n, unit`): a
+  pattern binds only the whole string today, as the DFA answers only whether it matched. A tagged
+  DFA (Laurikari's, as RE2 and re2c do it) records group boundaries without backtracking or
+  allocation; std/svg's lengths wanted one (11/24).
 - **[IDEA] Producing a raw pointer from an integer** — a separate feature with its own
   safety story.
 - **[IDEA] Arenas (`with`)**, refused as `lyra-E050`. If built, the `noalloc` discharge
@@ -1077,6 +1081,11 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   rune; numeric bounds there are refused. (COMPLETED.md, 09/23.)
 
 ## Pit of Success
+
+- **[OPEN] A value computed and dropped is silent** unless it is a call (`lyra-W006`): the tail
+  of an `if` with no `else`, a `match` or constructor as a statement (`if let Some n = p(s) {
+  Some(n) }` then `None`, std/svg's first parsers, 11/24) — always `None`, reading as an early
+  return. Warn where a non-void value reaches a statement that discards it, naming `return`.
 
 - **[IDEA] Overflow policy on a `newtype`** (`where wrapping` / `saturating`), so a hash
   accumulator need not spell `wrapping_*` per op and `saturating` can clamp to a `range`.
