@@ -337,6 +337,192 @@ pub struct WindowedEvent {
   window: u32,
 }
 
+/// Put `event` on SDL's queue as though the system had sent it — about the window numbered
+/// `window` ([window_id]; 0 for none), a key's `modifiers` held (`MOD_*`) — for a program, or
+/// its tests, to play input to its own loop headless: [poll_event] reads it back as it was
+/// pushed. False where SDL refused it, or for an event it never sends (a gamepad's or a
+/// finger's, which [classify] reads but nothing here makes). **A text is copied for SDL**
+/// (`SDL_strdup`) and kept for the program's life, as SDL frees only the text it made itself.
+/// Positions are the window's coordinates, as SDL's own events give them.
+pub let push_event = (event: Event, modifiers: u16, window: u32) -> bool => {
+  var raw = RawEvent { padding: #[0; 128] }
+  let empty = KeyboardEvent {
+    kind: 0,
+    reserved: 0,
+    timestamp: 0,
+    window_id: window,
+    which: 0,
+    scancode: 0,
+    key: 0,
+    modifiers: modifiers,
+    raw: 0,
+    down: 0,
+    repeat: 0
+  }
+  let windowed = (kind: u32, data1: i32, data2: i32) -> RawEvent =>
+    RawEvent {
+      window: WindowEvent {
+        kind: kind,
+        reserved: 0,
+        timestamp: 0,
+        window_id: window,
+        data1: data1,
+        data2: data2
+      }
+    }
+  raw = match event {
+    Quit => RawEvent { kind: EVENT_QUIT },
+    KeyDown(code) => RawEvent {
+      key: KeyboardEvent { empty | kind: EVENT_KEY_DOWN, key: code, down: 1 }
+    },
+    KeyUp(code) =>
+      RawEvent { key: KeyboardEvent { empty | kind: EVENT_KEY_UP, key: code } },
+    MouseMotion(x, y) => RawEvent {
+      motion: MouseMotionEvent {
+        kind: EVENT_MOUSE_MOTION,
+        reserved: 0,
+        timestamp: 0,
+        window_id: window,
+        which: 0,
+        state: 0,
+        x: x,
+        y: y,
+        xrel: 0.0,
+        yrel: 0.0
+      }
+    },
+    MouseDown(button, x, y, clicks) => RawEvent {
+      button: MouseButtonEvent {
+        kind: EVENT_MOUSE_BUTTON_DOWN,
+        reserved: 0,
+        timestamp: 0,
+        window_id: window,
+        which: 0,
+        button: button,
+        down: 1,
+        clicks: clicks,
+        padding: 0,
+        x: x,
+        y: y
+      }
+    },
+    MouseUp(button, x, y) => RawEvent {
+      button: MouseButtonEvent {
+        kind: EVENT_MOUSE_BUTTON_UP,
+        reserved: 0,
+        timestamp: 0,
+        window_id: window,
+        which: 0,
+        button: button,
+        down: 0,
+        clicks: 1,
+        padding: 0,
+        x: x,
+        y: y
+      }
+    },
+    // [classify] turns a flipped wheel's amounts back the way the fingers went, so they are
+    // turned here first.
+    MouseWheel(x, y, flipped) => {
+      let sign: f32 = if flipped { -1.0 } else { 1.0 }
+      RawEvent {
+        wheel: MouseWheelEvent {
+          kind: EVENT_MOUSE_WHEEL,
+          reserved: 0,
+          timestamp: 0,
+          window_id: window,
+          which: 0,
+          x: x * sign,
+          y: y * sign,
+          direction: if flipped { WHEEL_FLIPPED } else { 0 },
+          mouse_x: 0.0,
+          mouse_y: 0.0,
+          integer_x: 0,
+          integer_y: 0
+        }
+      }
+    },
+    TextInput(text) => RawEvent {
+      text: TextInputEvent {
+        kind: EVENT_TEXT_INPUT,
+        reserved: 0,
+        timestamp: 0,
+        window_id: window,
+        text: kept_text(text)
+      }
+    },
+    TextEditing(text, start, length) => RawEvent {
+      editing: TextEditingEvent {
+        kind: EVENT_TEXT_EDITING,
+        reserved: 0,
+        timestamp: 0,
+        window_id: window,
+        text: kept_text(text),
+        start: start,
+        length: length
+      }
+    },
+    WindowFocusGained => windowed(EVENT_WINDOW_FOCUS_GAINED, 0, 0),
+    WindowFocusLost => windowed(EVENT_WINDOW_FOCUS_LOST, 0, 0),
+    WindowResized(w, h) => windowed(EVENT_WINDOW_RESIZED, w, h),
+    WindowMoved(x, y) => windowed(EVENT_WINDOW_MOVED, x, y),
+    WindowCloseRequested => windowed(EVENT_WINDOW_CLOSE_REQUESTED, 0, 0),
+    WindowScaleChanged => windowed(EVENT_WINDOW_DISPLAY_SCALE_CHANGED, 0, 0),
+    DropBegin => RawEvent {
+      drop: DropEvent {
+        kind: EVENT_DROP_BEGIN,
+        reserved: 0,
+        timestamp: 0,
+        window_id: window,
+        x: 0.0,
+        y: 0.0,
+        source: nullptr,
+        data: nullptr
+      }
+    },
+    DropFile(path) => RawEvent {
+      drop: DropEvent {
+        kind: EVENT_DROP_FILE,
+        reserved: 0,
+        timestamp: 0,
+        window_id: window,
+        x: 0.0,
+        y: 0.0,
+        source: nullptr,
+        data: kept_text(path)
+      }
+    },
+    DropComplete => RawEvent {
+      drop: DropEvent {
+        kind: EVENT_DROP_COMPLETE,
+        reserved: 0,
+        timestamp: 0,
+        window_id: window,
+        x: 0.0,
+        y: 0.0,
+        source: nullptr,
+        data: nullptr
+      }
+    },
+    Terminating => RawEvent { kind: EVENT_TERMINATING },
+    WillEnterBackground => RawEvent { kind: EVENT_WILL_ENTER_BACKGROUND },
+    DidEnterForeground => RawEvent { kind: EVENT_DID_ENTER_FOREGROUND },
+    Other(kind) => RawEvent { kind: kind },
+    _ => return false,
+  }
+  unsafe { sdl_push_event(&mut raw) }
+}
+
+/// `text` copied where SDL can read it after the call: a pushed event's text.
+let kept_text = (text: string) -> ^u8 =>
+  text.with_cstring((t) => unsafe { sdl_strdup(t) })
+
+@symbol("SDL_PushEvent")
+unsafe extern sdl_push_event: (event: ^mut RawEvent) -> bool
+
+@symbol("SDL_strdup")
+unsafe extern sdl_strdup: (text: ^u8) -> ^u8
+
 /// [poll_event_with_modifiers], with the window the event is about: what a program with
 /// several windows routes it by.
 pub let poll_window_event = () -> Maybe<WindowedEvent> => {

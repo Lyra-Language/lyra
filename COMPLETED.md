@@ -9,6 +9,29 @@ Newest first.
 
 ## Dated log
 
+### 11/23/26 — `ui.sdl3`'s platform half tested: SDL's own events, pushed
+
+**Nothing headless had sent `SdlPlatform` input**: the scripted platform stands in for it in
+every `ui` test, so `translate`, the key and button maps, the modifiers a key was made with,
+the wheel's flip, the drop gathered into one input and the routing by window were held by
+nothing but use. **`bindings.sdl3`'s `push_event(event, modifiers, window)`** is `classify`
+backwards: an `Event` built into the `SDL_Event` union member its tag names and handed to
+`SDL_PushEvent`, so `poll_event` reads it back as it went in — a flipped wheel's amounts
+turned back first, since `classify` undoes the flip; a text `SDL_strdup`'d, as SDL frees only
+text it made and a Lyra string's buffer may be gone by the time the queue is read. A
+gamepad's or a finger's event answers false: `classify` reads them, but nothing in a `ui`
+test needs them pushed.
+
+**The test** (`TestRun_UiSdl3PlatformTranslatesSDLsEvents`, `ui_sdl3_test.go`) opens a real
+`ui.sdl3` window on the dummy driver — SDL's own focus event as it opens drained first —
+pushes 23 events and prints what `next_events` answers: positions, both buttons and the
+clicks in a row, a key's code with Shift and Command (the primary modifier on a Mac, Control
+elsewhere, which the test expects by OS), the keypad, typed and composed text, a wheel turned
+both ways, focus, size, place, close and quit, two files dropped as one input, and three
+events of a window the platform does not have going nowhere. It skips without SDL3 or a
+dummy window, as the game tests do. Three mutations — the right button read as the middle,
+a stranger's events routed to the main window, a drop never said — each fail it.
+
 ### 11/23/26 — A field's caret blinks, and typing is undone a word at a time
 
 **The blink is the tooltip's pattern, not a timer.** `Ui` keeps the clock the blink last

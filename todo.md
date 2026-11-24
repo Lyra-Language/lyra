@@ -985,8 +985,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   struct literal before a list beside or inside it, never an arm's pattern (COMPLETED.md, 11/11).
 - **[DONE 11/11] lyrafmt indents a comment before a list's closer with the list**, and a
   struct's newline-separated fields each at the field level (COMPLETED.md, 11/11).
-- **[OPEN] `ui.sdl3`'s platform half is untested.** Nothing headless sends it input: bind
-  `SDL_PushEvent` and script events, as `std.game`'s `--hold` scripts a pad.
+- **[DONE 11/23] `ui.sdl3`'s platform half is tested**: SDL's events pushed onto its queue
+  (`bindings.sdl3`'s `push_event`) and read back through `next_events` (COMPLETED.md 11/23).
 - **[OPEN] A rounded clip is square on SDL's renderer** (`PushClip`'s radii are ignored):
   it needs a stencil (an SDL_GPU backend) or content drawn to a texture and masked.
 - **[OPEN] A constructor resolved by its declaration, not its name.** Then `KeyDown as
