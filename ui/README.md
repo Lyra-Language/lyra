@@ -575,7 +575,12 @@ layer — implements the two traits; the display list is the whole contract.
   character — a grapheme cluster (`std.unicode`): Left, Right, Backspace and Delete take `e`
   and its combining accent, a flag or an emoji sequence at once, and a click never puts the
   caret inside one — by word with Alt (Control off a Mac), to the ends with Command or
-  Home/End, selects with Shift, and takes the primary modifier's A, C, X, V and Z.
+  Home/End, selects with Shift, and takes the primary modifier's A, C, X, V and Z — undo
+  stepping back a word of typing at a time, a word and the spaces after it (a caret moved, a
+  paste or a deletion ending the step). **Its caret blinks**, `CARET_BLINK_MS` (530) shown and
+  as long hidden, the host waking for each (`Ui.caret_due`, as for a tooltip); a key, typed
+  text or a press shows it and starts the blink again, and while the window does not have the
+  keyboard's focus no caret is drawn.
 - **A field's clicks**: one puts the caret there and a drag selects by rune; a double click
   selects the word under the pointer (or the run of spaces it is on) and a drag goes on by
   whole words either way; a triple click selects the whole text. The count is the

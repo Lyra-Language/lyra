@@ -923,15 +923,17 @@ impl Host<s, e> {
   }
 
   /// Whether window `k` is drawn this pass: something has happened in it since its last
-  /// frame, or it has none yet, or a transition in it moves, or a tooltip's rest is over — or
-  /// every pass under `--live`, where the code itself may have changed.
+  /// frame, or it has none yet, or a transition in it moves, or a tooltip's rest is over, or a
+  /// field's caret blinks — or every pass under `--live`, where the code itself may have
+  /// changed.
   let wants_frame = pure (self, k: i64, now: i64) -> bool => {
     let w = self.windows[k]
     w.dirty ||
       self.live ||
       w.shown.len() == 0 ||
       w.ui.animating() ||
-      w.ui.tip_due(now) == 0
+      w.ui.tip_due(now) == 0 ||
+      w.ui.caret_due(now) == 0
   }
 
   /// The program's windows beside the main one, if it has any ([App.windows]).
@@ -1309,7 +1311,8 @@ impl Host<s, e> {
 
   /// How long the pass may wait for input from `now`: not at all while events wait, a frame
   /// while a frame subscription is on or a transition moves in any window, until the next
-  /// timer, `Every` or tooltip, else for good — never past a tenth of a second under `--live`.
+  /// timer, `Every`, tooltip or caret's blink, else for good — never past a tenth of a second
+  /// under `--live`.
   let wait_ms = (self: mut, now: i64) -> i64 => {
     if self.waiting.len() > 0 || self.measures.len() > 0 { return 0 }
     for fd in self.watched() {
@@ -1320,6 +1323,8 @@ impl Host<s, e> {
       if w.ui.animating() { wait = sooner(wait, FRAME_MS) }
       let tip = w.ui.tip_due(now)
       if tip >= 0 { wait = sooner(wait, tip) }
+      let blink = w.ui.caret_due(now)
+      if blink >= 0 { wait = sooner(wait, blink) }
     }
     for timer in self.timers { wait = sooner(wait, timer.at - now) }
     for sub in (self.app.subscriptions)(self.state) {

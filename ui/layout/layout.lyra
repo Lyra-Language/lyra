@@ -1178,7 +1178,8 @@ pub struct Interaction {
 /// What the framework keeps for one element: a scroll's offset once the user has scrolled
 /// it, and a text field's caret and the other end of its selection (`anchor`, the caret
 /// itself for none), in runes; how far its text is scrolled to keep the caret in view; and
-/// the edits that undo steps back through.
+/// the edits that undo steps back through, with where typing that goes on in the last of them
+/// left the caret (`typed_to`, `-1` once anything else has happened since).
 pub struct WidgetState {
   /// How far it is scrolled down, and across, once scrolled; and where on a scrollbar's thumb
   /// the pointer took hold of it, while it drags one.
@@ -1197,12 +1198,15 @@ pub struct WidgetState {
   anchor: i64 = 0,
   field_scroll: f32 = 0.0,
   undo: []Edit = [],
+  typed_to: i64 = -1,
 }
 
-/// A text field's value and caret, before an edit.
+/// A text field's value and caret, before an edit — or before a run of typing, a word and
+/// the spaces after it undone as one step (`typing`).
 pub struct Edit {
   value: string,
   caret: i64,
+  typing: bool = false,
 }
 
 /// No focus, nothing under the pointer, no element's state.
@@ -1327,7 +1331,8 @@ pub data Content = Blank | Prose(TextBlock) | Bitmap(
 /// far its text is scrolled, the caret's and the selection's ends across its text (each from
 /// the text's start), their colours, how tall a line is, and whether it has the focus. Also
 /// whether it is empty and its parts' styles, which the colours are made from ([field_inked]):
-/// a frame moves those on as their transitions say, as an element's (`ui.interact`).
+/// a frame moves those on as their transitions say, as an element's (`ui.interact`). And
+/// whether its caret is blinked out (`ui.interact`'s blink), so not drawn.
 pub struct FieldLook {
   color: Color,
   scroll: f32 = 0.0,
@@ -1339,6 +1344,7 @@ pub struct FieldLook {
   line_height: f32 = 0.0,
   focused: bool = false,
   empty: bool = false,
+  blink_off: bool = false,
   /// One, or none: in an array, so a field's parts are not carried inline by every element.
   parts: []FieldParts = [],
 }
@@ -3548,7 +3554,7 @@ let paint_into<e, r> where r: Renderer = (
         color
       ) { ops.push(op) }
     }
-    if look.focused && look.selection_to <= look.selection_from {
+    if look.focused && !look.blink_off && look.selection_to <= look.selection_from {
       let caret = Rect {
         x: at.x + look.caret - 0.75,
         y: at.y,

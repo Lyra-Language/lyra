@@ -9,6 +9,37 @@ Newest first.
 
 ## Dated log
 
+### 11/23/26 — A field's caret blinks, and typing is undone a word at a time
+
+**The blink is the tooltip's pattern, not a timer.** `Ui` keeps the clock the blink last
+started from (`caret_since`), and a frame draws the focused field's caret in the first half of
+each `CARET_BLINK_MS` (530 ms, Windows's default and near the Mac's) and blinks it out in the
+second — `FieldLook.blink_off`, set on the one element along the focus's path
+(`blink_out`), so nothing is laid out again and the field's look is all that changes.
+`Ui.caret_due(now)` is what the host waits on beside `tip_due`: `0` when the phase at `now` is
+not what the last frame drew, else the time to the next flip, `-1` with no caret to draw. An
+`App.After` timer was the other way, but it is the program's, raises an event and dirties the
+state; the blink is the framework's and needs only a frame.
+
+**What restarts it** is every key, typed text, composition and press (`caret_since = -1`, the
+next frame setting it to its clock), a new focus, and the window's focus coming back — so
+the caret is never hidden as the user acts on it. `WindowUnfocused` stops it with the caret
+hidden and nothing waking the host, as a Mac's inactive window shows none.
+
+**Typing is undone by word**: a `TextTyped` goes on in the last undo step while that step is
+typing (`Edit.typing`), the caret is where typing left it (`WidgetState.typed_to`, `-1` after
+any other edit, move or undo) with nothing selected, and no word begins — a space before the
+caret and none typed first (`begins_word`). So `hi to  x` undoes to `hi to  `, then `hi `,
+then nothing, a word and the spaces after it a step; a caret moved, a paste or a Backspace
+between ends the step. An input method's text handed over at once is typing, and runs on as
+typed runes do.
+
+Held by `TestRun_UiFieldCaretBlinksAndTypingUndoesByWord`: the frames the host draws through
+the script platform's clock (woken at 530 and 1060, a Left restarting the blink, none drawn
+or woken for after `blur`), and undo after typing a rune at a time. Each of five mutations —
+the host not waking for it, a key not restarting it, the window's focus ignored, no runs,
+runs across words — fails it.
+
 ### 11/23/26 — A song started as the vertical blank came: the hero's chord
 
 Vega's hero check heard two notes of its theme's FM 3 chord off pitch once the raster plans

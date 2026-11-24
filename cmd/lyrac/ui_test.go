@@ -4803,6 +4803,96 @@ keys: true (4 runes)
 	}
 }
 
+// A field's caret blinks: drawn for CARET_BLINK_MS and hidden for as long, the host waking for
+// each with nothing else to do; a key shows it again at once and restarts the blink, and it is
+// not drawn at all while the window does not have the keyboard's focus. And typing a rune at a
+// time is undone a word at a time — a word and the spaces after it one step — where a caret
+// moved, a paste or a deletion between ends the step.
+func TestRun_UiFieldCaretBlinksAndTypingUndoesByWord(t *testing.T) {
+	t.Parallel()
+	got := runUiProgram(t, `import ui.app.{ sandbox, run }
+import ui.script.{ timed_platform, parse_steps }
+import ui.backend.{ Renderer }
+import ui.draw.{ Size, Color, TextureId, Fill }
+import ui.text.{ fonts_new }
+import ui.layout.{ Node, column, text_input, FieldSpec }
+
+/// A renderer noting, for each frame, whether it drew a caret — the only 1.5-wide fill.
+struct Carets {
+  textures: i64 = 0,
+  seen: []string = [],
+}
+
+impl Renderer for Carets {
+  upload = (self, image) => {
+    self.textures += 1
+    Some(TextureId(self.textures - 1))
+  }
+  update = (self, id, at, image) => true
+  draw = (self, window, background, ops) => {
+    var caret = false
+    for op in ops {
+      match op {
+        Fill(r, _, _) => { if r.w == 1.5 { caret = true } },
+        _ => {},
+      }
+    }
+    self.seen.push(if caret { "|" } else { "." })
+  }
+}
+
+data Ev = Typed(string)
+
+let main = () -> u8 => {
+  var fonts = fonts_new()
+  if !fonts.add_system_font() { return 1 }
+  let view = (s: string) -> Node<Ev> => column([text_input(FieldSpec { value: s, on_edit: Typed })])
+  let update = (s: string, e: Ev) -> string => match e { Typed(t) => t }
+  let app = sandbox(view, update, Color { r: 0, g: 0, b: 0 })
+  for script in [
+    "Tab 'ab' wait:1200",
+    "Tab 'ab' wait:300 Left wait:300",
+    "Tab 'ab' blur wait:2000 focus",
+  ] {
+    let Ok(steps) = parse_steps(script) else { return 2 }
+    var platform = timed_platform(steps, Size { w: 300.0, h: 100.0 })
+    var renderer = Carets {}
+    let _ = run(app, "", platform, renderer, fonts)
+    println("[${script}] ${renderer.seen.join("")} at ${platform.clock}ms")
+  }
+  for script in [
+    "Tab 'h' 'i' ' ' 't' 'o' ' ' ' ' 'x' Primary+z",
+    "Tab 'h' 'i' ' ' 't' 'o' ' ' ' ' 'x' Primary+z Primary+z",
+    "Tab 'h' 'i' ' ' 't' 'o' ' ' ' ' 'x' Primary+z Primary+z Primary+z",
+    "Tab 'a' 'b' Left 'c' Primary+z",
+    "Tab 'a' 'b' Backspace 'c' 'd' Primary+z",
+    "Tab 'one two' 'x' Primary+z",
+  ] {
+    let Ok(steps) = parse_steps(script) else { return 2 }
+    var platform = timed_platform(steps, Size { w: 300.0, h: 100.0 })
+    var renderer = Carets {}
+    let last = run(app, "", platform, renderer, fonts)
+    println("[${script}] '${last}'")
+  }
+  0
+}
+`)
+	// The first frame has no focus; Tab is a press and a release, a frame each.
+	want := `[Tab 'ab' wait:1200] .|||.| at 1200ms
+[Tab 'ab' wait:300 Left wait:300] .||||| at 600ms
+[Tab 'ab' blur wait:2000 focus] .|||.| at 2000ms
+[Tab 'h' 'i' ' ' 't' 'o' ' ' ' ' 'x' Primary+z] 'hi to  '
+[Tab 'h' 'i' ' ' 't' 'o' ' ' ' ' 'x' Primary+z Primary+z] 'hi '
+[Tab 'h' 'i' ' ' 't' 'o' ' ' ' ' 'x' Primary+z Primary+z Primary+z] ''
+[Tab 'a' 'b' Left 'c' Primary+z] 'ab'
+[Tab 'a' 'b' Backspace 'c' 'd' Primary+z] 'a'
+[Tab 'one two' 'x' Primary+z] ''
+`
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
 // Edit's items handed to the focused field (Ui.edit_focused, Command.EditField), as the Mac's
 // bar takes their keys before a field hears them: all of a colour's text selected and copied,
 // another pasted over it — the field's edit raised — and nothing with no field focused.

@@ -40,7 +40,9 @@ module ui.interact
 //! or composed ([TextTyped]), Left and Right (with Shift to select, and Alt — Control off a
 //! Mac — by word, Command to the ends), Home and End, Backspace and Delete (by word with Alt or
 //! Control), and the primary modifier's A (select all), C, X and V (the platform's clipboard)
-//! and Z (undo). A field's caret moves by rune, not yet by grapheme cluster (todo.md).
+//! and Z (undo, a word of typing a step). A field's caret moves by grapheme cluster
+//! (`std.unicode`), and blinks ([CARET_BLINK_MS], [Ui.caret_due]) while the window has the
+//! keyboard's focus.
 
 import ui.backend.{
   Platform,
@@ -55,6 +57,7 @@ import ui.backend.{
   KeyReleased,
   TextTyped,
   TextComposing,
+  WindowFocused,
   WindowUnfocused,
   Primary,
   Middle,
@@ -168,6 +171,7 @@ import ui.layout.{
   byte_at,
   SLIDER_THUMB,
   FieldParts,
+  FieldLook,
   field_inked,
 }
 import ui.style.{ OverflowClip, Computed }
@@ -241,6 +245,15 @@ pub struct Ui {
   tip_since: i64 = -1,
   tip_rest: Point = Point {},
   tip_spent: string = "",
+  /// The caret's blink: the clock it last started from, shown — a key, typed text, a press, a
+  /// new focus or the window's coming back restarting it; `-1` until the next frame says — and
+  /// the element it blinks in; whether the last frame had a field's caret to draw, and drew
+  /// it; and whether the window has the keyboard's focus, without which no caret is drawn.
+  caret_since: i64 = -1,
+  caret_of: string = "",
+  caret_field: bool = false,
+  caret_shown: bool = false,
+  window_active: bool = true,
   /// The tab whose × the primary button went down on: it closes when the button comes up
   /// still on that ×, as a button presses, and not where the pointer has left it.
   closing: string = "",
@@ -292,6 +305,10 @@ pub let ui_new = pure () -> Ui => Ui {
   panels: HashMap.new(),
   bar_seen: HashMap.new(),
 }
+
+/// How long a field's caret shows, and then is hidden, as it blinks: Windows's 530 ms, near
+/// the Mac's.
+pub const CARET_BLINK_MS: i64 = 530
 
 /// How long an auto-hiding scroller's bars show after it last scrolled, and how long they then
 /// take to fade.
@@ -490,7 +507,39 @@ impl Ui {
     // A field's text scrolled to keep its caret in view is remembered, so it stays put
     // until the caret leaves the view again.
     keep_field_scrolls(laid, self)
-    shown
+    self.blinked(shown)
+  }
+
+  /// `shown` with the focused field's caret blinked out, where its blink is in its hidden half
+  /// at `now` or the window does not have the keyboard's focus; a new focus restarts the blink.
+  let blinked<e> = (self: mut, shown: Laid<e>) -> Laid<e> => {
+    if self.caret_of != self.state.focus || self.caret_since < 0 {
+      self.caret_since = self.now
+      self.caret_of = self.state.focus
+    }
+    self.caret_field = false
+    self.caret_shown = false
+    let Some(found) = find(shown, self.state.focus, Point {}) else { return shown }
+    let Some(look) = found.laid.field else { return shown }
+    if !look.focused || look.selection_to > look.selection_from { return shown }
+    self.caret_field = true
+    self.caret_shown = self.caret_wanted(self.now)
+    if self.caret_shown { shown } else { blink_out(shown, self.state.focus) }
+  }
+
+  /// Whether a field's caret shows at `now`: in the first half of each of its blinks, while the
+  /// window has the keyboard's focus.
+  let caret_wanted = pure (self: ref, now: i64) -> bool =>
+    self.window_active && ((now - self.caret_since) / CARET_BLINK_MS) % 2 == 0
+
+  /// How long from `now` until the focused field's caret blinks on or off, in milliseconds — the
+  /// host draws then — or `-1` for none blinking: no caret drawn, or the window not the
+  /// keyboard's.
+  pub let caret_due = pure (self: ref, now: i64) -> i64 => {
+    if !self.caret_field { return -1 }
+    if self.caret_since < 0 || self.caret_wanted(now) != self.caret_shown { return 0 }
+    if !self.window_active { return -1 }
+    CARET_BLINK_MS - (now - self.caret_since) % CARET_BLINK_MS
   }
 
   /// Whether a transition is moving anything at `now` — while one is, the host draws every
@@ -657,6 +706,20 @@ impl Ui {
       KeyPressed(_, _) => self.tip_spend(),
       Scrolled(_, _) => self.tip_spend(),
       WindowUnfocused => self.tip_spend(),
+      _ => {},
+    }
+    // A key, typed text or a press shows the caret and starts its blink again; the window's
+    // focus decides whether it shows at all.
+    match input {
+      KeyPressed(_, _) => { self.caret_since = -1 },
+      TextTyped(_) => { self.caret_since = -1 },
+      TextComposing(_, _, _) => { self.caret_since = -1 },
+      PointerDown(_, _, _) => { self.caret_since = -1 },
+      WindowFocused => {
+        self.window_active = true
+        self.caret_since = -1
+      },
+      WindowUnfocused => { self.window_active = false },
       _ => {},
     }
     // A modal open takes the pointer only over its dialog (and what floats from it): a press or
@@ -1276,7 +1339,7 @@ impl Ui {
     KeyPressed(key, mods) => self.key_pressed(laid, key, mods, platform),
     TextTyped(typed) => {
       let Some(field) = self.focused_field(laid) else { return [] }
-      self.edit(field, (ed) => ed.insert(typed))
+      self.edit_as(field, (ed) => ed.insert(typed), typed)
     },
     AccessAction(id, request) => self.access_action(laid, id, request),
     WindowUnfocused => {
@@ -1442,7 +1505,10 @@ impl Ui {
           // The caret to the end of the new text, as after typing it.
           let state = self.widget(id)
           let end = text.len()
-          self.state.widgets.insert(id, WidgetState { state | caret: end, anchor: end })
+          self.state.widgets.insert(
+            id,
+            WidgetState { state | caret: end, anchor: end, typed_to: -1 }
+          )
           if spec.draft && !spec.read_only { self.state.drafts.insert(id, text) }
           if text == spec.value || spec.read_only { [] } else { [(spec.on_edit)(text)] }
         },
@@ -2262,7 +2328,18 @@ impl Ui {
 
   /// `change` applied to the focused field's text, caret and selection: the caret kept, and
   /// if the text changed, the edit remembered for undo and the field's event raised with it.
-  let edit<e> = (self: mut, field: Found<e>, change: (Editing) -> Editing) -> []e => {
+  let edit<e> = (self: mut, field: Found<e>, change: (Editing) -> Editing) -> []e =>
+    self.edit_as(field, change, "")
+
+  /// [edit], `typed` the text typed when the change is typing it: typing goes on in the last
+  /// undo step while it is typing left where the caret is and no word begins ([begins_word]),
+  /// so a word and the spaces after it are undone at once.
+  let edit_as<e> = (
+    self: mut,
+    field: Found<e>,
+    change: (Editing) -> Editing,
+    typed: string
+  ) -> []e => {
     let Editable(spec) = field.laid.kind else { return [] }
     let before = self.editing(field)
     let after = change(before)
@@ -2271,7 +2348,7 @@ impl Ui {
     if result == spec.value {
       self.state.widgets.insert(
         field.laid.id,
-        WidgetState { state | caret: after.caret, anchor: after.anchor }
+        WidgetState { state | caret: after.caret, anchor: after.anchor, typed_to: -1 }
       )
       return []
     }
@@ -2279,12 +2356,22 @@ impl Ui {
     if spec.read_only { return [] }
     // What is typed is kept, whatever the program makes of it, while the field has the focus.
     if spec.draft { self.state.drafts.insert(field.laid.id, result) }
-    let history = [...state.undo, Edit { value: spec.value, caret: before.caret }]
+    let typing = typed.len() > 0
+    let goes_on = typing &&
+      state.typed_to == before.caret &&
+      before.anchor == before.caret &&
+      state.undo.len() > 0 &&
+      state.undo[state.undo.len() - 1].typing &&
+      !begins_word(before, typed)
+    let history = if goes_on { state.undo } else {
+      [...state.undo, Edit { value: spec.value, caret: before.caret, typing: typing }]
+    }
     self.state.widgets.insert(field.laid.id, WidgetState {
       state |
       caret: after.caret,
       anchor: after.anchor,
       undo: history,
+      typed_to: if typing { after.caret } else { -1 },
     })
     [(spec.on_edit)(result)]
   }
@@ -2300,6 +2387,7 @@ impl Ui {
       caret: last.caret,
       anchor: last.caret,
       undo: state.undo.slice(0, state.undo.len() - 1),
+      typed_to: -1,
     })
     [(spec.on_edit)(last.value)]
   }
@@ -2534,6 +2622,28 @@ pub let control_at<e> = pure (laid: Laid<e>, at: Point) -> Maybe<Found<e>> => {
   }
   None
 }
+
+/// `laid` with the caret of the field identified as `id` blinked out.
+let blink_out<e> = pure (laid: Laid<e>, id: string) -> Laid<e> => {
+  if laid.id == id {
+    let Some(look) = laid.field else { return laid }
+    return Laid { laid | field: Some(FieldLook { look | blink_off: true }) }
+  }
+  var children: []Placed<e> = []
+  for p in laid.children {
+    if id == p.laid.id || id.starts_with("${p.laid.id}/") {
+      children.push(Placed { p | laid: blink_out(p.laid, id) })
+    } else { children.push(p) }
+  }
+  Laid { laid | children: children }
+}
+
+/// Whether typing `typed` at the caret of `before` begins a word: a space before the caret,
+/// and none typed first.
+let begins_word = pure (before: Editing, typed: string) -> bool =>
+  before.caret > 0 &&
+  is_space(before.runes[before.caret - 1]) &&
+  !is_space(typed.to_runes()[0])
 
 /// The element identified as `id` in `laid` (whose top-left corner is at `origin`), and
 /// where it is.
