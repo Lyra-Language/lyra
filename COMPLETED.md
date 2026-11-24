@@ -88,6 +88,24 @@ or woken for after `blur`), and undo after typing a rune at a time. Each of five
 the host not waking for it, a key not restarting it, the window's focus ignored, no runs,
 runs across words — fails it.
 
+### 11/23/26 — Colour cycles on the modern runtime
+
+`std.game.palette.step_cycles` turns a palette's cycles on every modern platform, as the
+Genesis's turn its CRAM — the hero's stars twinkle there now. The art has no palette, so a
+cycle is colours of the art replaced: after `s` steps, the place `k` of its run shows the
+colour `s` places before it (after it, turned back), the same count of steps in the same
+updates as the Genesis's frames. Vega writes each cycle's colours beside it (`CYCLE_COLORS`),
+and the replacements go to `std.game.raster`, under every band's changes — so cycles and
+raster effects are one mechanism, and a raster change of a colour a cycle turns wins below
+its line.
+
+- **The recoloured art is kept a part at a time**, not a set of changes at a time: the
+  overlook's seven sky bands and the stars' two steps were fourteen whole sets, and more
+  cycles or bands soon overran a cache of 32, remaking every texture every frame. Each
+  palette's tiles and the sprite sheet now key on their own replacements alone.
+- A colour a cycle's run holds twice, or colour 0 (clear in the art), cannot turn as places
+  do: a Vega warning on the modern target.
+
 ### 11/23/26 — Raster effects on the modern runtime
 
 Vega's raster effects were the Genesis's alone; `std.game.raster` draws them on every modern

@@ -63,6 +63,10 @@ pub let scroll_world = (y: f32) -> void => {
   placed = true
 }
 
+/// The colours `std.game.palette`'s cycles show in place of their own — palette, colour as
+/// drawn, colour shown — under every band from the next frame: once an update, as they step.
+pub let set_cycled = (replaced: [](i64, u32, u32)) -> void => { cycled = replaced }
+
 /// The changes started ([start]).
 pub let changes_now = () -> []Raster => changes
 
@@ -72,11 +76,12 @@ pub let sheet_areas = () -> []SheetArea => sprite_areas
 /// The bands of a screen `height` lines tall, `t` of the way from the last update to the
 /// next: each band's top line and the changes it shows — palette, colour replaced and its
 /// replacement, the later change of a colour in place of the earlier, in order of palette and
-/// colour. The first band's top is 0, and a band with no changes shows the art as it is.
+/// colour, the colour cycles' under them ([set_cycled]). The first band's top is 0, and a band
+/// with no changes shows the art as it is.
 /// A screen's change and a world's on one line: the screen's first, as the Genesis makes
-/// them. None while nothing is started.
+/// them. None while nothing is started and no colour turned.
 pub let bands = (height: i64, t: f32) -> [](i64, [](i64, u32, u32)) => {
-  if changes.len() == 0 { return [] }
+  if changes.len() == 0 && cycled.len() == 0 { return [] }
   let y = (was_y + (now_y - was_y) * t).floor()
   // Each change's screen line, a world's moving with the camera; the order they are made.
   var lines: [](i64, i64) = []
@@ -86,7 +91,10 @@ pub let bands = (height: i64, t: f32) -> [](i64, [](i64, u32, u32)) => {
   }
   lines.sort_by((a, b) => if a.0 != b.0 { a.0 <=> b.0 } else { a.1 <=> b.1 })
   var out: [](i64, [](i64, u32, u32)) = []
+  // Under every band, the colour cycles' replacements as they stand ([set_cycled]); a change
+  // of a colour a cycle turns takes its place below its line.
   var shown: [](i64, u32, u32) = []
+  for (palette, from, to) in cycled { shown = with_change(shown, palette, from, to) }
   var top: i64 = 0
   for (key, k) in lines {
     let at = (key - (key %% 2)) / 2
@@ -119,6 +127,7 @@ let with_change = pure (
 }
 
 var changes: []Raster = []
+var cycled: [](i64, u32, u32) = []
 var sprite_areas: []SheetArea = []
 var was_y: f32 = 0.0
 var now_y: f32 = 0.0

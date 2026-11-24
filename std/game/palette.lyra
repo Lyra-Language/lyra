@@ -14,9 +14,56 @@ module std.game.palette
 //!
 //! A modern game's art is coloured when it is built, so its colours are not the game's to
 //! turn: the fade is the colour drawn over the frame (`screen.set_fade`), which looks the same.
-//! A palette's colour cycles are the Genesis's alone so far.
+//!
+//! **Colour cycles** turn a run of a palette's colours a step every so many updates, as
+//! `std.genesis.palette`'s do — water flowing, a star twinkling — by colours of the art
+//! replaced (`std.game.raster.set_cycled`): the art has no palette, so the cycles' colours
+//! come with them.
+//!
+//! ```
+//! palette.step_cycles(PALETTE_CYCLES, CYCLE_COLORS)   // once an update
+//! ```
 
 import std.game.screen
+import std.game.raster
+
+/// A run of palette `palette`'s colours turning: `count` of them, from `first` in the table
+/// of the cycles' colours [step_cycles] is given, a step every `frames` updates moving each
+/// one place on — the last to the first — or back. Vega writes a project's as
+/// `PALETTE_CYCLES`, their colours as `CYCLE_COLORS`.
+pub struct Cycle {
+  palette: i64,
+  first: i64,
+  count: i64,
+  frames: i64,
+  backward: bool = false,
+}
+
+/// Each of `cycles` a step on where its frames have passed since the last: once an update —
+/// Vega's scenes call it from `scroll_maps`. `colors` is the cycles' colours (`0xRRGGBB`), as
+/// the art was drawn in them; from the next frame each shows the one its steps have turned to
+/// its place. A cycle has stepped as many times as its frames go into the updates so far, as
+/// a Genesis game's has in its frames.
+pub let step_cycles<const N: i64, const M: i64> = (
+  cycles: ref [N]Cycle,
+  colors: ref [M]u32
+) -> void => {
+  cycle_ticks += 1
+  var replaced: [](i64, u32, u32) = []
+  for c in cycles {
+    if c.count < 2 || c.frames < 1 || c.first < 0 || c.first + c.count > M { continue }
+    let steps = (cycle_ticks / c.frames) % c.count
+    if steps == 0 { continue }
+    for k in 0..<c.count {
+      // Turned on, a place shows the colour `steps` before it; turned back, the one after.
+      let shown = if c.backward { (k + steps) % c.count } else { (k - steps + c.count) % c.count }
+      let from = colors[c.first + k] & 0xFFFFFF
+      let to = colors[c.first + shown] & 0xFFFFFF
+      if from != to { replaced.push((c.palette, from, to)) }
+    }
+  }
+  raster.set_cycled(replaced)
+}
 
 /// The whole screen from how it shows to `color` (`0xRRGGBB`) over `updates` updates, the
 /// frame shown each, returning once it is there: to black, to white, or a flash of a colour.
@@ -85,3 +132,6 @@ let fade = (to: f32, updates: i64) -> void => {
   }
   screen.set_fade(fade_color, to)
 }
+
+/// Updates [step_cycles] has counted.
+var cycle_ticks: i64 = 0

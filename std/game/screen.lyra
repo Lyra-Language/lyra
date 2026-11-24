@@ -435,8 +435,8 @@ pub let show = () -> void => {
   // The art drawn its scale's times larger: SDL's scale under the screen's presentation —
   // but for a sprite drawn at the screen's own pixels (`unscaled`), which `draw_sprites` sets.
   r.set_scale(f32(art_scale), f32(art_scale))
-  // With raster changes, in bands of lines, each drawn from the art in its colours
-  // (`std.game.raster`): a band's lines alone of the planes, the sprites clipped to them.
+  // With raster changes or colours cycling, in bands of lines, each drawn from the art in its
+  // colours (`std.game.raster`): a band's lines alone of the planes, the sprites clipped to them.
   let banded = raster.bands(height(), t)
   if banded.len() == 0 {
     draw_layers(r, t, 0, height(), false)
@@ -444,10 +444,11 @@ pub let show = () -> void => {
     for k, (top, shown) in banded {
       let bottom = if k + 1 < banded.len() { banded[k + 1].0 } else { height() }
       if bottom <= top { continue }
-      drawing = tint_for(shown)
+      use_band(shown)
       draw_layers(r, t, top, bottom, true)
     }
-    drawing = -1
+    band_tiles = [-1; PALETTES]
+    band_sheet = -1
     let _ = r.clear_clip()
   }
   r.set_scale(1.0, 1.0)
@@ -578,19 +579,22 @@ var tile_art: []Maybe<Texture> = [None; PALETTES]
 var tile_columns: i64 = 1
 var sprite_art: Maybe<Texture> = None
 /// The art's pixels as its textures hold them — each palette's tiles laid out with gutters,
-/// and the sprite sheet — and their widths: what raster changes recolour ([tinted_art]).
+/// and the sprite sheet — and their widths: what raster changes recolour ([tinted]).
 var tile_pixels: [][]u32 = [k in 0..<PALETTES | [u32(0); 0]]
 var tile_widths: []i64 = [0; PALETTES]
 var sprite_pixels: []u32 = []
 var sprite_width: i64 = 0
-/// The art in each set of raster changes a frame has shown: its key, its tiles by palette
-/// and its sprites; and every texture made for them, which [forget_tints] releases.
+/// The art recoloured, kept a part at a time — a palette's tiles, or the sprite sheet (-1) —
+/// each by the colours it replaces ([tinted]), which [forget_tints] releases: a band's sky
+/// stepping through seven blues and a cycle turning the stars' colours are seven and the
+/// cycle's steps, where a set of a band's every change each was their product.
+var tint_parts: []i64 = []
 var tint_keys: []string = []
-var tint_tiles: [][]Maybe<Texture> = []
-var tint_sprites: []Maybe<Texture> = []
-var tint_made: []Texture = []
-/// The set of raster changes being drawn ([tint_keys]'s place), -1 for the art as it is.
-var drawing: i64 = -1
+var tint_art: []Maybe<Texture> = []
+/// The band being drawn: each palette's tiles' place in [tint_art], and the sprite sheet's;
+/// -1, the art as it is.
+var band_tiles: []i64 = [-1; PALETTES]
+var band_sheet: i64 = -1
 var quitting = false
 var failed = false
 /// A phone's screen (full, real pixels, a pad for the fingers), and the app away from it.
@@ -761,56 +765,63 @@ let use_sprites = (t: own Texture, pixels: []u32, width: i64) -> void => {
   sprite_width = width
 }
 
-/// The most sets of raster changes kept drawn at once; past it every one is made again.
-const MAX_TINTS: i64 = 32
+/// The most parts of the art kept recoloured at once ([tint_art]); past it every one is made
+/// again.
+const MAX_TINTS: i64 = 128
 
-/// Where in [tint_keys] the art is — each palette's tiles and the sprites — in the colours
-/// `shown` changes (palette, colour replaced, its replacement): a palette's tiles where a
-/// change names it, the sprite sheet's areas in each palette changed
-/// ([raster.use_sprite_areas]), the art as it is elsewhere; -1, the art as it is, for none.
-/// Made the first time a frame shows them, and kept.
-let tint_for = (shown: [](i64, u32, u32)) -> i64 => {
-  if shown.len() == 0 { return -1 }
-  let key = [c in shown | "${c.0}:${c.1}:${c.2}"].join(" ")
-  for k, have in tint_keys {
-    if have == key { return k }
-  }
-  if tint_keys.len() >= MAX_TINTS { forget_tints() }
-  var tiles: []Maybe<Texture> = [None; PALETTES]
+/// The band to draw in the colours `shown` replaces (palette, colour as drawn, colour shown):
+/// each palette's tiles where one names it, the sprite sheet where one names a palette it
+/// has areas of ([raster.use_sprite_areas]), each made the first time a frame shows it and
+/// kept; the art as it is elsewhere.
+let use_band = (shown: [](i64, u32, u32)) -> void => {
+  if tint_keys.len() + PALETTES + 1 > MAX_TINTS { forget_tints() }
   for p in 0..<PALETTES {
     let swaps = shown.filter((c) => c.0 == p)
-    let pixels = tile_pixels[p]
-    if swaps.len() == 0 || pixels.len() == 0 { continue }
-    if let Some(t) = texture_of([px in pixels | swapped(px, swaps)], tile_widths[p]) {
-      set_texture_scale_mode(t, scale_mode(looking))
-      tint_made.push(t)
-      tiles[p] = Some(t)
+    band_tiles[p] = if swaps.len() == 0 || tile_pixels[p].len() == 0 { -1 } else {
+      tinted(p, swaps)
     }
   }
-  var sheet: Maybe<Texture> = None
-  let areas = raster.sheet_areas().filter((a) => shown.any((c) => c.0 == a.palette))
-  if areas.len() > 0 && sprite_pixels.len() > 0 {
-    var pixels = [px in sprite_pixels | px]
-    let rows = pixels.len() / sprite_width
-    for a in areas {
-      let swaps = shown.filter((c) => c.0 == a.palette)
-      for y in a.y.max(0)..<(a.y + a.height).min(rows) {
-        for x in a.x.max(0)..<(a.x + a.width).min(sprite_width) {
-          let at = y * sprite_width + x
-          pixels[at] = swapped(pixels[at], swaps)
-        }
+  let areas = raster.sheet_areas()
+  let sheet_swaps = shown.filter((c) => areas.any((a) => a.palette == c.0))
+  band_sheet = if sheet_swaps.len() == 0 || sprite_pixels.len() == 0 { -1 } else {
+    tinted(-1, sheet_swaps)
+  }
+}
+
+/// Where in [tint_art] part `part` (a palette's tiles, or -1 the sprite sheet) is with
+/// `swaps` made: found, or made now.
+let tinted = (part: i64, swaps: [](i64, u32, u32)) -> i64 => {
+  let key = [c in swaps | "${c.0}:${c.1}:${c.2}"].join(" ")
+  for k, have in tint_keys {
+    if tint_parts[k] == part && have == key { return k }
+  }
+  let made = if part >= 0 {
+    texture_of([px in tile_pixels[part] | swapped(px, swaps)], tile_widths[part])
+  } else {
+    texture_of(sheet_swapped(swaps), sprite_width)
+  }
+  if let Some(t) = made { set_texture_scale_mode(t, scale_mode(looking)) }
+  tint_parts.push(part)
+  tint_keys.push(key)
+  tint_art.push(made)
+  tint_keys.len() - 1
+}
+
+/// The sprite sheet's pixels with `swaps` made in each area of a palette they name.
+let sheet_swapped = (swaps: [](i64, u32, u32)) -> []u32 => {
+  var pixels = [px in sprite_pixels | px]
+  let rows = pixels.len() / sprite_width
+  for a in raster.sheet_areas() {
+    let mine = swaps.filter((c) => c.0 == a.palette)
+    if mine.len() == 0 { continue }
+    for y in a.y.max(0)..<(a.y + a.height).min(rows) {
+      for x in a.x.max(0)..<(a.x + a.width).min(sprite_width) {
+        let at = y * sprite_width + x
+        pixels[at] = swapped(pixels[at], mine)
       }
     }
-    if let Some(t) = texture_of(pixels, sprite_width) {
-      set_texture_scale_mode(t, scale_mode(looking))
-      tint_made.push(t)
-      sheet = Some(t)
-    }
   }
-  tint_keys.push(key)
-  tint_tiles.push(tiles)
-  tint_sprites.push(sheet)
-  tint_keys.len() - 1
+  pixels
 }
 
 /// Pixel `px` with its colour replaced where one of `swaps` (palette, colour, replacement)
@@ -823,13 +834,16 @@ let swapped = pure (px: u32, swaps: [](i64, u32, u32)) -> u32 => {
   px
 }
 
-/// The art made for raster changes released, to be made again as frames show them.
+/// The art recoloured released, to be made again as frames show it.
 let forget_tints = () -> void => {
-  for t in tint_made { destroy_texture(t) }
-  tint_made = []
+  for art in tint_art {
+    if let Some(t) = art { destroy_texture(t) }
+  }
+  tint_parts = []
   tint_keys = []
-  tint_tiles = []
-  tint_sprites = []
+  tint_art = []
+  band_tiles = [-1; PALETTES]
+  band_sheet = -1
 }
 
 /// The planes and sprites between screen lines `top` and `bottom`, behind then in front —
@@ -1010,7 +1024,9 @@ let draw_cells = (
       let tile = planes.shown_tile(i64(word & TILE_MASK))
       if tile == 0 || ((word & FRONT) != 0) != front { continue }
       let palette = i64((word & PALETTE_MASK) >> PALETTE_SHIFT)
-      let Some(art) = if drawing >= 0 && tint_tiles[drawing][palette].is_some() { tint_tiles[drawing][palette] } else { tile_art[palette] } else { continue }
+      let Some(art) = if band_tiles[palette] >= 0 && tint_art[band_tiles[palette]].is_some() {
+        tint_art[band_tiles[palette]]
+      } else { tile_art[palette] } else { continue }
       // The part of the cell between `top` and `bottom` on the screen.
       let y = row * tile_side - sy
       let from = y.max(top)
@@ -1060,7 +1076,9 @@ let draw_laid_out = (r: Renderer, p: Plane, layout: Layout, front: bool) -> void
       if left >= width() || base >= height() { continue }
       if left + layout.block_width * tile_side <= 0 || base + layout.block_height * tile_side <= 0 { continue }
       let palette = i64((word & PALETTE_MASK) >> PALETTE_SHIFT)
-      let Some(art) = if drawing >= 0 && tint_tiles[drawing][palette].is_some() { tint_tiles[drawing][palette] } else { tile_art[palette] } else { continue }
+      let Some(art) = if band_tiles[palette] >= 0 && tint_art[band_tiles[palette]].is_some() {
+        tint_art[band_tiles[palette]]
+      } else { tile_art[palette] } else { continue }
       let flip_x = (word & FLIP_X) != 0
       let flip_y = (word & FLIP_Y) != 0
       for ty in 0..<layout.block_height {
@@ -1100,7 +1118,9 @@ let draw_sprites = (
   bottom: i64,
   clipped: bool
 ) -> void => {
-  let Some(art) = if drawing >= 0 && tint_sprites[drawing].is_some() { tint_sprites[drawing] } else { sprite_art } else { return }
+  let Some(art) = if band_sheet >= 0 && tint_art[band_sheet].is_some() { tint_art[band_sheet] } else { sprite_art } else {
+    return
+  }
   let list = sprites.added()
   var i = list.len() - 1
   while i >= 0 {
