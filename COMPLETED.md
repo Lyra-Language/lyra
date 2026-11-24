@@ -9,6 +9,31 @@ Newest first.
 
 ## Dated log
 
+### 11/23/26 — A rounded clip on SDL's renderer: the triangles cut to its corners
+
+**Neither way the item named was needed.** SDL's 2D renderer has no stencil, and drawing a
+clip's content to a texture and masking it wants a custom blend mode the software renderer
+need not have, and a target texture per clip. But everything `ui.sdl3` draws is already
+triangles (`ui.tess`'s meshes, one `SDL_RenderGeometry` a batch), and a rounded rectangle is
+convex — the property `fill` already fans from — so **the triangles are cut to it on the way
+out**: `ui.tess`'s `clip_rounded(mesh, rect, radii)` keeps a triangle wholly inside the cross
+the corners leave as it is (no outline test at all, for most of what a clip holds), clips any
+other against each edge of `contour`'s outline — Sutherland and Hodgman, as `clipped_at` cuts
+a gradient's bands — and fans what is left, the new corners' colours and texture places in
+between theirs. SDL's own rectangle clip still does the sides; the cut does the corners.
+
+**At flush**, since a batch gathers everything between two clip changes: `paint` keeps each
+open clip's own rectangle and radii (`Rounded`, beside the narrowed rectangles SDL is given)
+and `flush` cuts every batch to each rounded one open, so a square clip nested in a rounded one
+is still cut by it. The cut is a hard edge, where `ui.gpu`'s signed distance softens it.
+
+Held by `TestRun_UiSdlRendererClipsToRoundedCorners`: pixels read back from the software
+renderer on the dummy driver — a fill, a picture whose texture is green on its left half and
+blue on its right (so a cut that lost its texture places reads the wrong half), and a square
+clip nested in a rounded one — outside each arc the background, inside it the colour. Three
+mutations — no cut, a clip never popped from the rounded list, the cut's texture places lost
+— each fail it.
+
 ### 11/23/26 — `ui.sdl3`'s platform half tested: SDL's own events, pushed
 
 **Nothing headless had sent `SdlPlatform` input**: the scripted platform stands in for it in

@@ -22,9 +22,10 @@ module ui.sdl3
 //! and a hairline shows as two pixels at half strength. It is the renderer a machine with no
 //! GPU — and a headless test — gets.
 //!
-//! **A clip is a rectangle**: SDL's renderer clips to whole pixels and nothing rounder, so a
-//! `PushClip`'s radii are ignored here — content in a rounded clip shows square at its
-//! corners. A backend that can mask (a GPU's stencil) honours them.
+//! **A clip is a rectangle to SDL**, whole pixels and nothing rounder, so a `PushClip`'s
+//! corners are cut here instead: what is drawn inside a rounded clip is cut to its rounded
+//! rectangle as it goes to SDL (`ui.tess`'s `clip_rounded`), every rounded clip open — a
+//! nested square one inside cut too. The cut is a hard edge, where `ui.gpu`'s is softened.
 //!
 //! **Logical units**: SDL reports a window in points, and a high-density display shows a
 //! point as several pixels. A logical unit is a point times the pixel density over the
@@ -324,7 +325,7 @@ import ui.draw.{
   PopLayer,
   Radii,
 }
-import ui.tess.{ Mesh, fill, border, quad, fill_gradient, fill_soft }
+import ui.tess.{ Mesh, fill, border, quad, fill_gradient, fill_soft, clip_rounded }
 import std.io.{ write_stderr }
 
 /// A window open for an interface: its [SdlPlatform] and [SdlRenderer], which [close] puts
@@ -1547,6 +1548,9 @@ let paint = (
   var batches: []Batch = []
   var calls = 0
   var clips: []Rect = []
+  // Each clip's own rounded rectangle, where its corners are rounded: SDL clips to the
+  // rectangles, and what is drawn inside is cut to these ([flush]).
+  var rounded: []Rounded = []
   for op in ops {
     match op {
       Fill(at, radii, color) => {
@@ -1626,17 +1630,19 @@ let paint = (
       Backdrop(_, _, _) => { unblurred("backdrop-filter") },
       PushLayer(_, effect) => { if effect.blur > 0.0 { unblurred("filter: blur()") } },
       PopLayer => {},
-      PushClip(at, _) => {
-        calls += flush(canvas, textures, live, batches)
+      PushClip(at, radii) => {
+        calls += flush(canvas, textures, live, batches, rounded)
         let inside = at.scaled(scale)
         let narrowed = if clips.len() == 0 { inside } else { clips[clips.len() - 1].intersect(inside) }
         clips.push(narrowed)
+        rounded.push(Rounded { rect: inside, radii: radii.scaled(scale) })
         canvas.set_clip(pixel_rect(narrowed))
       },
       PopClip => {
-        calls += flush(canvas, textures, live, batches)
+        calls += flush(canvas, textures, live, batches, rounded)
         if clips.len() > 0 {
           clips = clips.slice(0, clips.len() - 1)
+          rounded = rounded.slice(0, rounded.len() - 1)
         }
         if clips.len() == 0 {
           canvas.clear_clip()
@@ -1646,7 +1652,22 @@ let paint = (
       },
     }
   }
-  calls + flush(canvas, textures, live, batches)
+  calls + flush(canvas, textures, live, batches, rounded)
+}
+
+/// A clip's rectangle and the radii of its corners, in pixels.
+struct Rounded {
+  rect: Rect,
+  radii: Radii,
+}
+
+impl Rounded {
+  /// Whether any corner is rounded, so what is drawn inside is cut to it.
+  let rounds = pure (self) -> bool =>
+    self.radii.top_left > 0.0 ||
+    self.radii.top_right > 0.0 ||
+    self.radii.bottom_right > 0.0 ||
+    self.radii.bottom_left > 0.0
 }
 
 /// Whether a blur this renderer cannot draw has been said: once a run.
@@ -1733,15 +1754,23 @@ let overlaps = pure (a: []Rect, b: []Rect) -> bool =>
   a.any((x) => b.any((y) => !x.intersect(y).is_empty()))
 
 /// Draw `batches` in order on `canvas`, each in one call, and empty them; how many calls that
-/// was.
+/// was. Each is cut to the clips open with rounded corners (`rounded`, `ui.tess`'s
+/// [clip_rounded]): SDL's own clip is only their rectangles.
 let flush = (
   canvas: Canvas,
   textures: []Texture,
   live: []bool,
-  batches: mut []Batch
+  batches: mut []Batch,
+  rounded: []Rounded
 ) -> i64 => {
   var calls = 0
-  for b in batches {
+  for batch in batches {
+    var b = batch
+    for clip in rounded {
+      if clip.rounds() {
+        b = Batch { b | mesh: clip_rounded(b.mesh, clip.rect, clip.radii) }
+      }
+    }
     if b.mesh.indices.len() == 0 { continue }
     if b.texture < 0 {
       canvas.draw_geometry(vertices(b.mesh), b.mesh.indices)

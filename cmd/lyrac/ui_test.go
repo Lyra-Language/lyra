@@ -3394,6 +3394,85 @@ let box = pure (style: Style) -> Node<void> =>
 	near("radial centre", [3]int{255, 255, 255}, 15)
 }
 
+// A rounded clip on SDL's 2D renderer, whose own clip is only a rectangle: what is drawn inside
+// is cut to the rounded rectangle (ui.tess's clip_rounded) — a fill, a picture from a texture
+// (its texture places carried to the cut), and what a square clip nested inside draws, which
+// the rounded one around it still cuts. Outside each corner's arc is the background, inside it
+// the colour, and the middles of the edges are drawn.
+func TestRun_UiSdlRendererClipsToRoundedCorners(t *testing.T) {
+	t.Parallel()
+	skipWithoutText(t)
+	if err := command(t, "pkg-config", "--exists", "sdl3").Run(); err != nil {
+		t.Skip("no SDL3")
+	}
+	setenv(t, "SDL_VIDEODRIVER", "dummy")
+	setenv(t, "SDL_RENDER_DRIVER", "software")
+	setenv(t, "LYRA_STD", repoRoot(t))
+	src := filepath.Join(t.TempDir(), "main.lyra")
+	if err := os.WriteFile(src, []byte(`import ui.sdl3
+import ui.sdl3.{ capture }
+import ui.backend.{ Renderer }
+import ui.draw.{ Rect, Image, rgb, radius, DrawOp, Fill, Picture, PushClip, PopClip }
+
+let main = () -> u8 => {
+  let Ok(window) = sdl3.open("clip", 300.0, 220.0) else { return 2 }
+  var platform = window.platform
+  var renderer = window.renderer
+  var pixels: []u32 = []
+  // Green on its left half, blue on its right: a cut that lost its texture places reads the
+  // wrong half.
+  for k in 0..<16 { pixels.push(if k % 4 < 2 { 0xFF00FF00 } else { 0xFF0000FF }) }
+  let Some(halves) = renderer.upload(Image { width: 4, height: 4, argb: pixels }) else { return 3 }
+  let red = rgb(0xFF0000)
+  let blue = rgb(0x0000FF)
+  let everywhere = Rect { x: 0.0, y: 0.0, w: 300.0, h: 220.0 }
+  let ops: []DrawOp = [
+    // A fill, cut to a 100 × 80 card rounded by 24.
+    PushClip(Rect { x: 20.0, y: 20.0, w: 100.0, h: 80.0 }, radius(24.0)),
+    Fill(everywhere, radius(0.0), red),
+    PopClip,
+    // A picture, cut to one rounded by 40 — its left and right edges half circles.
+    PushClip(Rect { x: 150.0, y: 20.0, w: 100.0, h: 80.0 }, radius(40.0)),
+    Picture(halves, Rect { x: 0.0, y: 0.0, w: 4.0, h: 4.0 }, Rect { x: 140.0, y: 10.0, w: 120.0, h: 100.0 }, 1.0),
+    PopClip,
+    // A square clip inside a rounded one: the rounded one still cuts it.
+    PushClip(Rect { x: 20.0, y: 120.0, w: 100.0, h: 80.0 }, radius(24.0)),
+    PushClip(everywhere, radius(0.0)),
+    Fill(everywhere, radius(0.0), blue),
+    PopClip,
+    PopClip,
+  ]
+  let Some(frame) = capture(renderer, rgb(0xFFFFFF), ops) else { return 3 }
+  let at = (x: i64, y: i64) -> string => {
+    let p = frame.argb[y * frame.width + x]
+    "${(p >> 16) & 0xFF},${(p >> 8) & 0xFF},${p & 0xFF}"
+  }
+  // The arc's centre is 24 in from each side: (24, 24) is outside it, (30, 30) inside.
+  println("fill: corner ${at(24, 24)}, inside the arc ${at(30, 30)}, middle ${at(70, 60)}, top ${at(70, 21)}, left ${at(21, 60)}, far corner ${at(116, 96)}")
+  println("picture: corner ${at(154, 24)}, inside the arc ${at(165, 35)}, left ${at(152, 60)}, top ${at(185, 22)}, right's arc ${at(235, 35)}, right ${at(248, 60)}, right's corner ${at(246, 24)}, beyond ${at(145, 60)}")
+  println("nested: corner ${at(24, 124)}, inside the arc ${at(30, 130)}, middle ${at(70, 160)}, outside ${at(140, 160)}")
+  sdl3.close(platform, renderer)
+  0
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := captureRunUnoptimized(t, "run", src)
+	if code == 2 {
+		t.Skipf("SDL could not open a dummy window here: %s", stdout)
+	}
+	if code != 0 {
+		t.Fatalf("exited %d\nstderr: %s", code, stderr)
+	}
+	want := `fill: corner 255,255,255, inside the arc 255,0,0, middle 255,0,0, top 255,0,0, left 255,0,0, far corner 255,255,255
+picture: corner 255,255,255, inside the arc 0,255,0, left 0,255,0, top 0,255,0, right's arc 0,0,255, right 0,0,255, right's corner 255,255,255, beyond 255,255,255
+nested: corner 255,255,255, inside the arc 0,0,255, middle 0,0,255, outside 255,255,255
+`
+	if stdout != want {
+		t.Errorf("got\n%s\nwant\n%s", stdout, want)
+	}
+}
+
 // Effects in the cascade and the display list: an element with every one paints, in CSS's
 // order, a layer for its filter, its outer shadows (the first on top, so last), its backdrop,
 // its colour, its gradient, its inset shadow, its border, and the layer put down. A compound

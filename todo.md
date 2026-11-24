@@ -987,8 +987,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   struct's newline-separated fields each at the field level (COMPLETED.md, 11/11).
 - **[DONE 11/23] `ui.sdl3`'s platform half is tested**: SDL's events pushed onto its queue
   (`bindings.sdl3`'s `push_event`) and read back through `next_events` (COMPLETED.md 11/23).
-- **[OPEN] A rounded clip is square on SDL's renderer** (`PushClip`'s radii are ignored):
-  it needs a stencil (an SDL_GPU backend) or content drawn to a texture and masked.
+- **[DONE 11/23] A rounded clip is rounded on SDL's renderer**: what it holds is cut to its
+  corners as it is drawn (`ui.tess`'s `clip_rounded`; COMPLETED.md 11/23).
 - **[OPEN] A constructor resolved by its declaration, not its name.** Then `KeyDown as
   SdlKeyDown` could stand beside another module's `KeyDown`, which is refused since 10/21
   (`constructorAliasCollisions`) rather than silently confused.
