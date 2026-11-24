@@ -1121,6 +1121,12 @@ Item numbers (#3–#8) are cited from code comments.
   answer is **both** — inference across the merged program for free functions, and a
   declared bound at the boundary for trait methods, which a bound call now believes instead
   of joining over every impl. (COMPLETED.md, 09/22.)
+- **[OPEN] A `pure` function changes a `ref` parameter's arrays through a call's result.**
+  `lyra-E007` refuses `var ys = b.xs; ys[0] = 9`, but not `var r = b.row(0); r[0] = 7`
+  (a method returning `self.rows[k]`) nor `var t = [k in … | b.row(k)]; t[0][0] = 9`: the
+  sharing is followed through places, not through what a call returns. Vega's scene editor
+  painted the project's palettes this way (11/23); a call returning a managed value from a
+  `ref` argument should count as sharing its storage.
 - **[DONE 09/23] W018 on a trait method advises the trait.** An impl's own bound says
   nothing about its siblings, so only the trait's is what a `where t: Trait` call can rely
   on — and an impl inherits it, so the trait is the one action that covers every impl.
