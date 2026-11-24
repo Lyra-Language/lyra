@@ -25,3 +25,6 @@ imgui.ini
 # (it saves to its preference folder unless --save-to says otherwise).
 /name.txt
 /examples/ui/name.txt
+
+# resvg's SVG test suite, fetched by tools/resvg-tests.sh (25 MB; the workspace's setup.sh runs it).
+/cmd/lyrac/testdata/svg/

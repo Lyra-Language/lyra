@@ -955,7 +955,14 @@ of Markdown.
 go test ./...
 go test -run TestFunctionName ./pkg/...
 UPDATE_GOLDEN=1 go test ./pkg/analyzer/collector/tests/...   # regenerate goldens
+tools/resvg-tests.sh      # resvg's SVG suite into cmd/lyrac/testdata/svg/resvg/ (untracked, pinned)
 ```
+
+**resvg's SVG test suite is fetched, not tracked** (25 MB): `tools/resvg-tests.sh` pins a
+commit, sparse-clones it into `build/deps/`, and copies its tests (each SVG beside the PNG it
+should render as), resources and fonts into `cmd/lyrac/testdata/svg/resvg/` (gitignored), a
+`COMMIT` file there making a second run a no-op. The workspace's `setup.sh` runs it. A test
+using it skips when the folder is not there, as CI's checkout has none.
 
 **Collector golden tests** (`pkg/analyzer/collector/tests/`): `runGoldenTest(t, source,
 "name")` (no extension) against `testdata/*.golden`; a new golden is created and fails on
