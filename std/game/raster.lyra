@@ -1,0 +1,125 @@
+module std.game.raster
+//! Colours changed partway down the screen — `std.genesis.raster`'s raster effects on every
+//! modern platform. A change says that from a line of the screen down — or of the world,
+//! moving with the camera (a waterline) — a colour of a palette's art is another:
+//!
+//! ```
+//! const RASTERS: [1]Raster = #[Raster { line: 256, palette: 0, from: 0x492424, to: 0x002449, world: true }]
+//! raster.start(RASTERS, 0, 1)
+//! // each update:
+//! raster.scroll_world(camera.y)
+//! ```
+//!
+//! There is no interrupt and no palette here: the art is finished colours. `std.game.screen`
+//! copies it once for each set of changes a frame shows, the colour a change replaces
+//! replaced in that palette's art — a tile set's art in that palette, and the sprite sheet's
+//! areas of it ([use_sprite_areas]) — and draws the screen in bands of lines, each from its
+//! copy. So a colour two of a palette's colours share changes in both, where the Genesis
+//! changes one.
+
+/// A colour change: from screen line `line` down — the world's line, where `world` —
+/// palette `palette`'s colour `from` is `to` (each `0xRRGGBB`).
+pub struct Raster {
+  line: i64,
+  palette: i64,
+  from: u32,
+  to: u32,
+  world: bool = false,
+}
+
+/// An area of the sprite sheet drawn in palette `palette`: what a change to that palette
+/// recolours there.
+pub struct SheetArea {
+  x: i64,
+  y: i64,
+  width: i64,
+  height: i64,
+  palette: i64,
+}
+
+/// Rows `first` to `first + count` of `table` from the next frame on, in place of any before:
+/// a scene's changes.
+pub let start<const N: i64> = (table: ref [N]Raster, first: i64, count: i64) -> void => {
+  let from = first.clamp(0, N)
+  let to = (first + count).clamp(from, N)
+  changes = [k in from..<to | table[k]]
+  placed = false
+}
+
+/// No changes from the next frame on.
+pub let stop = () -> void => { changes = [] }
+
+/// The sprite sheet's areas and the palette each is drawn in: the game's, once, after it
+/// loads its sprites. A change recolours its palette's areas alone.
+pub let use_sprite_areas<const N: i64> = (areas: ref [N]SheetArea) -> void => {
+  sprite_areas = [a in areas | a]
+}
+
+/// The camera's place down the world, for the changes kept to it: once an update, as the
+/// planes are scrolled. A frame between updates puts them where it puts the planes.
+pub let scroll_world = (y: f32) -> void => {
+  was_y = if placed { now_y } else { y }
+  now_y = y
+  placed = true
+}
+
+/// The changes started ([start]).
+pub let changes_now = () -> []Raster => changes
+
+/// The sprite sheet's areas ([use_sprite_areas]).
+pub let sheet_areas = () -> []SheetArea => sprite_areas
+
+/// The bands of a screen `height` lines tall, `t` of the way from the last update to the
+/// next: each band's top line and the changes it shows — palette, colour replaced and its
+/// replacement, the later change of a colour in place of the earlier, in order of palette and
+/// colour. The first band's top is 0, and a band with no changes shows the art as it is.
+/// A screen's change and a world's on one line: the screen's first, as the Genesis makes
+/// them. None while nothing is started.
+pub let bands = (height: i64, t: f32) -> [](i64, [](i64, u32, u32)) => {
+  if changes.len() == 0 { return [] }
+  let y = (was_y + (now_y - was_y) * t).floor()
+  // Each change's screen line, a world's moving with the camera; the order they are made.
+  var lines: [](i64, i64) = []
+  for k, change in changes {
+    let at = if change.world { change.line - i64(y) } else { change.line }
+    lines.push((at * 2 + (if change.world { 1 } else { 0 }), k))
+  }
+  lines.sort_by((a, b) => if a.0 != b.0 { a.0 <=> b.0 } else { a.1 <=> b.1 })
+  var out: [](i64, [](i64, u32, u32)) = []
+  var shown: [](i64, u32, u32) = []
+  var top: i64 = 0
+  for (key, k) in lines {
+    let at = (key - (key %% 2)) / 2
+    if at >= height { break }
+    if at > top {
+      out.push((top, shown))
+      top = at
+    }
+    let change = changes[k]
+    shown = with_change(shown, change.palette, change.from & 0xFFFFFF, change.to & 0xFFFFFF)
+  }
+  out.push((top, shown))
+  out
+}
+
+// ── Beneath ──────────────────────────────────────────────────────────────────────────
+
+/// `shown` with palette `palette`'s colour `from` made `to`, in place of an earlier change of
+/// it, in order of palette and colour.
+let with_change = pure (
+  shown: [](i64, u32, u32),
+  palette: i64,
+  from: u32,
+  to: u32
+) -> [](i64, u32, u32) => {
+  var out = shown.filter((c) => c.0 != palette || c.1 != from)
+  out.push((palette, from, to))
+  out.sort_by((a, b) => if a.0 != b.0 { a.0 <=> b.0 } else { a.1 <=> b.1 })
+  out
+}
+
+var changes: []Raster = []
+var sprite_areas: []SheetArea = []
+var was_y: f32 = 0.0
+var now_y: f32 = 0.0
+var placed = false

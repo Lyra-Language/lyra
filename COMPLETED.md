@@ -63,6 +63,26 @@ or woken for after `blur`), and undo after typing a rune at a time. Each of five
 the host not waking for it, a key not restarting it, the window's focus ignored, no runs,
 runs across words — fails it.
 
+### 11/23/26 — Raster effects on the modern runtime
+
+Vega's raster effects were the Genesis's alone; `std.game.raster` draws them on every modern
+platform, so the waterline and the overlook's sky gradient look the same there. Not by a
+shader: SDL's custom shaders are the GPU renderer's and Metal's, and the Linux build has
+neither.
+
+- **A change is a colour replaced**, not a palette entry: the modern art is finished colours,
+  a tile set's art drawn once per palette and every sprite in one sheet. Vega writes each
+  change with the colour its palette's art was drawn in (`from`), and the sheet's areas by
+  palette, so a change of palette 1 leaves palette 0's sprites alone. A colour two of a
+  palette's colours share changes in both — a Vega warning, as is a change of colour 0, which
+  the art leaves clear.
+- **The screen is drawn in bands of lines**, each from art recoloured for its set of changes,
+  made the first time a frame shows that set and kept: the waterline's nine sets once each,
+  then nothing a frame but the draws. Planes draw their band's rows alone; sprites are
+  clipped, the clip set again at each sprite's scale since SDL scales it with the drawing.
+- **A texture handle held in a local is a `@must_release` warning**, so the art drawn from is
+  chosen by index into the kept sets (`drawing`) rather than by swapping the art globals.
+
 ### 11/23/26 — A song started as the vertical blank came: the hero's chord
 
 Vega's hero check heard two notes of its theme's FM 3 chord off pitch once the raster plans
