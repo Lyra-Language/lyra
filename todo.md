@@ -1085,6 +1085,9 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   of an `if` with no `else`, a `match` or constructor as a statement (`if let Some n = p(s) {
   Some(n) }` then `None`, std/svg's first parsers, 11/24) — always `None`, reading as an early
   return. Warn where a non-void value reaches a statement that discards it, naming `return`.
+- **[OPEN] A `while let` (or `if let`) whose pattern cannot fail is silent**: `while let (x, y, end)
+  = pair_at(b, i)? { … }` never ends by its pattern, only by the `?` returning an `Err` — std/svg's
+  pair loop, 11/25, failing every multi-command path. Warn as E077's check does, naming `loop`/`let`.
 
 - **[IDEA] Overflow policy on a `newtype`** (`where wrapping` / `saturating`), so a hash
   accumulator need not spell `wrapping_*` per op and `saturating` can clamp to a `range`.
