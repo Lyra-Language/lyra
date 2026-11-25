@@ -1,0 +1,510 @@
+module std.svg
+
+import std.xml.{ parse_xml, Element }
+import std.io.{ read_file }
+
+pub let parse_svg_file = (path: string) -> Result<SvgElement, string> => {
+  if let Some(content) = read_file(path) {
+    return parse_svg(content)
+  } else {
+    return Err("The file at ${path} could not be read.")
+  }
+}
+
+/// An SVG document's tree. Err where it is not XML, or its root is not an `<svg>`.
+pub let parse_svg = pure (source: string) -> Result<SvgElement, string> => {
+  let root = parse_xml(source)?
+  if root.name != "svg" {
+    return Err("The root element is <${root.name}>, not <svg>.")
+  }
+  Ok(build_svg_element(root))
+}
+
+/// An element and everything inside it. One this parser does not know yet is kept as
+/// `Other`, so the rest of the document still reads.
+let build_svg_element = pure (xml: Element) -> SvgElement => {
+  match xml.name {
+    "svg" => make_svg(xml),
+    "title" => make_title(xml),
+    "rect" => make_rect(xml),
+    "circle" => make_circle(xml),
+    "path" => make_path(xml),
+    _ => Other(xml.name),
+  }
+}
+
+let make_svg = pure (xml: Element) -> SvgElement => {
+  Svg {
+    id: xml.attribute("id"),
+    x: parse_length_percent(xml.attribute("x")),
+    y: parse_length_percent(xml.attribute("y")),
+    width: parse_length_percent(xml.attribute("width")),
+    height: parse_length_percent(xml.attribute("height")),
+    baseProfile: xml.attribute("baseProfile"),
+    version: parse_num(xml.attribute("version")),
+    viewBox: parse_viewbox(xml.attribute("viewBox")),
+    preserveAspectRatio: parse_preserve_aspect_ratio(xml.attribute("preserveAspectRatio")),
+    children: [child in xml.children | build_svg_element(child)],
+  }
+}
+
+let make_title = pure (xml: Element) -> SvgElement => Title { text: Some(xml.text) }
+
+let make_rect = pure (xml: Element) -> SvgElement => {
+  Rect {
+    id: xml.attribute("id"),
+    x: parse_length_percent(xml.attribute("x")),
+    y: parse_length_percent(xml.attribute("y")),
+    width: parse_length_percent(xml.attribute("width")),
+    height: parse_length_percent(xml.attribute("height")),
+    stroke: parse_color(xml.attribute("stroke")),
+    fill: parse_color(xml.attribute("fill")),
+    rx: parse_length_percent(xml.attribute("rx")),
+    ry: parse_length_percent(xml.attribute("ry")),
+    pathLength: parse_num(xml.attribute("pathLength")),
+  }
+}
+
+let make_circle = pure (xml: Element) -> SvgElement => {
+  Circle {
+    id: xml.attribute("id"),
+    cx: parse_length_percent(xml.attribute("cx")),
+    cy: parse_length_percent(xml.attribute("cy")),
+    r: parse_length_percent(xml.attribute("r")),
+    pathLength: parse_num(xml.attribute("pathLength")),
+    fill: parse_color(xml.attribute("fill")),
+    stroke: parse_color(xml.attribute("stroke")),
+  }
+}
+
+let make_path = pure (xml: Element) -> SvgElement => {
+  let d: Maybe<PathData> = match xml.attribute("d") {
+    Some(text) => Some(parse_path_data(text)),
+    None => None,
+  }
+  Path {
+    id: xml.attribute("id"),
+    d: d,
+    stroke: parse_color(xml.attribute("stroke")),
+    fill: parse_color(xml.attribute("fill")),
+    pathLength: parse_num(xml.attribute("pathLength")),
+  }
+}
+
+/// Path data (`d`): its segments up to the first error. SVG draws a path as far as it is
+/// right, so an error ends the path rather than refusing it — `M 0 0 L 10` is the moveto
+/// alone. Data that does not start with a moveto (`M` or `m`) is no path at all.
+let parse_path_data = pure (d: string) -> PathData => {
+  let b = d.encode_utf8()
+  var out: []PathSegment = []
+  var i = skip_list_space(b, 0)
+  if byte_at(b, i) != UPPER_M && byte_at(b, i) != LOWER_M { return PathData(out) }
+  while i < b.len() {
+    let command = byte_at(b, i)
+    if command != UPPER_M && command != LOWER_M && command != UPPER_L && command != LOWER_L {
+      // A command not read yet, or something that is no command: the path ends here.
+      break
+    }
+    let (pairs, end) = coordinate_pair_sequence_at(b, skip_list_space(b, i + 1))
+    if pairs.len() == 0 { break }
+    if command == UPPER_M {
+      out.push(MoveToAbs pairs)
+    } else if command == LOWER_M {
+      out.push(MoveToRel pairs)
+    } else if command == UPPER_L {
+      out.push(LineToAbs pairs)
+    } else {
+      out.push(LineToRel pairs)
+    }
+    i = skip_list_space(b, end)
+  }
+  PathData(out)
+}
+
+/// The coordinate pairs starting at `from`, and the offset after the last whole one. It
+/// stops where no number follows, and at a pair cut short (`1 2 3` is one pair, ending
+/// before the 3) — what is left at the offset then ends the path.
+let coordinate_pair_sequence_at = pure (
+  b: []u8,
+  from: i64
+) -> ([]CoordinatePair, i64) => {
+  var pairs: []CoordinatePair = []
+  var i = from
+  loop {
+    let Some((x, y, end)) = coordinate_pair_at(b, i) else { break }
+    pairs.push(CoordinatePair(x, y))
+    i = end
+    let next = skip_comma_list_space(b, end)
+    if number_at(b, next).is_none() { break }
+    i = next
+  }
+  (pairs, i)
+}
+
+let coordinate_pair_at = pure (b: []u8, from: i64) -> Maybe<(f64, f64, i64)> => {
+  let Some((x, x_end)) = number_at(b, from) else { return None }
+  let Some((y, y_end)) = number_at(b, skip_comma_list_space(b, x_end)) else {
+    return None
+  }
+  Some((x, y, y_end))
+}
+
+let parse_num = pure (maybe_num: Maybe<string>) -> Maybe<CssNumber> => {
+  if let Some num_str = maybe_num {
+    if let Some num = parse_f64(num_str) {
+      return Some(CssNumber(num))
+    }
+  }
+  None
+}
+
+/// The `viewBox` attribute: four numbers, `min-x min-y width height`. None where it is
+/// absent, is not four numbers, or has a negative width or height — an invalid `viewBox`
+/// is ignored, as if not written. A zero width or height is kept: it disables rendering
+/// of the element, which is the renderer's to act on.
+let parse_viewbox = pure (list: Maybe<string>) -> Maybe<ViewBox> => {
+  let Some(nums) = parse_list_of_nums(list) else { return None }
+  match base(nums) {
+    [min_x, min_y, width, height] =>
+      if width < 0 || height < 0 {
+        None
+      } else {
+        Some(ViewBox { min_x: min_x, min_y: min_y, width: width, height: height })
+      },
+    _ => None,
+  }
+}
+
+/// An SVG list of numbers (`viewBox`, `points`): numbers apart by whitespace, a comma or both,
+/// and by nothing where the next one's start says so (`1-2` is 1 and -2; `1.5.5` is 1.5 and
+/// .5). None where the attribute is absent, or anything in it is not such a list.
+let parse_list_of_nums = pure (list: Maybe<string>) -> Maybe<ListOfNumbers> => {
+  let Some(text) = list else { return None }
+  let b = text.encode_utf8()
+  var out: []f64 = []
+  var i = skip_list_space(b, 0)
+  while i < b.len() {
+    let Some((n, end)) = number_at(b, i) else { return None }
+    out.push(n)
+    i = skip_list_space(b, end)
+    if byte_at(b, i) == COMMA {
+      // A comma must have a number after it: `1,` and `1,,2` are not lists.
+      i = skip_list_space(b, i + 1)
+      if i >= b.len() { return None }
+    }
+  }
+  Some(ListOfNumbers(out))
+}
+
+// for now just accepts any string. Later will match against known color names, hex notation, rgba, etc.
+let parse_color = pure (color_str: Maybe<string>) -> Maybe<CssColor> => {
+  return Some(CssColor(color_str?))
+}
+
+/// The number starting at `from` and the offset after it: a sign, digits with a point among
+/// or before them, and an exponent only where digits follow its `e` (so `1em` stops at the 1).
+let number_at = pure (b: []u8, from: i64) -> Maybe<(f64, i64)> => {
+  var i = from
+  if byte_at(b, i) == PLUS || byte_at(b, i) == MINUS { i += 1 }
+  let whole = skip_digits(b, i)
+  var end = whole
+  var digits = whole > i
+  if byte_at(b, end) == POINT {
+    let fraction = skip_digits(b, end + 1)
+    digits = digits || fraction > end + 1
+    end = fraction
+  }
+  if !digits { return None }
+  if byte_at(b, end) == LOWER_E || byte_at(b, end) == UPPER_E {
+    var e = end + 1
+    if byte_at(b, e) == PLUS || byte_at(b, e) == MINUS { e += 1 }
+    let power = skip_digits(b, e)
+    if power > e { end = power }
+  }
+  let Some(n) = parse_f64(b.slice(from, end).decode_utf8()) else { return None }
+  Some((n, end))
+}
+
+let skip_digits = pure (b: []u8, from: i64) -> i64 => {
+  var i = from
+  while byte_at(b, i) >= DIGIT_0 && byte_at(b, i) <= DIGIT_9 { i += 1 }
+  i
+}
+
+/// Past SVG's whitespace: space, tab, carriage return and line feed.
+let skip_list_space = pure (b: []u8, from: i64) -> i64 => {
+  var i = from
+  while is_list_space(byte_at(b, i)) { i += 1 }
+  i
+}
+
+/// Past SVG's `comma-wsp`: whitespace with at most one comma among it, so `1,,2` stops
+/// at the second comma.
+let skip_comma_list_space = pure (b: []u8, from: i64) -> i64 => {
+  var i = skip_list_space(b, from)
+  if byte_at(b, i) == COMMA { i = skip_list_space(b, i + 1) }
+  i
+}
+
+let is_list_space = pure (c: i64) -> bool => c == 32 || c == 9 || c == 10 || c == 13
+
+/// The byte at `i`, or -1 past either end.
+let byte_at = pure (b: []u8, i: i64) -> i64 =>
+  if i >= 0 && i < b.len() { i64(b[i]) } else { -1 }
+
+const PLUS: i64 = 43
+const COMMA: i64 = 44
+const MINUS: i64 = 45
+const POINT: i64 = 46
+const DIGIT_0: i64 = 48
+const DIGIT_9: i64 = 57
+const UPPER_E: i64 = 69
+const LOWER_E: i64 = 101
+const UPPER_L: i64 = 76
+const LOWER_L: i64 = 108
+const UPPER_M: i64 = 77
+const LOWER_M: i64 = 109
+
+let parse_length_percent = pure (length_percent: Maybe<string>) -> Maybe<CssLengthPercentage> => {
+  if var Some length_percent_str = length_percent {
+    length_percent_str = length_percent_str.trim()
+
+    if let Some length_num = parse_f64(length_percent_str) {
+      return Some(CssLPLength(Num(CssNumber(length_num))))
+    }
+
+    if let Some length_num = length_percent_str.strip_suffix("%") {
+      if let Some length_num = parse_f64(length_num) {
+        return Some(CssLPPercentage(CssPercentage(length_num)))
+      }
+      return None
+    }
+
+    if let Some length_num = length_percent_str.strip_suffix("px") {
+      if let Some length_num = parse_f64(length_num) {
+        return Some(CssLPLength(Px(length_num)))
+      }
+      return None
+    }
+
+    if let Some length_num = length_percent_str.strip_suffix("cm") {
+      if let Some length_num = parse_f64(length_num) {
+        return Some(CssLPLength(Cm(length_num)))
+      }
+      return None
+    }
+
+    if let Some length_num = length_percent_str.strip_suffix("mm") {
+      if let Some length_num = parse_f64(length_num) {
+        return Some(CssLPLength(Mm(length_num)))
+      }
+      return None
+    }
+
+    if let Some length_num = length_percent_str.strip_suffix("in") {
+      if let Some length_num = parse_f64(length_num) {
+        return Some(CssLPLength(In(length_num)))
+      }
+      return None
+    }
+
+    if let Some length_num = length_percent_str.strip_suffix("pt") {
+      if let Some length_num = parse_f64(length_num) {
+        return Some(CssLPLength(Pt(length_num)))
+      }
+      return None
+    }
+
+    if let Some length_num = length_percent_str.strip_suffix("rem") {
+      if let Some length_num = parse_f64(length_num) {
+        return Some(CssLPLength(Rem(length_num)))
+      }
+      return None
+    }
+
+    if let Some length_num = length_percent_str.strip_suffix("em") {
+      if let Some length_num = parse_f64(length_num) {
+        return Some(CssLPLength(Em(length_num)))
+      }
+      return None
+    }
+
+    if let Some length_num = length_percent_str.strip_suffix("ex") {
+      if let Some length_num = parse_f64(length_num) {
+        return Some(CssLPLength(Ex(length_num)))
+      }
+      return None
+    }
+
+    if let Some length_num = length_percent_str.strip_suffix("pc") {
+      if let Some length_num = parse_f64(length_num) {
+        return Some(CssLPLength(Pc(length_num)))
+      }
+      return None
+    }
+
+    return None
+  }
+  None
+}
+
+/// `preserveAspectRatio`: `[defer] <align> [meet | slice]`, apart by any whitespace.
+/// (None, None) where it is absent or invalid — an invalid value counts as unwritten, so
+/// both mean the default, `xMidYMid meet`. `defer` matters only on `<image>` and is
+/// dropped.
+let parse_preserve_aspect_ratio = pure (aspect_ratio: Maybe<string>) -> PreserveAspectRatio => {
+  let unset = PreserveAspectRatio(None, None)
+  let Some(text) = aspect_ratio else { return unset }
+  var words = text.split_when((r) => r.is_ascii_space())
+  if words.len() > 0 && words[0] == "defer" { words = words.slice(1, words.len()) }
+  match words {
+    [align_str] => {
+      let Some(align) = parse_aspect_ratio_align(align_str) else { return unset }
+      PreserveAspectRatio(Some(align), None)
+    },
+    [align_str, meet_or_slice_str] => {
+      let Some(align) = parse_aspect_ratio_align(align_str) else { return unset }
+      let Some(meet_or_slice) = parse_meet_or_slice(meet_or_slice_str) else { return unset }
+      PreserveAspectRatio(Some(align), Some(meet_or_slice))
+    },
+    _ => unset,
+  }
+}
+
+let parse_aspect_ratio_align = pure (align_str: string) -> Maybe<AspectRatioAlign> =>
+  match align_str {
+    "none" => Some(AlignNone),
+    "xMinYMin" => Some(XMinYMin),
+    "xMidYMin" => Some(XMidYMin),
+    "xMaxYMin" => Some(XMaxYMin),
+    "xMinYMid" => Some(XMinYMid),
+    "xMidYMid" => Some(XMidYMid),
+    "xMaxYMid" => Some(XMaxYMid),
+    "xMinYMax" => Some(XMinYMax),
+    "xMidYMax" => Some(XMidYMax),
+    "xMaxYMax" => Some(XMaxYMax),
+    _ => None,
+  }
+
+let parse_meet_or_slice = pure (meet_or_slice_str: string) -> Maybe<MeetOrSlice> =>
+  match meet_or_slice_str {
+    "meet" => Some(Meet),
+    "slice" => Some(Slice),
+    _ => None,
+  }
+
+pub data SvgElement =
+  Svg {
+    id: Maybe<string>,
+    x: Maybe<CssLengthPercentage> = None,
+    y: Maybe<CssLengthPercentage> = None,
+    width: Maybe<CssLengthPercentage> = None,
+    height: Maybe<CssLengthPercentage> = None,
+    baseProfile: Maybe<string>,
+    version: Maybe<CssNumber>,
+    viewBox: Maybe<ViewBox>,
+    preserveAspectRatio: PreserveAspectRatio
+    children: []SvgElement = [],
+  }
+  | Title { text: Maybe<string> }
+  | Rect {
+    id: Maybe<string>,
+    x: Maybe<CssLengthPercentage> = None,
+    y: Maybe<CssLengthPercentage> = None,
+    width: Maybe<CssLengthPercentage> = None,
+    height: Maybe<CssLengthPercentage> = None,
+    stroke: Maybe<CssColor> = None,
+    fill: Maybe<CssColor> = None,
+    rx: Maybe<CssLengthPercentage> = None,
+    ry: Maybe<CssLengthPercentage> = None,
+    pathLength: Maybe<CssNumber>,
+  }
+  | Circle {
+    id: Maybe<string>,
+    cx: Maybe<CssLengthPercentage> = None,
+    cy: Maybe<CssLengthPercentage> = None,
+    r: Maybe<CssLengthPercentage> = None,
+    stroke: Maybe<CssColor> = None,
+    fill: Maybe<CssColor> = None,
+    pathLength: Maybe<CssNumber>,
+  }
+  | Path {
+    id: Maybe<string>,
+    d: Maybe<PathData> = None,
+    stroke: Maybe<CssColor> = None,
+    fill: Maybe<CssColor> = None,
+    pathLength: Maybe<CssNumber>,
+  }
+  | Other string
+
+/// A `viewBox`: the rectangle of user space an element's viewport shows.
+pub struct ViewBox {
+  min_x: f64,
+  min_y: f64,
+  width: f64,
+  height: f64,
+}
+
+pub tuple PreserveAspectRatio (Maybe<AspectRatioAlign>, Maybe<MeetOrSlice>)
+pub data AspectRatioAlign = AlignNone | XMinYMin | XMidYMin | XMaxYMin | XMinYMid | XMidYMid | XMaxYMid | XMinYMax | XMidYMax | XMaxYMax
+pub data MeetOrSlice = Meet | Slice
+
+pub type PathData = []PathSegment
+pub data PathSegment =
+  // A moveto's pairs after the first are linetos, drawn as `L` (or `l`) would draw them.
+  MoveToAbs []CoordinatePair
+  | MoveToRel []CoordinatePair
+  | LineToAbs []CoordinatePair
+  | LineToRel []CoordinatePair
+  | LineToHorizAbs { x: f64 }
+  | LineToHorizRel { dx: f64 }
+  | LineToVertAbs { y: f64 }
+  | LineToVertRel { dy: f64 }
+  | CubicBezierAbs { triplets: []CubicBezierTripletAbs }
+  | CubicBezierRel { triplets: []CubicBezierTripletRel }
+  | SmoothCubicBezierAbs { triplets: []CubicBezierTripletAbs }
+  | SmoothCubicBezierRel { triplets: []CubicBezierTripletRel }
+  | QuadBezierAbs { triplets: []QuadBezierTripletAbs }
+  | QuadBezierRel { triplets: []QuadBezierTripletRel }
+  | SmoothQuadBezierAbs { triplets: []QuadBezierTripletAbs }
+  | SmoothQuadBezierRel { triplets: []QuadBezierTripletRel }
+  | EllipticalArcCurveAbs {
+    rx: f64,
+    ry: f64,
+    angle: f64,
+    largeArcFlag: bool,
+    sweepFlag: bool,
+    x: f64,
+    y: f64
+  }
+  | EllipticalArcCurveRel {
+    rx: f64,
+    ry: f64,
+    angle: f64,
+    largeArcFlag: bool,
+    sweepFlag: bool,
+    dx: f64,
+    dy: f64
+  }
+  | ClosePath
+
+pub tuple CoordinatePair(f64, f64)
+
+pub struct CubicBezierTripletAbs { x1: f64, y1: f64, x2: f64, y2: f64, x: f64, y: f64 }
+pub struct CubicBezierTripletRel {
+  dx1: f64,
+  dy1: f64,
+  dx2: f64,
+  dy2: f64,
+  dx: f64,
+  dy: f64
+}
+pub struct QuadBezierTripletAbs { x1: f64, y1: f64, x: f64, y: f64 }
+pub struct QuadBezierTripletRel { dx1: f64, dy1: f64, dx: f64, dy: f64 }
+
+pub data CssLengthPercentage = CssLPLength CssLength | CssLPPercentage CssPercentage
+pub data CssLength = Num CssNumber | Px f64 | Cm f64 | Mm f64 | In f64 | Pt f64 | Em f64 | Rem f64 | Ex f64 | Pc f64
+pub type CssPercentage = f64
+pub type CssNumber = f64
+pub type ListOfNumbers = []f64
+pub type CssColor = string
