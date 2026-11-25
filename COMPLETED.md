@@ -9,6 +9,38 @@ Newest first.
 
 ## Dated log
 
+### 11/24/26 — An aliased constructor beside another of its name
+
+`import sdl.{ Event, KeyDown as SdlKeyDown }` beside `import gui.{ Input, KeyDown }`, or a
+`KeyDown` of the module's own, was refused since 10/21 (`constructorAliasCollisions`): the
+alias is erased into the constructor's own name before any pass, and afterwards the two were
+one name. Now `SdlKeyDown` is SDL's and the bare `KeyDown` the other, built, matched and typed
+each as its own data type's.
+
+- **Not a resolver by declaration across the compiler**, which the todo item named. A name
+  written through a namespace (`lib.Circle` beside the module's own `Circle`, 10/29) had
+  already met the same problem: erased to the bare name, its location recorded with the
+  module the qualifier named, and the two resolvers a construction or a pattern asks
+  (`declKey`, `DeclaringDataType`) answering from that record. The alias erasure now records
+  the import's module the same way, so everything after reads the right type, and the
+  dozen places that compare a constructor by name compare it within that type.
+- **The alias is kept on the node** (`Alias`, beside `Namespace`), for the reason the
+  qualifier is: the collect cache hands an unedited file's AST, its alias already erased, to
+  the next analysis, whose record starts empty. `TestConstructorAlias_SurvivesACachedReanalysis`.
+- **Two rankings that only mattered once both names could be reached.** A constructor
+  imported by its own name and one reached through its imported type ranked alike, so the
+  bare `KeyDown` went to whichever declaration's key sorted first — `pad`'s over `ui`'s in
+  the first run of the test. The constructor named now outranks the type. And an import
+  admitted its constructor by the original name under any alias, which made the bare
+  `KeyDown` SDL's as much as the other's; it admits it now only under its own name, as a
+  type imported under another name is.
+
+`TestExec_AnAliasedConstructorBesideAnotherOfItsName` (three `KeyDown`s of alike payload,
+two aliased, built, translated between types, matched and unwrapped) and
+`…BesideTheModulesOwnOfItsName`, with the driver's tests. Each of four mutations fails
+them: no record, the old ranking, the alias not kept on the node, any alias admitted by its
+original name.
+
 ### 11/23/26 — A rounded clip on SDL's renderer: the triangles cut to its corners
 
 **Neither way the item named was needed.** SDL's 2D renderer has no stencil, and drawing a

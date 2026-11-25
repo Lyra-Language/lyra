@@ -1,17 +1,16 @@
 package driver
 
 import (
-	"fmt"
-
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
-	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
 // eraseConstructorAliases rewrites every use of a constructor imported under an alias —
 // `import owner.{ OfMap as Theirs }` — to the constructor's own name, in the modules that
-// import it so, before any pass reads the program. It returns, per file, the declared names
-// of the constructors it rewrote there, which is what counts the import as used (lyra-W004).
+// import it so, before any pass reads the program, and records each use's location with the
+// module the import named (symbols/qualified.go), as a name written through a namespace is.
+// It returns, per file, the declared names of the constructors it rewrote there, which is
+// what counts the import as used (lyra-W004).
 //
 // **A desugaring, as an `impl` block is**, because a constructor is resolved by name in a
 // dozen places (construction, payloads, patterns, exhaustiveness, the backend's tags), each
@@ -20,9 +19,15 @@ import (
 // it: `Theirs` was lyra-E035 "undefined constructor or type" and `Big(3)` "undefined tuple
 // type", while a type or a function took an alias like any import.
 //
-// The rewritten name resolves through the import (symbols.importsConstructor admits a
-// member by its original name), so writing the original name in such a module resolves too;
-// the alias is what the program is expected to say. A module that declares its own name the
+// **The record is what keeps the alias's meaning** beside another constructor of the
+// original's name — `KeyDown as SdlKeyDown` beside `ui.backend`'s `KeyDown`, or this
+// module's own: the two resolvers a construction or a pattern asks (declKey,
+// DeclaringDataType) answer from the recorded module at that location. Until 11/24 there was
+// no record, so after the erasure the two were one name and such an import was refused.
+//
+// The alias is also kept on the node (Alias): the driver's collect cache shares an unedited
+// file's AST with the next analysis, whose symbol table starts without the record, and the
+// rewritten name alone could no longer find it. A module that declares its own name the
 // alias would take is left alone — its own declaration wins, as it does over any import.
 func eraseConstructorAliases(program *ast.Program, st *symbols.SymbolTable) map[string]map[string]bool {
 	aliases := constructorAliases(st)
@@ -30,22 +35,30 @@ func eraseConstructorAliases(program *ast.Program, st *symbols.SymbolTable) map[
 		return nil
 	}
 	used := map[string]map[string]bool{}
-	rename := func(name *string, loc ast.Location) {
-		original, ok := aliases[st.ModuleOfFile[loc.File]][*name]
+	rename := func(name, alias *string, loc ast.Location) {
+		written := *name
+		if *alias != "" {
+			written = *alias
+		}
+		imported, ok := aliases[st.ModuleOfFile[loc.File]][written]
 		if !ok {
+			// An alias a re-analysis no longer finds (the import changed under an unedited
+			// file) is put back as written, for the "undefined" that follows to name it.
+			*name, *alias = written, ""
 			return
 		}
-		*name = original
+		*name, *alias = imported.original, written
+		st.RecordQualified(loc, imported.module, imported.original)
 		if used[loc.File] == nil {
 			used[loc.File] = map[string]bool{}
 		}
-		used[loc.File][original] = true
+		used[loc.File][imported.original] = true
 	}
 	renamePatterns := func(node ast.AstNode) {
 		for _, p := range ast.PatternsOf(node) {
 			ast.WalkPattern(p, func(q ast.Pattern) bool {
 				if dp, ok := q.(*ast.DataPattern); ok {
-					rename(&dp.Name, dp.GetLocation())
+					rename(&dp.Name, &dp.Alias, dp.GetLocation())
 				}
 				return true
 			})
@@ -62,10 +75,10 @@ func eraseConstructorAliases(program *ast.Program, st *symbols.SymbolTable) map[
 		}, func(e ast.Expression) bool {
 			switch ex := e.(type) {
 			case *ast.DataConstructorExpr:
-				rename(&ex.Constructor, ex.GetLocation())
+				rename(&ex.Constructor, &ex.Alias, ex.GetLocation())
 			case *ast.TupleLiteralExpr:
 				// An applied constructor, `Big(3)`, is this node kind.
-				rename(&ex.Name, ex.GetLocation())
+				rename(&ex.Name, &ex.Alias, ex.GetLocation())
 			}
 			renamePatterns(e)
 			return true
@@ -74,13 +87,18 @@ func eraseConstructorAliases(program *ast.Program, st *symbols.SymbolTable) map[
 	return used
 }
 
+// importedConstructor is the constructor an alias names: its module and its own name.
+type importedConstructor struct {
+	module, original string
+}
+
 // constructorAliases is, per importing module, each alias a selective import gives a
-// constructor of the imported module, mapped to the constructor's own name.
-func constructorAliases(st *symbols.SymbolTable) map[string]map[string]string {
+// constructor of the imported module, mapped to the constructor it names.
+func constructorAliases(st *symbols.SymbolTable) map[string]map[string]importedConstructor {
 	if st == nil {
 		return nil
 	}
-	var out map[string]map[string]string
+	var out map[string]map[string]importedConstructor
 	for module, imports := range st.Imports {
 		for _, imp := range imports {
 			if imp.IsNamespace() {
@@ -95,12 +113,12 @@ func constructorAliases(st *symbols.SymbolTable) map[string]map[string]string {
 					continue
 				}
 				if out == nil {
-					out = map[string]map[string]string{}
+					out = map[string]map[string]importedConstructor{}
 				}
 				if out[module] == nil {
-					out[module] = map[string]string{}
+					out[module] = map[string]importedConstructor{}
 				}
-				out[module][local] = original
+				out[module][local] = importedConstructor{module: imp.Path, original: original}
 			}
 		}
 	}
@@ -112,72 +130,4 @@ func constructorAliases(st *symbols.SymbolTable) map[string]map[string]string {
 func declaresConstructor(st *symbols.SymbolTable, module, name string) bool {
 	_, ok := ownConstructor(st, module, name)
 	return ok
-}
-
-// constructorAliasCollisions refuses an aliased constructor import whose own name the
-// module also reaches as another constructor — its own, or another module's imported by
-// name or under an alias. The erasure above rewrites the alias to that name, and a
-// constructor is matched by name, so after it the two are one: `KeyDown as SdlKeyDown`
-// beside another module's `KeyDown` checked `SdlKeyDown(code)` against the other's payload,
-// and with payloads alike would have built the wrong one in silence. Until this is lifted —
-// a constructor resolved by its declaration rather than its name — one of the two has to be
-// renamed where it is declared.
-func constructorAliasCollisions(program *ast.Program, st *symbols.SymbolTable) []diag.Diagnostic {
-	if program == nil || st == nil {
-		return nil
-	}
-	var out []diag.Diagnostic
-	byModule := map[string]map[string][]string{} // module → constructor name → the modules it comes from
-	var aliased []struct {
-		module, source string
-		member         ast.ImportMember
-	}
-	for _, node := range program.Statements {
-		imp, ok := node.(*ast.ImportStmt)
-		if !ok || imp.Alias != "" {
-			continue
-		}
-		module := st.ModuleOfFile[imp.GetLocation().File]
-		source := joinModulePath(imp.Path)
-		for _, m := range imp.Members {
-			if !declaresConstructor(st, source, m.Name) {
-				continue
-			}
-			if byModule[module] == nil {
-				byModule[module] = map[string][]string{}
-			}
-			byModule[module][m.Name] = append(byModule[module][m.Name], source)
-			if m.Alias != "" && m.Alias != m.Name {
-				aliased = append(aliased, struct {
-					module, source string
-					member         ast.ImportMember
-				}{module, source, m})
-			}
-		}
-	}
-	for _, a := range aliased {
-		other := ""
-		if own, ok := ownConstructor(st, a.module, a.member.Name); ok {
-			other = fmt.Sprintf("this module's own %s (%s:%d)", a.member.Name,
-				own.GetLocation().File, own.GetLocation().StartLine)
-		}
-		for _, source := range byModule[a.module][a.member.Name] {
-			if other == "" && source != a.source {
-				other = fmt.Sprintf("the %s imported from module %q", a.member.Name, source)
-			}
-		}
-		if other == "" {
-			continue
-		}
-		out = append(out, diag.Diagnostic{
-			Location: a.member.Location,
-			Severity: diag.SeverityError,
-			Code:     diag.CodeTypeError,
-			Message: fmt.Sprintf(
-				"%s as %s: a constructor imported under another name is still matched by its own,"+
-					" so %s cannot be told from %s. Rename one of the two where its data type"+
-					" declares it", a.member.Name, a.member.Alias, a.member.Alias, other),
-		})
-	}
-	return out
 }

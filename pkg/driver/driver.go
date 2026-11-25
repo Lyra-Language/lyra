@@ -211,8 +211,8 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	program, symTable, scopeTable, collectorErrors := c.Finish()
 	res.Program, res.SymbolTable, res.ScopeTable = program, symTable, scopeTable
 	// Before every pass: an aliased constructor import is erased into the constructor's own
-	// name, and the uses it rewrote count the import as used (lyra-W004, below).
-	res.Diagnostics = append(res.Diagnostics, constructorAliasCollisions(program, symTable)...)
+	// name, each use's module recorded, and the uses it rewrote count the import as used
+	// (lyra-W004, below).
 	aliasedConstructorUses := eraseConstructorAliases(program, symTable)
 	// An aliased trait import likewise: an impl, a bound and a path name the trait itself.
 	aliasedTraitUses := eraseTraitAliases(program, symTable)

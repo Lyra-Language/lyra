@@ -993,9 +993,8 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
   (`bindings.sdl3`'s `push_event`) and read back through `next_events` (COMPLETED.md 11/23).
 - **[DONE 11/23] A rounded clip is rounded on SDL's renderer**: what it holds is cut to its
   corners as it is drawn (`ui.tess`'s `clip_rounded`; COMPLETED.md 11/23).
-- **[OPEN] A constructor resolved by its declaration, not its name.** Then `KeyDown as
-  SdlKeyDown` could stand beside another module's `KeyDown`, which is refused since 10/21
-  (`constructorAliasCollisions`) rather than silently confused.
+- **[DONE 11/24] `KeyDown as SdlKeyDown` stands beside another module's `KeyDown`**: each
+  erased use records the module the alias named, as a namespace's does (COMPLETED.md 11/24).
 - **[OPEN] An install carries `ui/`** beside `std/` and `bindings/` once a shipped program
   uses it — Vega's release copies those two into its lyra.
 - **[OPEN] Vega: `bindings.sdl3.Event` grew `TextInput`, `WindowResized`,

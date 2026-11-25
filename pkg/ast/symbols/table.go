@@ -1331,29 +1331,35 @@ func (st *SymbolTable) DeclaringDataType(ctorName string, loc ast.Location) (*as
 		}
 	}
 	// **Ranked by how the asking file reaches the type**, then by key: its own module's,
-	// one it imports by name (or whose constructor it does), the prelude's, one whose module
-	// it imports other names from, and last one merely program-wide (a namespace import
+	// one whose constructor it imports by that name, one whose type it imports, the
+	// prelude's, one whose module it imports other names from, and last one merely
+	// program-wide (a namespace import
 	// binds no bare name, so it reaches no further than that). Until 10/19 only the
 	// first rung existed and the rest was alphabetical — so a `pub data ImportEvent = … |
 	// TrueColor` anywhere in the program took `TrueColor` from five Vega modules that
 	// imported only `project.{ … }`, where `PixelFormat`'s is, since "ImportEvent" sorts
 	// before "PixelFormat" and any `pub` type resolves program-wide. The prelude sits above a
 	// module imported for something else, so a file importing a module that declares its own
-	// `Some` still means `Maybe`'s, as it always did.
+	// `Some` still means `Maybe`'s, as it always did. **The constructor named outranks the
+	// type**: `import ui.{ Input, KeyDown }` beside `import sdl.{ Event, KeyDown as
+	// SdlKeyDown }` reaches both `KeyDown`s through their types, and the bare name is the one
+	// imported as itself (until 11/24 the two ranked alike, and the key chose).
 	rank := func(k string) int {
 		decl := st.Types[k]
 		declaring := st.ModuleOfFile[decl.GetLocation().File]
 		switch {
 		case declaring == asking:
 			return 0
-		case st.importsName(loc, declaring, decl.Name) || st.importsConstructor(loc, ctorName, decl):
+		case st.importsConstructor(loc, ctorName, decl):
 			return 1
-		case declaring == st.PreludeModule && st.PreludeModule != "":
+		case st.importsName(loc, declaring, decl.Name):
 			return 2
-		case st.importsModule(loc, declaring):
+		case declaring == st.PreludeModule && st.PreludeModule != "":
 			return 3
+		case st.importsModule(loc, declaring):
+			return 4
 		}
-		return 4
+		return 5
 	}
 	ranks := make(map[string]int, len(keys))
 	for _, k := range keys {
@@ -1417,13 +1423,13 @@ func (st *SymbolTable) importsConstructor(loc ast.Location, ctorName string, dec
 		if imp.IsNamespace() || imp.Path != declaring {
 			continue
 		}
-		// By its original name, under whatever name the import gave it: an aliased
-		// constructor's uses are rewritten to the original before any pass reads them
-		// (driver, eraseConstructorAliases), so `Theirs` arrives here as `OfMap`.
-		for _, original := range imp.Members {
-			if original == ctorName {
-				return true
-			}
+		// Under its own name only. An aliased constructor's uses are rewritten to the
+		// original before any pass reads them (driver, eraseConstructorAliases) and answered
+		// from the module recorded at each, so the original name written bare is not the
+		// import's — beside another module's `KeyDown`, `KeyDown as SdlKeyDown` must not
+		// make the bare `KeyDown` SDL's.
+		if original, ok := imp.Members[ctorName]; ok && original == ctorName {
+			return true
 		}
 	}
 	return false

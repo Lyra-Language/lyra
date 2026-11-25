@@ -75,10 +75,10 @@ func payloadArity(st *symbols.SymbolTable, name string, loc ast.Location) int {
 func constructorLambda(dc *ast.DataConstructorExpr, fields int) *ast.LambdaExpr {
 	at := ast.AstBase{Location: dc.GetLocation()}
 	lambda := &ast.LambdaExpr{ExprBase: ast.ExprBase{AstBase: at}, ConstructorValue: dc}
-	// The qualifier goes with it (`xs.map(shapes.Circle)`): the lambda's own application
+	// The qualifier or alias goes with it (`xs.map(shapes.Circle)`): the lambda's own application
 	// sits at the constructor's span, so the record made for one answers for the other,
 	// and on a re-analysis this is the node the erasure meets.
-	apply := &ast.TupleLiteralExpr{ExprBase: ast.ExprBase{AstBase: at}, Name: dc.Constructor, Namespace: dc.Namespace}
+	apply := &ast.TupleLiteralExpr{ExprBase: ast.ExprBase{AstBase: at}, Name: dc.Constructor, Namespace: dc.Namespace, Alias: dc.Alias}
 	for i := range fields {
 		name := fmt.Sprintf("__%s%d", dc.Constructor, i)
 		lambda.Parameters = append(lambda.Parameters, ast.Parameter{
