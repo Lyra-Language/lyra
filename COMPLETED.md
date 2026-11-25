@@ -9,6 +9,16 @@ Newest first.
 
 ## Dated log
 
+### 11/25/26 — A shorthand field pattern binds its field's resolved type
+
+`match s { Box { fill } => show(fill), … }` with `fill: Hue` (a nominal `type`) refused the
+call: "cannot assign Hue to Hue". The named form `Box { fill: f }` and `if let Box { fill }`
+were fine. The struct arm of `walkDestructuredPattern` bound a shorthand field straight to the
+field type it read off the variant — still an `UnresolvedType` for a data variant's record —
+while the named form recursed, and the walk resolves its type on entry. The shorthand now
+resolves it too. Found by std/svg's tree printer on `Maybe<CssColor>`.
+`TestTypeCheck_DataMatch_ShorthandFieldOfNominalType_Ok`.
+
 ### 11/24/26 — An aliased constructor beside another of its name
 
 `import sdl.{ Event, KeyDown as SdlKeyDown }` beside `import gui.{ Input, KeyDown }`, or a

@@ -102,3 +102,19 @@ func TestTypeCheck_StructMatch_WildcardIsExhaustive_Ok(t *testing.T) {
   }`, false)
 	assertNoErrors(t, res)
 }
+
+// A shorthand field (`Box { fill }`) of a data variant binds the field's resolved type, as
+// the named form (`Box { fill: f }`) always did. Until 11/25 a match arm bound the
+// unresolved nominal, so passing it where that same type was wanted failed: "cannot assign
+// Hue to Hue" — found by std/svg's tree printer, on `Maybe<CssColor>`.
+func TestTypeCheck_DataMatch_ShorthandFieldOfNominalType_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+data Shape = Box { fill: Hue, edge: Hue } | Dot { id: i64 }
+type Hue = string
+let show = (h: Hue) -> string => base(h)
+let describe = (s: Shape) -> string => match s {
+  Box { fill, edge } => show(fill) ++ show(edge),
+  Dot { id } => "${id}",
+}`, false)
+	assertNoErrors(t, res)
+}

@@ -517,6 +517,10 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Language surface
 
+- **[OPEN] A named tuple is not taken apart by its name**: `let P(a, b) = p` is "cannot
+  destructure P(f64, f64) with a data pattern", and a `P(x, y)` arm "expected tuple pattern".
+  `let (a, b) = p` and `p.0` work (std/svg, 11/25). Accept the name, and say so in LANGUAGE.md.
+
 - **[DONE 11/13] A Genesis ROM names a trap's file from its root** (`std/genesis/sprites.lyra`,
   not the builder's path): the hero's 185 places lost 7.2 KB (COMPLETED.md, 11/13).
 

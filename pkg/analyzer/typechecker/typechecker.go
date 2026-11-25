@@ -1071,7 +1071,12 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 			if f.Pattern != nil {
 				tc.walkDestructuredPattern(f.Pattern, fieldType, bind)
 			} else {
-				bind(f.Name, fieldType)
+				// Resolved as the walk resolves `{ fill: f }`'s type on entry. A data
+				// variant's record fields can still be unresolved names here, and until
+				// 11/25 the shorthand `Box { fill }` in a match arm bound `fill` to the
+				// unresolved nominal `Hue`, which then refused itself: "cannot assign Hue
+				// to Hue".
+				bind(f.Name, tc.resolveType(fieldType, f.GetLocation()))
 			}
 		}
 
