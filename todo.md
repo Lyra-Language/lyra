@@ -607,9 +607,16 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Standard library and bindings
 
-- **[PLAN 11/25] SVG in `std.svg`**, in this order; the parser is the user's own work, so
-  guide and review it before writing any. Then CPU first: resvg's tests carry reference PNGs,
-  and the consoles need pixels anyway. The GPU comes through `ui` (GUI, below).
+- **[PLAN 11/26] TinyVG in `std.tinyvg`** — the user's own work, so guide and review it. Read
+  the binary format (header, colour table, commands, path segments) into a tree; then a CPU
+  renderer — fills, outlines, flat and gradient styles — checked against reference renderings,
+  arcs and quadratics as cubics. The GPU comes through `ui` paths (GUI, below).
+- **[IDEA 11/26] A vector graphics editor** — its own MIT app on `ui`, like Termina, opening
+  and saving TinyVG and SVG. Its document is TinyVG-shaped plus layers and names; it comes after
+  the TinyVG reader and renderer and `ui` paths, and opening SVG resumes `std.svg` (below).
+- **[PAUSED 11/26] SVG in `std.svg`**, for TinyVG (above), which covers the uses in sight. The
+  parser is the user's own work, so guide and review it before writing any. Then CPU first:
+  resvg's tests carry reference PNGs, and the consoles need pixels anyway.
   - **[PARTIAL] Parsing** (`std/svg/parse.lyra`): `<svg>`, `rect`, `circle`, all path data;
     other elements kept by name. Next: styles, transforms, groups, the remaining shapes.
   - **[OPEN] Resolution into a render tree**, as resvg's usvg: absolute commands, `S`/`T`
@@ -769,8 +776,8 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is built.
 
 - **[OPEN] Paths in the display list** — a path op, filled and stroked, through `ui.tess` and
-  both renderers, which replaces the flare's clipped rings and `PaintWave`. Then `std.svg`'s
-  render tree draws as ops, so Vega shows SVGs on the GPU at any zoom (SVG plan, above).
+  both renderers, which replaces the flare's clipped rings and `PaintWave`. Then a TinyVG image
+  draws as ops, so Vega shows vector art on the GPU at any zoom (TinyVG plan, above).
 - **[DONE 10/30] An interface-wide scale** — `App.interface_scale`: every logical unit that
   many times larger, on top of the display's scale; `Platform.set_interface_scale`, the
   factor in `ui.backend` for the renderers (`TestRun_UiInterfaceScale`). Vega's Settings size
