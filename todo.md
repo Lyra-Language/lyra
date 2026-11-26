@@ -607,6 +607,17 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Standard library and bindings
 
+- **[PLAN 11/25] SVG in `std.svg`**, in this order; the parser is the user's own work, so
+  guide and review it before writing any. Then CPU first: resvg's tests carry reference PNGs,
+  and the consoles need pixels anyway. The GPU comes through `ui` (GUI, below).
+  - **[PARTIAL] Parsing** (`std/svg/parse.lyra`): `<svg>`, `rect`, `circle`, all path data;
+    other elements kept by name. Next: styles, transforms, groups, the remaining shapes.
+  - **[OPEN] Resolution into a render tree**, as resvg's usvg: absolute commands, `S`/`T`
+    reflected, `H`/`V` and arcs as lines and cubics, one matrix per element, inherited paint,
+    shapes as paths. Both renderers read only that.
+  - **[OPEN] A CPU renderer** — fills, strokes, solid paint — checked against resvg's PNGs
+    within a small tolerance, `shapes/` first; gradients, clipping and text later, a test
+    directory at a time.
 - **[DONE 11/09] A panic in the standard library names its caller** — `@track_caller`, on
   every std function that traps on what its caller passed (COMPLETED.md, 11/09).
 - **[IDEA] `@track_caller` on a trait impl's method.** Its members (`show = (self) => …`)
@@ -757,6 +768,9 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is built.
 
+- **[OPEN] Paths in the display list** — a path op, filled and stroked, through `ui.tess` and
+  both renderers, which replaces the flare's clipped rings and `PaintWave`. Then `std.svg`'s
+  render tree draws as ops, so Vega shows SVGs on the GPU at any zoom (SVG plan, above).
 - **[DONE 10/30] An interface-wide scale** — `App.interface_scale`: every logical unit that
   many times larger, on top of the display's scale; `Platform.set_interface_scale`, the
   factor in `ui.backend` for the renderers (`TestRun_UiInterfaceScale`). Vega's Settings size
