@@ -24,11 +24,19 @@ module std.game.camera
 //! corner. The view is kept at
 //! whole pixels, so the planes and sprites scroll together without shimmering.
 //!
+//! **A camera may turn and zoom** — what a console's cannot: its `angle`, clockwise in degrees,
+//! and `zoom`, given to the screen once an update by [turn_screen], turn the world about the
+//! screen's middle (`screen.set_turn`) — a walk round a small world with its ground always
+//! below. The view is still placed, followed and kept inside the world unturned, so what it
+//! follows stays in the middle when its zone is centred there (`centred_zone`); [on_screen]
+//! is where the game places a sprite, and `screen.shown_at` where it then shows.
+//!
 //! **A plane holds the whole map** (`std.game.planes`), so scrolling is only telling the
 //! plane where the view is; [show_map] and [scroll_map] keep the Genesis camera's names, so
 //! a game ports between the two unchanged.
 
 import std.game.planes
+import std.game.screen
 
 /// The part of the screen what a camera follows may move in without the view moving, in
 /// screen pixels: `left` ≤ x and x + its width ≤ `right`, and the same down.
@@ -53,9 +61,18 @@ pub struct Camera {
   /// Where on the screen what it follows may move without the view moving: the whole
   /// screen unless the game sets one ([thirds], [centred_zone]).
   zone: Zone = Zone { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 },
+  /// The world turned clockwise about the screen's middle, in degrees ([turn_screen]).
+  angle: f32 = 0.0,
+  /// The world drawn this many times its size about the screen's middle: above 1 nearer,
+  /// below it further off ([turn_screen]).
+  zoom: f32 = 1.0,
 }
 
 impl Camera {
+  /// The camera's `angle` and `zoom` given to the screen (`screen.set_turn`): once an update,
+  /// after they change — the screen draws the turn between updates.
+  pub let turn_screen = (self) -> void => screen.set_turn(self.angle, self.zoom)
+
   /// The middle third of the view each way.
   pub let thirds = pure (self) -> Zone => Zone {
     left: whole(self.view_width / 3.0),

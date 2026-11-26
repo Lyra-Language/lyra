@@ -47,6 +47,14 @@ module std.game.screen
 //! front, and the sprites in front. Pixel art stays sharp: the screen is scaled by whole
 //! numbers into the window, nearest-neighbour, unless the game says otherwise.
 //!
+//! **The world may turn and grow** ([set_turn], or `std.game.camera`'s `angle` and `zoom`
+//! through `Camera.turn_screen`): the planes and sprites are composed off the screen, on a
+//! stage just large enough to cover it turned, and drawn turned about the screen's middle —
+//! the art's pixels turned whole, so pixel art stays pixel art. What is on the screen rather
+//! than in the world stays upright over it: the window plane, and a sprite marked `fixed` (a
+//! HUD). A game places everything as it would unturned; [shown_at] says where a point of that
+//! frame shows. Drawn between updates, the turn takes the shorter way round.
+//!
 //! **Played without anyone at it**, as Sheliak plays a ROM: `--frames N` stops after N
 //! frames, one update each, at scale 1; `--ppm FILE` writes the last as a binary PPM, at the
 //! screen's size whatever the window's; `--hold up,right` holds pad 1's buttons, and `--touch
@@ -95,6 +103,9 @@ import bindings.sdl3.{
   Rect,
   Texture,
   create_texture,
+  create_target_texture,
+  set_render_target,
+  reset_render_target,
   destroy_texture,
   draw_texture_flipped,
   draw_texture_rotated,
@@ -352,6 +363,75 @@ pub let set_fade = (color: u32, amount: f32) -> void => {
 /// How far the frame is faded ([set_fade]), 0 to 1.
 pub let faded = () -> f32 => fade_amount
 
+/// Turn the world `angle` degrees clockwise about the screen's middle and draw it `zoom`
+/// times its size (above 1 nearer, below it further off) — the planes and sprites, but not
+/// the window plane or a sprite marked `fixed`, which stay upright over it. Once an update,
+/// as a camera moves: the screen draws the turn between where the update before left it and
+/// this, the shorter way round. 0 and 1, the default, draw the frame as it is.
+pub let set_turn = (angle: f32, zoom: f32 = 1.0) -> void => {
+  let now = sprites.updates()
+  if turned_in != now {
+    // The first turn this update: where it was is where the last update left it — or,
+    // after a jump, here.
+    let fresh = turned_in < 0 || sprites.snapped()
+    was_angle = if fresh { angle } else { turn_angle }
+    was_zoom = if fresh { zoom.max(MIN_ZOOM) } else { turn_zoom }
+    turned_in = now
+  }
+  turn_angle = angle
+  turn_zoom = zoom.max(MIN_ZOOM)
+}
+
+/// The turn [set_turn] last gave: its angle in degrees and its zoom.
+pub let turn = () -> (f32, f32) => (turn_angle, turn_zoom)
+
+/// Where (`x`, `y`) of the frame as the game places it — in the art's pixels, unturned — shows
+/// on the screen turned as [set_turn] says: for what points at something in the world from
+/// the screen, or a finger meeting it.
+pub let shown_at = (x: f32, y: f32) -> (f32, f32) =>
+  turned_point(x, y, f32(width()), f32(height()), turn_angle, turn_zoom)
+
+/// Where (`x`, `y`) of a screen `width` × `height` shows with the frame turned `angle` degrees
+/// clockwise about its middle and grown `zoom` times — [shown_at]'s arithmetic, pure so it
+/// can be tested.
+pub let turned_point = pure (
+  x: f32,
+  y: f32,
+  width: f32,
+  height: f32,
+  angle: f32,
+  zoom: f32
+) -> (f32, f32) => {
+  let a = angle * RADIANS
+  let (c, s) = (a.cos(), a.sin())
+  let dx = (x - width / 2.0) * zoom
+  let dy = (y - height / 2.0) * zoom
+  (width / 2.0 + dx * c - dy * s, height / 2.0 + dx * s + dy * c)
+}
+
+/// The part of the frame, as the game places it, that a screen `width` × `height` shows turned
+/// `angle` degrees about its middle and grown `zoom` times: left, top, right and bottom, whole
+/// pixels with one spare round them — what the stage holds. The screen itself unturned.
+pub let turned_cover = pure (
+  width: f32,
+  height: f32,
+  angle: f32,
+  zoom: f32
+) -> (i64, i64, i64, i64) => {
+  let a = angle * RADIANS
+  let c = a.cos().abs()
+  let s = a.sin().abs()
+  let z = zoom.max(MIN_ZOOM)
+  let hx = (c * width / 2.0 + s * height / 2.0) / z
+  let hy = (s * width / 2.0 + c * height / 2.0) / z
+  (
+    (width / 2.0 - hx).floor() - 1,
+    (height / 2.0 - hy).floor() - 1,
+    (width / 2.0 + hx).ceil() + 1,
+    (height / 2.0 + hy).ceil() + 1
+  )
+}
+
 /// The art the planes' cells show in `palette` (0–15): `columns` tiles a row, `tile_size`
 /// pixels square each (every palette's alike), `pixels` the whole picture row by row, `0xAARRGGBB` (alpha 0 is transparent). Tile
 /// `t` is the `t`-th, left to right, top to bottom; tile 0 should be blank. A cell in palette
@@ -434,23 +514,33 @@ pub let show = () -> void => {
   planes.step_tiles(if limit > 0 { frame * 1000 / 60 } else { i64(ticks_ns()) / 1000000 })
   // The art drawn its scale's times larger: SDL's scale under the screen's presentation —
   // but for a sprite drawn at the screen's own pixels (`unscaled`), which `draw_sprites` sets.
+  // Turned or grown, the world is composed on the stage and drawn turned; what is on the
+  // screen rather than in it after, upright.
+  let (angle, zoom) = turn_at(t)
+  let staged = turning(angle, zoom) && begin_stage(r, angle, zoom)
+  if !staged { view_all() }
+  sprite_pass = if staged { WORLD_SPRITES } else { ALL_SPRITES }
   r.set_scale(f32(art_scale), f32(art_scale))
   // With raster changes or colours cycling, in bands of lines, each drawn from the art in its
   // colours (`std.game.raster`): a band's lines alone of the planes, the sprites clipped to them.
+  // On the stage the first band reaches up to its top and the last down to its bottom.
   let banded = raster.bands(height(), t)
   if banded.len() == 0 {
-    draw_layers(r, t, 0, height(), false)
+    draw_layers(r, t, view_top, view_bottom, false)
   } else {
     for k, (top, shown) in banded {
-      let bottom = if k + 1 < banded.len() { banded[k + 1].0 } else { height() }
-      if bottom <= top { continue }
+      let from = if k == 0 { top.min(view_top) } else { top }
+      let bottom = if k + 1 < banded.len() { banded[k + 1].0 } else { view_bottom }
+      if bottom <= from { continue }
       use_band(shown)
-      draw_layers(r, t, top, bottom, true)
+      draw_layers(r, t, from, bottom, true)
     }
     band_tiles = [-1; PALETTES]
     band_sheet = -1
     let _ = r.clear_clip()
   }
+  if staged { end_stage(r, t, angle, zoom) }
+  sprite_pass = ALL_SPRITES
   r.set_scale(1.0, 1.0)
   // A fade over everything, the screen's own pixels: `std.game.palette`'s.
   if fade_amount > 0.0 {
@@ -483,8 +573,10 @@ pub let close = () -> u8 => {
     if let Some(t) = art { destroy_texture(t) }
   }
   if let Some(t) = sprite_art { destroy_texture(t) }
+  if let Some(t) = stage { destroy_texture(t) }
   tile_art = [None; PALETTES]
   sprite_art = None
+  stage = None
   pad.release()
   if let Some(r) = renderer { destroy_renderer(r) }
   if let Some(w) = window { destroy_window(w) }
@@ -612,6 +704,136 @@ var owed_ns: i64 = 0
 /// that show left it: a frame whose updates no `sprites.clear` counted is counted by [show].
 var ran_since_show: i64 = 0
 var counted_at_show: i64 = -1
+
+/// Degrees to radians.
+const RADIANS: f32 = 0.017453292
+/// The least a turn's zoom may be: a world grown smaller than this would need a stage of
+/// thousands of screens.
+const MIN_ZOOM: f32 = 0.125
+
+/// The turn ([set_turn]): now, the update before, and the update it was given in.
+var turn_angle: f32 = 0.0
+var turn_zoom: f32 = 1.0
+var was_angle: f32 = 0.0
+var was_zoom: f32 = 1.0
+var turned_in: i64 = -1
+/// The stage a turned frame is composed on, and its size in texels: made as large as a frame
+/// has needed, so it is not made anew each frame.
+var stage: Maybe<Texture> = None
+var stage_width: i64 = 0
+var stage_height: i64 = 0
+/// The part of the frame being drawn, in the art's pixels as the game places things — the
+/// screen, or on the stage what covers the screen turned ([turned_cover]) — and how far its
+/// drawing is moved, so the part's top-left is the stage's.
+var view_left: i64 = 0
+var view_top: i64 = 0
+var view_right: i64 = 0
+var view_bottom: i64 = 0
+var shift_x: f32 = 0.0
+var shift_y: f32 = 0.0
+/// Which sprites are drawn now: all of them, those in the world (on the stage), or those
+/// `fixed` to the screen (after it).
+const ALL_SPRITES: i64 = 0
+const WORLD_SPRITES: i64 = 1
+const FIXED_SPRITES: i64 = 2
+var sprite_pass: i64 = ALL_SPRITES
+
+/// The turn `t` of the way from the update before to this one: the angle the shorter way
+/// round.
+let turn_at = (t: f32) -> (f32, f32) => {
+  let d = turn_angle - was_angle
+  let shorter = d - 360.0 * f32((d / 360.0).round())
+  (was_angle + shorter * t, was_zoom + (turn_zoom - was_zoom) * t)
+}
+
+/// Whether a turn of `angle` degrees grown `zoom` changes the frame: not a whole number of
+/// turns, or not its own size.
+let turning = pure (angle: f32, zoom: f32) -> bool =>
+  apart(angle - 360.0 * f32((angle / 360.0).round()), 0.0) || apart(zoom, 1.0)
+
+/// The whole screen drawn where it is: the part drawn, and no shift.
+let view_all = () -> void => {
+  view_left = 0
+  view_top = 0
+  view_right = width()
+  view_bottom = height()
+  shift_x = 0.0
+  shift_y = 0.0
+}
+
+/// Draw on the stage, cleared to the backdrop, the part of the frame the screen shows turned
+/// `angle` and grown `zoom` — or, when the stage cannot be made, `false`, the frame drawn as
+/// it is.
+let begin_stage = (r: Renderer, angle: f32, zoom: f32) -> bool => {
+  let (left, top, right, bottom) = turned_cover(f32(width()), f32(height()), angle, zoom)
+  let w = (right - left) * art_scale
+  let h = (bottom - top) * art_scale
+  if w > stage_width || h > stage_height {
+    if let Some(old) = stage { destroy_texture(old) }
+    stage = None
+    let grown_w = w.max(stage_width)
+    let grown_h = h.max(stage_height)
+    let Some(made) = create_target_texture(r, grown_w, grown_h) else {
+      stage_width = 0
+      stage_height = 0
+      return false
+    }
+    set_texture_scale_mode(made, scale_mode(looking))
+    stage = Some(made)
+    stage_width = grown_w
+    stage_height = grown_h
+  }
+  let Some(on) = stage else { return false }
+  if !set_render_target(r, on) { return false }
+  r.set_draw_color(backdrop)
+  r.clear()
+  view_left = left
+  view_top = top
+  view_right = right
+  view_bottom = bottom
+  shift_x = f32(-left)
+  shift_y = f32(-top)
+  true
+}
+
+/// The stage drawn on the screen turned `angle` about its middle and grown `zoom`, over the
+/// backdrop — then the window plane and the `fixed` sprites over it, upright, `t` of the way
+/// from the update before.
+let end_stage = (r: Renderer, t: f32, angle: f32, zoom: f32) -> void => {
+  let _ = reset_render_target(r)
+  let Some(on) = stage else { return }
+  r.set_scale(1.0, 1.0)
+  r.set_draw_color(backdrop)
+  r.clear()
+  let k = f32(art_scale)
+  let w = f32(view_right - view_left)
+  let h = f32(view_bottom - view_top)
+  // The stage's middle, where the screen's middle shows it turned.
+  let (cx, cy) = turned_point(
+    f32(view_left) + w / 2.0,
+    f32(view_top) + h / 2.0,
+    f32(width()),
+    f32(height()),
+    angle,
+    zoom
+  )
+  let place = Rect {
+    x: cx * k - w * k * zoom / 2.0,
+    y: cy * k - h * k * zoom / 2.0,
+    w: w * k * zoom,
+    h: h * k * zoom
+  }
+  let source = Rect { x: 0.0, y: 0.0, w: w * k, h: h * k }
+  draw_texture_rotated(r, on, source, place, f64(angle), FLIP_NONE)
+  // What is on the screen rather than in the world, upright over it.
+  view_all()
+  r.set_scale(k, k)
+  sprite_pass = FIXED_SPRITES
+  draw_window(r, false)
+  draw_sprites(r, false, t, 0, height(), false)
+  draw_window(r, true)
+  draw_sprites(r, true, t, 0, height(), false)
+}
 
 /// `--frames N`, `--ppm FILE` and `--hold BUTTONS`, from the program's arguments — or
 /// `false`, having said what is wrong.
@@ -862,7 +1084,7 @@ let clip_lines = (r: Renderer, top: i64, bottom: i64, scale: f32) -> void => {
   let k = f32(art_scale) / scale
   let _ = r.set_clip(PixelRect {
     x: 0,
-    y: i32((f32(top) * k).round()),
+    y: i32(((f32(top) + shift_y) * k).round()),
     w: 65535,
     h: i32((f32(bottom - top) * k).round())
   })
@@ -872,7 +1094,10 @@ let clip_lines = (r: Renderer, top: i64, bottom: i64, scale: f32) -> void => {
 /// front, or those behind, between screen lines `top` and `bottom`; each scrolled `t` of the
 /// way from the update before ([blend]).
 let draw_planes = (r: Renderer, front: bool, t: f32, top: i64, bottom: i64) -> void => {
-  let window_bottom = planes.rows_in_window() * tile_side
+  // On the stage the window is not in the world: plane A goes on under it, and the window is
+  // drawn upright after ([draw_window]).
+  let on_stage = sprite_pass == WORLD_SPRITES
+  let window_bottom = if on_stage { 0 } else { planes.rows_in_window() * tile_side }
   draw_banded(r, planes.plane(planes.PLANE_B), t, front, top, bottom)
   for k in planes.FIRST_LAYER..<planes.plane_count() {
     draw_banded(r, planes.plane(k), t, front, top, bottom)
@@ -882,6 +1107,14 @@ let draw_planes = (r: Renderer, front: bool, t: f32, top: i64, bottom: i64) -> v
     let w = planes.plane(planes.WINDOW)
     draw_plane(r, Plane { w | x: 0.0, y: 0.0 }, front, top, window_bottom.min(bottom))
   }
+}
+
+/// The window plane's rows, its cells in front or those behind, where they are on the screen.
+let draw_window = (r: Renderer, front: bool) -> void => {
+  let window_bottom = planes.rows_in_window() * tile_side
+  if window_bottom <= 0 { return }
+  let w = planes.plane(planes.WINDOW)
+  draw_plane(r, Plane { w | x: 0.0, y: 0.0 }, front, 0, window_bottom.min(height()))
 }
 
 /// `p` where it shows `t` of the way from the update before.
@@ -975,8 +1208,8 @@ let draw_plane = (r: Renderer, p: Plane, front: bool, top: i64, bottom: i64) -> 
   }
   if apart(p.columns.wave, 0.0) {
     let column = planes.COLUMN_TILES * tile_side
-    var k = 0
-    while k * column < width() {
+    var k = (view_left - view_left %% column) / column
+    while k * column < view_right {
       let down = p.column_offset(k, f32(column), p.column_shown).round()
       draw_cells(
         r,
@@ -991,7 +1224,7 @@ let draw_plane = (r: Renderer, p: Plane, front: bool, top: i64, bottom: i64) -> 
     }
     return
   }
-  draw_cells(r, p, front, top, bottom, 0, width())
+  draw_cells(r, p, front, top, bottom, view_left, view_right)
 }
 
 /// [draw_plane]'s cells between screen columns `left` and `right` too.
@@ -1049,8 +1282,8 @@ let draw_cells = (
         h: f32(to - from),
       }
       let place = Rect {
-        x: f32(x_from),
-        y: f32(from),
+        x: f32(x_from) + shift_x,
+        y: f32(from) + shift_y,
         w: f32(x_to - x_from),
         h: f32(to - from)
       }
@@ -1073,8 +1306,8 @@ let draw_laid_out = (r: Renderer, p: Plane, layout: Layout, front: bool) -> void
       let (bx, by) = layout.box_of(column, row)
       let left = bx - sx
       let base = by + layout.cell_height - layout.block_height * tile_side - sy
-      if left >= width() || base >= height() { continue }
-      if left + layout.block_width * tile_side <= 0 || base + layout.block_height * tile_side <= 0 { continue }
+      if left >= view_right || base >= view_bottom { continue }
+      if left + layout.block_width * tile_side <= view_left || base + layout.block_height * tile_side <= view_top { continue }
       let palette = i64((word & PALETTE_MASK) >> PALETTE_SHIFT)
       let Some(art) = if band_tiles[palette] >= 0 && tint_art[band_tiles[palette]].is_some() {
         tint_art[band_tiles[palette]]
@@ -1094,8 +1327,8 @@ let draw_laid_out = (r: Renderer, p: Plane, layout: Layout, front: bool) -> void
             h: f32(tile_side),
           }
           let place = Rect {
-            x: f32(left + tx * tile_side),
-            y: f32(base + ty * tile_side),
+            x: f32(left + tx * tile_side) + shift_x,
+            y: f32(base + ty * tile_side) + shift_y,
             w: f32(tile_side),
             h: f32(tile_side),
           }
@@ -1126,21 +1359,25 @@ let draw_sprites = (
   while i >= 0 {
     let (x, y) = list[i].at(t)
     let s = Sprite { list[i] | x: x, y: y }
-    if s.front == front && s.alpha > 0.0 && s.scale > 0.0 {
+    let passing = sprite_pass == ALL_SPRITES || (sprite_pass == FIXED_SPRITES) == s.fixed
+    if passing && s.front == front && s.alpha > 0.0 && s.scale > 0.0 {
       let scale = if s.unscaled { 1.0 } else { f32(art_scale) }
       r.set_scale(scale, scale)
       if clipped { clip_lines(r, top, bottom, scale) }
+      // The stage's shift, in the art's pixels, counted in the sprite's.
+      let dx = shift_x * f32(art_scale) / scale
+      let dy = shift_y * f32(art_scale) / scale
       let source = Rect { x: s.sheet_x, y: s.sheet_y, w: s.width, h: s.height }
       if s.as_drawn() {
         let place = Rect {
-          x: f32(s.x.floor()),
-          y: f32(s.y.floor()),
+          x: f32(s.x.floor()) + dx,
+          y: f32(s.y.floor()) + dy,
           w: s.width,
           h: s.height
         }
         draw_texture_flipped(r, art, source, place, flips(s.flip_x, s.flip_y))
       } else {
-        draw_changed(r, art, s, source)
+        draw_changed(r, art, s, source, dx, dy)
       }
     }
     i -= 1
@@ -1154,12 +1391,19 @@ let draw_sprites = (
 /// Grown about its middle, its box at the whole pixel a sprite as drawn is at: a place
 /// between pixels is one each renderer rounds its own way, and a turned star moving along
 /// a path was a pixel apart on the Mac and in the iOS Simulator (11/10).
-let draw_changed = (r: Renderer, art: Texture, s: Sprite, source: Rect) -> void => {
+let draw_changed = (
+  r: Renderer,
+  art: Texture,
+  s: Sprite,
+  source: Rect,
+  dx: f32,
+  dy: f32
+) -> void => {
   let w = s.width * s.scale
   let h = s.height * s.scale
   let place = Rect {
-    x: f32(s.x.floor()) + (s.width - w) / 2.0,
-    y: f32(s.y.floor()) + (s.height - h) / 2.0,
+    x: f32(s.x.floor()) + (s.width - w) / 2.0 + dx,
+    y: f32(s.y.floor()) + (s.height - h) / 2.0 + dy,
     w: w,
     h: h
   }

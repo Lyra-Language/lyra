@@ -1,0 +1,193 @@
+// A camera that turns and zooms (`std.game.camera`'s `angle` and `zoom`, drawn by
+// `std.game.screen`'s `set_turn`): the walker's hero in a field bigger than the screen, the
+// world turned about him while he stays upright, and a compass fixed to the screen.
+//
+//   lyrac run turner.lyra             # arrows walk, Z and C turn the world, X held zooms out
+//   lyrac run turner.lyra -- --frames 90 --hold right,c --ppm turner.ppm   # plays itself
+//
+// The arrows walk the way they point on the screen, however the world is turned: the step
+// is turned back into the world's before he moves. Everything is placed as if unturned —
+// the screen does the turning.
+
+import std.game.screen
+import std.game.pad
+import std.game.planes
+import std.game.sprites
+import std.game.sprites.{ Sprite }
+import std.game.camera.{ Camera }
+
+/// How far a held direction moves the hero each update, in pixels.
+const SPEED: f32 = 2.0
+
+/// How far Z or C turns the world each update, in degrees.
+const TURN_SPEED: f32 = 1.5
+
+/// The zoom with X held, and how far an update moves towards it or back to 1.
+const FAR_ZOOM: f32 = 0.5
+const ZOOM_STEP: f32 = 0.02
+
+/// The hero is 16×16, two frames side by side in the sprite art; the compass beside them.
+const HERO_SIZE: f32 = 16.0
+
+/// The screen, and the world: a field of 80 × 56 tiles.
+const WIDTH: i64 = 320
+const HEIGHT: i64 = 224
+const COLUMNS: i64 = 80
+const ROWS: i64 = 56
+
+/// Degrees to radians.
+const RADIANS: f32 = 0.017453292
+
+let main = () -> u8 => {
+  if !screen.open("Turner", WIDTH, HEIGHT) { return 1 }
+  screen.set_backdrop(16, 24, 48)
+  screen.load_tiles(3, tile_art())
+  screen.load_sprites(48, sprite_art())
+  planes.write_plane(planes.PLANE_B, field(), COLUMNS)
+
+  let world_w = f32(COLUMNS * 8)
+  let world_h = f32(ROWS * 8)
+  var view = Camera {
+    world_width: world_w,
+    world_height: world_h,
+    view_width: f32(WIDTH),
+    view_height: f32(HEIGHT),
+  }
+  view.zone = view.centred_zone(HERO_SIZE, HERO_SIZE)
+  var x = (world_w - HERO_SIZE) / 2.0
+  var y = (world_h - HERO_SIZE) / 2.0
+  view = view.kept_inside()
+  var step = 0
+  var updates = 0
+  while screen.running() {
+    for _ in 0..<screen.updates_due() {
+      let buttons = pad.read(1)
+      // The turn and the zoom.
+      if pad.held(buttons, pad.A) { view.angle -= TURN_SPEED }
+      if pad.held(buttons, pad.C) { view.angle += TURN_SPEED }
+      let goal = if pad.held(buttons, pad.B) { FAR_ZOOM } else { 1.0 }
+      view.zoom = toward(view.zoom, goal, ZOOM_STEP)
+      // A step on the screen, turned back into the world's.
+      var dx: f32 = 0.0
+      var dy: f32 = 0.0
+      if pad.held(buttons, pad.LEFT) { dx = -SPEED }
+      if pad.held(buttons, pad.RIGHT) { dx = SPEED }
+      if pad.held(buttons, pad.UP) { dy = -SPEED }
+      if pad.held(buttons, pad.DOWN) { dy = SPEED }
+      let a = view.angle * RADIANS
+      let wx = dx * a.cos() + dy * a.sin()
+      let wy = dy * a.cos() - dx * a.sin()
+      let nx = (x + wx).clamp(0.0, world_w - HERO_SIZE)
+      let ny = (y + wy).clamp(0.0, world_h - HERO_SIZE)
+      if (nx - x).abs() > 0.01 || (ny - y).abs() > 0.01 {
+        updates += 1
+        if updates == 8 {
+          updates = 0
+          step = 1 - step
+        }
+      } else {
+        step = 0
+        updates = 0
+      }
+      x = nx
+      y = ny
+      view.follow(x, y, HERO_SIZE, HERO_SIZE)
+      view.turn_screen()
+    }
+    sprites.clear()
+    // The compass, fixed to the screen: its needle turned with the world, so it points to
+    // the field's north.
+    sprites.add(Sprite {
+      x: 8.0,
+      y: 8.0,
+      width: HERO_SIZE,
+      height: HERO_SIZE,
+      sheet_x: 32.0,
+      sheet_y: 0.0,
+      angle: view.angle,
+      fixed: true,
+    })
+    // The hero, turned against the world, so he stands upright on the screen.
+    let (sx, sy) = view.on_screen(x, y)
+    sprites.add(Sprite {
+      x: sx,
+      y: sy,
+      width: HERO_SIZE,
+      height: HERO_SIZE,
+      sheet_x: f32(step) * HERO_SIZE,
+      sheet_y: 0.0,
+      angle: -view.angle,
+    })
+    view.scroll_map(planes.PLANE_B, field(), COLUMNS)
+    screen.show()
+  }
+  screen.close()
+}
+
+/// `at` moved `by` towards `to`, never past it.
+let toward = pure (at: f32, to: f32, by: f32) -> f32 =>
+  if at < to { (at + by).min(to) } else { (at - by).max(to) }
+
+/// Three tiles, side by side: blank, grass with darker blades, and stone.
+let tile_art = pure () -> [192]u32 => {
+  var art: [192]u32 = #[0; 192]
+  for row in 0..<8 {
+    for column in 0..<8 {
+      let blade = (row + column * 3) % 5 == 0
+      art[row * 24 + 8 + column] = if blade { GRASS_DARK } else { GRASS }
+      let seam = row == 7 || column == 7
+      art[row * 24 + 16 + column] = if seam { STONE_DARK } else { STONE }
+    }
+  }
+  art
+}
+
+/// The field: grass, crossed by stone paths every ten tiles, inside a border of nothing.
+let field = pure () -> [4480]u32 => {
+  var cells: [4480]u32 = #[0; 4480]
+  for row in 1..<ROWS - 1 {
+    for column in 1..<COLUMNS - 1 {
+      let path = row % 10 == 0 || column % 10 == 0
+      cells[row * COLUMNS + column] = if path { 2 } else { 1 }
+    }
+  }
+  cells
+}
+
+/// The hero's two frames, 16×16 each — a red body with a white eye, his feet apart in the
+/// second — and the compass: a ring with a needle, white to the north.
+let sprite_art = pure () -> [768]u32 => {
+  var art: [768]u32 = #[0; 768]
+  for frame in 0..<2 {
+    for row in 2..<14 {
+      for column in 3..<13 { art[row * 48 + frame * 16 + column] = RED }
+    }
+    for row in 4..<7 {
+      for column in 8..<11 { art[row * 48 + frame * 16 + column] = WHITE }
+    }
+    let spread = frame * 2
+    for row in 14..<16 {
+      art[row * 48 + frame * 16 + 4 - spread] = RED
+      art[row * 48 + frame * 16 + 11 + spread] = RED
+    }
+  }
+  for row in 0..<16 {
+    for column in 0..<16 {
+      let dx = column * 2 - 15
+      let dy = row * 2 - 15
+      let d = dx * dx + dy * dy
+      if d >= 169 && d <= 225 { art[row * 48 + 32 + column] = WHITE }
+    }
+  }
+  for row in 3..<13 {
+    for column in 7..<9 { art[row * 48 + 32 + column] = if row < 8 { WHITE } else { RED } }
+  }
+  art
+}
+
+const GRASS: u32 = 0xFF30A030
+const GRASS_DARK: u32 = 0xFF207020
+const STONE: u32 = 0xFF909098
+const STONE_DARK: u32 = 0xFF606068
+const RED: u32 = 0xFFE03020
+const WHITE: u32 = 0xFFFFFFFF

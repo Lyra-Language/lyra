@@ -9,6 +9,27 @@ Newest first.
 
 ## Dated log
 
+### 11/25/26 — `std.game`'s camera turns and zooms
+
+The first step towards a game on round worlds (Vega's todo, Round worlds): `Camera.angle` and
+`zoom`, given to the screen by `turn_screen` (`screen.set_turn`), turn the world about the
+screen's middle.
+
+- **The world is composed on a stage, then drawn turned** — a target texture covering the
+  screen turned (`turned_cover`), drawn with `SDL_RenderTextureRotated` (bindings'
+  `create_target_texture`, `set_render_target`). Turning each tile and sprite on its own
+  would have left seams between tiles and a separate turn for every plane's cells; turning
+  the composed frame keeps planes, bands, splits and raster changes as they are, each
+  only moved by the stage's shift (`shift_x`, `view_left`…).
+- **Pixel art stays pixel art**: an art pixel is turned whole, nearest-neighbour at the
+  art scale — at `set_art_scale(5)` the stage is the screen's resolution, so a turned pixel
+  is a clean square, not a 1-pixel stairstep.
+- **What is on the screen stays upright**: the window plane and a sprite marked `fixed`,
+  drawn after the stage over it. Plane A is drawn whole under the window on the stage.
+- **Unturned, nothing changes** — no stage, no shift — so every frame test and Vega's
+  hero-modern frame compare stay byte for byte. The turn is drawn between updates like a
+  scroll, the shorter way round. `TestRun_GameScreenTurnsTheWorld`; `examples/game/turner.lyra`.
+
 ### 11/25/26 — A shorthand field pattern binds its field's resolved type
 
 `match s { Box { fill } => show(fill), … }` with `fill: Hue` (a nominal `type`) refused the

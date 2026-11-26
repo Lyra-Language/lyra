@@ -21,7 +21,8 @@ module std.game.sprites
 //! draws it as it is: see through it (`alpha`), colour it (`tint`), turn it (`angle`), grow it
 //! (`scale`, about its middle), and make it light rather than paint (`additive`: its colours
 //! add to what is beneath — a glow, a spark, fire). And draw at the screen's own pixels over
-//! art the screen scales up (`unscaled`): a HUD, or text (`std.game.text`), kept sharp.
+//! art the screen scales up (`unscaled`): a HUD, or text (`std.game.text`), kept sharp; and
+//! stay upright on the screen when the world turns (`fixed`, `screen.set_turn`).
 //!
 //! **A sprite may say where it was the update before** ([came_from]), and the screen draws it
 //! between there and here by how far the clock is between updates (`screen.blend`), so
@@ -58,6 +59,10 @@ pub struct Sprite {
   /// its place and size counted in `screen.full_width()` × `full_height()` — a HUD or text
   /// drawn sharp over art scaled up, from art drawn at the screen's resolution.
   unscaled: bool = false,
+  /// On the screen rather than in the world: left upright and its own size when the world is
+  /// turned or grown (`screen.set_turn`) — a HUD, a pointer to what is off the screen. Drawn
+  /// then over the world, whatever its `front`.
+  fixed: bool = false,
   /// Where it was on the screen the update before, when `was_there` ([came_from]): it is
   /// drawn between there and (`x`, `y`).
   was_x: f32 = 0.0,

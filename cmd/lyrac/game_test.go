@@ -1031,6 +1031,100 @@ let main = () -> u8 => {
 	}
 }
 
+// The world turned and grown about the screen's middle (screen.set_turn, a camera's angle
+// and zoom): a plane's tile and a sprite composed on the stage and drawn turned, a sprite
+// marked fixed left upright over them — at the art's own size and at twice it.
+func TestRun_GameScreenTurnsTheWorld(t *testing.T) {
+	t.Parallel()
+	const program = `import std.game.screen
+import std.game.planes
+import std.game.sprites
+import std.game.sprites.{ Sprite }
+import std.game.camera.{ Camera }
+
+const CELLS: [4]u32 = #[1, 0, 0, 0]
+
+let near = pure (a: f32, b: f32) -> bool => (a - b).abs() < 0.01
+
+let main = () -> u8 => {
+  let (px, py) = screen.turned_point(0.0, 0.0, 16.0, 16.0, 90.0, 1.0)
+  if !near(px, 16.0) || !near(py, 0.0) { return 3 }
+  let (zx, zy) = screen.turned_point(12.0, 4.0, 16.0, 16.0, 0.0, 2.0)
+  if !near(zx, 16.0) || !near(zy, 0.0) { return 4 }
+  if screen.turned_cover(16.0, 16.0, 0.0, 1.0) != (-1, -1, 17, 17) { return 5 }
+  if screen.turned_cover(16.0, 16.0, 45.0, 1.0) != (-5, -5, 21, 21) { return 6 }
+  if screen.turned_cover(16.0, 16.0, 0.0, 2.0) != (3, 3, 13, 13) { return 7 }
+  if !screen.open("turn", %[1]d, %[1]d) { return 2 }
+  screen.set_art_scale(%[2]d)
+  // Tile 1 blue; the sprite art red, then green, two pixels each.
+  var tiles: [128]u32 = #[0; 128]
+  for row in 0..<8 {
+    for column in 0..<8 { tiles[row * 16 + 8 + column] = 0xFF0000FF }
+  }
+  screen.load_tiles(2, tiles)
+  screen.load_sprites(4, #[0xFFFF0000, 0xFFFF0000, 0xFF00FF00, 0xFF00FF00, 0xFFFF0000, 0xFFFF0000, 0xFF00FF00, 0xFF00FF00])
+  planes.write_plane(planes.PLANE_B, CELLS, 2)
+  var view = Camera { world_width: 16.0, world_height: 16.0, view_width: 16.0, view_height: 16.0, angle: %[3]s, zoom: %[4]s }
+  while screen.running() {
+    sprites.clear()
+    view.turn_screen()
+    sprites.add(Sprite { x: 0, y: 0, width: 2, height: 2, sheet_x: 2, sheet_y: 0, fixed: true })
+    sprites.add(Sprite { x: 12, y: 12, width: 2, height: 2, sheet_x: 0, sheet_y: 0 })
+    screen.show()
+  }
+  screen.close()
+}
+`
+	blue, red, green, black := [3]byte{0, 0, 255}, [3]byte{255, 0, 0}, [3]byte{0, 255, 0}, [3]byte{0, 0, 0}
+	type point struct {
+		x, y int
+		want [3]byte
+		what string
+	}
+	for _, c := range []struct {
+		name, angle, zoom string
+		points            []point
+	}{
+		{"unturned", "0.0", "1.0", []point{
+			{4, 4, blue, "the tile where it is"}, {12, 4, black, "beside it"},
+			{13, 13, red, "the sprite where it is"}, {1, 1, green, "the fixed sprite"},
+		}},
+		{"a quarter turn", "90.0", "1.0", []point{
+			{12, 4, blue, "the tile turned to the top right"}, {4, 4, black, "where it was"},
+			{3, 13, red, "the sprite turned to the bottom left"}, {13, 13, black, "where it was"},
+			{1, 1, green, "the fixed sprite, upright where it is"},
+		}},
+		{"a whole turn less a half", "-180.0", "1.0", []point{
+			{12, 12, blue, "the tile turned to the bottom right"}, {4, 12, black, "the bottom left"},
+			{3, 3, red, "the sprite turned to the top left"}, {1, 1, green, "the fixed sprite"},
+		}},
+		{"zoomed", "0.0", "2.0", []point{
+			{4, 4, blue, "the tile grown to the middle"}, {7, 7, blue, "to its edge"},
+			{12, 4, black, "beside it"}, {15, 15, black, "the sprite grown off the screen"},
+			{1, 1, green, "the fixed sprite its own size"}, {2, 2, blue, "the tile beside it"},
+		}},
+	} {
+		for _, scale := range []int{1, 2} {
+			t.Run(fmt.Sprintf("%s at %d", c.name, scale), func(t *testing.T) {
+				t.Parallel()
+				src := filepath.Join(t.TempDir(), "main.lyra")
+				code := fmt.Sprintf(program, 16*scale, scale, c.angle, c.zoom)
+				if err := os.WriteFile(src, []byte(code), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				frame := playGame(t, src, "--frames", "1")
+				for _, p := range c.points {
+					// The middle of the art's pixel, in the screen's.
+					x, y := p.x*scale+scale/2, p.y*scale+scale/2
+					if got := frame.at(x, y); got != p.want {
+						t.Errorf("%s: (%d, %d) is %v, want %v", p.what, p.x, p.y, got, p.want)
+					}
+				}
+			})
+		}
+	}
+}
+
 // examples/game/wisps.lyra played headless, 150 frames holding right and down: it runs and
 // shows its screen — the night's dark field, and the wisp gone right and down, its light the
 // brightest thing about it.

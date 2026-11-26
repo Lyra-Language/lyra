@@ -877,6 +877,11 @@ of Markdown.
   screen is played headless by `--frames`/`--ppm`/`--hold` under SDL's dummy driver, both in
   `cmd/lyrac/game_test.go`; a `Sprite` also fades, tints, turns, grows and draws as light —
   what a console cannot — shown off by `examples/game/wisps.lyra`; `examples/game/walker.lyra`;
+  **the world turns and zooms** about the screen's middle (`screen.set_turn`, a camera's
+  `angle`/`zoom` through `Camera.turn_screen`): composed on a stage — a target texture covering
+  the turned screen (`turned_cover`), the layers drawn shifted onto it — then drawn turned;
+  the window plane and `fixed` sprites drawn upright after it; unturned, no stage at all
+  (`TestRun_GameScreenTurnsTheWorld`, `examples/game/turner.lyra`);
   **on a phone** the screen is the whole display in real pixels, landscape, with an on-screen
   pad (`pad.touch_layout`, drawn in real pixels beside the game, `--touch` scripting it), a
   pause while the app is away, and `--ppm` sampling the game's own pixels back out of the
