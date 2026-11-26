@@ -78,7 +78,33 @@ impl Element {
   /// Every child element called `name`, in order.
   pub let children_named = pure (self, name: string) -> []Element =>
     self.children.filter((c) => c.name == name)
+
+  /// Prints the element and everything in it, one element a line, each child indented two
+  /// spaces past its parent: an element with no text and no children as `<a />`, text trimmed,
+  /// and `&`, `<` and an attribute's `"` escaped.
+  pub let pretty_print = (self: ref, indent: string = "") -> void => {
+    print("${indent}<${self.name}")
+    for attr in self.attributes {
+      print(" ${attr.name}=\"${escape(attr.value).replace("\"", "&quot;")}\"")
+    }
+    if self.text.trim() == "" && self.children.len() == 0 {
+      println(" />")
+      return
+    }
+    print(">")
+    if self.text.trim() != "" {
+      print(escape(self.text.trim()))
+    }
+    print("\n")
+    for element in self.children {
+      pretty_print(element, indent ++ "  ")
+    }
+    println("${indent}</${self.name}>")
+  }
 }
+
+/// `s` as XML text: `&` and `<` written as entities, so it reads back as itself.
+let escape = pure (s: string) -> string => s.replace("&", "&amp;").replace("<", "&lt;")
 
 // ── The parser ───────────────────────────────────────────────────────────────
 

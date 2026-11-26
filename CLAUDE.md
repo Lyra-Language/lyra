@@ -943,7 +943,7 @@ of Markdown.
   `std/png.lyra` (read, and written as 8-bit RGBA, each row's filter the one whose bytes sum
   smallest, deflated; both tested against Go's `image/png` in `cmd/lyrac/png_test.go`, which
   holds the size written within a quarter of Go's encoder), `std/base64.lyra` (standard alphabet, padded, strict; tested
-  against Go's `encoding/base64`), `std/xml.lyra` (read only; tested against Go's
+  against Go's `encoding/base64`), `std/xml.lyra` (read, and printed indented by `pretty_print`; reading tested against Go's
   `encoding/xml` in `cmd/lyrac/xml_test.go`), `std/svg/` (in progress: the tree of
   `<svg>`, `rect`, `circle`, `path`'s M/L, others kept by name; `cmd/lyrac/svg_test.go`, with
   resvg's `simple-case.svg` when `tools/resvg-tests.sh` has fetched it), `std/zip.lyra`, `std/sevenzip.lyra` (its test archives
