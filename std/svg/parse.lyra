@@ -93,7 +93,9 @@ let make_path = pure (xml: Element) -> SvgElement => {
 
 /// Path data (`d`): its segments up to the first error. SVG draws a path as far as it is
 /// right, so an error ends the path rather than refusing it — `M 0 0 L 10` is the moveto
-/// alone. Data that does not start with a moveto (`M` or `m`) is no path at all.
+/// alone. Data that does not start with a moveto (`M` or `m`) is no path at all. Read so
+/// far: moveto, lineto, horizontal and vertical lineto (each number its own segment, so
+/// `H 1 2` is two) and closepath.
 let parse_path_data = pure (d: string) -> PathData => {
   let b = d.encode_utf8()
   var out: []PathSegment = []
@@ -101,24 +103,62 @@ let parse_path_data = pure (d: string) -> PathData => {
   if byte_at(b, i) != UPPER_M && byte_at(b, i) != LOWER_M { return PathData(out) }
   while i < b.len() {
     let command = byte_at(b, i)
-    if command != UPPER_M && command != LOWER_M && command != UPPER_L && command != LOWER_L {
+    let args = skip_list_space(b, i + 1)
+    if command == UPPER_Z || command == LOWER_Z {
+      // Takes no numbers; one straight after it is no command, and ends the path.
+      out.push(ClosePath)
+      i = args
+    } else if command == UPPER_H || command == LOWER_H || command == UPPER_V || command == LOWER_V {
+      let (values, end) = number_sequence_at(b, args)
+      if values.len() == 0 { break }
+      for v in values {
+        if command == UPPER_H {
+          out.push(LineToHorizAbs { x: v })
+        } else if command == LOWER_H {
+          out.push(LineToHorizRel { dx: v })
+        } else if command == UPPER_V {
+          out.push(LineToVertAbs { y: v })
+        } else {
+          out.push(LineToVertRel { dy: v })
+        }
+      }
+      i = skip_list_space(b, end)
+    } else if command == UPPER_M || command == LOWER_M || command == UPPER_L || command == LOWER_L {
+      let (pairs, end) = coordinate_pair_sequence_at(b, args)
+      if pairs.len() == 0 { break }
+      if command == UPPER_M {
+        out.push(MoveToAbs pairs)
+      } else if command == LOWER_M {
+        out.push(MoveToRel pairs)
+      } else if command == UPPER_L {
+        out.push(LineToAbs pairs)
+      } else {
+        out.push(LineToRel pairs)
+      }
+      i = skip_list_space(b, end)
+    } else {
       // A command not read yet, or something that is no command: the path ends here.
       break
     }
-    let (pairs, end) = coordinate_pair_sequence_at(b, skip_list_space(b, i + 1))
-    if pairs.len() == 0 { break }
-    if command == UPPER_M {
-      out.push(MoveToAbs pairs)
-    } else if command == LOWER_M {
-      out.push(MoveToRel pairs)
-    } else if command == UPPER_L {
-      out.push(LineToAbs pairs)
-    } else {
-      out.push(LineToRel pairs)
-    }
-    i = skip_list_space(b, end)
   }
   PathData(out)
+}
+
+/// The numbers starting at `from`, apart by `comma-wsp`, and the offset after the last.
+/// It stops where no number follows, leaving a trailing comma unread, as
+/// `coordinate_pair_sequence_at` does.
+let number_sequence_at = pure (b: []u8, from: i64) -> ([]f64, i64) => {
+  var values: []f64 = []
+  var i = from
+  loop {
+    let Some((n, end)) = number_at(b, i) else { break }
+    values.push(n)
+    i = end
+    let next = skip_comma_list_space(b, end)
+    if number_at(b, next).is_none() { break }
+    i = next
+  }
+  (values, i)
 }
 
 /// The coordinate pairs starting at `from`, and the offset after the last whole one. It
@@ -260,10 +300,16 @@ const DIGIT_0: i64 = 48
 const DIGIT_9: i64 = 57
 const UPPER_E: i64 = 69
 const LOWER_E: i64 = 101
+const UPPER_H: i64 = 72
+const LOWER_H: i64 = 104
 const UPPER_L: i64 = 76
 const LOWER_L: i64 = 108
 const UPPER_M: i64 = 77
 const LOWER_M: i64 = 109
+const UPPER_V: i64 = 86
+const LOWER_V: i64 = 118
+const UPPER_Z: i64 = 90
+const LOWER_Z: i64 = 122
 
 let parse_length_percent = pure (length_percent: Maybe<string>) -> Maybe<CssLengthPercentage> => {
   if var Some length_percent_str = length_percent {

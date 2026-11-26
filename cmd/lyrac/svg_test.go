@@ -9,8 +9,9 @@ import (
 
 // std.svg reads a document into its tree: each element it knows with its attributes
 // parsed, and one it does not know kept by name, so the rest still reads. Path data is
-// kept up to its first error, as SVG draws it. resvg's shapes/rect/simple-case.svg (from
-// tools/resvg-tests.sh) is the first real file; the others are written here, one rule each.
+// kept up to its first error, as SVG draws it (moveto, lineto, H, V and Z so far). resvg's
+// shapes/rect/simple-case.svg (from tools/resvg-tests.sh) is the first real file; the others
+// are written here, one rule each.
 func TestRun_SvgBuildsTheTree(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
@@ -59,6 +60,12 @@ func TestRun_SvgBuildsTheTree(t *testing.T) {
 <path d="M 10,20 30,40"/>
 <path d="M1-2-3-4"/>
 <path d="M 0 0 H 10 Z"/>
+<path d="M 0 0 H 10 V 10 h -5 v -5 z"/>
+<path d="M 0 0 H 1 2,3 L 4 4"/>
+<path d="M 0 0 Z 5"/>
+<path d="M 0 0 Zm 1 1 z"/>
+<path d="M 0 0 H"/>
+<path d="M 0 0 V 1,"/>
 <path d="M 0 0 L 10"/>
 <path d="M 0 0 L 1 2 3"/>
 <path d="M 0 0 1,,2"/>
@@ -71,7 +78,13 @@ func TestRun_SvgBuildsTheTree(t *testing.T) {
 		"  path id=- fill=- stroke=- d=M 10 20 L 30 40",
 		"  path id=- fill=- stroke=- d=M 10 20 30 40",
 		"  path id=- fill=- stroke=- d=M 1 -2 -3 -4",
+		"  path id=- fill=- stroke=- d=M 0 0 H 10 Z",
+		"  path id=- fill=- stroke=- d=M 0 0 H 10 V 10 h -5 v -5 Z",
+		"  path id=- fill=- stroke=- d=M 0 0 H 1 H 2 H 3 L 4 4",
+		"  path id=- fill=- stroke=- d=M 0 0 Z",
+		"  path id=- fill=- stroke=- d=M 0 0 Z m 1 1 Z",
 		"  path id=- fill=- stroke=- d=M 0 0",
+		"  path id=- fill=- stroke=- d=M 0 0 V 1",
 		"  path id=- fill=- stroke=- d=M 0 0",
 		"  path id=- fill=- stroke=- d=M 0 0 L 1 2",
 		"  path id=- fill=- stroke=- d=M 0 0",
@@ -109,6 +122,7 @@ import std.svg.{ PreserveAspectRatio, AspectRatioAlign, MeetOrSlice, Meet, Slice
 import std.svg.{ AlignNone, XMinYMin, XMidYMin, XMaxYMin, XMinYMid, XMidYMid, XMaxYMid }
 import std.svg.{ XMinYMax, XMidYMax, XMaxYMax }
 import std.svg.{ PathData, PathSegment, MoveToAbs, MoveToRel, LineToAbs, LineToRel, CoordinatePair }
+import std.svg.{ LineToHorizAbs, LineToHorizRel, LineToVertAbs, LineToVertRel, ClosePath }
 
 let main = () -> void => {
 `+strings.Join(calls, "\n")+`
@@ -197,6 +211,11 @@ let path_data = pure (m: Maybe<PathData>) -> string => {
       MoveToRel(ps) => words.push("m ${pairs(ps)}"),
       LineToAbs(ps) => words.push("L ${pairs(ps)}"),
       LineToRel(ps) => words.push("l ${pairs(ps)}"),
+      LineToHorizAbs { x } => words.push("H ${x}"),
+      LineToHorizRel { dx } => words.push("h ${dx}"),
+      LineToVertAbs { y } => words.push("V ${y}"),
+      LineToVertRel { dy } => words.push("v ${dy}"),
+      ClosePath => words.push("Z"),
       _ => words.push("?"),
     }
   }
