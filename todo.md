@@ -1103,6 +1103,11 @@ The design is the *Lyra GUI — Design* document; `ui/README.md` maps what is bu
 
 ## Pit of Success
 
+- **[OPEN] An import of a name its module does not have is no error**: `import std.xml.{ nope }`
+  unused passes `check` (W004, "never used"), and used is "undefined function" at each use, its
+  consequences cascading (26 errors for two names, 11/25). Refuse it at the import, naming the
+  module, and let the uses stay quiet — an unknown module's names cascade the same way.
+
 - **[OPEN] A value computed and dropped is silent** unless it is a call (`lyra-W006`): the tail
   of an `if` with no `else`, a `match` or constructor as a statement (`if let Some n = p(s) {
   Some(n) }` then `None`, std/svg's first parsers, 11/24) — always `None`, reading as an early
