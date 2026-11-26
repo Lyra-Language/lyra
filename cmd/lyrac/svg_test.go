@@ -9,7 +9,7 @@ import (
 
 // std.svg reads a document into its tree: each element it knows with its attributes
 // parsed, and one it does not know kept by name, so the rest still reads. Path data is
-// kept up to its first error, as SVG draws it (moveto, lineto, H, V and Z so far). resvg's
+// kept up to its first error, as SVG draws it (every command). resvg's
 // shapes/rect/simple-case.svg (from tools/resvg-tests.sh) is the first real file; the others
 // are written here, one rule each.
 func TestRun_SvgBuildsTheTree(t *testing.T) {
@@ -66,6 +66,16 @@ func TestRun_SvgBuildsTheTree(t *testing.T) {
 <path d="M 0 0 Zm 1 1 z"/>
 <path d="M 0 0 H"/>
 <path d="M 0 0 V 1,"/>
+<path d="M 0 0 C 1 2 3 4 5 6 7 8 9 10 11 12"/>
+<path d="M0,0c1,2,3,4,5,6"/>
+<path d="M 0 0 C 1 2 3 4 5"/>
+<path d="M 0 0 C 1 2 3 4 5 6 7"/>
+<path d="M 0 0 S 1 2 3 4 s 5 6 7 8"/>
+<path d="M 0 0 Q 1 2 3 4 q 5 6 7 8 T 9 10 11 12 t 1 1"/>
+<path d="M 0 0 A 5 5 0 1 0 10 10 a 5 5 30 0 1 -10 -10"/>
+<path d="M 0 0 a 5 5 0 106 6"/>
+<path d="M 0 0 A 5 5 0 1 0 1 1 5,5 0 0,1 2 2"/>
+<path d="M 0 0 A 5 5 0 2 0 1 1"/>
 <path d="M 0 0 L 10"/>
 <path d="M 0 0 L 1 2 3"/>
 <path d="M 0 0 1,,2"/>
@@ -85,6 +95,16 @@ func TestRun_SvgBuildsTheTree(t *testing.T) {
 		"  path id=- fill=- stroke=- d=M 0 0 Z m 1 1 Z",
 		"  path id=- fill=- stroke=- d=M 0 0",
 		"  path id=- fill=- stroke=- d=M 0 0 V 1",
+		"  path id=- fill=- stroke=- d=M 0 0 C 1 2 3 4 5 6 7 8 9 10 11 12",
+		"  path id=- fill=- stroke=- d=M 0 0 c 1 2 3 4 5 6",
+		"  path id=- fill=- stroke=- d=M 0 0",
+		"  path id=- fill=- stroke=- d=M 0 0 C 1 2 3 4 5 6",
+		"  path id=- fill=- stroke=- d=M 0 0 S 1 2 3 4 s 5 6 7 8",
+		"  path id=- fill=- stroke=- d=M 0 0 Q 1 2 3 4 q 5 6 7 8 T 9 10 11 12 t 1 1",
+		"  path id=- fill=- stroke=- d=M 0 0 A 5 5 0 1 0 10 10 a 5 5 30 0 1 -10 -10",
+		"  path id=- fill=- stroke=- d=M 0 0 a 5 5 0 1 0 6 6",
+		"  path id=- fill=- stroke=- d=M 0 0 A 5 5 0 1 0 1 1 A 5 5 0 0 1 2 2",
+		"  path id=- fill=- stroke=- d=M 0 0",
 		"  path id=- fill=- stroke=- d=M 0 0",
 		"  path id=- fill=- stroke=- d=M 0 0 L 1 2",
 		"  path id=- fill=- stroke=- d=M 0 0",
@@ -123,6 +143,9 @@ import std.svg.{ AlignNone, XMinYMin, XMidYMin, XMaxYMin, XMinYMid, XMidYMid, XM
 import std.svg.{ XMinYMax, XMidYMax, XMaxYMax }
 import std.svg.{ PathData, PathSegment, MoveToAbs, MoveToRel, LineToAbs, LineToRel, CoordinatePair }
 import std.svg.{ LineToHorizAbs, LineToHorizRel, LineToVertAbs, LineToVertRel, ClosePath }
+import std.svg.{ CubicBezierAbs, CubicBezierRel, SmoothCubicBezierAbs, SmoothCubicBezierRel }
+import std.svg.{ QuadBezierAbs, QuadBezierRel, SmoothQuadBezierAbs, SmoothQuadBezierRel }
+import std.svg.{ EllipticalArcCurveAbs, EllipticalArcCurveRel }
 
 let main = () -> void => {
 `+strings.Join(calls, "\n")+`
@@ -216,11 +239,24 @@ let path_data = pure (m: Maybe<PathData>) -> string => {
       LineToVertAbs { y } => words.push("V ${y}"),
       LineToVertRel { dy } => words.push("v ${dy}"),
       ClosePath => words.push("Z"),
-      _ => words.push("?"),
+      CubicBezierAbs { triplets } => words.push("C " ++ [t in triplets | "${t.x1} ${t.y1} ${t.x2} ${t.y2} ${t.x} ${t.y}"].join(" ")),
+      CubicBezierRel { triplets } => words.push("c " ++ [t in triplets | "${t.dx1} ${t.dy1} ${t.dx2} ${t.dy2} ${t.dx} ${t.dy}"].join(" ")),
+      SmoothCubicBezierAbs { pairs: ps } => words.push("S " ++ [t in ps | "${t.x2} ${t.y2} ${t.x} ${t.y}"].join(" ")),
+      SmoothCubicBezierRel { pairs: ps } => words.push("s " ++ [t in ps | "${t.dx2} ${t.dy2} ${t.dx} ${t.dy}"].join(" ")),
+      QuadBezierAbs { triplets } => words.push("Q " ++ [t in triplets | "${t.x1} ${t.y1} ${t.x} ${t.y}"].join(" ")),
+      QuadBezierRel { triplets } => words.push("q " ++ [t in triplets | "${t.dx1} ${t.dy1} ${t.dx} ${t.dy}"].join(" ")),
+      SmoothQuadBezierAbs { points } => words.push("T ${pairs(points)}"),
+      SmoothQuadBezierRel { points } => words.push("t ${pairs(points)}"),
+      EllipticalArcCurveAbs { rx, ry, angle, largeArcFlag, sweepFlag, x, y } =>
+        words.push("A ${rx} ${ry} ${angle} ${flag(largeArcFlag)} ${flag(sweepFlag)} ${x} ${y}"),
+      EllipticalArcCurveRel { rx, ry, angle, largeArcFlag, sweepFlag, dx, dy } =>
+        words.push("a ${rx} ${ry} ${angle} ${flag(largeArcFlag)} ${flag(sweepFlag)} ${dx} ${dy}"),
     }
   }
   words.join(" ")
 }
+
+let flag = pure (f: bool) -> string => if f { "1" } else { "0" }
 
 let pairs = pure (ps: []CoordinatePair) -> string =>
   [p in ps | "${p.0} ${p.1}"].join(" ")

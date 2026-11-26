@@ -945,7 +945,7 @@ of Markdown.
   holds the size written within a quarter of Go's encoder), `std/base64.lyra` (standard alphabet, padded, strict; tested
   against Go's `encoding/base64`), `std/xml.lyra` (read, and printed indented by `pretty_print`; reading tested against Go's
   `encoding/xml` in `cmd/lyrac/xml_test.go`), `std/svg/` (in progress: the tree of
-  `<svg>`, `rect`, `circle`, `path`'s M, L, H, V and Z, others kept by name; `cmd/lyrac/svg_test.go`, with
+  `<svg>`, `rect`, `circle`, `path` data, others kept by name; `cmd/lyrac/svg_test.go`, with
   resvg's `simple-case.svg` when `tools/resvg-tests.sh` has fetched it), `std/zip.lyra`, `std/sevenzip.lyra` (its test archives
   are `pkg/backend/llvm/testdata/sevenzip/`, made by the `make.sh` beside them),
   `std/rar.lyra` (RAR 5; `testdata/rar5/`, libarchive's archives and hand-built filter ones —

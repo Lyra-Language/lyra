@@ -94,8 +94,8 @@ let make_path = pure (xml: Element) -> SvgElement => {
 /// Path data (`d`): its segments up to the first error. SVG draws a path as far as it is
 /// right, so an error ends the path rather than refusing it — `M 0 0 L 10` is the moveto
 /// alone. Data that does not start with a moveto (`M` or `m`) is no path at all. Read so
-/// far: moveto, lineto, horizontal and vertical lineto (each number its own segment, so
-/// `H 1 2` is two) and closepath.
+/// far: every command. Horizontal and vertical lineto and the arc make a segment per
+/// argument set (`H 1 2` is two); the others keep their sets together, as a moveto does.
 let parse_path_data = pure (d: string) -> PathData => {
   let b = d.encode_utf8()
   var out: []PathSegment = []
@@ -136,8 +136,121 @@ let parse_path_data = pure (d: string) -> PathData => {
         out.push(LineToRel pairs)
       }
       i = skip_list_space(b, end)
+    } else if command == UPPER_C || command == LOWER_C {
+      let (groups, end) = number_groups_at(b, args, 6)
+      if groups.len() == 0 { break }
+      if command == UPPER_C {
+        out.push(CubicBezierAbs {
+          triplets: [
+            g in groups | CubicBezierTripletAbs {
+              x1: g[0],
+              y1: g[1],
+              x2: g[2],
+              y2: g[3],
+              x: g[4],
+              y: g[5]
+            }
+          ]
+        })
+      } else {
+        out.push(CubicBezierRel {
+          triplets: [
+            g in groups | CubicBezierTripletRel {
+              dx1: g[0],
+              dy1: g[1],
+              dx2: g[2],
+              dy2: g[3],
+              dx: g[4],
+              dy: g[5]
+            }
+          ]
+        })
+      }
+      i = skip_list_space(b, end)
+    } else if command == UPPER_S || command == LOWER_S {
+      let (groups, end) = number_groups_at(b, args, 4)
+      if groups.len() == 0 { break }
+      if command == UPPER_S {
+        out.push(SmoothCubicBezierAbs {
+          pairs: [g in groups | SmoothCubicBezierPairAbs {
+            x2: g[0],
+            y2: g[1],
+            x: g[2],
+            y: g[3]
+          }]
+        })
+      } else {
+        out.push(SmoothCubicBezierRel {
+          pairs: [g in groups | SmoothCubicBezierPairRel {
+            dx2: g[0],
+            dy2: g[1],
+            dx: g[2],
+            dy: g[3]
+          }]
+        })
+      }
+      i = skip_list_space(b, end)
+    } else if command == UPPER_Q || command == LOWER_Q {
+      let (groups, end) = number_groups_at(b, args, 4)
+      if groups.len() == 0 { break }
+      if command == UPPER_Q {
+        out.push(QuadBezierAbs {
+          triplets: [g in groups | QuadBezierTripletAbs {
+            x1: g[0],
+            y1: g[1],
+            x: g[2],
+            y: g[3]
+          }]
+        })
+      } else {
+        out.push(QuadBezierRel {
+          triplets: [g in groups | QuadBezierTripletRel {
+            dx1: g[0],
+            dy1: g[1],
+            dx: g[2],
+            dy: g[3]
+          }]
+        })
+      }
+      i = skip_list_space(b, end)
+    } else if command == UPPER_T || command == LOWER_T {
+      let (pairs, end) = coordinate_pair_sequence_at(b, args)
+      if pairs.len() == 0 { break }
+      if command == UPPER_T {
+        out.push(SmoothQuadBezierAbs { points: pairs })
+      } else {
+        out.push(SmoothQuadBezierRel { points: pairs })
+      }
+      i = skip_list_space(b, end)
+    } else if command == UPPER_A || command == LOWER_A {
+      let (arcs, end) = arc_sequence_at(b, args)
+      if arcs.len() == 0 { break }
+      for a in arcs {
+        if command == UPPER_A {
+          out.push(EllipticalArcCurveAbs {
+            rx: a.rx,
+            ry: a.ry,
+            angle: a.angle,
+            largeArcFlag: a.large_arc,
+            sweepFlag: a.sweep,
+            x: a.x,
+            y: a.y
+          })
+        } else {
+          out.push(EllipticalArcCurveRel {
+            rx: a.rx,
+            ry: a.ry,
+            angle: a.angle,
+            largeArcFlag: a.large_arc,
+            sweepFlag: a.sweep,
+            dx: a.x,
+            dy: a.y
+          })
+        }
+      }
+      i = skip_list_space(b, end)
     } else {
-      // A command not read yet, or something that is no command: the path ends here.
+      // Something that is no command: the path ends here.
       break
     }
   }
@@ -159,6 +272,93 @@ let number_sequence_at = pure (b: []u8, from: i64) -> ([]f64, i64) => {
     i = next
   }
   (values, i)
+}
+
+/// Sets of `n` numbers starting at `from` — `C` takes sixes, `S` and `Q` fours — and the
+/// offset after the last whole set. It stops where no number follows, and at a set cut
+/// short, before its first number, as `coordinate_pair_sequence_at` does for pairs.
+let number_groups_at = pure (b: []u8, from: i64, n: i64) -> ([][]f64, i64) => {
+  var groups: [][]f64 = []
+  var i = from
+  loop {
+    let Some((group, end)) = numbers_at(b, i, n) else { break }
+    groups.push(group)
+    i = end
+    let next = skip_comma_list_space(b, end)
+    if number_at(b, next).is_none() { break }
+    i = next
+  }
+  (groups, i)
+}
+
+/// `n` numbers starting at `from`, apart by `comma-wsp`, and the offset after the last.
+/// None where fewer than `n` are there.
+let numbers_at = pure (b: []u8, from: i64, n: i64) -> Maybe<([]f64, i64)> => {
+  var values: []f64 = []
+  var i = from
+  for k in 0..<n {
+    if k > 0 { i = skip_comma_list_space(b, i) }
+    let Some((v, end)) = number_at(b, i) else { return None }
+    values.push(v)
+    i = end
+  }
+  Some((values, i))
+}
+
+/// An arc's arguments, before they are told absolute from relative.
+struct Arc { rx: f64, ry: f64, angle: f64, large_arc: bool, sweep: bool, x: f64, y: f64 }
+
+/// The arcs' argument sets starting at `from` (`rx ry angle large-arc sweep x y`), and the
+/// offset after the last whole one, stopping as `number_groups_at` does.
+let arc_sequence_at = pure (b: []u8, from: i64) -> ([]Arc, i64) => {
+  var arcs: []Arc = []
+  var i = from
+  loop {
+    let Some((arc, end)) = arc_at(b, i) else { break }
+    arcs.push(arc)
+    i = end
+    let next = skip_comma_list_space(b, end)
+    if number_at(b, next).is_none() { break }
+    i = next
+  }
+  (arcs, i)
+}
+
+/// One arc's arguments. A flag is the one character `0` or `1`, so it needs nothing after
+/// it: `a 5 5 0 106 6` is large-arc 1, sweep 0, then 6 6.
+let arc_at = pure (b: []u8, from: i64) -> Maybe<(Arc, i64)> => {
+  let Some((radii, after_radii)) = numbers_at(b, from, 3) else { return None }
+  let Some((large_arc, after_large)) = flag_at(
+    b,
+    skip_comma_list_space(b, after_radii)
+  ) else {
+    return None
+  }
+  let Some((sweep, after_sweep)) = flag_at(
+    b,
+    skip_comma_list_space(b, after_large)
+  ) else {
+    return None
+  }
+  let Some((point, end)) = numbers_at(b, skip_comma_list_space(b, after_sweep), 2) else {
+    return None
+  }
+  let arc = Arc {
+    rx: radii[0],
+    ry: radii[1],
+    angle: radii[2],
+    large_arc: large_arc,
+    sweep: sweep,
+    x: point[0],
+    y: point[1]
+  }
+  Some((arc, end))
+}
+
+let flag_at = pure (b: []u8, i: i64) -> Maybe<(bool, i64)> => {
+  if byte_at(b, i) == DIGIT_0 { return Some((false, i + 1)) }
+  if byte_at(b, i) == DIGIT_1 { return Some((true, i + 1)) }
+  None
 }
 
 /// The coordinate pairs starting at `from`, and the offset after the last whole one. It
@@ -297,16 +497,27 @@ const COMMA: i64 = 44
 const MINUS: i64 = 45
 const POINT: i64 = 46
 const DIGIT_0: i64 = 48
+const DIGIT_1: i64 = 49
 const DIGIT_9: i64 = 57
 const UPPER_E: i64 = 69
 const LOWER_E: i64 = 101
+const UPPER_A: i64 = 65
+const UPPER_C: i64 = 67
 const UPPER_H: i64 = 72
+const LOWER_A: i64 = 97
+const LOWER_C: i64 = 99
 const LOWER_H: i64 = 104
 const UPPER_L: i64 = 76
 const LOWER_L: i64 = 108
 const UPPER_M: i64 = 77
 const LOWER_M: i64 = 109
+const UPPER_Q: i64 = 81
+const UPPER_S: i64 = 83
+const UPPER_T: i64 = 84
 const UPPER_V: i64 = 86
+const LOWER_Q: i64 = 113
+const LOWER_S: i64 = 115
+const LOWER_T: i64 = 116
 const LOWER_V: i64 = 118
 const UPPER_Z: i64 = 90
 const LOWER_Z: i64 = 122
@@ -508,12 +719,12 @@ pub data PathSegment =
   | LineToVertRel { dy: f64 }
   | CubicBezierAbs { triplets: []CubicBezierTripletAbs }
   | CubicBezierRel { triplets: []CubicBezierTripletRel }
-  | SmoothCubicBezierAbs { triplets: []CubicBezierTripletAbs }
-  | SmoothCubicBezierRel { triplets: []CubicBezierTripletRel }
+  | SmoothCubicBezierAbs { pairs: []SmoothCubicBezierPairAbs }
+  | SmoothCubicBezierRel { pairs: []SmoothCubicBezierPairRel }
   | QuadBezierAbs { triplets: []QuadBezierTripletAbs }
   | QuadBezierRel { triplets: []QuadBezierTripletRel }
-  | SmoothQuadBezierAbs { triplets: []QuadBezierTripletAbs }
-  | SmoothQuadBezierRel { triplets: []QuadBezierTripletRel }
+  | SmoothQuadBezierAbs { points: []CoordinatePair }
+  | SmoothQuadBezierRel { points: []CoordinatePair }
   | EllipticalArcCurveAbs {
     rx: f64,
     ry: f64,
@@ -547,6 +758,10 @@ pub struct CubicBezierTripletRel {
 }
 pub struct QuadBezierTripletAbs { x1: f64, y1: f64, x: f64, y: f64 }
 pub struct QuadBezierTripletRel { dx1: f64, dy1: f64, dx: f64, dy: f64 }
+/// A smooth curve's (`S`, and `T`'s points) first control point is the reflection of the
+/// previous segment's last, which drawing works out; the data gives only the rest.
+pub struct SmoothCubicBezierPairAbs { x2: f64, y2: f64, x: f64, y: f64 }
+pub struct SmoothCubicBezierPairRel { dx2: f64, dy2: f64, dx: f64, dy: f64 }
 
 pub data CssLengthPercentage = CssLPLength CssLength | CssLPPercentage CssPercentage
 pub data CssLength = Num CssNumber | Px f64 | Cm f64 | Mm f64 | In f64 | Pt f64 | Em f64 | Rem f64 | Ex f64 | Pc f64

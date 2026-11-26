@@ -517,6 +517,10 @@ neither way of writing an **optional child** works. `shared` on a plain field is
 
 ## Language surface
 
+- **[OPEN] A comment between two `data` variants is a syntax error**, which lyrac and lyrafmt
+  both place at 1:1 (`| A { … }`, a `//` line, `| B { … }`); one before the first variant
+  parses. Accept it in the grammar (std/svg, 11/25), and point a parse error at its node.
+
 - **[OPEN] A named tuple is not taken apart by its name**: `let P(a, b) = p` is "cannot
   destructure P(f64, f64) with a data pattern", and a `P(x, y)` arm "expected tuple pattern".
   `let (a, b) = p` and `p.0` work (std/svg, 11/25). Accept the name, and say so in LANGUAGE.md.
