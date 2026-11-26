@@ -93,168 +93,236 @@ let make_path = pure (xml: Element) -> SvgElement => {
 
 /// Path data (`d`): its segments up to the first error. SVG draws a path as far as it is
 /// right, so an error ends the path rather than refusing it — `M 0 0 L 10` is the moveto
-/// alone. Data that does not start with a moveto (`M` or `m`) is no path at all. Read so
-/// far: every command. Horizontal and vertical lineto and the arc make a segment per
-/// argument set (`H 1 2` is two); the others keep their sets together, as a moveto does.
+/// alone. Data that does not start with a moveto (`M` or `m`) is no path at all.
 let parse_path_data = pure (d: string) -> PathData => {
   let b = d.encode_utf8()
   var out: []PathSegment = []
   var i = skip_list_space(b, 0)
-  if byte_at(b, i) != UPPER_M && byte_at(b, i) != LOWER_M { return PathData(out) }
+  let first = rune_at(b, i)
+  if first != 'M' && first != 'm' { return PathData(out) }
   while i < b.len() {
-    let command = byte_at(b, i)
-    let args = skip_list_space(b, i + 1)
-    if command == UPPER_Z || command == LOWER_Z {
-      // Takes no numbers; one straight after it is no command, and ends the path.
-      out.push(ClosePath)
-      i = args
-    } else if command == UPPER_H || command == LOWER_H || command == UPPER_V || command == LOWER_V {
-      let (values, end) = number_sequence_at(b, args)
-      if values.len() == 0 { break }
-      for v in values {
-        if command == UPPER_H {
-          out.push(LineToHorizAbs { x: v })
-        } else if command == LOWER_H {
-          out.push(LineToHorizRel { dx: v })
-        } else if command == UPPER_V {
-          out.push(LineToVertAbs { y: v })
-        } else {
-          out.push(LineToVertRel { dy: v })
-        }
-      }
-      i = skip_list_space(b, end)
-    } else if command == UPPER_M || command == LOWER_M || command == UPPER_L || command == LOWER_L {
-      let (pairs, end) = coordinate_pair_sequence_at(b, args)
-      if pairs.len() == 0 { break }
-      if command == UPPER_M {
-        out.push(MoveToAbs pairs)
-      } else if command == LOWER_M {
-        out.push(MoveToRel pairs)
-      } else if command == UPPER_L {
-        out.push(LineToAbs pairs)
-      } else {
-        out.push(LineToRel pairs)
-      }
-      i = skip_list_space(b, end)
-    } else if command == UPPER_C || command == LOWER_C {
-      let (groups, end) = number_groups_at(b, args, 6)
-      if groups.len() == 0 { break }
-      if command == UPPER_C {
-        out.push(CubicBezierAbs {
-          triplets: [
-            g in groups | CubicBezierTripletAbs {
-              x1: g[0],
-              y1: g[1],
-              x2: g[2],
-              y2: g[3],
-              x: g[4],
-              y: g[5]
-            }
-          ]
-        })
-      } else {
-        out.push(CubicBezierRel {
-          triplets: [
-            g in groups | CubicBezierTripletRel {
-              dx1: g[0],
-              dy1: g[1],
-              dx2: g[2],
-              dy2: g[3],
-              dx: g[4],
-              dy: g[5]
-            }
-          ]
-        })
-      }
-      i = skip_list_space(b, end)
-    } else if command == UPPER_S || command == LOWER_S {
-      let (groups, end) = number_groups_at(b, args, 4)
-      if groups.len() == 0 { break }
-      if command == UPPER_S {
-        out.push(SmoothCubicBezierAbs {
-          pairs: [g in groups | SmoothCubicBezierPairAbs {
-            x2: g[0],
-            y2: g[1],
-            x: g[2],
-            y: g[3]
-          }]
-        })
-      } else {
-        out.push(SmoothCubicBezierRel {
-          pairs: [g in groups | SmoothCubicBezierPairRel {
-            dx2: g[0],
-            dy2: g[1],
-            dx: g[2],
-            dy: g[3]
-          }]
-        })
-      }
-      i = skip_list_space(b, end)
-    } else if command == UPPER_Q || command == LOWER_Q {
-      let (groups, end) = number_groups_at(b, args, 4)
-      if groups.len() == 0 { break }
-      if command == UPPER_Q {
-        out.push(QuadBezierAbs {
-          triplets: [g in groups | QuadBezierTripletAbs {
-            x1: g[0],
-            y1: g[1],
-            x: g[2],
-            y: g[3]
-          }]
-        })
-      } else {
-        out.push(QuadBezierRel {
-          triplets: [g in groups | QuadBezierTripletRel {
-            dx1: g[0],
-            dy1: g[1],
-            dx: g[2],
-            dy: g[3]
-          }]
-        })
-      }
-      i = skip_list_space(b, end)
-    } else if command == UPPER_T || command == LOWER_T {
-      let (pairs, end) = coordinate_pair_sequence_at(b, args)
-      if pairs.len() == 0 { break }
-      if command == UPPER_T {
-        out.push(SmoothQuadBezierAbs { points: pairs })
-      } else {
-        out.push(SmoothQuadBezierRel { points: pairs })
-      }
-      i = skip_list_space(b, end)
-    } else if command == UPPER_A || command == LOWER_A {
-      let (arcs, end) = arc_sequence_at(b, args)
-      if arcs.len() == 0 { break }
-      for a in arcs {
-        if command == UPPER_A {
-          out.push(EllipticalArcCurveAbs {
-            rx: a.rx,
-            ry: a.ry,
-            angle: a.angle,
-            largeArcFlag: a.large_arc,
-            sweepFlag: a.sweep,
-            x: a.x,
-            y: a.y
-          })
-        } else {
-          out.push(EllipticalArcCurveRel {
-            rx: a.rx,
-            ry: a.ry,
-            angle: a.angle,
-            largeArcFlag: a.large_arc,
-            sweepFlag: a.sweep,
-            dx: a.x,
-            dy: a.y
-          })
-        }
-      }
-      i = skip_list_space(b, end)
-    } else {
-      // Something that is no command: the path ends here.
-      break
-    }
+    let Some((segments, end)) = command_at(b, i) else { break }
+    for s in segments { out.push(s) }
+    i = skip_list_space(b, end)
   }
   PathData(out)
+}
+
+/// The segments of the command at `i`, and the offset after its arguments. None where `i`
+/// holds no command, or one without a whole argument set. A lowercase command is relative.
+let command_at = pure (b: []u8, i: i64) -> Maybe<([]PathSegment, i64)> => {
+  let c = rune_at(b, i)
+  let relative = c >= 'a'
+  let args = skip_list_space(b, i + 1)
+  match c {
+    'M' | 'm' => moveto_at(b, args, relative),
+    'L' | 'l' => lineto_at(b, args, relative),
+    'H' | 'h' => horizontal_lineto_at(b, args, relative),
+    'V' | 'v' => vertical_lineto_at(b, args, relative),
+    'C' | 'c' => curveto_at(b, args, relative),
+    'S' | 's' => smooth_curveto_at(b, args, relative),
+    'Q' | 'q' => quadratic_curveto_at(b, args, relative),
+    'T' | 't' => smooth_quadratic_curveto_at(b, args, relative),
+    'A' | 'a' => arc_at(b, args, relative),
+    // Takes no numbers; one straight after it is no command, and ends the path.
+    'Z' | 'z' => Some(([ClosePath], args)),
+    _ => None,
+  }
+}
+
+/// `M`: a move, then any further pairs as linetos (see `MoveToAbs`).
+let moveto_at = pure (
+  b: []u8,
+  from: i64,
+  relative: bool
+) -> Maybe<([]PathSegment, i64)> => {
+  let (pairs, end) = coordinate_pair_sequence_at(b, from)
+  if pairs.len() == 0 { return None }
+  let segment = if relative { MoveToRel pairs } else { MoveToAbs pairs }
+  Some(([segment], end))
+}
+
+let lineto_at = pure (
+  b: []u8,
+  from: i64,
+  relative: bool
+) -> Maybe<([]PathSegment, i64)> => {
+  let (pairs, end) = coordinate_pair_sequence_at(b, from)
+  if pairs.len() == 0 { return None }
+  let segment = if relative { LineToRel pairs } else { LineToAbs pairs }
+  Some(([segment], end))
+}
+
+/// `H`: a segment per number, so `H 1 2` is two.
+let horizontal_lineto_at = pure (
+  b: []u8,
+  from: i64,
+  relative: bool
+) -> Maybe<([]PathSegment, i64)> => {
+  let (values, end) = number_sequence_at(b, from)
+  if values.len() == 0 { return None }
+  let segments = [
+    v in values | if relative { LineToHorizRel { dx: v } } else { LineToHorizAbs { x: v } }
+  ]
+  Some((segments, end))
+}
+
+/// `V`: a segment per number, as `H`.
+let vertical_lineto_at = pure (
+  b: []u8,
+  from: i64,
+  relative: bool
+) -> Maybe<([]PathSegment, i64)> => {
+  let (values, end) = number_sequence_at(b, from)
+  if values.len() == 0 { return None }
+  let segments = [
+    v in values | if relative { LineToVertRel { dy: v } } else { LineToVertAbs { y: v } }
+  ]
+  Some((segments, end))
+}
+
+/// `C`: sets of six numbers, `x1 y1 x2 y2 x y`.
+let curveto_at = pure (
+  b: []u8,
+  from: i64,
+  relative: bool
+) -> Maybe<([]PathSegment, i64)> => {
+  let (groups, end) = number_groups_at(b, from, 6)
+  if groups.len() == 0 { return None }
+  let segment = if relative {
+    CubicBezierRel {
+      triplets: [
+        g in groups | CubicBezierTripletRel {
+          dx1: g[0],
+          dy1: g[1],
+          dx2: g[2],
+          dy2: g[3],
+          dx: g[4],
+          dy: g[5]
+        }
+      ]
+    }
+  } else {
+    CubicBezierAbs {
+      triplets: [
+        g in groups | CubicBezierTripletAbs {
+          x1: g[0],
+          y1: g[1],
+          x2: g[2],
+          y2: g[3],
+          x: g[4],
+          y: g[5]
+        }
+      ]
+    }
+  }
+  Some(([segment], end))
+}
+
+/// `S`: sets of four numbers, `x2 y2 x y` — the first control point is drawing's to work out.
+let smooth_curveto_at = pure (
+  b: []u8,
+  from: i64,
+  relative: bool
+) -> Maybe<([]PathSegment, i64)> => {
+  let (groups, end) = number_groups_at(b, from, 4)
+  if groups.len() == 0 { return None }
+  let segment = if relative {
+    SmoothCubicBezierRel {
+      pairs: [g in groups | SmoothCubicBezierPairRel {
+        dx2: g[0],
+        dy2: g[1],
+        dx: g[2],
+        dy: g[3]
+      }]
+    }
+  } else {
+    SmoothCubicBezierAbs {
+      pairs: [g in groups | SmoothCubicBezierPairAbs {
+        x2: g[0],
+        y2: g[1],
+        x: g[2],
+        y: g[3]
+      }]
+    }
+  }
+  Some(([segment], end))
+}
+
+/// `Q`: sets of four numbers, `x1 y1 x y`.
+let quadratic_curveto_at = pure (
+  b: []u8,
+  from: i64,
+  relative: bool
+) -> Maybe<([]PathSegment, i64)> => {
+  let (groups, end) = number_groups_at(b, from, 4)
+  if groups.len() == 0 { return None }
+  let segment = if relative {
+    QuadBezierRel {
+      triplets: [g in groups | QuadBezierTripletRel {
+        dx1: g[0],
+        dy1: g[1],
+        dx: g[2],
+        dy: g[3]
+      }]
+    }
+  } else {
+    QuadBezierAbs {
+      triplets: [g in groups | QuadBezierTripletAbs {
+        x1: g[0],
+        y1: g[1],
+        x: g[2],
+        y: g[3]
+      }]
+    }
+  }
+  Some(([segment], end))
+}
+
+/// `T`: end points only — the control point is drawing's to work out.
+let smooth_quadratic_curveto_at = pure (
+  b: []u8,
+  from: i64,
+  relative: bool
+) -> Maybe<([]PathSegment, i64)> => {
+  let (pairs, end) = coordinate_pair_sequence_at(b, from)
+  if pairs.len() == 0 { return None }
+  let segment = if relative {
+    SmoothQuadBezierRel { points: pairs }
+  } else {
+    SmoothQuadBezierAbs { points: pairs }
+  }
+  Some(([segment], end))
+}
+
+/// `A`: a segment per arc, as `H` makes one per number.
+let arc_at = pure (b: []u8, from: i64, relative: bool) -> Maybe<([]PathSegment, i64)> => {
+  let (arcs, end) = arc_sequence_at(b, from)
+  if arcs.len() == 0 { return None }
+  let segments = [
+    a in arcs | if relative {
+      EllipticalArcCurveRel {
+        rx: a.rx,
+        ry: a.ry,
+        angle: a.angle,
+        largeArcFlag: a.large_arc,
+        sweepFlag: a.sweep,
+        dx: a.x,
+        dy: a.y
+      }
+    } else {
+      EllipticalArcCurveAbs {
+        rx: a.rx,
+        ry: a.ry,
+        angle: a.angle,
+        largeArcFlag: a.large_arc,
+        sweepFlag: a.sweep,
+        x: a.x,
+        y: a.y
+      }
+    }
+  ]
+  Some((segments, end))
 }
 
 /// The numbers starting at `from`, apart by `comma-wsp`, and the offset after the last.
@@ -314,7 +382,7 @@ let arc_sequence_at = pure (b: []u8, from: i64) -> ([]Arc, i64) => {
   var arcs: []Arc = []
   var i = from
   loop {
-    let Some((arc, end)) = arc_at(b, i) else { break }
+    let Some((arc, end)) = arc_args_at(b, i) else { break }
     arcs.push(arc)
     i = end
     let next = skip_comma_list_space(b, end)
@@ -326,7 +394,7 @@ let arc_sequence_at = pure (b: []u8, from: i64) -> ([]Arc, i64) => {
 
 /// One arc's arguments. A flag is the one character `0` or `1`, so it needs nothing after
 /// it: `a 5 5 0 106 6` is large-arc 1, sweep 0, then 6 6.
-let arc_at = pure (b: []u8, from: i64) -> Maybe<(Arc, i64)> => {
+let arc_args_at = pure (b: []u8, from: i64) -> Maybe<(Arc, i64)> => {
   let Some((radii, after_radii)) = numbers_at(b, from, 3) else { return None }
   let Some((large_arc, after_large)) = flag_at(
     b,
@@ -488,6 +556,10 @@ let skip_comma_list_space = pure (b: []u8, from: i64) -> i64 => {
 
 let is_list_space = pure (c: i64) -> bool => c == 32 || c == 9 || c == 10 || c == 13
 
+/// The byte at `i` as a rune, or NUL past either end — a command letter to match on.
+let rune_at = pure (b: []u8, i: i64) -> rune =>
+  if i >= 0 && i < b.len() { rune(b[i]) } else { '\0' }
+
 /// The byte at `i`, or -1 past either end.
 let byte_at = pure (b: []u8, i: i64) -> i64 =>
   if i >= 0 && i < b.len() { i64(b[i]) } else { -1 }
@@ -501,26 +573,6 @@ const DIGIT_1: i64 = 49
 const DIGIT_9: i64 = 57
 const UPPER_E: i64 = 69
 const LOWER_E: i64 = 101
-const UPPER_A: i64 = 65
-const UPPER_C: i64 = 67
-const UPPER_H: i64 = 72
-const LOWER_A: i64 = 97
-const LOWER_C: i64 = 99
-const LOWER_H: i64 = 104
-const UPPER_L: i64 = 76
-const LOWER_L: i64 = 108
-const UPPER_M: i64 = 77
-const LOWER_M: i64 = 109
-const UPPER_Q: i64 = 81
-const UPPER_S: i64 = 83
-const UPPER_T: i64 = 84
-const UPPER_V: i64 = 86
-const LOWER_Q: i64 = 113
-const LOWER_S: i64 = 115
-const LOWER_T: i64 = 116
-const LOWER_V: i64 = 118
-const UPPER_Z: i64 = 90
-const LOWER_Z: i64 = 122
 
 let parse_length_percent = pure (length_percent: Maybe<string>) -> Maybe<CssLengthPercentage> => {
   if var Some length_percent_str = length_percent {
