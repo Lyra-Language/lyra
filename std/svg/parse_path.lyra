@@ -1,0 +1,381 @@
+module std.svg
+
+let make_path = pure (xml: Element) -> SvgElement => {
+  let d: Maybe<PathData> = match xml.attribute("d") {
+    Some(text) => Some(parse_path_data(text)),
+    None => None,
+  }
+  Path {
+    id: xml.attribute("id"),
+    d: d,
+    stroke: parse_color(xml.attribute("stroke")),
+    fill: parse_color(xml.attribute("fill")),
+    pathLength: parse_num(xml.attribute("pathLength")),
+  }
+}
+
+/// Path data (`d`): its segments up to the first error. SVG draws a path as far as it is
+/// right, so an error ends the path rather than refusing it — `M 0 0 L 10` is the moveto
+/// alone. Data that does not start with a moveto (`M` or `m`) is no path at all.
+let parse_path_data = pure (d: string) -> PathData => {
+  let b = d.encode_utf8()
+  var out: []PathSegment = []
+  var i = skip_list_space(b, 0)
+  let first = rune_at(b, i)
+  if first != 'M' && first != 'm' { return PathData(out) }
+  while i < b.len() {
+    let Some((segments, end)) = command_at(b, i) else { break }
+    for s in segments { out.push(s) }
+    i = skip_list_space(b, end)
+  }
+  PathData(out)
+}
+
+/// The segments of the command at `i`, and the offset after its arguments. None where `i`
+/// holds no command, or one without a whole argument set. A lowercase command is relative.
+let command_at = pure (b: []u8, i: i64) -> Maybe<([]PathSegment, i64)> => {
+  let c = rune_at(b, i)
+  let relative = c >= 'a'
+  let args = skip_list_space(b, i + 1)
+  match c {
+    'M' | 'm' => moveto_at(b, args, relative),
+    'L' | 'l' => lineto_at(b, args, relative),
+    'H' | 'h' => horizontal_lineto_at(b, args, relative),
+    'V' | 'v' => vertical_lineto_at(b, args, relative),
+    'C' | 'c' => curveto_at(b, args, relative),
+    'S' | 's' => smooth_curveto_at(b, args, relative),
+    'Q' | 'q' => quadratic_curveto_at(b, args, relative),
+    'T' | 't' => smooth_quadratic_curveto_at(b, args, relative),
+    'A' | 'a' => arc_at(b, args, relative),
+    // Takes no numbers; one straight after it is no command, and ends the path.
+    'Z' | 'z' => Some(([ClosePath], args)),
+    _ => None,
+  }
+}
+
+/// `M`: a move, then any further pairs as linetos (see `MoveToAbs`).
+let moveto_at = pure (
+  b: []u8,
+  from: i64,
+  relative: bool
+) -> Maybe<([]PathSegment, i64)> => {
+  let (pairs, end) = coordinate_pair_sequence_at(b, from)
+  if pairs.len() == 0 { return None }
+  let segment = if relative { MoveToRel pairs } else { MoveToAbs pairs }
+  Some(([segment], end))
+}
+
+let lineto_at = pure (
+  b: []u8,
+  from: i64,
+  relative: bool
+) -> Maybe<([]PathSegment, i64)> => {
+  let (pairs, end) = coordinate_pair_sequence_at(b, from)
+  if pairs.len() == 0 { return None }
+  let segment = if relative { LineToRel pairs } else { LineToAbs pairs }
+  Some(([segment], end))
+}
+
+/// `H`: a segment per number, so `H 1 2` is two.
+let horizontal_lineto_at = pure (
+  b: []u8,
+  from: i64,
+  relative: bool
+) -> Maybe<([]PathSegment, i64)> => {
+  let (values, end) = number_sequence_at(b, from)
+  if values.len() == 0 { return None }
+  let segments = [
+    v in values | if relative { LineToHorizRel { dx: v } } else { LineToHorizAbs { x: v } }
+  ]
+  Some((segments, end))
+}
+
+/// `V`: a segment per number, as `H`.
+let vertical_lineto_at = pure (
+  b: []u8,
+  from: i64,
+  relative: bool
+) -> Maybe<([]PathSegment, i64)> => {
+  let (values, end) = number_sequence_at(b, from)
+  if values.len() == 0 { return None }
+  let segments = [
+    v in values | if relative { LineToVertRel { dy: v } } else { LineToVertAbs { y: v } }
+  ]
+  Some((segments, end))
+}
+
+/// `C`: sets of six numbers, `x1 y1 x2 y2 x y`.
+let curveto_at = pure (
+  b: []u8,
+  from: i64,
+  relative: bool
+) -> Maybe<([]PathSegment, i64)> => {
+  let (groups, end) = number_groups_at(b, from, 6)
+  if groups.len() == 0 { return None }
+  let segment = if relative {
+    CubicBezierRel {
+      triplets: [
+        g in groups | CubicBezierTripletRel {
+          dx1: g[0],
+          dy1: g[1],
+          dx2: g[2],
+          dy2: g[3],
+          dx: g[4],
+          dy: g[5]
+        }
+      ]
+    }
+  } else {
+    CubicBezierAbs {
+      triplets: [
+        g in groups | CubicBezierTripletAbs {
+          x1: g[0],
+          y1: g[1],
+          x2: g[2],
+          y2: g[3],
+          x: g[4],
+          y: g[5]
+        }
+      ]
+    }
+  }
+  Some(([segment], end))
+}
+
+/// `S`: sets of four numbers, `x2 y2 x y` — the first control point is drawing's to work out.
+let smooth_curveto_at = pure (
+  b: []u8,
+  from: i64,
+  relative: bool
+) -> Maybe<([]PathSegment, i64)> => {
+  let (groups, end) = number_groups_at(b, from, 4)
+  if groups.len() == 0 { return None }
+  let segment = if relative {
+    SmoothCubicBezierRel {
+      pairs: [g in groups | SmoothCubicBezierPairRel {
+        dx2: g[0],
+        dy2: g[1],
+        dx: g[2],
+        dy: g[3]
+      }]
+    }
+  } else {
+    SmoothCubicBezierAbs {
+      pairs: [g in groups | SmoothCubicBezierPairAbs {
+        x2: g[0],
+        y2: g[1],
+        x: g[2],
+        y: g[3]
+      }]
+    }
+  }
+  Some(([segment], end))
+}
+
+/// `Q`: sets of four numbers, `x1 y1 x y`.
+let quadratic_curveto_at = pure (
+  b: []u8,
+  from: i64,
+  relative: bool
+) -> Maybe<([]PathSegment, i64)> => {
+  let (groups, end) = number_groups_at(b, from, 4)
+  if groups.len() == 0 { return None }
+  let segment = if relative {
+    QuadBezierRel {
+      triplets: [g in groups | QuadBezierTripletRel {
+        dx1: g[0],
+        dy1: g[1],
+        dx: g[2],
+        dy: g[3]
+      }]
+    }
+  } else {
+    QuadBezierAbs {
+      triplets: [g in groups | QuadBezierTripletAbs {
+        x1: g[0],
+        y1: g[1],
+        x: g[2],
+        y: g[3]
+      }]
+    }
+  }
+  Some(([segment], end))
+}
+
+/// `T`: end points only — the control point is drawing's to work out.
+let smooth_quadratic_curveto_at = pure (
+  b: []u8,
+  from: i64,
+  relative: bool
+) -> Maybe<([]PathSegment, i64)> => {
+  let (pairs, end) = coordinate_pair_sequence_at(b, from)
+  if pairs.len() == 0 { return None }
+  let segment = if relative {
+    SmoothQuadBezierRel { points: pairs }
+  } else {
+    SmoothQuadBezierAbs { points: pairs }
+  }
+  Some(([segment], end))
+}
+
+/// `A`: a segment per arc, as `H` makes one per number.
+let arc_at = pure (b: []u8, from: i64, relative: bool) -> Maybe<([]PathSegment, i64)> => {
+  let (arcs, end) = arc_sequence_at(b, from)
+  if arcs.len() == 0 { return None }
+  let segments = [
+    a in arcs | if relative {
+      EllipticalArcCurveRel {
+        rx: a.rx,
+        ry: a.ry,
+        angle: a.angle,
+        largeArcFlag: a.large_arc,
+        sweepFlag: a.sweep,
+        dx: a.x,
+        dy: a.y
+      }
+    } else {
+      EllipticalArcCurveAbs {
+        rx: a.rx,
+        ry: a.ry,
+        angle: a.angle,
+        largeArcFlag: a.large_arc,
+        sweepFlag: a.sweep,
+        x: a.x,
+        y: a.y
+      }
+    }
+  ]
+  Some((segments, end))
+}
+
+/// The numbers starting at `from`, apart by `comma-wsp`, and the offset after the last.
+/// It stops where no number follows, leaving a trailing comma unread, as
+/// `coordinate_pair_sequence_at` does.
+let number_sequence_at = pure (b: []u8, from: i64) -> ([]f64, i64) => {
+  var values: []f64 = []
+  var i = from
+  loop {
+    let Some((n, end)) = number_at(b, i) else { break }
+    values.push(n)
+    i = end
+    let next = skip_comma_list_space(b, end)
+    if number_at(b, next).is_none() { break }
+    i = next
+  }
+  (values, i)
+}
+
+/// Sets of `n` numbers starting at `from` — `C` takes sixes, `S` and `Q` fours — and the
+/// offset after the last whole set. It stops where no number follows, and at a set cut
+/// short, before its first number, as `coordinate_pair_sequence_at` does for pairs.
+let number_groups_at = pure (b: []u8, from: i64, n: i64) -> ([][]f64, i64) => {
+  var groups: [][]f64 = []
+  var i = from
+  loop {
+    let Some((group, end)) = numbers_at(b, i, n) else { break }
+    groups.push(group)
+    i = end
+    let next = skip_comma_list_space(b, end)
+    if number_at(b, next).is_none() { break }
+    i = next
+  }
+  (groups, i)
+}
+
+/// `n` numbers starting at `from`, apart by `comma-wsp`, and the offset after the last.
+/// None where fewer than `n` are there.
+let numbers_at = pure (b: []u8, from: i64, n: i64) -> Maybe<([]f64, i64)> => {
+  var values: []f64 = []
+  var i = from
+  for k in 0..<n {
+    if k > 0 { i = skip_comma_list_space(b, i) }
+    let Some((v, end)) = number_at(b, i) else { return None }
+    values.push(v)
+    i = end
+  }
+  Some((values, i))
+}
+
+/// An arc's arguments, before they are told absolute from relative.
+struct Arc { rx: f64, ry: f64, angle: f64, large_arc: bool, sweep: bool, x: f64, y: f64 }
+
+/// The arcs' argument sets starting at `from` (`rx ry angle large-arc sweep x y`), and the
+/// offset after the last whole one, stopping as `number_groups_at` does.
+let arc_sequence_at = pure (b: []u8, from: i64) -> ([]Arc, i64) => {
+  var arcs: []Arc = []
+  var i = from
+  loop {
+    let Some((arc, end)) = arc_args_at(b, i) else { break }
+    arcs.push(arc)
+    i = end
+    let next = skip_comma_list_space(b, end)
+    if number_at(b, next).is_none() { break }
+    i = next
+  }
+  (arcs, i)
+}
+
+/// One arc's arguments. A flag is the one character `0` or `1`, so it needs nothing after
+/// it: `a 5 5 0 106 6` is large-arc 1, sweep 0, then 6 6.
+let arc_args_at = pure (b: []u8, from: i64) -> Maybe<(Arc, i64)> => {
+  let Some((radii, after_radii)) = numbers_at(b, from, 3) else { return None }
+  let Some((large_arc, after_large)) = flag_at(
+    b,
+    skip_comma_list_space(b, after_radii)
+  ) else {
+    return None
+  }
+  let Some((sweep, after_sweep)) = flag_at(
+    b,
+    skip_comma_list_space(b, after_large)
+  ) else {
+    return None
+  }
+  let Some((point, end)) = numbers_at(b, skip_comma_list_space(b, after_sweep), 2) else {
+    return None
+  }
+  let arc = Arc {
+    rx: radii[0],
+    ry: radii[1],
+    angle: radii[2],
+    large_arc: large_arc,
+    sweep: sweep,
+    x: point[0],
+    y: point[1]
+  }
+  Some((arc, end))
+}
+
+let flag_at = pure (b: []u8, i: i64) -> Maybe<(bool, i64)> => {
+  if byte_at(b, i) == DIGIT_0 { return Some((false, i + 1)) }
+  if byte_at(b, i) == DIGIT_1 { return Some((true, i + 1)) }
+  None
+}
+
+/// The coordinate pairs starting at `from`, and the offset after the last whole one. It
+/// stops where no number follows, and at a pair cut short (`1 2 3` is one pair, ending
+/// before the 3) — what is left at the offset then ends the path.
+let coordinate_pair_sequence_at = pure (
+  b: []u8,
+  from: i64
+) -> ([]CoordinatePair, i64) => {
+  var pairs: []CoordinatePair = []
+  var i = from
+  loop {
+    let Some((x, y, end)) = coordinate_pair_at(b, i) else { break }
+    pairs.push(CoordinatePair(x, y))
+    i = end
+    let next = skip_comma_list_space(b, end)
+    if number_at(b, next).is_none() { break }
+    i = next
+  }
+  (pairs, i)
+}
+
+let coordinate_pair_at = pure (b: []u8, from: i64) -> Maybe<(f64, f64, i64)> => {
+  let Some((x, x_end)) = number_at(b, from) else { return None }
+  let Some((y, y_end)) = number_at(b, skip_comma_list_space(b, x_end)) else {
+    return None
+  }
+  Some((x, y, y_end))
+}

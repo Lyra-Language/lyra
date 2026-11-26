@@ -1,0 +1,94 @@
+module std.svg
+
+pub let print_svg_element = (element: ref SvgElement, indent: string = "") => {
+  match element {
+    Svg {
+      id,
+      x,
+      y,
+      width,
+      height,
+      baseProfile,
+      version,
+      viewBox,
+      preserveAspectRatio,
+      children,
+    } => {
+      var id_attr = ""
+      if let Some id_str = id {
+        id_attr = " id='${id_str}'"
+      }
+      let x_attr = lp_to_str(x, "x")
+      let y_attr = lp_to_str(y, "y")
+      let width_attr = lp_to_str(width, "width")
+      let height_attr = lp_to_str(height, "height")
+
+      println("${indent}<svg${id_attr}${x_attr}${y_attr}${width_attr}${height_attr}>")
+      for child in children {
+        print_svg_element(child, indent ++ "  ")
+      }
+      println("${indent}</svg>")
+    },
+    Rect { id, x, y, width, height, stroke, strokeWidth, fill, rx, ry, pathLength, children } => {
+      var id_attr = ""
+      if let Some id_str = id {
+        id_attr = " id='${id_str}'"
+      }
+      let x_attr = lp_to_str(x, "x")
+      let y_attr = lp_to_str(y, "y")
+      let width_attr = lp_to_str(width, "width")
+      let height_attr = lp_to_str(height, "height")
+      let rx_attr = lp_to_str(rx, "rx")
+      let ry_attr = lp_to_str(ry, "ry")
+      let stroke_attr = color_to_str(stroke, "stroke")
+      let stroke_width_attr = lp_to_str(strokeWidth, "stroke-width")
+      let fill_attr = color_to_str(fill, "fill")
+      let path_length_attr = num_to_str(pathLength, "pathLength")
+
+      print("${indent}<rect${id_attr}${x_attr}${y_attr}${width_attr}${height_attr}${rx_attr}${ry_attr}${stroke_attr}${stroke_width_attr}${fill_attr}${path_length_attr}")
+      if children.len() == 0 {
+        println(" />")
+      } else {
+        println(">")
+        for child in children {
+          print_svg_element(child, indent ++ "  ")
+        }
+        println("${indent}</rect>")
+      }
+    },
+    _ => print("Error: Unknown SVG Element")
+  }
+}
+
+let num_to_str = pure (css_num: Maybe<CssNumber>, attr_name: string) -> string => {
+  if let Some num = css_num {
+    return " ${attr_name}='${f64(num)}'"
+  }
+  return ""
+}
+
+let lp_to_str = pure (
+  maybe_length_percentage: Maybe<CssLengthPercentage>,
+  attr_name: string
+) -> string => {
+  if let Some lp = maybe_length_percentage {
+    return match lp {
+      CssLPLength css_lp_length => {
+        match css_lp_length {
+          Num num => " ${attr_name}='${f64(num)}'",
+          Px px => " ${attr_name}='${f64(px)}px'",
+          _ => ""
+        }
+      },
+      CssLPPercentage percent => " ${attr_name}='${f64(percent)}%'",
+    }
+  }
+  return ""
+}
+
+let color_to_str = pure (maybe_color: Maybe<CssColor>, attr_name: string) -> string => {
+  if let Some color = maybe_color {
+    return " ${attr_name}='${string(color)}'"
+  }
+  return ""
+}
